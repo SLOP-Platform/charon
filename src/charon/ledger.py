@@ -65,9 +65,13 @@ class Checkpoint:
     note: str = ""
     # Resource span for this dispatch (Tier 3); None if the backend reported none.
     usage: Usage | None = None
+    # Consensus verdict at completion (Tier 4): True/False if a reviewer was
+    # consulted, None if not (L0/L1, or no reviewer). Recorded for audit (INV-1).
+    reviewer_passed: bool | None = None
+    reviewer_note: str = ""
 
     def to_dict(self) -> dict:
-        d = {
+        d: dict = {
             "seq": self.seq,
             "provider": self.provider,
             "commit": self.commit,
@@ -77,6 +81,9 @@ class Checkpoint:
         }
         if self.usage is not None:
             d["usage"] = self.usage.to_dict()
+        if self.reviewer_passed is not None:
+            d["reviewer_passed"] = self.reviewer_passed
+            d["reviewer_note"] = self.reviewer_note
         return d
 
 
@@ -211,6 +218,8 @@ class Ledger:
                     remaining=list(d.get("remaining", [])),
                     note=d.get("note", ""),
                     usage=Usage.from_dict(d.get("usage")),
+                    reviewer_passed=d.get("reviewer_passed"),
+                    reviewer_note=d.get("reviewer_note", ""),
                 )
             )
         return out

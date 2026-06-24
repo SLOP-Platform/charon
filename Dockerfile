@@ -20,6 +20,9 @@ RUN pip install --no-cache-dir '.[service]'
 
 USER charon
 ENV CHARON_STATE_DIR=/work/.charon
+# This IS the Mode-B container boundary (ADR-0002 §2.3 / INV-B4), so L2+ autonomy
+# is permitted here (Fence.assert_environment). Outside a container, L2+ refuses.
+ENV CHARON_CONTAINER_VERIFIED=1
 WORKDIR /work
 
 EXPOSE 8473

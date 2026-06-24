@@ -18,6 +18,7 @@ from .coordinator import run as _run
 from .fence import Fence
 from .ledger import Ledger
 from .ports.backend import AgentBackend
+from .ports.reviewer import Reviewer
 from .router import StaticRouter
 from .types import Autonomy, Budget, WorkUnit
 
@@ -52,6 +53,7 @@ def run_task(
     backend: AgentBackend | None = None,
     backends: Mapping[str, AgentBackend] | None = None,
     backend_name: str = "mock",
+    reviewer: Reviewer | None = None,
     autonomy: str = "L0",
     max_checkpoints: int = 8,
     max_cost_usd: float | None = None,
@@ -85,6 +87,7 @@ def run_task(
     result: RunResult = _run(
         WorkUnit(task_id=task_id, goal=goal),
         run_backends, ledger, fence, router,
+        reviewer=reviewer,
         max_checkpoints=max_checkpoints, budget=budget,
     )
     out = asdict(result)

@@ -17,6 +17,10 @@ from .doctor import probe
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
+    reviewer = None
+    if args.review:
+        from .adapters.review_mock import MockReviewer, ReviewMode
+        reviewer = MockReviewer(ReviewMode(args.review))
     try:
         out = api.run_task(
             goal=args.goal,
@@ -24,12 +28,13 @@ def _cmd_run(args: argparse.Namespace) -> int:
             repo=args.repo,
             state_dir=args.state_dir,
             backend_name=args.backend,
+            reviewer=reviewer,
             autonomy=args.autonomy,
             max_checkpoints=args.budget,
             max_cost_usd=args.max_cost_usd,
             max_tokens=args.max_tokens,
         )
-    except (ValueError, RuntimeError) as exc:
+    except (ValueError, RuntimeError, PermissionError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     print(json.dumps(out, indent=2))
@@ -67,7 +72,10 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--backend", default="mock",
                    help="backend name(s); comma-separated configures multiple "
                         "vendors for cross-vendor handoff (e.g. mock-a,mock-b)")
-    r.add_argument("--autonomy", default="L0", choices=["L0", "L1", "L2", "L3"])
+    r.add_argument("--autonomy", default="L0", choices=["L0", "L1", "L2", "L3"],
+                   help="L2+ requires the Mode-B container (CHARON_CONTAINER_VERIFIED=1)")
+    r.add_argument("--review", default=None, choices=["pass", "block", "error"],
+                   help="consensus reviewer for L2 (demo mock; real reviewer is gated)")
     r.add_argument("--budget", type=int, default=8, help="max checkpoints")
     r.add_argument("--max-cost-usd", type=float, default=None,
                    help="cumulative cost cap (USD); stop before exceeding")

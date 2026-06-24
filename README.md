@@ -122,10 +122,26 @@ contract. *(Re-scoped from a consensus gate after adversarial review found the
 gate's only consumer is L2 — built in Tier 4 with it; see
 [`docs/REVIEW-LOG.md`](docs/REVIEW-LOG.md).)*
 
-**Tier 4** (next): autonomy **L2** (apply-with-consensus) + the consensus gate
-paired with it, **L3** full-auto + parallel independent units, and cost-aware
-routing feedback. The live web/worker service + GHCR publish-on-tag land with the
-Tier-3 SLOP adapter (SLOP-side).
+**Tier 4** (this release): autonomy **L2 (apply-with-consensus)** + the consensus
+gate. At L2 a completed unit is applied only if a configured reviewer passes; a
+**block, an error, or no reviewer all fail _closed_** (`blocked-consensus`, lkg
+unchanged). L1 never consults the reviewer (unchanged); **L3** (full-auto) applies
+regardless but records the verdict. **L2+ is refused outside the Mode-B
+container** (`Fence.assert_environment` — set `CHARON_CONTAINER_VERIFIED=1` inside
+it, or opt out loudly), enforcing ADR-0002 §2.3 in code, not just docs.
+
+> **Consensus is _not_ a security boundary.** The reviewer is an automated check
+> (an LLM, behind the gateway) that can be wrong or gamed. L2 consensus is
+> *additive quality insurance* on top of executable acceptance — not a human
+> review and not a security audit. For security-sensitive code, require human
+> review outside Charon.
+
+**Parallel independent units (PERF-4) are deferred** — adversarial review found
+the thin design unsafe as drafted (escape-scan races on shared worktree parents,
+a shared-budget overspend race, sticky backend subprocess state) and no consumer
+needs the throughput yet. The binding fixes for when it is built are recorded in
+[`docs/PLAN-tier4.md`](docs/PLAN-tier4.md) §6. The live web/worker service + GHCR
+publish-on-tag land with the Tier-3 SLOP adapter (SLOP-side).
 
 To configure multiple vendors from the CLI:
 

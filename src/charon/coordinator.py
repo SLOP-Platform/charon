@@ -23,13 +23,14 @@ from .fence import Fence, detect_escape, snapshot_outside
 from .handoff import choose_next_backend
 from .ledger import Checkpoint, Ledger
 from .ports.backend import AgentBackend
+from .ports.reviewer import Reviewer
 from .router import StaticRouter
-from .types import Autonomy, Budget, OutcomeStatus, PrivilegedOp, WorkUnit
+from .types import Autonomy, Budget, Outcome, OutcomeStatus, PrivilegedOp, WorkUnit
 
 
 @dataclass
 class RunResult:
-    status: str  # complete | exhausted | escaped | blocked | budget
+    status: str  # complete | exhausted | escaped | blocked | blocked-consensus | budget
     checkpoints: int
     verified: list[str] = field(default_factory=list)
     remaining: list[str] = field(default_factory=list)
@@ -46,20 +47,24 @@ def run(
     fence: Fence,
     router: StaticRouter,
     *,
+    reviewer: Reviewer | None = None,
     max_checkpoints: int = 8,
     budget: Budget | None = None,
 ) -> RunResult:
     """Drive ``unit`` to acceptance or a bounded stop. One Ledger, one lock.
 
     ``budget`` (Tier 3) adds cumulative cost/token caps on top of
-    ``max_checkpoints``: the loop stops *before* starting a dispatch once the
-    spend recorded in the ledger has reached a cap — 'always working' can never
-    mean 'unbounded cost'."""
+    ``max_checkpoints``. ``reviewer`` (Tier 4) is the consensus gate: at autonomy
+    **L2** a completed unit is applied only if the reviewer passes (fail-closed);
+    at L1 the reviewer is not consulted; at L3 (full-auto) it is consulted for the
+    record but does not block. L2+ also requires the Mode-B container
+    (``Fence.assert_environment``)."""
+    fence.assert_environment()  # L2+ refused outside the container (INV-B4)
     worktree = Path(ledger.target_repo)
     guard_dir = worktree.parent
-    apply_allowed = fence.authorize(
-        PrivilegedOp.APPLY_REVERSIBLE, consensus=fence.autonomy >= Autonomy.L3
-    )
+    # "propose-only" = this level applies nothing even with consensus (L0 only);
+    # L1+ keeps changes, and the consensus gate (L2+) decides the final advance.
+    propose_only = not fence.authorize(PrivilegedOp.APPLY_REVERSIBLE, consensus=True)
     # BR2-11: every backend the router may pick must be wired in, or a route
     # would KeyError mid-run. Catch it as a config error before the loop.
     missing = set(router.backends) - set(backends)
@@ -122,25 +127,44 @@ def run(
             # Evaluate the proposal against disk BEFORE any rollback.
             verified = sorted(ledger.verified())
             remaining = sorted(ledger.remaining())
+            # A completion checkpoint = acceptance fully passes against disk now
+            # (re-derived, BR2-5) and there is a commit to bless.
+            is_completion = bool(not remaining and outcome.commit and not ledger.remaining())
+
+            # Consensus gate (Tier 4): consult the reviewer ONCE, at completion,
+            # at L2+ — before advancing lkg (D-GATE-1). Verdict recorded on the
+            # checkpoint for audit (INV-1).
+            reviewer_passed: bool | None = None
+            rnote = ""
+            if is_completion and fence.autonomy >= Autonomy.L2:
+                reviewer_passed, rnote = _consult_reviewer(reviewer, unit, outcome)
+
             ledger.append_checkpoint(
                 Checkpoint(seq, route.backend, outcome.commit, verified, remaining,
-                           note=outcome.note, usage=outcome.usage)
+                           note=outcome.note, usage=outcome.usage,
+                           reviewer_passed=reviewer_passed, reviewer_note=rnote)
             )
             ledger.record_provider(route.backend)
 
-            if not apply_allowed:
+            if propose_only:
                 # L0 propose-only: discard the worktree changes.
                 gitutil.reset_hard(worktree, ledger.lkg_ref)
                 return _result("blocked", seq, ledger,
                                note="L0 propose-only: proposal recorded, not applied")
 
-            # L1+: keep changes; advance lkg only when fully verified (INV-2).
-            # Re-derive remaining at the moment of advance (BR2-5): the value read
-            # above could in principle be stale; lkg must never advance past an
-            # unverified state, so we re-check against disk here, not earlier.
-            if not remaining and outcome.commit and not ledger.remaining():
-                ledger.advance_lkg(outcome.commit)
-                return _result("complete", seq, ledger)
+            # L1+: keep changes; advance lkg only when fully verified (INV-2) AND
+            # the consensus gate passes (Tier 4). The reviewer verdict is supplied
+            # as the fence's consensus signal — but it is an AUTOMATED reviewer,
+            # not human approval, and not a security boundary (D-GATE-3/6).
+            if is_completion and outcome.commit is not None:
+                consensus_signal = reviewer_passed if reviewer_passed is not None else True
+                if fence.authorize(PrivilegedOp.APPLY_REVERSIBLE, consensus=consensus_signal):
+                    ledger.advance_lkg(outcome.commit)
+                    return _result("complete", seq, ledger, note=rnote)
+                # L2 fail-closed: reviewer blocked / errored / absent. Do not apply.
+                gitutil.reset_hard(worktree, ledger.lkg_ref)
+                return _result("blocked-consensus", seq, ledger,
+                               note=rnote or "apply-with-consensus: reviewer did not pass")
 
             if outcome.status is OutcomeStatus.EXHAUSTED:
                 exhausted.add(route.backend)
@@ -148,6 +172,29 @@ def run(
                 return _result("blocked", seq, ledger, note=outcome.note)
 
         return _result("budget", seq, ledger, note="max_checkpoints reached")
+
+
+def _consult_reviewer(
+    reviewer: Reviewer | None, unit: WorkUnit, outcome: Outcome
+) -> tuple[bool, str]:
+    """Tier-4 consensus consult, FAIL-CLOSED (D-GATE-4): an absent reviewer, a
+    blocking finding, or ANY error all yield 'not passed', so unreviewed work is
+    never applied at L2.
+
+    Honest scope (D-GATE-5): there is no stateful cross-run circuit breaker — a
+    reviewer error fails this run closed and does not retry; persisting trip state
+    across CLI runs is out of scope (it would live in the ledger). And the
+    reviewer is an automated check that can be wrong or gamed — NOT a security
+    boundary (D-GATE-6)."""
+    if reviewer is None:
+        return False, "apply-with-consensus requires a reviewer; none configured (fail-closed)"
+    try:
+        findings = reviewer.review(unit, outcome)
+    except Exception as exc:  # timeout / unavailable / crash ⇒ fail closed
+        return False, f"reviewer error (fail-closed): {exc}"
+    if findings.passes:
+        return True, "reviewer passed"
+    return False, f"reviewer blocked: {findings.blocking}"
 
 
 def _ids(ledger: Ledger) -> list[str]:
