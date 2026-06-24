@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -25,6 +26,22 @@ from .acceptance import AcceptanceCheck, derive_remaining, derive_verified
 
 SCHEMA_VERSION = 1
 _LOCK_TTL_SECONDS = 900  # a lock older than this is considered abandoned
+
+# A task id is a single path segment under the state dir — never a path. This is
+# the boundary guard against traversal (reconciliation BR2-9): `../etc`, absolute
+# paths, and separators are rejected before any path join, so no surface (CLI,
+# API, or a future HTTP endpoint) can escape the state dir via a crafted id.
+_TASK_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+
+
+def validate_task_id(task_id: str) -> str:
+    """Return ``task_id`` iff it is a safe single path segment, else raise."""
+    if not _TASK_ID_RE.fullmatch(task_id):
+        raise LedgerCorruption(
+            f"invalid task id {task_id!r}: must match {_TASK_ID_RE.pattern} "
+            f"(no path separators, no traversal)"
+        )
+    return task_id
 
 
 class LedgerCorruption(RuntimeError):
@@ -95,6 +112,7 @@ class Ledger:
         target_repo: str,
         base_ref: str,
     ) -> Ledger:
+        validate_task_id(task_id)
         root = Path(state_dir) / task_id
         if (root / "ledger.json").exists():
             raise LedgerCorruption(
@@ -116,6 +134,7 @@ class Ledger:
 
     @classmethod
     def load(cls, state_dir: Path, task_id: str) -> Ledger:
+        validate_task_id(task_id)
         root = Path(state_dir) / task_id
         meta_path = root / "ledger.json"
         if not meta_path.exists():

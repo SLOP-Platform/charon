@@ -6,7 +6,11 @@ services:
     build: .
     image: ghcr.io/nnyan/charon:0.1.0
     ports:
-      - "8473:8473"
+      # Bind the host side to LOOPBACK by default (reconciliation BR2-1/D3): the
+      # service fronts the privileged loop, so it must not be reachable off-host
+      # without a deliberate change. In Mode B, SLOP reaches it over the docker
+      # network or an explicit, authenticated mapping — never a bare 0.0.0.0.
+      - "127.0.0.1:8473:8473"
     volumes:
       # Mount ONLY the project you want Charon to work on. The container
       # boundary is the blast-radius limit — do not mount the host root.

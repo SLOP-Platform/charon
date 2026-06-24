@@ -38,5 +38,5 @@ def test_h3_idempotent_rehydration_is_provider_independent(state_dir: Path, git_
 
 def test_h6_handoff_excludes_exhausted_backend() -> None:
     router = StaticRouter(backends=["alpha", "beta"])
-    route = handoff.choose_next_backend(router, "codegen", exhausted="alpha")
+    route = handoff.choose_next_backend(router, "codegen", exclude={"alpha"})
     assert route.backend == "beta"

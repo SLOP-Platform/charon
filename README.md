@@ -85,11 +85,36 @@ for the adversarial review of the build plan and its reconciliation.
 
 ## Status
 
-**Tier 1** (this release): standalone repo, CLI, CI, the continuity core (Ledger,
-fence, ports), proven end-to-end on the mock backend; real ACP adapter shipped
-to-spec (validate with `charon doctor`). Cross-vendor handoff logic is built and
-unit-tested; **live** cross-vendor handoff, the gateway, the consensus gate, and
-L2/L3 unattended operation are Tier 2–4.
+**Tier 1:** standalone repo, CLI, CI, the continuity core (Ledger, fence, ports),
+proven end-to-end on the mock backend; real ACP adapter shipped to-spec (validate
+with `charon doctor`).
+
+**Tier 2a** (this release): **multi-backend cross-vendor handoff**, proven
+end-to-end across two mock vendors — exhaustion (H4) routes to a *different*
+backend (H6), which rehydrates `remaining` from the ledger+disk alone (H3) and
+finishes without replaying committed work (H5). The proof is deliberately
+adversarial, not a happy path: a **lying** backend's forged "done" claim does not
+survive the vendor boundary, and `lkg` never advances past an unverified commit
+(INV-2). Routing stays a static native policy; the network gateway is gated on
+[`docs/SUPPLY-CHAIN.md`](docs/SUPPLY-CHAIN.md) before it may enter the privileged
+loop. The Mode-B container is built and health-checked in CI.
+
+**Honest scope of the handoff proof:** what is proven is the *vendor-agnostic
+contract* (the portable unit is files+ledger, not a vendor session). **Live**
+ACP-to-ACP handoff needs two real ACP agents (not in this env) and stays gated
+behind `charon doctor`.
+
+**Tier 2b** (next): the live HTTP `POST /v1/runs` endpoint fronting the
+privileged loop + GHCR image publish — shipped only with the security hardening
+enumerated in [`docs/PLAN-tier2.md`](docs/PLAN-tier2.md) §8 (reject untrusted
+repo paths, token-gate non-loopback binds, bound budget/concurrency). The
+consensus gate and L2/L3 unattended operation are Tier 3–4.
+
+To configure multiple vendors from the CLI:
+
+```bash
+charon run --goal "..." --accept "test -f ok.txt" --backend mock-a,mock-b --autonomy L1
+```
 
 ## License
 

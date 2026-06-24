@@ -62,7 +62,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="executable acceptance check (repeatable); exit 0 == verified")
     r.add_argument("--repo", default=None, help="target git repo (default: a sandbox)")
     r.add_argument("--state-dir", default=api.DEFAULT_STATE_DIR)
-    r.add_argument("--backend", default="mock", choices=["mock", "acp"])
+    r.add_argument("--backend", default="mock",
+                   help="backend name(s); comma-separated configures multiple "
+                        "vendors for cross-vendor handoff (e.g. mock-a,mock-b)")
     r.add_argument("--autonomy", default="L0", choices=["L0", "L1", "L2", "L3"])
     r.add_argument("--budget", type=int, default=8, help="max checkpoints")
     r.set_defaults(func=_cmd_run)

@@ -43,12 +43,18 @@ class MockBackend:
         creates: list[str] | None = None,
         escape_path: Path | None = None,
         health: Health | None = None,
+        exhaust_after: int | None = None,
     ) -> None:
         self.name = name
         self.mode = mode
         self._creates = list(creates) if creates else None
         self._escape_path = escape_path
         self._health = health or Health()
+        # After this many dispatches the backend self-reports exhausted (H4): the
+        # handoff signal a real backend raises on rate-limit / context pressure /
+        # budget cap. Lets a test choreograph "vendor A does some work, then
+        # exhausts; vendor B must pick up from the ledger".
+        self._exhaust_after = exhaust_after
         self._dispatches = 0
         self._killed = False
 
@@ -105,6 +111,8 @@ class MockBackend:
                        note=f"created {files}")
 
     def health(self) -> Health:
+        if self._exhaust_after is not None and self._dispatches >= self._exhaust_after:
+            return Health(budget_remaining=False)
         return self._health
 
     def capabilities(self) -> CapSet:

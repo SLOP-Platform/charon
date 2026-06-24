@@ -59,3 +59,30 @@ jobs:
           /tmp/clean/bin/charon --version
           /tmp/clean/bin/charon run --goal "ci smoke" \
             --accept "test -f ok.txt" --backend mock --autonomy L1
+      - name: smoke — cross-vendor handoff reaches completion
+        run: |
+          cd /tmp
+          # Two mock vendors configured; the loop must complete and record both
+          # only when handoff is needed — here it proves multi-backend wiring.
+          /tmp/clean/bin/charon run --goal "ci handoff" \
+            --accept "test -f ok.txt" --backend mock-a,mock-b --autonomy L1
+
+  image-smoke:
+    # ADR-0002 §5 Tier 2 (build axis): prove the Mode-B image still BUILDS and
+    # the fenced service answers — without publishing (no token surface; GHCR
+    # publish-on-tag is Tier 2b, gated on the hardening in PLAN-tier2 §8).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build image
+        run: docker build -t charon:ci .
+      - name: run service + healthz
+        run: |
+          docker run -d --name charon-ci -p 127.0.0.1:8473:8473 charon:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8473/healthz; then ok=1; break; fi
+            sleep 1
+          done
+          docker logs charon-ci
+          docker rm -f charon-ci
+          test "${ok:-0}" = "1"

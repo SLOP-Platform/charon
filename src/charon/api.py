@@ -6,6 +6,7 @@ else under ``charon.*`` is private and may change without a major bump.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from dataclasses import asdict
 from pathlib import Path
 
@@ -49,11 +50,18 @@ def run_task(
     repo: str | None = None,
     state_dir: str = DEFAULT_STATE_DIR,
     backend: AgentBackend | None = None,
+    backends: Mapping[str, AgentBackend] | None = None,
     backend_name: str = "mock",
     autonomy: str = "L0",
     max_checkpoints: int = 8,
 ) -> dict:
     """Create a Work Ledger and drive the goal to acceptance or a bounded stop.
+
+    Backend selection (first non-None wins): an explicit ``backends`` mapping
+    (multi-backend, the cross-vendor path) · a single ``backend`` · else
+    ``backend_name`` parsed as a comma-separated list, each name becoming a
+    satisfying mock vendor (the Tier-1/2 demo path; real ACP needs a live agent —
+    see ``charon doctor``).
 
     Returns a JSON-serializable dict (the RunResult plus task id + lkg)."""
     if not accept:
@@ -66,23 +74,35 @@ def run_task(
     checks = [AcceptanceCheck(id=f"a{i}", cmd=c) for i, c in enumerate(accept)]
     ledger = Ledger.create(sdir, task_id, goal, checks, target, base_ref)
 
-    if backend is None:
-        # Tier-1 default backend is the mock (the real ACP path needs a live
-        # agent; see `charon doctor`).
-        backend = MockBackend.satisfying(checks, name=backend_name)
-    backends = {backend.name: backend}
-    router = StaticRouter(backends=[backend.name])
+    run_backends = _resolve_backends(backend, backends, backend_name, checks)
+    router = StaticRouter(backends=list(run_backends))
     fence = Fence(autonomy=Autonomy[autonomy])
 
     result: RunResult = _run(
         WorkUnit(task_id=task_id, goal=goal),
-        backends, ledger, fence, router, max_checkpoints=max_checkpoints,
+        run_backends, ledger, fence, router, max_checkpoints=max_checkpoints,
     )
     out = asdict(result)
     out["task_id"] = task_id
     out["target_repo"] = target
     out["state_dir"] = str(sdir)
     return out
+
+
+def _resolve_backends(
+    backend: AgentBackend | None,
+    backends: Mapping[str, AgentBackend] | None,
+    backend_name: str,
+    checks: list[AcceptanceCheck],
+) -> dict[str, AgentBackend]:
+    if backends:
+        return dict(backends)
+    if backend is not None:
+        return {backend.name: backend}
+    names = [n.strip() for n in backend_name.split(",") if n.strip()]
+    if not names:
+        raise ValueError("no backend named")
+    return {n: MockBackend.satisfying(checks, name=n) for n in names}
 
 
 def show_ledger(task_id: str, state_dir: str = DEFAULT_STATE_DIR) -> dict:

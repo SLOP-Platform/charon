@@ -52,6 +52,13 @@ def run(
     apply_allowed = fence.authorize(
         PrivilegedOp.APPLY_REVERSIBLE, consensus=fence.autonomy >= Autonomy.L3
     )
+    # BR2-11: every backend the router may pick must be wired in, or a route
+    # would KeyError mid-run. Catch it as a config error before the loop.
+    missing = set(router.backends) - set(backends)
+    if missing:
+        raise KeyError(
+            f"router may route to backends not provided: {sorted(missing)}"
+        )
     exhausted: set[str] = set()
     seq = 0
 
@@ -67,10 +74,11 @@ def run(
             backend = backends[route.backend]
 
             # H4: exhaustion is detected via health(), not inferred from failure.
+            # Re-route excluding the FULL exhausted set (BR2-4), not just this one.
             if backend.health().exhausted:
                 exhausted.add(route.backend)
                 try:
-                    route = choose_next_backend(router, unit.task_class, route.backend)
+                    route = choose_next_backend(router, unit.task_class, exhausted)
                     backend = backends[route.backend]
                 except RuntimeError as exc:
                     return _result("exhausted", seq, ledger, note=str(exc))
@@ -106,7 +114,10 @@ def run(
                                note="L0 propose-only: proposal recorded, not applied")
 
             # L1+: keep changes; advance lkg only when fully verified (INV-2).
-            if not remaining and outcome.commit:
+            # Re-derive remaining at the moment of advance (BR2-5): the value read
+            # above could in principle be stale; lkg must never advance past an
+            # unverified state, so we re-check against disk here, not earlier.
+            if not remaining and outcome.commit and not ledger.remaining():
                 ledger.advance_lkg(outcome.commit)
                 return _result("complete", seq, ledger)
 

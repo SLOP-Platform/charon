@@ -6,7 +6,13 @@ import pytest
 
 from charon.acceptance import AcceptanceCheck
 from charon.gitutil import head
-from charon.ledger import Checkpoint, Ledger, LedgerCorruption, LedgerLocked
+from charon.ledger import (
+    Checkpoint,
+    Ledger,
+    LedgerCorruption,
+    LedgerLocked,
+    validate_task_id,
+)
 
 
 def _mk(state_dir: Path, repo: Path) -> Ledger:
@@ -58,6 +64,23 @@ def test_torn_checkpoint_line_is_skipped_not_misread(state_dir: Path, git_repo: 
     cps = led.checkpoints()
     assert len(cps) == 1  # the good record, torn one dropped — not misread
     assert cps[0].seq == 1
+
+
+@pytest.mark.parametrize(
+    "bad", ["../etc", "..", "a/b", "/abs", "x/../../etc", "-leading", "UPPER", "x" * 65]
+)
+def test_task_id_traversal_rejected(bad: str, state_dir: Path, git_repo: Path) -> None:
+    # BR2-9: a crafted task id must never escape the state dir, on any surface.
+    checks = [AcceptanceCheck("a0", "test -f done.txt")]
+    with pytest.raises(LedgerCorruption):
+        Ledger.create(state_dir, bad, "g", checks, str(git_repo), head(git_repo))
+    with pytest.raises(LedgerCorruption):
+        Ledger.load(state_dir, bad)
+
+
+def test_valid_task_ids_accepted() -> None:
+    for ok in ["t1", "create-hello-abc12345", "a", "0", "x" * 64]:
+        assert validate_task_id(ok) == ok
 
 
 def test_concurrent_coordinator_lock(state_dir: Path, git_repo: Path) -> None:
