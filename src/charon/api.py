@@ -19,7 +19,7 @@ from .fence import Fence
 from .ledger import Ledger
 from .ports.backend import AgentBackend
 from .router import StaticRouter
-from .types import Autonomy, WorkUnit
+from .types import Autonomy, Budget, WorkUnit
 
 DEFAULT_STATE_DIR = ".charon"
 
@@ -54,6 +54,8 @@ def run_task(
     backend_name: str = "mock",
     autonomy: str = "L0",
     max_checkpoints: int = 8,
+    max_cost_usd: float | None = None,
+    max_tokens: int | None = None,
 ) -> dict:
     """Create a Work Ledger and drive the goal to acceptance or a bounded stop.
 
@@ -78,9 +80,12 @@ def run_task(
     router = StaticRouter(backends=list(run_backends))
     fence = Fence(autonomy=Autonomy[autonomy])
 
+    budget = Budget(max_checkpoints=max_checkpoints,
+                    max_cost_usd=max_cost_usd, max_tokens=max_tokens)
     result: RunResult = _run(
         WorkUnit(task_id=task_id, goal=goal),
-        run_backends, ledger, fence, router, max_checkpoints=max_checkpoints,
+        run_backends, ledger, fence, router,
+        max_checkpoints=max_checkpoints, budget=budget,
     )
     out = asdict(result)
     out["task_id"] = task_id
@@ -116,5 +121,6 @@ def show_ledger(task_id: str, state_dir: str = DEFAULT_STATE_DIR) -> dict:
         "provider_history": ledger.provider_history,
         "verified": sorted(ledger.verified()),
         "remaining": sorted(ledger.remaining()),
+        "usage": ledger.cumulative_usage().to_dict(),  # derived cost truth (Tier 3)
         "checkpoints": [c.to_dict() for c in ledger.checkpoints()],
     }

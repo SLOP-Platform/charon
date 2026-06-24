@@ -24,7 +24,7 @@ from .handoff import choose_next_backend
 from .ledger import Checkpoint, Ledger
 from .ports.backend import AgentBackend
 from .router import StaticRouter
-from .types import Autonomy, OutcomeStatus, PrivilegedOp, WorkUnit
+from .types import Autonomy, Budget, OutcomeStatus, PrivilegedOp, WorkUnit
 
 
 @dataclass
@@ -35,6 +35,8 @@ class RunResult:
     remaining: list[str] = field(default_factory=list)
     lkg_ref: str = ""
     note: str = ""
+    cost_usd: float = 0.0  # cumulative spend, derived from ledger spans (Tier 3)
+    tokens: int = 0
 
 
 def run(
@@ -45,8 +47,14 @@ def run(
     router: StaticRouter,
     *,
     max_checkpoints: int = 8,
+    budget: Budget | None = None,
 ) -> RunResult:
-    """Drive ``unit`` to acceptance or a bounded stop. One Ledger, one lock."""
+    """Drive ``unit`` to acceptance or a bounded stop. One Ledger, one lock.
+
+    ``budget`` (Tier 3) adds cumulative cost/token caps on top of
+    ``max_checkpoints``: the loop stops *before* starting a dispatch once the
+    spend recorded in the ledger has reached a cap — 'always working' can never
+    mean 'unbounded cost'."""
     worktree = Path(ledger.target_repo)
     guard_dir = worktree.parent
     apply_allowed = fence.authorize(
@@ -67,6 +75,19 @@ def run(
             return _result("complete", seq, ledger)
 
         while seq < max_checkpoints:
+            # Tier 3: stop before starting a dispatch once cumulative spend
+            # (derived from the ledger spans) has reached a budget cap. The cap
+            # binds at checkpoint boundaries — like max_checkpoints bounds count.
+            if budget is not None and seq > 0:
+                spent = ledger.cumulative_usage()
+                if budget.max_cost_usd is not None and spent.cost_usd >= budget.max_cost_usd:
+                    return _result("budget", seq, ledger,
+                                   note=f"cost cap reached: ${spent.cost_usd:.4f} "
+                                        f">= ${budget.max_cost_usd:.4f}")
+                if budget.max_tokens is not None and spent.tokens >= budget.max_tokens:
+                    return _result("budget", seq, ledger,
+                                   note=f"token cap reached: {spent.tokens} "
+                                        f">= {budget.max_tokens}")
             try:
                 route = router.route(unit.task_class, exclude=exhausted)
             except RuntimeError as exc:
@@ -103,7 +124,7 @@ def run(
             remaining = sorted(ledger.remaining())
             ledger.append_checkpoint(
                 Checkpoint(seq, route.backend, outcome.commit, verified, remaining,
-                           note=outcome.note)
+                           note=outcome.note, usage=outcome.usage)
             )
             ledger.record_provider(route.backend)
 
@@ -134,6 +155,7 @@ def _ids(ledger: Ledger) -> list[str]:
 
 
 def _result(status: str, seq: int, ledger: Ledger, note: str = "") -> RunResult:
+    spent = ledger.cumulative_usage()
     return RunResult(
         status=status,
         checkpoints=seq,
@@ -141,4 +163,6 @@ def _result(status: str, seq: int, ledger: Ledger, note: str = "") -> RunResult:
         remaining=sorted(ledger.remaining()),
         lkg_ref=ledger.lkg_ref,
         note=note,
+        cost_usd=spent.cost_usd,
+        tokens=spent.tokens,
     )

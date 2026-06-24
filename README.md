@@ -104,11 +104,28 @@ contract* (the portable unit is files+ledger, not a vendor session). **Live**
 ACP-to-ACP handoff needs two real ACP agents (not in this env) and stays gated
 behind `charon doctor`.
 
-**Tier 2b** (next): the live HTTP `POST /v1/runs` endpoint fronting the
-privileged loop + GHCR image publish — shipped only with the security hardening
-enumerated in [`docs/PLAN-tier2.md`](docs/PLAN-tier2.md) §8 (reject untrusted
-repo paths, token-gate non-loopback binds, bound budget/concurrency). The
-consensus gate and L2/L3 unattended operation are Tier 3–4.
+**Tier 2b:** GHCR image-publish path (release-triggered, gated on tests, base
+digest-pinned at release, SLSA provenance) + the web surface made honestly
+read-only (it returns `501` rather than running the privileged loop in-process —
+ADR-0002 §2.3). The live `POST /v1/runs` web/worker split is the recorded design
+of record, built *with* its Tier-3 SLOP consumer (see
+[`docs/PLAN-tier2.md`](docs/PLAN-tier2.md) §8).
+
+**Tier 3** (this release): **Ledger-native cost & budget accounting.** Each
+checkpoint records a usage span (`tokens_in/out`, `cost_usd`, `latency_ms`);
+cumulative spend is **derived** from the ledger (like progress), so it survives a
+cross-vendor handoff and a reload without resetting (H3-for-cost). A
+`--max-cost-usd` / `--max-tokens` cap stops a run *before* exceeding it — "always
+working" never means "unbounded cost." Live token/cost come from real ACP
+`session/usage` (gated on `charon doctor`); the mock proves the accounting
+contract. *(Re-scoped from a consensus gate after adversarial review found the
+gate's only consumer is L2 — built in Tier 4 with it; see
+[`docs/REVIEW-LOG.md`](docs/REVIEW-LOG.md).)*
+
+**Tier 4** (next): autonomy **L2** (apply-with-consensus) + the consensus gate
+paired with it, **L3** full-auto + parallel independent units, and cost-aware
+routing feedback. The live web/worker service + GHCR publish-on-tag land with the
+Tier-3 SLOP adapter (SLOP-side).
 
 To configure multiple vendors from the CLI:
 

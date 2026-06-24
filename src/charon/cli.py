@@ -26,6 +26,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
             backend_name=args.backend,
             autonomy=args.autonomy,
             max_checkpoints=args.budget,
+            max_cost_usd=args.max_cost_usd,
+            max_tokens=args.max_tokens,
         )
     except (ValueError, RuntimeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -67,6 +69,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "vendors for cross-vendor handoff (e.g. mock-a,mock-b)")
     r.add_argument("--autonomy", default="L0", choices=["L0", "L1", "L2", "L3"])
     r.add_argument("--budget", type=int, default=8, help="max checkpoints")
+    r.add_argument("--max-cost-usd", type=float, default=None,
+                   help="cumulative cost cap (USD); stop before exceeding")
+    r.add_argument("--max-tokens", type=int, default=None,
+                   help="cumulative token cap; stop before exceeding")
     r.set_defaults(func=_cmd_run)
 
     lg = sub.add_parser("ledger", help="show a task's derived ledger state")
