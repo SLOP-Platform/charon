@@ -7,6 +7,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  release:
+    types: [published]
 
 jobs:
   gate:
@@ -86,3 +88,69 @@ jobs:
           docker logs charon-ci
           docker rm -f charon-ci
           test "${ok:-0}" = "1"
+
+  publish:
+    # ADR-0002 §5 Tier 2b: publish the Mode-B image to GHCR, but ONLY on a
+    # published Release and ONLY after the full gate + image-smoke pass — never
+    # an untested image (BR2-8). The base is digest-PINNED here (resolved fresh,
+    # recorded in SLSA provenance); only immutable :vX.Y.Z is pushed, never
+    # :latest. No publish token surface exists off the release path.
+    needs: [gate, image-smoke]
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write       # OIDC for build provenance attestation
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: derive version (single source of truth = pyproject)
+        id: ver
+        run: |
+          V=$(python3 -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          # The release tag must match the package version (no drift).
+          TAG="${GITHUB_REF_NAME#v}"
+          if [ "$TAG" != "$V" ]; then
+            echo "release tag '$GITHUB_REF_NAME' != pyproject version '$V'" >&2
+            exit 1
+          fi
+
+      - name: resolve + pin base image digest (supply-chain gate)
+        id: base
+        run: |
+          docker buildx imagetools inspect python:3.12-slim --raw > /dev/null
+          DIGEST=$(docker buildx imagetools inspect python:3.12-slim \
+                    --format '{{.Manifest.Digest}}')
+          case "$DIGEST" in
+            sha256:*) : ;;
+            *) echo "could not resolve base digest" >&2; exit 1 ;;
+          esac
+          echo "base=python:3.12-slim@${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "Pinned base: python:3.12-slim@${DIGEST}"
+
+      - name: log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: build + push (digest-pinned base, immutable version tag)
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          build-args: |
+            BASE_IMAGE=${{ steps.base.outputs.base }}
+          tags: ghcr.io/nnyan/charon:v${{ steps.ver.outputs.version }}
+
+      - name: attest build provenance (SLSA via GitHub OIDC)
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-name: ghcr.io/nnyan/charon
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true

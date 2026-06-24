@@ -61,12 +61,39 @@ No third-party dependency has entered the privileged loop. When one is proposed
 |------|------------------|-----|--------------|----------|---------|
 | —    | (none)           | —   | —            | —        | —       |
 
-## 5. Container images (Tier 2b, when publish lands)
+## 5. Container images (Tier 2b — publish policy, reconciled)
 
-- Pin the base by digest: `FROM python:3.12-slim@sha256:<digest>`.
-- Pin the installed `charon` version in the image.
-- Publish only `:vX.Y.Z` (immutable); `:latest` is a moving target, not for
-  production.
-- Attach SLSA provenance / attestation at publish time.
-- Until then, CI only **builds** the image (no registry push), so there is no
-  publish token surface to compromise.
+Reviewed adversarially (REVIEW-LOG references BR2-8; GHCR-publish focused review
+2026-06-24). Decisions:
+
+- **Base pinned by digest, resolved at release time.** The `Dockerfile` base is a
+  build-arg (`BASE_IMAGE=python:3.12-slim`); the `publish` CI job resolves the
+  current digest with `docker buildx imagetools inspect` and builds with
+  `BASE_IMAGE=python:3.12-slim@sha256:…`. The pin is therefore real and fresh,
+  recorded in the build log and SLSA provenance — never a stale hardcoded value,
+  never fabricated. The plain tag is used only for the non-publishing CI
+  build-smoke.
+- **Installed `charon` is the checked-out source** at the release tag; the
+  `publish` job asserts the **release tag matches `pyproject.toml` version** (no
+  drift), so the image contains exactly the released version.
+- **Trigger = a published GitHub Release**, gated `needs: [gate, image-smoke]` —
+  an untested image can never be published. Off the release path there is **no
+  publish token surface**.
+- **Only `:vX.Y.Z` is pushed** (immutable per semver). `:latest` is **not**
+  published — it is a silent-upgrade footgun. Operators pin explicit versions.
+  Do not delete/re-create a published tag (silent swap of a different image).
+- **Provenance:** SLSA v1 via GitHub-native `actions/attest-build-provenance`
+  (OIDC + transparency log), pushed to the registry; verifiable with
+  `gh attestation verify oci://ghcr.io/nnyan/charon:vX.Y.Z`. **Cosign is not
+  used** — it adds key-management burden without addressing the real threat (a
+  compromised runner would hold the cosign key too). Honesty: provenance attests
+  *build integrity* (commit, builder, inputs), **not** dependency safety — that
+  is `pip-audit` + this gate's job.
+- **Permissions** are the minimum: `contents:read`, `packages:write`,
+  `id-token:write`, `attestations:write`.
+- **Namespace** is lowercase `ghcr.io/nnyan/charon` (GHCR lowercases names).
+- **Multi-arch (arm64)** is deferred (YAGNI until a consumer deploys on arm64);
+  v0.1.0 publishes `linux/amd64` only, disclosed as such.
+- **Base-digest renewal** is manual + intentional (no auto-bump bot yet): the
+  publish job always re-resolves the live digest, so each release pins whatever
+  is current; a deliberate base upgrade is just a normal release.

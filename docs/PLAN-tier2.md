@@ -211,12 +211,39 @@ with the Lens-A hardening. This build is **Tier 2a**:
 6. **Docker build-smoke** in CI (build only, no push); honesty register updated:
    cross-vendor handoff proven as a vendor-agnostic *contract*, not a live result.
 
-**Tier 2b (deferred, with landing prerequisites):**
-- Live `POST /v1/runs` fronting the privileged loop — only with: reject untrusted
-  `repo` on the service path; cap `budget`/concurrency + request body size;
-  require `CHARON_SERVICE_TOKEN` for any non-loopback bind; sandbox or
-  operator-trust-document the acceptance exec (`shell=True`); real out-of-process
-  HTTP test (subprocess + socket, not TestClient-only).
-- GHCR **publish-on-tag** — pin base image by digest, pin installed `charon`
-  version, SLSA provenance, `:vX.Y.Z` over `:latest`.
-- Gateway live wiring — gated on `SUPPLY-CHAIN.md` green.
+**Tier 2b — split into "now" vs "with-consumer" by a DTC (REVIEW-LOG 2026-06-24).**
+
+*Shipped now (consumer-independent, safe):*
+- **GHCR publish path** — release-triggered, gated on the full test gate +
+  image-smoke, base digest-pinned at release time (recorded in SLSA provenance),
+  `:vX.Y.Z` only, native `attest-build-provenance` (no cosign). See
+  `SUPPLY-CHAIN.md §5` and the `publish` CI job.
+- **Web surface neutered honest:** `service/app.py` is **read-only** (healthz +
+  derived ledger read) and **refuses** runs with `501` rather than running the
+  privileged loop in-process. A structural test
+  (`test_service_app_runs_no_privileged_loop_in_process`) enforces that the web
+  module references no privileged-exec symbol (`run_task`/`coordinator`/
+  `dispatch`) — the literal ADR-0002 §2.3 / INV-B4 topology.
+
+*Design of record — built WHEN the Tier-3 SLOP consumer lands (not ahead of it):*
+the **web/worker split**. The exposed web process validates + enqueues one inert
+job record (atomic write) and **never imports the privileged loop**; a separate
+worker container (`network_mode: none`, shared `.charon` volume only) drains it
+and runs `api.run_task`. Request shape drops `repo` entirely (runs only in an
+auto-created sandbox — operator-repo branch unreachable from HTTP); `budget`
+clamped; `CHARON_SERVICE_TOKEN` required (and startup hard-fails) on any
+non-loopback bind; acceptance exec runs **`shell=False`** (parsed argv) on the
+service path; service autonomy pinned **L0** unless an operator opts in (with a
+logged "live agent RCE in the worker" warning). Explicitly **NOT** built: a
+durable queue/lease/reclaim broker, an HMAC-signed policy file, an argv0
+allowlist module, or threading service concerns into the zero-dep core — all
+rejected on thinness/YAGNI (no consumer yet).
+
+*Honesty (must mirror in README at the opt-in):* the Mode-B **container** is the
+only real boundary for a live skip-permissions agent; in-process guards bound the
+caller/request, not a determined agent. The shared `.charon` volume is a
+**bidirectional integrity seam** — a compromised worker can write ledger records
+the web layer serves back as truth; one-way code isolation is not one-way data
+isolation.
+
+- Gateway live wiring — separately gated on `SUPPLY-CHAIN.md` green (Tier 2.5).

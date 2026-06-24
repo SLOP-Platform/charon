@@ -2,7 +2,13 @@
 # This is where the privileged agent-spawning loop is meant to run: isolated
 # from the host (and, when embedded, from SLOP's process) so the container
 # boundary is the real blast-radius limit (reconciliation BR-2).
-FROM python:3.12-slim AS base
+#
+# The base is a build-arg so the PUBLISH workflow can pin it to an immutable
+# digest resolved at release time (recorded in SLSA provenance) — see
+# .github/workflows/ci.yml `publish` and docs/SUPPLY-CHAIN.md §5. The plain tag
+# is used only for the CI build-smoke; a published image is always digest-pinned.
+ARG BASE_IMAGE=python:3.12-slim
+FROM ${BASE_IMAGE} AS base
 
 # Non-root by default; the loop should never need host root.
 RUN useradd --create-home --uid 10001 charon
