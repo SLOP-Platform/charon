@@ -1,0 +1,61 @@
+name: ci
+
+# ADR-0002 §4: CI lands with the first commit — test suite, version-consistency,
+# the SLOP-import boundary check, and a Mode-A-in-isolation smoke (INV-B6: prove
+# standalone never bit-rots behind the embed).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: install (dev)
+        run: pip install -e '.[dev]'
+
+      - name: SLOP-boundary check (INV-B1/B5)
+        run: python3 tools/check_boundary.py src
+
+      - name: version consistency
+        run: python3 tools/check_version.py
+
+      - name: lint
+        run: ruff check src tests tools
+
+      - name: type
+        run: mypy src/charon
+
+      - name: tests
+        run: pytest -q
+
+      - name: supply-chain audit (privileged loop carries no unvetted deps)
+        run: pip-audit || true
+
+  modeA-isolation:
+    # INV-B6: install the published artifact in a clean env with NO repo on the
+    # path and prove the CLI works standalone.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: build + install wheel in a clean venv
+        run: |
+          pip install build
+          python -m build --wheel
+          python -m venv /tmp/clean
+          /tmp/clean/bin/pip install dist/*.whl
+      - name: smoke — standalone CLI + mock end-to-end
+        run: |
+          cd /tmp
+          /tmp/clean/bin/charon --version
+          /tmp/clean/bin/charon run --goal "ci smoke" \
+            --accept "test -f ok.txt" --backend mock --autonomy L1

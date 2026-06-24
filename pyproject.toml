@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "charon"
+version = "0.1.0"
+description = "A thin orchestrator that ferries one unit of work across swappable coding-agent backends, keeping a vendor-neutral Work Ledger as the single source of truth."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Rafael", email = "nnyan.tengwar@gmail.com" }]
+keywords = ["agents", "orchestration", "acp", "llm", "autonomous"]
+
+# Tier 1 core has NO runtime dependencies (stdlib only) — the privileged loop
+# carries no unvetted third-party code (reconciliation BR-3). The HTTP service
+# is an OPTIONAL extra so FastAPI never lands in the core/privileged install.
+dependencies = []
+
+[project.optional-dependencies]
+service = ["fastapi>=0.110", "uvicorn>=0.29", "pydantic>=2"]
+dev = ["pytest>=8", "ruff>=0.4", "mypy>=1.9", "pip-audit>=2.7"]
+
+[project.scripts]
+charon = "charon.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/SLOP-Platform/charon"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/charon"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests", "tools"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src/charon"]
+ignore_missing_imports = true
+follow_imports = "skip"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::UserWarning"]

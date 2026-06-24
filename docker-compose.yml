@@ -1,0 +1,17 @@
+# Mode B — run Charon as a fenced service (ADR-0002 §2.3).
+# SLOP (or any operator) talks to it over the HTTP surface; the privileged loop
+# stays inside this container.
+services:
+  charon:
+    build: .
+    image: ghcr.io/nnyan/charon:0.1.0
+    ports:
+      - "8473:8473"
+    volumes:
+      # Mount ONLY the project you want Charon to work on. The container
+      # boundary is the blast-radius limit — do not mount the host root.
+      - ./work:/work
+    environment:
+      - CHARON_STATE_DIR=/work/.charon
+    # No host docker socket, no privileged flag — keep the fence intact.
+    restart: unless-stopped
