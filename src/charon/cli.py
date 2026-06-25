@@ -32,6 +32,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
             proxy_upstream=args.proxy_upstream,
             proxy_key_env=args.proxy_key_env,
             acp_model=args.acp_model,
+            role=args.role,
             reviewer=reviewer,
             autonomy=args.autonomy,
             max_checkpoints=args.budget,
@@ -89,6 +90,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="env var holding the upstream key (held by the proxy, not the agent)")
     r.add_argument("--acp-model", default=None,
                    help="model id the agent is pinned to through the proxy, e.g. kimi-k2.7-code")
+    r.add_argument("--role", default=None,
+                   help="run a role's model-pool with cost-first live failover "
+                        "(from .charon/models.json + pools.json); needs --acp-cmd")
     r.add_argument("--budget", type=int, default=8, help="max checkpoints")
     r.add_argument("--max-cost-usd", type=float, default=None,
                    help="cumulative cost cap (USD); stop before exceeding")

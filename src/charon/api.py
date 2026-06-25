@@ -61,6 +61,7 @@ def run_task(
     proxy_upstream: str | None = None,
     proxy_key_env: str | None = None,
     acp_model: str | None = None,
+    role: str | None = None,
     reviewer: Reviewer | None = None,
     autonomy: str = "L0",
     max_checkpoints: int = 8,
@@ -87,8 +88,35 @@ def run_task(
     ledger = Ledger.create(sdir, task_id, goal, checks, target, base_ref)
 
     proxy_server = None
+    failover_note = ""
     acp_names = [n.strip() for n in backend_name.split(",")]
-    if proxy_upstream and backend is None and backends is None and "acp" in acp_names:
+    if role is not None and backend is None and backends is None:
+        # Pool mode: cost-first failover across the role's pool, live.
+        if not acp_cmd:
+            raise ValueError("--role needs --acp-cmd")
+        from .failover import select_live_entry
+        from .proxy import GatewayProxy
+        from .proxy_server import GatewayProxyServer
+        prouter = StaticRouter.from_charon_dir(sdir)
+        pool = prouter.pools.get(role)
+        if not pool:
+            raise ValueError(f"no pool for role {role!r} in {sdir}/pools.json")
+        proxy_server = GatewayProxyServer(routes=_pool_routes(pool), observer=GatewayProxy())
+        proxy_server.serve_in_thread()
+        chosen = select_live_entry(prouter, role, proxy_server.observer,
+                                   _http_probe(proxy_server))
+        if chosen is None:
+            proxy_server.shutdown()
+            skipped = sorted(proxy_server.observer.exhausted_models())
+            return {"status": "exhausted", "task_id": task_id, "checkpoints": 0,
+                    "verified": [], "remaining": sorted(ledger.remaining()),
+                    "note": f"pool for {role!r} dry; all probed models unavailable: {skipped}",
+                    "target_repo": target, "state_dir": str(sdir)}
+        failover_note = (f"role {role!r} → {chosen.model} ({chosen.cost_tier})"
+                         + (f"; skipped {sorted(proxy_server.observer.exhausted_models())}"
+                            if proxy_server.observer.exhausted_models() else ""))
+        run_backends: dict = {"acp": _acp_for_proxy(acp_cmd, proxy_server, chosen.model)}
+    elif proxy_upstream and backend is None and backends is None and "acp" in acp_names:
         if not acp_cmd:
             raise ValueError("--proxy with an acp backend needs --acp-cmd")
         key = os.environ.get(proxy_key_env or "", "")
@@ -96,7 +124,7 @@ def run_task(
             raise ValueError(f"proxy key env {proxy_key_env!r} is not set")
         acp_backend, proxy_server = _start_proxy_acp(
             acp_cmd, proxy_upstream, key, acp_model or "default")
-        run_backends: dict = {"acp": acp_backend}
+        run_backends = {"acp": acp_backend}
     else:
         run_backends = _resolve_backends(backend, backends, backend_name, checks, acp_cmd)
 
@@ -127,6 +155,8 @@ def run_task(
     out["state_dir"] = str(sdir)
     if proxy_upstream:
         out["proxy"] = {"upstream": proxy_upstream, "model": acp_model}
+    if failover_note:
+        out["failover"] = failover_note
     return out
 
 
@@ -142,6 +172,58 @@ _ACP_KEY_PASSTHROUGH = ("OPENCODE_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API
 def _acp_passthrough_env(include_keys: bool = True) -> dict[str, str]:
     names = _ACP_BASE_PASSTHROUGH + (_ACP_KEY_PASSTHROUGH if include_keys else ())
     return {k: os.environ[k] for k in names if k in os.environ}
+
+
+def _acp_for_proxy(acp_cmd: str, server, model: str) -> AcpBackend:
+    """Build an ACP backend whose agent routes ``model`` through an already-running
+    proxy ``server`` (single- or multi-upstream). The agent sends ``model``; the
+    proxy maps it to the real upstream + key (and rewrites the id if needed)."""
+    cfg = {
+        "model": f"charon/{model}",
+        "provider": {
+            "charon": {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "Charon Proxy",
+                "options": {"baseURL": server.url + "/v1", "apiKey": "charon-proxy"},
+                "models": {model: {}},
+            }
+        },
+    }
+    env = {**_acp_passthrough_env(include_keys=False),
+           "OPENCODE_CONFIG_CONTENT": json.dumps(cfg)}
+    return AcpBackend(shlex.split(acp_cmd), name="acp",
+                      passthrough_env=env, observer=server.observer)
+
+
+def _pool_routes(entries) -> dict:
+    """Build the proxy's model→upstream routing table from a role's pool."""
+    from .proxy_server import UpstreamRoute
+    routes: dict = {}
+    for e in entries:
+        if not e.upstream_base:
+            continue
+        key = os.environ.get(e.key_env, "") if e.key_env else None
+        routes[e.model] = UpstreamRoute(e.upstream_base, key, e.upstream_model)
+    return routes
+
+
+def _http_probe(server):
+    """A cheap pre-flight: send a 1-token completion for an entry through the proxy
+    so the observer sees the live status (200/429/404) — the failover trigger."""
+    import urllib.request
+
+    def probe(entry) -> None:
+        payload = json.dumps({"model": entry.model,
+                              "messages": [{"role": "user", "content": "ping"}],
+                              "max_tokens": 1}).encode()
+        req = urllib.request.Request(server.url + "/v1/chat/completions", data=payload,
+                                     headers={"Content-Type": "application/json"},
+                                     method="POST")
+        try:
+            urllib.request.urlopen(req, timeout=30).read()
+        except Exception:
+            pass  # the proxy already observed the status server-side
+    return probe
 
 
 def _start_proxy_acp(acp_cmd: str, upstream: str, key: str, model: str):
