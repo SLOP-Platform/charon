@@ -30,6 +30,7 @@ class UpstreamRoute:
     upstream_base: str
     api_key: str | None = None
     upstream_model: str | None = None  # rewrite the body's model to this id upstream
+    pool_id: str | None = None  # observe under this id (the router's pool id) if set
 
 _SKIP_HEADERS = {"host", "authorization", "content-length", "connection",
                  "accept-encoding", "proxy-authorization"}
@@ -167,7 +168,10 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
             pass
 
         observed = _extract(b"".join(chunks), ctype)
-        srv.observer.observe(requested or observed.get("model", ""), status, rhdrs, observed)
+        # observe under the router's pool id (so failover/exclusion line up), or
+        # the requested model when single-upstream.
+        observe_id = route.pool_id or requested or observed.get("model", "")
+        srv.observer.observe(observe_id, status, rhdrs, observed)
 
 
 class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):

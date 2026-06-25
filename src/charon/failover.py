@@ -47,23 +47,27 @@ def select_live_entry(
     router: StaticRouter,
     role: str,
     proxy: GatewayProxy,
-    probe: Callable[[PoolEntry], None],
+    probe: Callable[[PoolEntry], bool],
     *,
     code_safe_only: bool = False,
 ) -> PoolEntry | None:
     """Pick the first *actually-available* model for ``role`` — the cost-first
-    failover (#6). Walk the pool, run ``probe(entry)`` on each (the probe drives a
-    cheap request through the proxy so the observer sees a 429/404/downgrade), and
-    return the first entry the proxy did NOT flag. Returns None when the pool is
-    dry — a clean exhausted stop, never a launch onto a dead model.
+    failover (#6). Walk the pool and ``probe(entry)`` each: the probe drives a
+    cheap request through the proxy and returns True ONLY on a positive 200.
+    Return the first model that responds; skip any that 429/404/time-out/error.
+    Returns None when the pool is dry — a clean exhausted stop, never a launch
+    onto a dead model.
 
-    This is the pre-flight that avoids OpenCode's hang-on-429: a model is verified
-    live *before* the heavy agent is committed to it."""
+    Requiring a positive 200 (not merely 'the proxy didn't flag it') is the
+    load-bearing bit: a slow/timed-out probe must NOT pass, or the agent gets
+    committed to a rate-limited model and hangs on its 429."""
+    dead: set[str] = set()
     while True:
         try:
-            entry = next_entry(router, role, proxy, code_safe_only=code_safe_only)
+            entry = next_entry(router, role, proxy, also_exclude=dead,
+                               code_safe_only=code_safe_only)
         except RuntimeError:
             return None  # pool exhausted
-        probe(entry)
-        if not proxy.is_exhausted(entry.model):
+        if probe(entry):
             return entry
+        dead.add(entry.key)  # 429/404/timeout/error — exclude and keep walking

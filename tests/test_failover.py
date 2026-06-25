@@ -78,9 +78,10 @@ def test_select_live_entry_skips_rate_limited(tmp_path: Path) -> None:
     proxy = GatewayProxy()
     status = {"openrouter/qwen3-coder": 429, "nano-gpt/kimi-k2": 200, "zen/claude-opus": 200}
 
-    def probe(entry: PoolEntry) -> None:  # simulate driving a request through the proxy
+    def probe(entry: PoolEntry) -> bool:  # simulate driving a request through the proxy
         proxy.observe(entry.model, status[entry.model],
                       body={"model": entry.model} if status[entry.model] == 200 else None)
+        return status[entry.model] == 200
 
     chosen = select_live_entry(router, "coder", proxy, probe)
     assert chosen is not None and chosen.model == "nano-gpt/kimi-k2"
@@ -90,7 +91,24 @@ def test_select_live_entry_returns_none_when_all_dead(tmp_path: Path) -> None:
     router = _router(tmp_path)
     proxy = GatewayProxy()
 
-    def probe(entry: PoolEntry) -> None:
+    def probe(entry: PoolEntry) -> bool:
         proxy.observe(entry.model, 429)  # every model rate-limited
+        return False
 
     assert select_live_entry(router, "coder", proxy, probe) is None
+
+
+def test_select_live_entry_skips_timeout_without_flag(tmp_path: Path) -> None:
+    # a probe that times out (returns False WITHOUT the proxy flagging the model)
+    # must still be skipped — else the agent gets a dead model (the CLI-hang bug).
+    router = _router(tmp_path)
+    proxy = GatewayProxy()
+    seen: list[str] = []
+
+    def probe(entry: PoolEntry) -> bool:
+        seen.append(entry.model)
+        return entry.model == "nano-gpt/kimi-k2"  # only the 2nd responds; 1st "times out"
+
+    chosen = select_live_entry(router, "coder", proxy, probe)
+    assert chosen is not None and chosen.model == "nano-gpt/kimi-k2"
+    assert seen[0] == "openrouter/qwen3-coder"  # the timed-out free model was tried + skipped

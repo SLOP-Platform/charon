@@ -174,18 +174,30 @@ def _acp_passthrough_env(include_keys: bool = True) -> dict[str, str]:
     return {k: os.environ[k] for k in names if k in os.environ}
 
 
-def _acp_for_proxy(acp_cmd: str, server, model: str) -> AcpBackend:
-    """Build an ACP backend whose agent routes ``model`` through an already-running
-    proxy ``server`` (single- or multi-upstream). The agent sends ``model``; the
-    proxy maps it to the real upstream + key (and rewrites the id if needed)."""
+def _split_model(pool_model: str) -> tuple[str, str]:
+    """A pool id ``<provider>/<model>`` → (opencode provider, the model id the
+    agent sends, which the upstream natively understands). Using the REAL provider
+    name (opencode-go/openrouter/…) matters: opencode's ACP mode hangs on an
+    unrecognized provider. A bare id (no '/') falls back to a generic provider."""
+    if "/" in pool_model:
+        provider, short = pool_model.split("/", 1)
+        return provider, short
+    return "charon", pool_model
+
+
+def _acp_for_proxy(acp_cmd: str, server, pool_model: str) -> AcpBackend:
+    """Build an ACP backend whose agent routes ``pool_model`` through a running
+    proxy ``server``. The agent is configured under the model's real provider and
+    sends the native model id; the proxy forwards it to the right upstream."""
+    provider, short = _split_model(pool_model)
     cfg = {
-        "model": f"charon/{model}",
+        "model": f"{provider}/{short}",
         "provider": {
-            "charon": {
+            provider: {
                 "npm": "@ai-sdk/openai-compatible",
-                "name": "Charon Proxy",
+                "name": provider,
                 "options": {"baseURL": server.url + "/v1", "apiKey": "charon-proxy"},
-                "models": {model: {}},
+                "models": {short: {}},
             }
         },
     }
@@ -196,14 +208,16 @@ def _acp_for_proxy(acp_cmd: str, server, model: str) -> AcpBackend:
 
 
 def _pool_routes(entries) -> dict:
-    """Build the proxy's model→upstream routing table from a role's pool."""
+    """Build the proxy's routing table from a role's pool — keyed by the model id
+    the agent sends (the native id), observed back under the pool id."""
     from .proxy_server import UpstreamRoute
     routes: dict = {}
     for e in entries:
         if not e.upstream_base:
             continue
+        _, short = _split_model(e.model)
         key = os.environ.get(e.key_env, "") if e.key_env else None
-        routes[e.model] = UpstreamRoute(e.upstream_base, key, e.upstream_model)
+        routes[short] = UpstreamRoute(e.upstream_base, key, e.upstream_model, pool_id=e.model)
     return routes
 
 
@@ -212,17 +226,20 @@ def _http_probe(server):
     so the observer sees the live status (200/429/404) — the failover trigger."""
     import urllib.request
 
-    def probe(entry) -> None:
-        payload = json.dumps({"model": entry.model,
+    def probe(entry) -> bool:
+        _, short = _split_model(entry.model)
+        payload = json.dumps({"model": short,
                               "messages": [{"role": "user", "content": "ping"}],
                               "max_tokens": 1}).encode()
         req = urllib.request.Request(server.url + "/v1/chat/completions", data=payload,
                                      headers={"Content-Type": "application/json"},
                                      method="POST")
         try:
-            urllib.request.urlopen(req, timeout=30).read()
+            resp = urllib.request.urlopen(req, timeout=25)
+            resp.read()
+            return resp.status == 200  # available ONLY on a positive 200
         except Exception:
-            pass  # the proxy already observed the status server-side
+            return False  # 429/404/timeout/error — unavailable (proxy logged status)
     return probe
 
 
