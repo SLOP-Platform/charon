@@ -60,3 +60,42 @@ def test_cumulative_usage_sums_across_calls() -> None:
 def test_503_overload_is_exhaustion() -> None:
     p = GatewayProxy()
     assert p.observe("m", 503).failover
+
+
+def test_404_drops_model_from_pool() -> None:
+    # free rosters churn: 404 = "unavailable for free" = drop, not retry (R6).
+    p = GatewayProxy()
+    obs = p.observe("openrouter/deepseek:free", 404, body={"error": {"message": "unavailable"}})
+    assert obs.dropped and obs.failover and not obs.exhausted
+    assert p.is_exhausted("openrouter/deepseek:free")
+    assert "dropped" in obs.note
+
+
+def test_take_delta_returns_increment() -> None:
+    p = GatewayProxy()
+    p.observe("m", 200, body={"model": "m", "usage": {"prompt_tokens": 10, "completion_tokens": 5}})
+    d1 = p.take_delta()
+    assert d1.tokens == 15
+    p.observe("m", 200, body={"model": "m", "usage": {"prompt_tokens": 4, "completion_tokens": 1}})
+    d2 = p.take_delta()
+    assert d2.tokens == 5  # only the new increment
+    assert p.take_delta().tokens == 0  # nothing new
+
+
+def test_concurrent_observe_loses_no_usage() -> None:
+    # the proxy server is threaded; observe() must be atomic (review #1).
+    import threading
+    p = GatewayProxy()
+    usage = {"prompt_tokens": 1, "completion_tokens": 1}
+
+    def hammer() -> None:
+        for _ in range(200):
+            p.observe("m", 200, body={"model": "m", "usage": usage})
+
+    threads = [threading.Thread(target=hammer) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    # 8 threads × 200 calls × 2 tokens = 3200, none lost to a race
+    assert p.cumulative_usage().tokens == 3200

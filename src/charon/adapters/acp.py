@@ -14,8 +14,10 @@ seam.
 from __future__ import annotations
 
 import json
+import select
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 from ..proxy import GatewayProxy
@@ -42,7 +44,6 @@ class AcpBackend:
         # usage/cost OpenCode does not report over ACP. Per dispatch we emit the
         # delta so the Ledger sums real spend (INV-1, cost).
         self.observer = observer
-        self._usage_seen = Usage()
         # Real agents need their own config/creds (e.g. ~/.config + a provider
         # key), which the fence's scrubbed env strips. Inside the Mode-B
         # container/VM — the actual isolation boundary (INV-B4) — these are merged
@@ -54,12 +55,16 @@ class AcpBackend:
         self._next_id = 0
         self._lock = threading.Lock()
         self._last_usage: dict = {}
+        self._buf = b""
 
     # ----------------------------------------------------------- lifecycle
     def _start(self, worktree: Path, env: dict[str, str]) -> None:
         if self._proc is not None:
             return
         merged = {**env, **self.passthrough_env}
+        # Binary + unbuffered so we can `select` with a timeout (text-mode readline
+        # cannot be timed out, and a hung agent — e.g. retrying a 429 — would block
+        # the coordinator forever; review fix #4).
         self._proc = subprocess.Popen(
             self.command,
             cwd=str(worktree),
@@ -67,25 +72,44 @@ class AcpBackend:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
+            bufsize=0,
         )
+        self._buf = b""
+
+    def _readline(self, deadline: float) -> str:
+        """Read one NDJSON line, bounded by ``deadline`` (monotonic). Raises
+        AcpError on timeout or EOF — so a hung agent cannot block forever."""
+        assert self._proc is not None and self._proc.stdout is not None
+        while b"\n" not in self._buf:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise AcpError("timeout waiting for agent response")
+            ready, _, _ = select.select([self._proc.stdout], [], [], remaining)
+            if not ready:
+                raise AcpError("timeout waiting for agent response")
+            chunk = self._proc.stdout.read(4096)
+            if not chunk:
+                raise AcpError("agent closed stream")
+            self._buf += chunk
+        line, _, self._buf = self._buf.partition(b"\n")
+        return line.decode("utf-8", "replace")
 
     def _rpc(self, method: str, params: dict, timeout: float = 600.0) -> dict:
         """Send a JSON-RPC request; drain notifications until the matching
-        response arrives. NDJSON: one JSON object per line."""
+        response arrives. NDJSON: one JSON object per line. Bounded by ``timeout``."""
         if self._proc is None or self._proc.stdin is None or self._proc.stdout is None:
             raise AcpError("agent process not started")
         with self._lock:
             self._next_id += 1
             req_id = self._next_id
             msg = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params}
-            self._proc.stdin.write(json.dumps(msg) + "\n")
+            self._proc.stdin.write((json.dumps(msg) + "\n").encode())
             self._proc.stdin.flush()
+            deadline = time.monotonic() + timeout
             while True:
-                line = self._proc.stdout.readline()
-                if not line:
-                    raise AcpError(f"agent closed stream during {method}")
+                line = self._readline(deadline)
+                if not line.strip():
+                    continue
                 try:
                     obj = json.loads(line)
                 except json.JSONDecodeError:
@@ -140,18 +164,11 @@ class AcpBackend:
                        usage=self._dispatch_usage())
 
     def _dispatch_usage(self) -> Usage | None:
-        """Tokens/cost the proxy observed during THIS dispatch (cumulative delta)."""
+        """Tokens/cost the proxy observed during THIS dispatch — taken atomically
+        from the observer so it cannot race a concurrent dispatch (review #2)."""
         if self.observer is None:
             return None
-        cur = self.observer.cumulative_usage()
-        prev = self._usage_seen
-        self._usage_seen = cur
-        return Usage(
-            tokens_in=cur.tokens_in - prev.tokens_in,
-            tokens_out=cur.tokens_out - prev.tokens_out,
-            cost_usd=cur.cost_usd - prev.cost_usd,
-            latency_ms=cur.latency_ms - prev.latency_ms,
-        )
+        return self.observer.take_delta()
 
     def health(self) -> Health:
         u = self._last_usage

@@ -21,12 +21,17 @@ live via ``charon doctor`` (no real network in these unit tests).
 """
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 
 from .types import Usage
 
-# Gateway statuses that mean "this model/account is out of capacity right now".
+# Gateway statuses that mean "this model/account is out of capacity right now"
+# (transient — retry later / fail over).
 _EXHAUSTION_STATUSES = {429, 402, 503}
+# Statuses meaning "this model is gone" — drop it from the pool permanently for
+# this run, not retry (free rosters churn; renames/removals return 404). ADR R6.
+_DROP_STATUSES = {404}
 
 
 @dataclass(frozen=True)
@@ -38,6 +43,7 @@ class ProxyObservation:
     status: int
     exhausted: bool
     pseudo_success: bool  # 200 but the gateway silently served a different model
+    dropped: bool = False  # 404: model is gone — drop from the pool, not retry
     retry_after: int | None = None
     usage: Usage | None = None
     note: str = ""
@@ -45,7 +51,7 @@ class ProxyObservation:
     @property
     def failover(self) -> bool:
         """True iff the coordinator should route this model's role elsewhere."""
-        return self.exhausted or self.pseudo_success
+        return self.exhausted or self.pseudo_success or self.dropped
 
 
 def _retry_after(headers: dict | None) -> int | None:
@@ -98,6 +104,10 @@ class GatewayProxy:
     def __init__(self) -> None:
         self._exhausted: dict[str, ProxyObservation] = {}
         self._usage = Usage()
+        self._delta_seen = Usage()
+        # The proxy server is THREADED — concurrent agent calls race on this
+        # state. A lock keeps usage summation and the exhausted set atomic.
+        self._lock = threading.Lock()
 
     def observe(
         self,
@@ -106,18 +116,19 @@ class GatewayProxy:
         headers: dict | None = None,
         body: dict | None = None,
     ) -> ProxyObservation:
-        """Classify one upstream response and fold it into proxy state."""
+        """Classify one upstream response and fold it into proxy state (atomically)."""
         returned = (body or {}).get("model")
         exhausted = status in _EXHAUSTION_STATUSES
+        dropped = status in _DROP_STATUSES
         # pseudo-success: a 200 that silently served a different model than asked.
-        pseudo = bool(
-            status == 200 and returned and returned != requested_model
-        )
+        pseudo = bool(status == 200 and returned and returned != requested_model)
         usage = _gateway_usage(body) if status == 200 else None
 
         note = ""
         if exhausted:
             note = f"exhausted: status={status} {_error_type(body)}".strip()
+        elif dropped:
+            note = f"dropped: status=404 {_error_type(body)} (model gone)".strip()
         elif pseudo:
             note = f"silent downgrade: asked {requested_model!r}, got {returned!r}"
 
@@ -127,29 +138,47 @@ class GatewayProxy:
             status=status,
             exhausted=exhausted,
             pseudo_success=pseudo,
+            dropped=dropped,
             retry_after=_retry_after(headers),
             usage=usage,
             note=note,
         )
-        if obs.failover:
-            # record under the requested model — the router excludes by model id.
-            self._exhausted[requested_model] = obs
-        if usage is not None:
-            self._usage = Usage(
-                tokens_in=self._usage.tokens_in + usage.tokens_in,
-                tokens_out=self._usage.tokens_out + usage.tokens_out,
-                cost_usd=self._usage.cost_usd + usage.cost_usd,
-                latency_ms=self._usage.latency_ms + usage.latency_ms,
-            )
+        with self._lock:
+            if obs.failover:
+                # record under the requested model — the router excludes by model id.
+                self._exhausted[requested_model] = obs
+            if usage is not None:
+                self._usage = Usage(
+                    tokens_in=self._usage.tokens_in + usage.tokens_in,
+                    tokens_out=self._usage.tokens_out + usage.tokens_out,
+                    cost_usd=self._usage.cost_usd + usage.cost_usd,
+                    latency_ms=self._usage.latency_ms + usage.latency_ms,
+                )
         return obs
 
     def is_exhausted(self, model: str) -> bool:
-        return model in self._exhausted
+        with self._lock:
+            return model in self._exhausted
 
     def exhausted_models(self) -> set[str]:
-        """Model ids that have signalled exhaustion or a silent downgrade — the
-        coordinator maps these to pool-entry keys to exclude on the next route."""
-        return set(self._exhausted)
+        """Model ids to exclude on the next route — exhausted (429/402/503),
+        dropped (404), or silently downgraded (H6)."""
+        with self._lock:
+            return set(self._exhausted)
 
     def cumulative_usage(self) -> Usage:
-        return self._usage
+        with self._lock:
+            return self._usage
+
+    def take_delta(self) -> Usage:
+        """Atomically return usage since the last call (so a backend can attribute
+        a dispatch's spend without racing the shared observer — review fix #2)."""
+        with self._lock:
+            cur, prev = self._usage, self._delta_seen
+            self._delta_seen = cur
+            return Usage(
+                tokens_in=cur.tokens_in - prev.tokens_in,
+                tokens_out=cur.tokens_out - prev.tokens_out,
+                cost_usd=cur.cost_usd - prev.cost_usd,
+                latency_ms=cur.latency_ms - prev.latency_ms,
+            )

@@ -112,6 +112,13 @@ def run_task(
             max_checkpoints=max_checkpoints, budget=budget,
         )
     finally:
+        # Always reap the agent subprocess(es) and the proxy (review #8 — no
+        # orphaned opencode processes left holding file handles).
+        for b in run_backends.values():
+            try:
+                b.kill()
+            except Exception:
+                pass
         if proxy_server is not None:
             proxy_server.shutdown()
     out = asdict(result)
@@ -123,14 +130,18 @@ def run_task(
     return out
 
 
-# Provider/agent env the live ACP backend needs (its real config + a provider
-# key) — merged back over the fence's scrubbed env inside the container/VM.
-_ACP_PASSTHROUGH = ("HOME", "PATH", "OPENCODE_API_KEY", "OPENROUTER_API_KEY",
-                    "ANTHROPIC_API_KEY", "XDG_CONFIG_HOME", "XDG_DATA_HOME")
+# Env the live ACP agent needs to find its own config — merged back over the
+# fence's scrubbed env (only honest inside the Mode-B container/VM, the real
+# boundary). Provider KEYS are separate: with the proxy in front (R1) the agent
+# must NOT get the real key (review #3) — the proxy injects it. Only the
+# no-proxy path passes keys, as a documented interim.
+_ACP_BASE_PASSTHROUGH = ("HOME", "PATH", "XDG_CONFIG_HOME", "XDG_DATA_HOME")
+_ACP_KEY_PASSTHROUGH = ("OPENCODE_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY")
 
 
-def _acp_passthrough_env() -> dict[str, str]:
-    return {k: os.environ[k] for k in _ACP_PASSTHROUGH if k in os.environ}
+def _acp_passthrough_env(include_keys: bool = True) -> dict[str, str]:
+    names = _ACP_BASE_PASSTHROUGH + (_ACP_KEY_PASSTHROUGH if include_keys else ())
+    return {k: os.environ[k] for k in names if k in os.environ}
 
 
 def _start_proxy_acp(acp_cmd: str, upstream: str, key: str, model: str):
@@ -162,7 +173,9 @@ def _start_proxy_acp(acp_cmd: str, upstream: str, key: str, model: str):
             }
         },
     }
-    env = {**_acp_passthrough_env(), "OPENCODE_CONFIG_CONTENT": json.dumps(cfg)}
+    # No real provider key in the agent env — the proxy holds it (review #3).
+    env = {**_acp_passthrough_env(include_keys=False),
+           "OPENCODE_CONFIG_CONTENT": json.dumps(cfg)}
     backend = AcpBackend(shlex.split(acp_cmd), name="acp",
                          passthrough_env=env, observer=observer)
     return backend, server
