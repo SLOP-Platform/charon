@@ -111,6 +111,22 @@ ADR-0002 §2.3). The live `POST /v1/runs` web/worker split is the recorded desig
 of record, built *with* its Tier-3 SLOP consumer (see
 [`docs/PLAN-tier2.md`](docs/PLAN-tier2.md) §8).
 
+**Web Ledger dashboard (read-only).** A minimal, single-operator web view of the
+Work Ledger — project/run list, a run view (progress/cost/handoffs/checkpoints),
+and a routing-config pane. Run it:
+
+```
+pip install 'charon[service]'
+CHARON_SERVICE_TOKEN=$(openssl rand -hex 16) python -m charon.service   # http://127.0.0.1:8001
+```
+
+It is **read-only** (no run launch — `POST /v1/runs` is `501` by design),
+**token-gated** (`CHARON_SERVICE_TOKEN`; the entrypoint refuses a non-loopback
+bind without one), and serves **self-contained HTML with no external assets**
+(zero egress). The container is the security boundary (INV-B4); for a VPS, front
+it with a reverse proxy + HTTPS. Watch-the-agent-work (live diffs/stream) stays
+CLI/TUI by design (ADR-0004 D7).
+
 **Tier 3** (this release): **Ledger-native cost & budget accounting.** Each
 checkpoint records a usage span (`tokens_in/out`, `cost_usd`, `latency_ms`);
 cumulative spend is **derived** from the ledger (like progress), so it survives a

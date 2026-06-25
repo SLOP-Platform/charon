@@ -320,3 +320,72 @@ def show_ledger(task_id: str, state_dir: str = DEFAULT_STATE_DIR) -> dict:
         "usage": ledger.cumulative_usage().to_dict(),  # derived cost truth (Tier 3)
         "checkpoints": [c.to_dict() for c in ledger.checkpoints()],
     }
+
+
+def list_ledgers(state_dir: str = DEFAULT_STATE_DIR) -> list[dict]:
+    """Read-only summary of every task ledger under ``state_dir`` — the data
+    behind the web dashboard's project/run list. Each entry derives status the
+    same way the loop does (``complete`` ⇔ no acceptance checks remain), plus the
+    Ledger-native cost truth and the cross-vendor handoff chain. Skips any
+    directory that is not a readable ledger (e.g. the ``sandbox`` worktree dir)
+    so a malformed neighbour never breaks the listing."""
+    sdir = Path(state_dir).resolve()
+    out: list[dict] = []
+    if not sdir.is_dir():
+        return out
+    for child in sorted(sdir.iterdir()):
+        if not child.is_dir() or not (child / "ledger.json").is_file():
+            continue
+        try:
+            led = Ledger.load(sdir, child.name)
+        except Exception:
+            continue  # not a valid ledger (bad id / corrupt) — omit, don't crash
+        remaining = sorted(led.remaining())
+        usage = led.cumulative_usage()
+        out.append({
+            "task_id": led.task_id,
+            "goal": led.goal,
+            "status": "complete" if not remaining else "incomplete",
+            "checkpoints": len(led.checkpoints()),
+            "verified": sorted(led.verified()),
+            "remaining": remaining,
+            "lkg_ref": led.lkg_ref,
+            "usage": usage.to_dict(),
+            "providers": list(led.provider_history),
+        })
+    return out
+
+
+# The models.json schema fields (pools.py). show_config projects each entry onto
+# this allowlist so the no-creds-in-config invariant is STRUCTURAL: even if an
+# operator fat-fingers an inline secret into models.json, it can never reach the
+# read-only web surface (provider keys live in env/proxy, referenced by key_env).
+_MODEL_FIELDS = ("agent", "cost_tier", "cost_rank", "code_safe", "free",
+                 "upstream_base", "key_env", "upstream_model")
+
+
+def show_config(state_dir: str = DEFAULT_STATE_DIR) -> dict:
+    """Read-only view of the routing policy (``models.json`` registry +
+    ``pools.json`` role→pool order) for the dashboard's config pane. These files
+    are key-*env* references by design (the proxy/control plane holds the actual
+    provider keys — INV: no creds in config); models are field-allowlisted so no
+    stray value can leak even on misconfiguration."""
+    sdir = Path(state_dir).resolve()
+
+    def _read(name: str) -> dict | None:
+        p = sdir / name
+        if not p.is_file():
+            return None
+        try:
+            parsed = json.loads(p.read_text())  # UnicodeDecodeError ⊂ ValueError
+        except (OSError, ValueError) as exc:
+            return {"error": f"{name} is not readable JSON: {exc}"}
+        return parsed if isinstance(parsed, dict) else {"error": f"{name} is not an object"}
+
+    models = _read("models.json")
+    if isinstance(models, dict) and "error" not in models:
+        models = {
+            mid: {k: spec[k] for k in _MODEL_FIELDS if k in spec}
+            for mid, spec in models.items() if isinstance(spec, dict)
+        }
+    return {"state_dir": str(sdir), "models": models, "pools": _read("pools.json")}
