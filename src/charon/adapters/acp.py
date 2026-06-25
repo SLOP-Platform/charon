@@ -65,13 +65,17 @@ class AcpBackend:
         # Binary + unbuffered so we can `select` with a timeout (text-mode readline
         # cannot be timed out, and a hung agent — e.g. retrying a 429 — would block
         # the coordinator forever; review fix #4).
+        # stderr -> DEVNULL: the agent logs there, and if we PIPE it and never
+        # drain it the 64 KB pipe buffer fills, the agent blocks on write(stderr),
+        # and never answers ACP — a deadlock that hung the coordinator. We read
+        # only the ACP channel (stdout); the agent's logs are not ours to parse.
         self._proc = subprocess.Popen(
             self.command,
             cwd=str(worktree),
             env=merged,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
             bufsize=0,
         )
         self._buf = b""
