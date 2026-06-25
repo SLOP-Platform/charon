@@ -5,6 +5,7 @@ else under ``charon.*`` is private and may change without a major bump.
 """
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import uuid
@@ -57,6 +58,9 @@ def run_task(
     backends: Mapping[str, AgentBackend] | None = None,
     backend_name: str = "mock",
     acp_cmd: str | None = None,
+    proxy_upstream: str | None = None,
+    proxy_key_env: str | None = None,
+    acp_model: str | None = None,
     reviewer: Reviewer | None = None,
     autonomy: str = "L0",
     max_checkpoints: int = 8,
@@ -82,22 +86,40 @@ def run_task(
     checks = [AcceptanceCheck(id=f"a{i}", cmd=c) for i, c in enumerate(accept)]
     ledger = Ledger.create(sdir, task_id, goal, checks, target, base_ref)
 
-    run_backends = _resolve_backends(backend, backends, backend_name, checks, acp_cmd)
+    proxy_server = None
+    acp_names = [n.strip() for n in backend_name.split(",")]
+    if proxy_upstream and backend is None and backends is None and "acp" in acp_names:
+        if not acp_cmd:
+            raise ValueError("--proxy with an acp backend needs --acp-cmd")
+        key = os.environ.get(proxy_key_env or "", "")
+        if not key:
+            raise ValueError(f"proxy key env {proxy_key_env!r} is not set")
+        acp_backend, proxy_server = _start_proxy_acp(
+            acp_cmd, proxy_upstream, key, acp_model or "default")
+        run_backends: dict = {"acp": acp_backend}
+    else:
+        run_backends = _resolve_backends(backend, backends, backend_name, checks, acp_cmd)
+
     router = StaticRouter(backends=list(run_backends))
     fence = Fence(autonomy=Autonomy[autonomy])
-
     budget = Budget(max_checkpoints=max_checkpoints,
                     max_cost_usd=max_cost_usd, max_tokens=max_tokens)
-    result: RunResult = _run(
-        WorkUnit(task_id=task_id, goal=goal),
-        run_backends, ledger, fence, router,
-        reviewer=reviewer,
-        max_checkpoints=max_checkpoints, budget=budget,
-    )
+    try:
+        result: RunResult = _run(
+            WorkUnit(task_id=task_id, goal=goal),
+            run_backends, ledger, fence, router,
+            reviewer=reviewer,
+            max_checkpoints=max_checkpoints, budget=budget,
+        )
+    finally:
+        if proxy_server is not None:
+            proxy_server.shutdown()
     out = asdict(result)
     out["task_id"] = task_id
     out["target_repo"] = target
     out["state_dir"] = str(sdir)
+    if proxy_upstream:
+        out["proxy"] = {"upstream": proxy_upstream, "model": acp_model}
     return out
 
 
@@ -109,6 +131,41 @@ _ACP_PASSTHROUGH = ("HOME", "PATH", "OPENCODE_API_KEY", "OPENROUTER_API_KEY",
 
 def _acp_passthrough_env() -> dict[str, str]:
     return {k: os.environ[k] for k in _ACP_PASSTHROUGH if k in os.environ}
+
+
+def _start_proxy_acp(acp_cmd: str, upstream: str, key: str, model: str):
+    """Start the observing proxy in front of ``upstream`` and build an ACP backend
+    whose agent routes all model calls through it. Done by OVERRIDING the agent's
+    provider ``baseURL`` to the proxy via inline ``OPENCODE_CONFIG_CONTENT`` (the
+    mechanism proven live; a config *file* path is not honored, and streaming SSE
+    must be relayed — both handled). The proxy holds the real key.
+    ``model`` is ``provider/model`` (e.g. ``opencode-go/kimi-k2.7-code``).
+    Returns (backend, server); the caller owns shutdown."""
+    from .proxy import GatewayProxy
+    from .proxy_server import GatewayProxyServer
+
+    observer = GatewayProxy()
+    server = GatewayProxyServer(upstream_base=upstream, api_key=key, observer=observer)
+    server.serve_in_thread()
+
+    provider, _, short = model.partition("/")
+    if not short:  # bare model id → synthesize a provider
+        provider, short, model = "charon-proxy", provider, f"charon-proxy/{provider}"
+    cfg = {
+        "model": model,
+        "provider": {
+            provider: {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "Charon Proxy",
+                "options": {"baseURL": server.url + "/v1", "apiKey": "charon-proxy"},
+                "models": {short: {}},
+            }
+        },
+    }
+    env = {**_acp_passthrough_env(), "OPENCODE_CONFIG_CONTENT": json.dumps(cfg)}
+    backend = AcpBackend(shlex.split(acp_cmd), name="acp",
+                         passthrough_env=env, observer=observer)
+    return backend, server
 
 
 def _resolve_backends(

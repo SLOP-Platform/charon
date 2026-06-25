@@ -18,7 +18,8 @@ import subprocess
 import threading
 from pathlib import Path
 
-from ..types import Budget, CapSet, Health, Outcome, OutcomeStatus, Tier, WorkUnit
+from ..proxy import GatewayProxy
+from ..types import Budget, CapSet, Health, Outcome, OutcomeStatus, Tier, Usage, WorkUnit
 
 
 class AcpError(RuntimeError):
@@ -33,9 +34,15 @@ class AcpBackend:
     """
 
     def __init__(self, command: list[str], name: str = "acp",
-                 passthrough_env: dict[str, str] | None = None) -> None:
+                 passthrough_env: dict[str, str] | None = None,
+                 observer: GatewayProxy | None = None) -> None:
         self.name = name
         self.command = command
+        # The observing proxy (R1) the agent's calls flow through; it carries the
+        # usage/cost OpenCode does not report over ACP. Per dispatch we emit the
+        # delta so the Ledger sums real spend (INV-1, cost).
+        self.observer = observer
+        self._usage_seen = Usage()
         # Real agents need their own config/creds (e.g. ~/.config + a provider
         # key), which the fence's scrubbed env strips. Inside the Mode-B
         # container/VM — the actual isolation boundary (INV-B4) — these are merged
@@ -129,7 +136,22 @@ class AcpBackend:
         from .. import gitutil
 
         commit = gitutil.commit_all(worktree, f"{self.name}: {unit.task_id}")
-        return Outcome(OutcomeStatus.PROGRESSED, self.name, commit=commit)
+        return Outcome(OutcomeStatus.PROGRESSED, self.name, commit=commit,
+                       usage=self._dispatch_usage())
+
+    def _dispatch_usage(self) -> Usage | None:
+        """Tokens/cost the proxy observed during THIS dispatch (cumulative delta)."""
+        if self.observer is None:
+            return None
+        cur = self.observer.cumulative_usage()
+        prev = self._usage_seen
+        self._usage_seen = cur
+        return Usage(
+            tokens_in=cur.tokens_in - prev.tokens_in,
+            tokens_out=cur.tokens_out - prev.tokens_out,
+            cost_usd=cur.cost_usd - prev.cost_usd,
+            latency_ms=cur.latency_ms - prev.latency_ms,
+        )
 
     def health(self) -> Health:
         u = self._last_usage

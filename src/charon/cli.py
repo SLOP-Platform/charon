@@ -29,6 +29,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
             state_dir=args.state_dir,
             backend_name=args.backend,
             acp_cmd=args.acp_cmd,
+            proxy_upstream=args.proxy_upstream,
+            proxy_key_env=args.proxy_key_env,
+            acp_model=args.acp_model,
             reviewer=reviewer,
             autonomy=args.autonomy,
             max_checkpoints=args.budget,
@@ -79,6 +82,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="consensus reviewer for L2 (demo mock; real reviewer is gated)")
     r.add_argument("--acp-cmd", default=None,
                    help="launch argv for a real ACP agent backend, e.g. 'opencode acp'")
+    r.add_argument("--proxy-upstream", default=None,
+                   help="route the agent's model calls through Charon's observing "
+                        "proxy to this OpenAI-compat base, e.g. https://opencode.ai/zen/go/v1")
+    r.add_argument("--proxy-key-env", default=None,
+                   help="env var holding the upstream key (held by the proxy, not the agent)")
+    r.add_argument("--acp-model", default=None,
+                   help="model id the agent is pinned to through the proxy, e.g. kimi-k2.7-code")
     r.add_argument("--budget", type=int, default=8, help="max checkpoints")
     r.add_argument("--max-cost-usd", type=float, default=None,
                    help="cumulative cost cap (USD); stop before exceeding")
