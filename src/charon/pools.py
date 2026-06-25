@@ -33,6 +33,8 @@ class PoolEntry:
     code_safe: bool  # defensible for proprietary code (no-train + jurisdiction)
     free: bool  # genuinely $0 (free-first sort key)
     upstream_base: str | None = None  # OpenAI-compat base the observing proxy forwards to
+    key_env: str | None = None  # env var holding the upstream key (proxy injects it)
+    upstream_model: str | None = None  # real model id at the upstream, if it differs
 
     @property
     def key(self) -> str:
@@ -50,6 +52,8 @@ def _entry_from_registry(model_id: str, spec: dict) -> PoolEntry:
             code_safe=bool(spec.get("code_safe", False)),
             free=bool(spec.get("free", False)),
             upstream_base=spec.get("upstream_base"),
+            key_env=spec.get("key_env"),
+            upstream_model=spec.get("upstream_model"),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise PoolConfigError(f"model {model_id!r} in models.json is malformed: {exc}") from exc
