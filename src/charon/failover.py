@@ -12,6 +12,8 @@ no live agent.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from .pools import PoolEntry
 from .proxy import GatewayProxy
 from .router import StaticRouter
@@ -39,3 +41,29 @@ def next_entry(
     pool = router.pools.get(role, [])
     exclude = proxy_excluded_keys(pool, proxy) | (also_exclude or set())
     return router.route_pool(role, exclude=exclude, code_safe_only=code_safe_only)
+
+
+def select_live_entry(
+    router: StaticRouter,
+    role: str,
+    proxy: GatewayProxy,
+    probe: Callable[[PoolEntry], None],
+    *,
+    code_safe_only: bool = False,
+) -> PoolEntry | None:
+    """Pick the first *actually-available* model for ``role`` — the cost-first
+    failover (#6). Walk the pool, run ``probe(entry)`` on each (the probe drives a
+    cheap request through the proxy so the observer sees a 429/404/downgrade), and
+    return the first entry the proxy did NOT flag. Returns None when the pool is
+    dry — a clean exhausted stop, never a launch onto a dead model.
+
+    This is the pre-flight that avoids OpenCode's hang-on-429: a model is verified
+    live *before* the heavy agent is committed to it."""
+    while True:
+        try:
+            entry = next_entry(router, role, proxy, code_safe_only=code_safe_only)
+        except RuntimeError:
+            return None  # pool exhausted
+        probe(entry)
+        if not proxy.is_exhausted(entry.model):
+            return entry
