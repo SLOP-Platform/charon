@@ -18,8 +18,18 @@ import socketserver
 import threading
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 
 from .proxy import GatewayProxy
+
+
+@dataclass(frozen=True)
+class UpstreamRoute:
+    """Where one agent-facing model id is forwarded (multi-provider pools)."""
+
+    upstream_base: str
+    api_key: str | None = None
+    upstream_model: str | None = None  # rewrite the body's model to this id upstream
 
 _SKIP_HEADERS = {"host", "authorization", "content-length", "connection",
                  "accept-encoding", "proxy-authorization"}
@@ -76,24 +86,40 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length else b""
 
-        # If the agent streams, ask the gateway to include usage in the stream so
-        # we can still see tokens/cost (OpenAI-compatible `stream_options`).
+        bj: dict = {}
         requested = ""
         try:
             bj = json.loads(body) if body else {}
             requested = bj.get("model", "")
+        except Exception:
+            pass
+
+        # Which upstream serves this model (multi-provider pools)?
+        route = srv.route_for(requested)
+        if route is None:
+            srv.observer.observe(requested, 502, {}, {})
+            data = json.dumps({"error": {"message": f"no route for model {requested!r}"}}).encode()
+            self.send_response(502)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(data)
+            return
+
+        # Rewrite the body: the upstream's real model id, and (if streaming) ask
+        # for usage in the stream so we can still see tokens/cost.
+        if bj:
+            if route.upstream_model:
+                bj["model"] = route.upstream_model
             if bj.get("stream") is True:
                 opts = dict(bj.get("stream_options") or {})
                 opts["include_usage"] = True
                 bj["stream_options"] = opts
-                body = json.dumps(bj).encode()
-        except Exception:
-            pass
+            body = json.dumps(bj).encode()
 
         path = self.path
         if srv.strip_v1 and path.startswith("/v1"):
             path = path[len("/v1"):]  # upstream_base already ends in /v1
-        url = srv.upstream_base.rstrip("/") + path
+        url = route.upstream_base.rstrip("/") + path
 
         req = urllib.request.Request(url, data=(body or None), method=self.command)
         for hk in self.headers.keys():
@@ -102,8 +128,8 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
         req.add_header("Content-Type", "application/json")
         if "user-agent" not in {k.lower() for k in self.headers.keys()}:
             req.add_header("User-Agent", "charon-proxy/0.1")
-        if srv.api_key:
-            req.add_header("Authorization", f"Bearer {srv.api_key}")
+        if route.api_key:
+            req.add_header("Authorization", f"Bearer {route.api_key}")
 
         try:
             resp = urllib.request.urlopen(req, timeout=srv.fwd_timeout)
@@ -145,16 +171,22 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
 
 
 class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
-    """A loopback OpenAI-compatible proxy in front of one upstream gateway."""
+    """A loopback OpenAI-compatible proxy in front of one or many upstreams.
+
+    Single-upstream: pass ``upstream_base`` + ``api_key``. Multi-provider pools
+    (failover across providers): pass ``routes`` mapping the agent-facing model id
+    to its ``UpstreamRoute`` (base, key, optional upstream model-id rewrite); the
+    single upstream, if also given, is the fallback."""
 
     daemon_threads = True
     allow_reuse_address = True
 
     def __init__(
         self,
-        upstream_base: str,
-        api_key: str | None,
+        upstream_base: str | None = None,
+        api_key: str | None = None,
         observer: GatewayProxy | None = None,
+        routes: dict[str, UpstreamRoute] | None = None,
         host: str = "127.0.0.1",
         port: int = 0,
         fwd_timeout: float = 180.0,
@@ -163,9 +195,19 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         super().__init__((host, port), _ProxyHandler)
         self.upstream_base = upstream_base
         self.api_key = api_key
+        self.routes = routes or {}
         self.observer = observer or GatewayProxy()
         self.fwd_timeout = fwd_timeout
         self.strip_v1 = strip_v1
+
+    def route_for(self, model: str) -> UpstreamRoute | None:
+        """Which upstream serves ``model``: an explicit route, else the single
+        upstream fallback, else None (no route → 502)."""
+        if model in self.routes:
+            return self.routes[model]
+        if self.upstream_base:
+            return UpstreamRoute(self.upstream_base, self.api_key)
+        return None
 
     @property
     def url(self) -> str:

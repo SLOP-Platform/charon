@@ -13,9 +13,10 @@ import socketserver
 import threading
 import urllib.request
 
-from charon.proxy_server import GatewayProxyServer
+from charon.proxy_server import GatewayProxyServer, UpstreamRoute
 
 _SEEN_AUTH: list[str] = []
+_SEEN: list[dict] = []  # (which upstream, model received) for the routing test
 
 
 class _MockUpstream(http.server.BaseHTTPRequestHandler):
@@ -88,3 +89,62 @@ def test_proxy_forwards_observes_and_relays() -> None:
     finally:
         proxy.shutdown()
         upstream.shutdown()
+
+
+class _RecordingUpstream(http.server.BaseHTTPRequestHandler):
+    tag = "?"
+
+    def log_message(self, *a) -> None:
+        pass
+
+    def do_POST(self) -> None:
+        length = int(self.headers.get("Content-Length") or 0)
+        body = json.loads(self.rfile.read(length) or b"{}")
+        _SEEN.append({"tag": self.server.tag, "model": body.get("model")})  # type: ignore[attr-defined]
+        payload = json.dumps({"model": body.get("model"),
+                              "choices": [{"message": {"content": "ok"}}],
+                              "usage": {"prompt_tokens": 1}}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+
+def _mk_upstream(tag: str):
+    srv = _Threaded(("127.0.0.1", 0), _RecordingUpstream)
+    srv.tag = tag  # type: ignore[attr-defined]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, f"http://{srv.server_address[0]}:{srv.server_address[1]}"
+
+
+def test_multi_upstream_routes_by_model_and_rewrites() -> None:
+    _SEEN.clear()
+    up_a, base_a = _mk_upstream("A")
+    up_b, base_b = _mk_upstream("B")
+    routes = {
+        "openrouter/qwen:free": UpstreamRoute(base_a, "key-a", upstream_model="qwen/real:free"),
+        "opencode-go/kimi": UpstreamRoute(base_b, "key-b"),
+    }
+    proxy = GatewayProxyServer(routes=routes)
+    proxy.serve_in_thread()
+    try:
+        _post(proxy.url + "/v1/chat/completions", {"model": "openrouter/qwen:free"})
+        _post(proxy.url + "/v1/chat/completions", {"model": "opencode-go/kimi"})
+        by_tag = {s["tag"]: s["model"] for s in _SEEN}
+        assert by_tag["A"] == "qwen/real:free"   # routed to A + model rewritten
+        assert by_tag["B"] == "opencode-go/kimi"  # routed to B, no rewrite
+    finally:
+        proxy.shutdown()
+        up_a.shutdown()
+        up_b.shutdown()
+
+
+def test_unknown_model_with_no_fallback_is_502() -> None:
+    proxy = GatewayProxyServer(routes={"known": UpstreamRoute("http://127.0.0.1:1/v1")})
+    proxy.serve_in_thread()
+    try:
+        status, body = _post(proxy.url + "/v1/chat/completions", {"model": "unknown"})
+        assert status == 502 and "no route" in body["error"]["message"]
+    finally:
+        proxy.shutdown()
