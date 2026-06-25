@@ -16,6 +16,7 @@ import urllib.request
 from charon.proxy_server import GatewayProxyServer, UpstreamRoute
 
 _SEEN_AUTH: list[str] = []
+_SEEN_UA: list[str] = []  # User-Agent the upstream actually received
 _SEEN: list[dict] = []  # (which upstream, model received) for the routing test
 
 
@@ -25,6 +26,7 @@ class _MockUpstream(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         _SEEN_AUTH.append(self.headers.get("Authorization", ""))
+        _SEEN_UA.append(self.headers.get("User-Agent", ""))
         length = int(self.headers.get("Content-Length") or 0)
         body = json.loads(self.rfile.read(length) or b"{}")
         model = body.get("model", "")
@@ -86,6 +88,39 @@ def test_proxy_forwards_observes_and_relays() -> None:
         status, _ = _post(proxy.url + "/v1/chat/completions", {"model": "ratelimited"})
         assert status == 429
         assert proxy.observer.is_exhausted("ratelimited")
+    finally:
+        proxy.shutdown()
+        upstream.shutdown()
+
+
+def test_proxy_normalizes_banned_user_agent() -> None:
+    """The proxy must not leak a library-default UA upstream: Cloudflare bans
+    ``Python-urllib`` (error 1010 → 403), which broke Charon's own pre-flight
+    probe live. A real agent UA passes through unchanged."""
+    upstream = _Threaded(("127.0.0.1", 0), _MockUpstream)
+    threading.Thread(target=upstream.serve_forever, daemon=True).start()
+    up_host, up_port = upstream.server_address[0], upstream.server_address[1]
+    proxy = GatewayProxyServer(upstream_base=f"http://{up_host}:{up_port}", api_key="k")
+    proxy.serve_in_thread()
+
+    def _post_ua(ua: str | None):
+        hdrs = {"Content-Type": "application/json"}
+        if ua is not None:
+            hdrs["User-Agent"] = ua
+        req = urllib.request.Request(
+            proxy.url + "/v1/chat/completions",
+            data=json.dumps({"model": "kimi-k2.7-code"}).encode(),
+            headers=hdrs, method="POST")
+        urllib.request.urlopen(req, timeout=10).read()
+
+    try:
+        _SEEN_UA.clear()
+        _post_ua("Python-urllib/3.12")           # library default → normalized
+        _post_ua("opencode/1.17.10")              # real agent UA → forwarded as-is
+        _post_ua(None)                            # urllib still injects a default
+        assert _SEEN_UA[0] == "charon-proxy/0.1"
+        assert _SEEN_UA[1] == "opencode/1.17.10"
+        assert not _SEEN_UA[2].lower().startswith("python-urllib")
     finally:
         proxy.shutdown()
         upstream.shutdown()

@@ -34,6 +34,10 @@ class UpstreamRoute:
 
 _SKIP_HEADERS = {"host", "authorization", "content-length", "connection",
                  "accept-encoding", "proxy-authorization"}
+_DEFAULT_UA = "charon-proxy/0.1"
+# Library-default UAs upstream bot-protection bans (Cloudflare 1010); normalize
+# these to the proxy's own identity so an internal urllib caller isn't blocked.
+_BANNED_UA_PREFIXES = ("python-urllib", "python-requests")
 
 
 def _extract(raw: bytes, content_type: str) -> dict:
@@ -124,11 +128,20 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
 
         req = urllib.request.Request(url, data=(body or None), method=self.command)
         for hk in self.headers.keys():
-            if hk.lower() not in _SKIP_HEADERS:
+            # User-Agent is normalized separately (below) — never forwarded raw.
+            if hk.lower() not in _SKIP_HEADERS and hk.lower() != "user-agent":
                 req.add_header(hk, self.headers[hk])
         req.add_header("Content-Type", "application/json")
-        if "user-agent" not in {k.lower() for k in self.headers.keys()}:
-            req.add_header("User-Agent", "charon-proxy/0.1")
+        # Egress identity: forward the agent's real UA (e.g. opencode/x — some
+        # gateways 403 an unknown one), but replace an absent or library-default
+        # UA with the proxy's own. A urllib/requests default leaks through as
+        # "Python-urllib/3.x", which upstream bot-protection bans (Cloudflare
+        # error 1010 → 403) — e.g. Charon's own pre-flight probe. Live-verified.
+        client_ua = self.headers.get("User-Agent", "")
+        if client_ua and not client_ua.lower().startswith(_BANNED_UA_PREFIXES):
+            req.add_header("User-Agent", client_ua)
+        else:
+            req.add_header("User-Agent", _DEFAULT_UA)
         if route.api_key:
             req.add_header("Authorization", f"Bearer {route.api_key}")
 
@@ -171,7 +184,11 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
         # observe under the router's pool id (so failover/exclusion line up), or
         # the requested model when single-upstream.
         observe_id = route.pool_id or requested or observed.get("model", "")
-        srv.observer.observe(observe_id, status, rhdrs, observed)
+        # The native id actually served upstream (after any model rewrite) — the
+        # baseline for the pseudo-success/silent-downgrade check, so a prefixed
+        # pool id doesn't false-positive an honest 200 (see GatewayProxy.observe).
+        expected = route.upstream_model or requested or None
+        srv.observer.observe(observe_id, status, rhdrs, observed, expected_model=expected)
 
 
 class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):

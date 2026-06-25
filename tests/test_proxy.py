@@ -48,6 +48,32 @@ def test_silent_downgrade_is_pseudo_success_failover() -> None:
     assert p.is_exhausted("opencode-go/glm-5.2")  # excluded on next route
 
 
+def test_prefixed_pool_id_native_return_is_not_false_pseudo_success() -> None:
+    """The router records exclusion under the prefixed pool id
+    (``opencode-go/kimi-k2.7-code``) while the upstream returns the bare native id
+    (``kimi-k2.7-code``). Comparing the return against the pool id would
+    false-flag every honest 200 as a silent downgrade (it did, live); the native
+    ``expected_model`` is the correct baseline."""
+    p = GatewayProxy()
+    obs = p.observe("opencode-go/kimi-k2.7-code", 200,
+                    body={"model": "kimi-k2.7-code",
+                          "usage": {"prompt_tokens": 8, "completion_tokens": 2}},
+                    expected_model="kimi-k2.7-code")
+    assert not obs.pseudo_success and not obs.failover
+    assert obs.usage is not None and obs.usage.tokens == 10
+    assert p.exhausted_models() == set()
+
+
+def test_pseudo_success_still_fires_against_native_expected_model() -> None:
+    # genuine downgrade: asked (native) kimi, gateway served a free model.
+    p = GatewayProxy()
+    obs = p.observe("opencode-go/kimi-k2.7-code", 200,
+                    body={"model": "some-free-model"},
+                    expected_model="kimi-k2.7-code")
+    assert obs.pseudo_success and obs.failover
+    assert p.is_exhausted("opencode-go/kimi-k2.7-code")  # excluded under the pool id
+
+
 def test_cumulative_usage_sums_across_calls() -> None:
     p = GatewayProxy()
     usage = {"prompt_tokens": 10, "completion_tokens": 5, "cost": 0.5}

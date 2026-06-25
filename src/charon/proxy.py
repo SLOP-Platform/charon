@@ -115,13 +115,23 @@ class GatewayProxy:
         status: int,
         headers: dict | None = None,
         body: dict | None = None,
+        expected_model: str | None = None,
     ) -> ProxyObservation:
-        """Classify one upstream response and fold it into proxy state (atomically)."""
+        """Classify one upstream response and fold it into proxy state (atomically).
+
+        ``requested_model`` is the id we record exclusion under (the router's pool
+        id). ``expected_model`` is the NATIVE model id actually sent upstream, used
+        for the pseudo-success comparison — they differ when the pool id carries a
+        provider prefix (``opencode-go/kimi-k2.7-code`` vs the upstream's bare
+        ``kimi-k2.7-code``), so comparing the returned id against the pool id would
+        false-positive every honest 200 as a silent downgrade. Defaults to
+        ``requested_model`` (the two coincide when there is no prefix)."""
         returned = (body or {}).get("model")
         exhausted = status in _EXHAUSTION_STATUSES
         dropped = status in _DROP_STATUSES
         # pseudo-success: a 200 that silently served a different model than asked.
-        pseudo = bool(status == 200 and returned and returned != requested_model)
+        expected = expected_model if expected_model is not None else requested_model
+        pseudo = bool(status == 200 and returned and returned != expected)
         usage = _gateway_usage(body) if status == 200 else None
 
         note = ""
@@ -130,7 +140,7 @@ class GatewayProxy:
         elif dropped:
             note = f"dropped: status=404 {_error_type(body)} (model gone)".strip()
         elif pseudo:
-            note = f"silent downgrade: asked {requested_model!r}, got {returned!r}"
+            note = f"silent downgrade: asked {expected!r}, got {returned!r}"
 
         obs = ProxyObservation(
             requested_model=requested_model,
