@@ -28,6 +28,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
             repo=args.repo,
             state_dir=args.state_dir,
             backend_name=args.backend,
+            acp_cmd=args.acp_cmd,
             reviewer=reviewer,
             autonomy=args.autonomy,
             max_checkpoints=args.budget,
@@ -76,6 +77,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="L2+ requires the Mode-B container (CHARON_CONTAINER_VERIFIED=1)")
     r.add_argument("--review", default=None, choices=["pass", "block", "error"],
                    help="consensus reviewer for L2 (demo mock; real reviewer is gated)")
+    r.add_argument("--acp-cmd", default=None,
+                   help="launch argv for a real ACP agent backend, e.g. 'opencode acp'")
     r.add_argument("--budget", type=int, default=8, help="max checkpoints")
     r.add_argument("--max-cost-usd", type=float, default=None,
                    help="cumulative cost cap (USD); stop before exceeding")

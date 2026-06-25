@@ -5,6 +5,8 @@ else under ``charon.*`` is private and may change without a major bump.
 """
 from __future__ import annotations
 
+import os
+import shlex
 import uuid
 from collections.abc import Mapping
 from dataclasses import asdict
@@ -12,6 +14,7 @@ from pathlib import Path
 
 from . import gitutil
 from .acceptance import AcceptanceCheck
+from .adapters.acp import AcpBackend
 from .adapters.mock import MockBackend
 from .coordinator import RunResult
 from .coordinator import run as _run
@@ -53,6 +56,7 @@ def run_task(
     backend: AgentBackend | None = None,
     backends: Mapping[str, AgentBackend] | None = None,
     backend_name: str = "mock",
+    acp_cmd: str | None = None,
     reviewer: Reviewer | None = None,
     autonomy: str = "L0",
     max_checkpoints: int = 8,
@@ -78,7 +82,7 @@ def run_task(
     checks = [AcceptanceCheck(id=f"a{i}", cmd=c) for i, c in enumerate(accept)]
     ledger = Ledger.create(sdir, task_id, goal, checks, target, base_ref)
 
-    run_backends = _resolve_backends(backend, backends, backend_name, checks)
+    run_backends = _resolve_backends(backend, backends, backend_name, checks, acp_cmd)
     router = StaticRouter(backends=list(run_backends))
     fence = Fence(autonomy=Autonomy[autonomy])
 
@@ -97,11 +101,22 @@ def run_task(
     return out
 
 
+# Provider/agent env the live ACP backend needs (its real config + a provider
+# key) — merged back over the fence's scrubbed env inside the container/VM.
+_ACP_PASSTHROUGH = ("HOME", "PATH", "OPENCODE_API_KEY", "OPENROUTER_API_KEY",
+                    "ANTHROPIC_API_KEY", "XDG_CONFIG_HOME", "XDG_DATA_HOME")
+
+
+def _acp_passthrough_env() -> dict[str, str]:
+    return {k: os.environ[k] for k in _ACP_PASSTHROUGH if k in os.environ}
+
+
 def _resolve_backends(
     backend: AgentBackend | None,
     backends: Mapping[str, AgentBackend] | None,
     backend_name: str,
     checks: list[AcceptanceCheck],
+    acp_cmd: str | None = None,
 ) -> dict[str, AgentBackend]:
     if backends:
         return dict(backends)
@@ -110,7 +125,16 @@ def _resolve_backends(
     names = [n.strip() for n in backend_name.split(",") if n.strip()]
     if not names:
         raise ValueError("no backend named")
-    return {n: MockBackend.satisfying(checks, name=n) for n in names}
+    out: dict[str, AgentBackend] = {}
+    for n in names:
+        if n == "acp" or n.startswith("acp-"):
+            if not acp_cmd:
+                raise ValueError(f"backend {n!r} needs --acp-cmd (e.g. 'opencode acp')")
+            out[n] = AcpBackend(shlex.split(acp_cmd), name=n,
+                                passthrough_env=_acp_passthrough_env())
+        else:
+            out[n] = MockBackend.satisfying(checks, name=n)
+    return out
 
 
 def show_ledger(task_id: str, state_dir: str = DEFAULT_STATE_DIR) -> dict:

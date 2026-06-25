@@ -32,9 +32,17 @@ class AcpBackend:
     The agent must speak ACP over stdin/stdout.
     """
 
-    def __init__(self, command: list[str], name: str = "acp") -> None:
+    def __init__(self, command: list[str], name: str = "acp",
+                 passthrough_env: dict[str, str] | None = None) -> None:
         self.name = name
         self.command = command
+        # Real agents need their own config/creds (e.g. ~/.config + a provider
+        # key), which the fence's scrubbed env strips. Inside the Mode-B
+        # container/VM — the actual isolation boundary (INV-B4) — these are merged
+        # back over the scrubbed env so the agent can function; the worktree
+        # escape-scan still guards the blast radius. The observing proxy (R1) is
+        # what ultimately removes provider keys from the agent env entirely.
+        self.passthrough_env = dict(passthrough_env or {})
         self._proc: subprocess.Popen | None = None
         self._next_id = 0
         self._lock = threading.Lock()
@@ -44,10 +52,11 @@ class AcpBackend:
     def _start(self, worktree: Path, env: dict[str, str]) -> None:
         if self._proc is not None:
             return
+        merged = {**env, **self.passthrough_env}
         self._proc = subprocess.Popen(
             self.command,
             cwd=str(worktree),
-            env=env,
+            env=merged,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
