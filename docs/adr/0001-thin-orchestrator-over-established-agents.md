@@ -5,7 +5,7 @@
 
 - **Status:** Proposed
 - **Deciders:** Rafael (solo operator)
-- **Repo:** `github.com/SLOP-Platform/charon` *(name TBD)*
+- **Repo:** `gitlab.com/slop-platform/charon` *(name TBD)*
 - **Relates to:** ADR-0002 (project boundary & SLOP integration)
 - **Methodology:** ADR + tiered; ports-and-adapters; derive-or-verify
 - **Priorities, in order:** (1) it works, (2) it's performant, (3) it's broadly

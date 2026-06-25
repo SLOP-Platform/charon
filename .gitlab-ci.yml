@@ -1,0 +1,116 @@
+# GitLab CI — ported from .github/workflows/ci.yml (HANDOFF §9 migration).
+# ADR-0002 §4: the gate (tests, version-consistency, SLOP-import boundary,
+# Mode-A isolation smoke), an image build-smoke, and a tag-gated publish to the
+# GitLab Container Registry (SUPPLY-CHAIN.md §5 policy preserved). The code is
+# host-agnostic; only the registry/CI plumbing changed (GHCR → GitLab registry,
+# GitHub-OIDC attestation → see the publish job note).
+
+stages: [test, image, publish]
+
+default:
+  image: python:3.12-slim
+  # git: the loop creates real git worktrees (gitutil), so tests + the CLI smoke
+  # need the binary; the slim base omits it.
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends git
+
+variables:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  GIT_DEPTH: "20"
+
+gate:
+  stage: test
+  script:
+    - pip install -e '.[dev,service]'   # [service] so the web/dashboard tests run too
+    - python3 tools/check_boundary.py src          # SLOP-boundary (INV-B1/B5)
+    - python3 tools/check_version.py               # version consistency
+    - ruff check src tests tools                   # lint
+    - mypy src/charon                              # type
+    - pytest -q                                    # tests
+    - pip-audit || true                            # supply-chain audit (advisory)
+
+modeA-isolation:
+  # INV-B6: install the built wheel in a clean env with NO repo on the path and
+  # prove the CLI works standalone (the standalone app never bit-rots behind the
+  # SLOP embed).
+  stage: test
+  script:
+    - pip install build
+    - python -m build --wheel
+    - python -m venv /tmp/clean
+    - /tmp/clean/bin/pip install dist/*.whl
+    - cd /tmp
+    - /tmp/clean/bin/charon --version
+    - /tmp/clean/bin/charon run --goal "ci smoke" --accept "test -f ok.txt" --backend mock --autonomy L1
+    # two mock vendors → proves multi-backend handoff wiring reaches completion
+    - /tmp/clean/bin/charon run --goal "ci handoff" --accept "test -f ok.txt" --backend mock-a,mock-b --autonomy L1
+  artifacts:
+    paths: [dist/*.whl]
+    expire_in: 1 week
+
+image-smoke:
+  # ADR-0002 §5 Tier 2: prove the Mode-B image still BUILDS and the fenced
+  # service answers — WITHOUT publishing (no token surface here).
+  stage: image
+  image: docker:27
+  services: [docker:27-dind]
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  before_script: []   # docker image: no apt/git needed
+  script:
+    - docker build -t charon:ci .
+    - docker run -d --name charon-ci charon:ci
+    # dind networking: curl from a sidecar sharing the service's net namespace
+    # (a host -p map would land on the dind daemon, not this job container).
+    - |
+      ok=0
+      for i in $(seq 1 30); do
+        if docker run --rm --network "container:charon-ci" curlimages/curl:8.11.1 \
+             -fsS http://localhost:8473/healthz; then ok=1; break; fi
+        sleep 1
+      done
+      docker logs charon-ci
+      docker rm -f charon-ci
+      test "$ok" = "1"
+
+publish:
+  # ADR-0002 §5 Tier 2b / SUPPLY-CHAIN.md §5: publish the Mode-B image to the
+  # GitLab Container Registry, ONLY on a vX.Y.Z tag and ONLY after the gate +
+  # image-smoke pass (stage ordering enforces this — publish runs only if the
+  # test + image stages succeeded; the GitHub `needs: [gate, image-smoke]`
+  # equivalent). Base is digest-PINNED fresh; tag must match pyproject version;
+  # only the immutable :vX.Y.Z is pushed, never :latest. No publish token surface
+  # exists off the tag path.
+  stage: publish
+  image: docker:27
+  services: [docker:27-dind]
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  before_script: []
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/'
+  script:
+    - apk add --no-cache python3
+    # release tag must match the package version (single source of truth = pyproject)
+    - |
+      V=$(python3 -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+      TAG="${CI_COMMIT_TAG#v}"
+      if [ "$TAG" != "$V" ]; then
+        echo "release tag '$CI_COMMIT_TAG' != pyproject version '$V'" >&2; exit 1
+      fi
+    # resolve + pin the base image digest (no buildx dependency: pull then read
+    # RepoDigests) — real and fresh, recorded in the build log.
+    - |
+      docker pull python:3.12-slim
+      BASE=$(docker inspect --format '{{index .RepoDigests 0}}' python:3.12-slim)
+      case "$BASE" in *@sha256:*) : ;; *) echo "could not resolve base digest" >&2; exit 1 ;; esac
+      echo "Pinned base: $BASE"
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - docker build --build-arg BASE_IMAGE="$BASE" -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG" .
+    - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
+    # PROVENANCE (open item, SUPPLY-CHAIN.md §5): GitHub's OIDC
+    # `attest-build-provenance` has no drop-in GitLab equivalent that meets the
+    # "no key-management" constraint (cosign was deliberately rejected). The
+    # deterministic guarantees above (digest-pin, version match, gated, immutable
+    # tag) are preserved; SLSA attestation for the pushed image is deferred to an
+    # operator decision on GitLab's mechanism — tracked, not silently dropped.

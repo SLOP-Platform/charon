@@ -4,8 +4,9 @@
 # boundary is the real blast-radius limit (reconciliation BR-2).
 #
 # The base is a build-arg so the PUBLISH workflow can pin it to an immutable
-# digest resolved at release time (recorded in SLSA provenance) — see
-# .github/workflows/ci.yml `publish` and docs/SUPPLY-CHAIN.md §5. The plain tag
+# digest resolved at release time — see the `publish` job in `.gitlab-ci.yml`
+# (and `.github/workflows/ci.yml` during the GitHub→GitLab transition) and
+# docs/SUPPLY-CHAIN.md §5. The plain tag
 # is used only for the CI build-smoke; a published image is always digest-pinned.
 ARG BASE_IMAGE=python:3.12-slim
 FROM ${BASE_IMAGE} AS base

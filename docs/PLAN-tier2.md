@@ -27,7 +27,7 @@ Tier 2 lights up the two things Tier 1 deferred but built the seams for:
 
 3. **Container image buildable + CI publish path.** The Tier-1 `Dockerfile` runs
    the service; Tier 2 makes CI build it and (on a version tag) publish to
-   `ghcr.io/nnyan/charon`. Mode B = "pull the image, talk to the API."
+   `registry.gitlab.com/slop-platform/charon`. Mode B = "pull the image, talk to the API."
 
 Out of Tier 2 (still ports/stubs): live network gateway routing (gated on
 `SUPPLY-CHAIN.md`, see §5), consensus plane (Tier 3), autonomy L2/L3 +
@@ -120,7 +120,7 @@ so CI exercises it.
 - Confirm the existing `Dockerfile` builds and `CMD` launches the service
   (uvicorn on the fenced port). Add a `make image` target.
 - CI: a `docker build` job on every push (proves the image isn't bit-rotting);
-  a **publish-on-tag** job pushing `ghcr.io/nnyan/charon:vX.Y.Z` + `:latest`
+  a **publish-on-tag** job pushing `registry.gitlab.com/slop-platform/charon:vX.Y.Z` + `:latest`
   using `GITHUB_TOKEN` with `packages: write`. Honest: the image runs the
   fenced service, not the bare privileged loop.
 - `docker-compose.yml` updated to bind loopback by default.

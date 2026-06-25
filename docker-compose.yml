@@ -4,7 +4,7 @@
 services:
   charon:
     build: .
-    image: ghcr.io/nnyan/charon:0.1.0
+    image: registry.gitlab.com/slop-platform/charon:v0.1.0
     ports:
       # Bind the host side to LOOPBACK by default (reconciliation BR2-1/D3): the
       # service fronts the privileged loop, so it must not be reachable off-host
