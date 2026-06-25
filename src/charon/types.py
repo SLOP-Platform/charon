@@ -122,6 +122,7 @@ class WorkUnit:
     task_id: str
     goal: str
     task_class: str = "codegen"
+    role: str = "coder"  # selects the model-pool for cross-model failover (ADR-0004)
 
 
 class OutcomeStatus(enum.Enum):

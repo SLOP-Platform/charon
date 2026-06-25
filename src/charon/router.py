@@ -11,6 +11,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from .pools import PoolEntry, choose_from_pool, load_pools
 from .types import Budget, Tier
 
 # Stable default so the system is useful before any tuning (ADR-0003 §5).
@@ -33,9 +34,11 @@ class Route:
 
 class StaticRouter:
     def __init__(self, policy: dict[str, str] | None = None,
-                 backends: list[str] | None = None) -> None:
+                 backends: list[str] | None = None,
+                 pools: dict[str, list[PoolEntry]] | None = None) -> None:
         self.policy = policy or dict(_DEFAULT_POLICY)
         self.backends = backends or []
+        self.pools = pools or {}
 
     @classmethod
     def from_file(cls, path: Path, backends: list[str]) -> StaticRouter:
@@ -44,6 +47,25 @@ class StaticRouter:
             return cls(policy=data.get("policy", _DEFAULT_POLICY),
                        backends=backends)
         return cls(backends=backends)
+
+    @classmethod
+    def from_charon_dir(cls, state_dir: Path,
+                        policy: dict[str, str] | None = None) -> StaticRouter:
+        """Build a pool-aware router from ``.charon/models.json`` + ``pools.json``
+        (ADR-0004 R2). ``backends`` is derived from the agents named in the pools."""
+        pools = load_pools(Path(state_dir))
+        backends = sorted({e.agent for entries in pools.values() for e in entries})
+        return cls(policy=policy, backends=backends, pools=pools)
+
+    def route_pool(self, role: str, *, exclude: set[str] | None = None,
+                   code_safe_only: bool = False) -> PoolEntry:
+        """Pick the next (agent, model) profile for ``role`` — free-first,
+        cheapest-first, skipping exhausted entries (H6). Cross-model failover is
+        just re-running this with the exhausted entry's key excluded."""
+        pool = self.pools.get(role)
+        if not pool:
+            raise RuntimeError(f"no pool configured for role {role!r}")
+        return choose_from_pool(pool, exclude=exclude, code_safe_only=code_safe_only)
 
     def route(self, task_class: str, *, exclude: set[str] | None = None) -> Route:
         """Choose (tier, backend, budget) for a unit before generation.
