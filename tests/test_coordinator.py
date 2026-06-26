@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from charon import coordinator, gitutil
 from charon.acceptance import AcceptanceCheck
 from charon.adapters.mock import MockBackend, MockMode
-from charon.fence import Fence
+from charon.fence import Fence, FenceDenied
 from charon.ledger import Ledger
 from charon.router import StaticRouter
 from charon.types import Autonomy, Health, WorkUnit
@@ -85,6 +87,58 @@ def test_multi_checkpoint_accumulates(state_dir: Path, git_repo: Path) -> None:
     res = coordinator.run(_unit(), backends, led, Fence(Autonomy.L1), router)
     assert res.status == "complete"
     assert sorted(res.verified) == ["a0", "a1"]
+
+
+# ------------------------------------------ T7: L3 unattended escalation gate
+
+def test_uncontained_l3_run_refused_without_unattended_opt_in(
+    state_dir: Path, git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The escalation gate is enforced from coordinator.run: the uncontained
+    override that unlocks L2 testing does NOT silently authorize uncontained L3 —
+    it fails LOUD (ADR-0009 D-ESC-1/3), so the loop never even dispatches a
+    full-auto run the operator under-authorized."""
+    monkeypatch.delenv("CHARON_CONTAINER_VERIFIED", raising=False)
+    monkeypatch.setenv("CHARON_ALLOW_UNCONTAINED_AUTONOMY", "1")
+    monkeypatch.delenv("CHARON_ALLOW_UNATTENDED", raising=False)
+    checks = [AcceptanceCheck("a0", "test -f hello.txt")]
+    backend = MockBackend.satisfying(checks)
+    led, backends, router = _setup(state_dir, git_repo, checks, backend)
+    with pytest.raises(FenceDenied, match="CHARON_ALLOW_UNATTENDED"):
+        coordinator.run(_unit(), backends, led, Fence(Autonomy.L3), router)
+    assert led.lkg_ref == led.base_ref  # nothing applied
+
+
+def test_l3_full_auto_applies_without_consensus_when_opted_in(
+    state_dir: Path, git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With the container AND the distinct unattended opt-in, L3 applies full-auto
+    with NO reviewer consulted, and the result discloses it (audit honesty)."""
+    monkeypatch.setenv("CHARON_CONTAINER_VERIFIED", "1")
+    monkeypatch.setenv("CHARON_ALLOW_UNATTENDED", "1")
+    checks = [AcceptanceCheck("a0", "test -f hello.txt")]
+    backend = MockBackend.satisfying(checks)
+    led, backends, router = _setup(state_dir, git_repo, checks, backend)
+    res = coordinator.run(_unit(), backends, led, Fence(Autonomy.L3), router)
+    assert res.status == "complete"
+    assert led.lkg_ref != led.base_ref  # applied with no consensus gate
+    assert "L3 unattended" in res.note
+
+
+def test_l3_still_rejects_escape_fence_intact(
+    state_dir: Path, git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """L3 is 'no consensus gate', not 'no fence': an escape is still rejected and
+    rolled back at the highest rung (ADR-0009 D-ESC-4)."""
+    monkeypatch.setenv("CHARON_CONTAINER_VERIFIED", "1")
+    monkeypatch.setenv("CHARON_ALLOW_UNATTENDED", "1")
+    escape = git_repo.parent / "escaped.txt"
+    checks = [AcceptanceCheck("a0", "test -f hello.txt")]
+    backend = MockBackend(mode=MockMode.ESCAPE, escape_path=escape)
+    led, backends, router = _setup(state_dir, git_repo, checks, backend)
+    res = coordinator.run(_unit(), backends, led, Fence(Autonomy.L3), router)
+    assert res.status == "escaped"
+    assert led.lkg_ref == led.base_ref
 
 
 # --------------------------------------------------------------- PERF-4 (T1)

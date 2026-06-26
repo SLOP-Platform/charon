@@ -16,14 +16,20 @@ Highest-blast-radius surface (unattended full-auto apply). Plan + ADR-0009 lande
 before code. Sent to three independent adversarial lenses (privilege-escalation ·
 ergonomics-footgun · scope/thinness); claims verified against the code.
 
-- **[HIGH, privesc] One flag silently grants two rungs.** Verified:
+- **[HIGH, privesc] One flag silently grants two rungs (uncontained).** Verified:
   `Fence.assert_environment` treated L2 and L3 identically — the override set to
-  test uncontained L2 also passes L3, where the consensus gate is *removed*
-  (`coordinator.run`: at L3 the reviewer is consulted "for the record" but
-  `authorize(APPLY_REVERSIBLE)` returns True regardless). **Reconciled:** L3 gets a
-  *separate, distinct* opt-in `CHARON_ALLOW_UNATTENDED=1` on **top** of the
-  container/override (D-ESC-1); per-rung default-deny ladder; proven-red test that
-  container-only L3 now raises `FenceDenied` where it previously passed.
+  test uncontained L2 also passed **uncontained L3**, where the consensus gate is
+  *removed* AND there is no container boundary (`coordinator.run`: at L3 the
+  reviewer is consulted "for the record" but `authorize(APPLY_REVERSIBLE)` returns
+  True regardless). **Reconciled:** *uncontained* L3 gets a *separate, distinct*
+  opt-in `CHARON_ALLOW_UNATTENDED=1` on **top** of the override (D-ESC-1); per-rung
+  default-deny ladder; proven-red test that override-only L3 now raises
+  `FenceDenied` where it previously passed. **Scope corrected mid-build:** the
+  first cut required the token even *inside* the container, which regressed the
+  blessed Tier-4 contract that container-L3 applies (a non-owned consensus-gate
+  test, verified red). The container IS the boundary, so the token gates only the
+  *uncontained* climb — closing the real hole without weakening or regressing the
+  intended path.
 - **[MED, footgun] Silent clamp hides operator intent.** A gate that silently
   downgrades L3→L1 leaves the operator believing they run unattended while work
   quietly stops applying. **Reconciled:** the enforcement path **raises** on

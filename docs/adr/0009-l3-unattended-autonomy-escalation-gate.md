@@ -18,15 +18,20 @@ That left one latent privilege-escalation hole, which this ADR closes:
 
 - `assert_environment` treats **L2 and L3 identically** — the *same* single
   `CHARON_ALLOW_UNCONTAINED_AUTONOMY=1` flag that an operator sets to test
-  apply-with-consensus uncontained *also* silently authorizes **L3**: full-auto,
-  **consensus gate removed**, applied unattended. One env var, set for the lower
-  rung, grants the highest-blast-radius rung. There is no *per-rung* escalation
-  gate — reaching the top of the ladder is not separately, explicitly authorized.
+  apply-with-consensus **uncontained** *also* silently authorizes **uncontained
+  L3**: full-auto, **consensus gate removed**, **no container boundary**, applied
+  unattended. One env var, set for the lower rung, grants the highest-blast-radius
+  rung. There is no *per-rung* escalation gate.
 
-L3 is materially different from L2: at L2 an automated reviewer is still consulted
-before `advance_lkg` (a residual, fail-closed check); at L3 that gate is removed
-and work is applied with no in-loop check at all (PLAN-tier4 §2). Its precondition
-must therefore be **strictly stronger** than L2's, not equal to it.
+The scope of the hole is specifically the **uncontained** path. *Inside* the
+verified Mode-B container, L3 full-auto is the **blessed, bounded** behaviour
+(PLAN-tier4 §6: "L3 retained as full-auto within the fence, now gated behind the
+container") — the container is the real boundary, so the highest rung is intended
+there. The danger is reaching L3 with **neither** the container **nor** a separate,
+explicit acknowledgement: at L2 an automated reviewer is still consulted before
+`advance_lkg` (a residual, fail-closed check); at L3 that gate is removed and work
+is applied with no in-loop check at all (PLAN-tier4 §2). So uncontained L3's
+precondition must be **strictly stronger** than uncontained L2's, not equal to it.
 
 ## Decisions
 
@@ -41,10 +46,12 @@ preconditions, each default-deny:
 - **L2** (apply-with-consensus): grantable iff Mode-B container
   (`CHARON_CONTAINER_VERIFIED=1`) **or** the loud uncontained override
   (`CHARON_ALLOW_UNCONTAINED_AUTONOMY=1`). Unchanged from Tier 4.
-- **L3** (full-auto, unattended, consensus removed): grantable iff the **L2**
-  precondition holds **and** a *separate, distinct* explicit opt-in
-  `CHARON_ALLOW_UNATTENDED=1` is set. The override that unlocks L2 testing does
-  **not** reach L3.
+- **L3** (full-auto, unattended, consensus removed): grantable iff the Mode-B
+  container is verified (blessed, bounded — unchanged from Tier 4), **or**, when
+  **uncontained**, the override `CHARON_ALLOW_UNCONTAINED_AUTONOMY=1` **and** a
+  *separate, distinct* explicit opt-in `CHARON_ALLOW_UNATTENDED=1` are **both**
+  set. The override that unlocks L2 testing does **not**, by itself, reach
+  uncontained L3.
 
 **D-ESC-2 — Monotone, non-skipping ladder.** A rung is grantable only if *every*
 lower rung's precondition also holds. The environment **ceiling** is the highest
@@ -77,8 +84,9 @@ cannot forge a higher autonomy for the parent. Asserted by test.
 
 ## Consequences
 
-- Closes the one-flag-grants-two-rungs hole: L3 now requires its own explicit,
-  loud acknowledgement on top of the container/override.
+- Closes the one-flag-grants-two-rungs hole: **uncontained** L3 now requires its
+  own explicit, loud acknowledgement on top of the override; container L3 (the
+  blessed Tier-4 path) is unchanged, so no merged contract regresses.
 - No new module and no new owned source file: the gate is one frozen dataclass +
   a delegating change to `assert_environment` inside `fence.py`, enforced at the
   single point `coordinator.run` already calls. `api.py` (default `autonomy="L0"`)
