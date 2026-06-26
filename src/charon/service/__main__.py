@@ -12,21 +12,10 @@ is where the "VPS-exposed ⇒ must be token-gated" rule belongs (the app's
 """
 from __future__ import annotations
 
-import ipaddress
 import os
 import sys
 
-
-def _is_loopback(host: str) -> bool:
-    if host == "localhost":
-        return True
-    # "" / "0.0.0.0" / "::" bind ALL interfaces — exposed, NOT loopback. Treat any
-    # host we can't prove is loopback (incl. empty and unresolved hostnames) as
-    # exposed, so the token guard fails safe.
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
+from ..netutil import is_loopback as _is_loopback
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -2,6 +2,8 @@
 
     charon run    --goal G --accept "CMD" [--accept ...] [--repo P]
                   [--backend mock|acp] [--autonomy L0|L1] [--budget N]
+    charon gateway [--config charon.toml | --state-dir D] [--host H] [--port P]
+                  [--token T]
     charon ledger <task-id> [--state-dir D]
     charon doctor [--backend-cmd "<agent> acp"]
     charon version
@@ -10,7 +12,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import urllib.request
 
 from . import __version__, api
 from .doctor import probe
@@ -56,6 +60,106 @@ def _cmd_ledger(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_gateway(args: argparse.Namespace) -> int:
+    from . import gateway, secrets
+    secrets.apply_to_env()  # load stored provider keys (0600 user-local file) into env
+    cfg = gateway.load_config(
+        toml_path=args.config,
+        state_dir=None if args.config else args.state_dir,
+        host=args.host,
+        port=args.port,
+        token=args.token,
+    )
+    return gateway.run(cfg)
+
+
+def _cmd_providers(args: argparse.Namespace) -> int:
+    from . import providers, secrets
+    secrets.apply_to_env()
+    if args.action == "list":
+        for name, p in sorted(providers.PRESETS.items()):
+            if p.key_env is None:
+                state = "no key needed"
+            else:
+                state = "key SET" if os.environ.get(p.key_env) else "key MISSING"
+            note = f" — {p.note}" if p.note else ""
+            print(f"{name:12} {p.base_url:34} key_env={p.key_env or '-':20} [{state}]{note}")
+        return 0
+    if args.action == "add":
+        overrides = {"base_url": args.base_url} if args.base_url else None
+        try:
+            preset = providers.resolve(args.name, overrides)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        key_env = args.key_env or preset.key_env
+        if not key_env:
+            print(f'{args.name}: local provider, no key needed — reference it as '
+                  f'provider = "{args.name}" in your config.')
+            return 0
+        value = args.key
+        if not value:
+            import getpass
+            value = getpass.getpass(f"Paste the API key for {args.name} ({key_env}): ")
+        if not value:
+            print("no key entered; nothing stored", file=sys.stderr)
+            return 2
+        path = secrets.set_secret(key_env, value)
+        print(f'stored {key_env} in {path} (0600). Reference it as provider = "{args.name}".')
+        return 0
+    if args.action == "test":
+        return _provider_test(args.name, args.base_url)
+    return 2
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse to follow redirects — a redirect could otherwise carry headers to
+    another host (urllib does NOT strip Authorization cross-host)."""
+    def redirect_request(self, *a, **k):
+        return None
+
+
+def _provider_test(name: str, base_url: str | None) -> int:
+    """Probe whether a provider's base URL RESOLVES, with GET /models — **no
+    credentials sent** (even a 401/403 proves the base resolves, which is the whole
+    point) and **redirects disabled**, so a real key is never shipped to an
+    unverified/redirecting host (security review). Rejects non-http(s) schemes (SSRF
+    guard). The way to confirm the UNVERIFIED nanogpt/zai preset bases."""
+    import urllib.error
+    from urllib.parse import urlsplit
+
+    from . import providers
+    try:
+        preset = providers.resolve(name, {"base_url": base_url} if base_url else None)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    parts = urlsplit(preset.base_url)
+    if parts.scheme not in ("http", "https"):
+        print(f"error: base URL must be http(s), got scheme {parts.scheme!r}", file=sys.stderr)
+        return 2
+    if (parts.hostname or "").startswith("169.254."):  # cloud-metadata SSRF guard
+        print(f"error: refusing to probe link-local host {parts.hostname}", file=sys.stderr)
+        return 2
+    url = preset.base_url.rstrip("/") + "/models"
+    opener = urllib.request.build_opener(_NoRedirect())
+    req = urllib.request.Request(url, method="GET")
+    req.add_header("User-Agent", "charon-proxy/0.1")  # NO Authorization header
+    try:
+        resp = opener.open(req, timeout=20)
+        print(f"{name}: base OK — HTTP {resp.status} from {url}")
+        return 0
+    except urllib.error.HTTPError as exc:
+        # any HTTP status (incl. 401/403/404) means the host + base path resolved
+        note = "needs a key (expected)" if exc.code in (401, 403) else "check the path"
+        print(f"{name}: base resolves — HTTP {exc.code} from {url} ({note})")
+        return 0
+    except Exception as exc:
+        print(f"{name}: UNREACHABLE — {type(exc).__name__} (check base_url / network)",
+              file=sys.stderr)
+        return 1
+
+
 def _cmd_doctor(args: argparse.Namespace) -> int:
     cmd = args.backend_cmd.split() if args.backend_cmd else None
     rep = probe(cmd)
@@ -99,6 +203,33 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--max-tokens", type=int, default=None,
                    help="cumulative token cap; stop before exceeding")
     r.set_defaults(func=_cmd_run)
+
+    g = sub.add_parser("gateway",
+                       help="run the standalone OpenAI-compatible failover gateway")
+    g.add_argument("--config", default=None,
+                   help="charon.toml config file (takes precedence over --state-dir)")
+    g.add_argument("--state-dir", default=api.DEFAULT_STATE_DIR,
+                   help="dir holding models.json (used when --config is absent)")
+    g.add_argument("--host", default=None, help="bind host (default 127.0.0.1)")
+    g.add_argument("--port", type=int, default=None, help="bind port (default 8080)")
+    g.add_argument("--token", default=None,
+                   help="bearer token (or set CHARON_GATEWAY_TOKEN); REQUIRED to "
+                        "bind a non-loopback host")
+    g.set_defaults(func=_cmd_gateway)
+
+    pv = sub.add_parser("providers",
+                        help="configure providers + API keys (stored 0600, never in the repo)")
+    pvsub = pv.add_subparsers(dest="action", required=True)
+    pvsub.add_parser("list", help="list provider presets and which keys are set")
+    pa = pvsub.add_parser("add", help="store an API key for a provider")
+    pa.add_argument("name", help="preset name (openrouter, nanogpt, …) or a custom name")
+    pa.add_argument("--key", help="the API key (omit to be prompted WITHOUT echo)")
+    pa.add_argument("--key-env", help="override the env-var name to store the key under")
+    pa.add_argument("--base-url", help="base URL for a custom (non-preset) provider")
+    pt = pvsub.add_parser("test", help="probe a provider's base URL (verifies it resolves)")
+    pt.add_argument("name")
+    pt.add_argument("--base-url")
+    pv.set_defaults(func=_cmd_providers)
 
     lg = sub.add_parser("ledger", help="show a task's derived ledger state")
     lg.add_argument("task_id")

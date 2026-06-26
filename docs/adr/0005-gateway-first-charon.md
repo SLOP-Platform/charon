@@ -234,6 +234,11 @@ real correctness hazards the self-review missed. They are design constraints on 
 Also specify (R1/D3): the **terminal client response when the whole pool is excluded**
 (status + headers) — bounded-by-pool-size covers the loop, not the final answer.
 
+- **R10d (P2 review, noted) — exact-match downgrade is too strict.** `classify`
+  flags `returned != expected` as a silent downgrade, so a provider that honestly
+  answers a *versioned* id (`gpt-4` → `gpt-4-0613`) would trip a spurious failover.
+  Low risk while pools are explicit; refine to a prefix/normalized compare in P3+.
+
 (The reviewer also confirmed: concurrency is largely pre-addressed — `proxy.py:110`
 `self._lock` already guards all observer state, so a cooldown map inherits it; and the
 gateway-imports-no-coordinator boundary (R3) is enforceable by extending the existing

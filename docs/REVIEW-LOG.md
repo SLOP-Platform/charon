@@ -575,3 +575,230 @@ Two operator-requested jobs. No application code changed; **114 tests still gree
   framework (R9), config rollout (D6/R5), loopback-default confirmation (D5/R8).
 - **Status:** P0 committed on `gateway-mode`; **PAUSED for operator confirmation**
   before P1 implementation.
+
+---
+
+## 2026-06-26 — Gateway P1: `charon gateway` standalone command
+
+- **Change under review:** standalone gateway mode on the existing
+  `GatewayProxyServer` — `src/charon/gateway.py` (config + run), a `gateway`
+  subcommand in `cli.py`, `src/charon/netutil.py` (shared `is_loopback`), and
+  additive `token`/`model_ids` support on `GatewayProxyServer`.
+- **Scope (ADR-0005 P1):** `/v1/chat/completions` (stream + non-stream, already in
+  the proxy) + aggregated `/v1/models`; config from `charon.toml` **or**
+  `.charon/models.json` (one schema, D6/R5); loopback default + optional bearer
+  token. **Failover is P2** — P1 forwards each model to its one configured upstream.
+- **Security (D5/R8):** `gateway.run` refuses a non-loopback bind without a token
+  (mirrors the service `__main__` guard, now factored into `netutil.is_loopback`).
+  Token is constant-time compared (`hmac.compare_digest`), accepted via `Authorization`
+  or `?token=`. `/v1/models` is field-allowlisted to ids — no `key_env`/`upstream_base`
+  leak (R4). Provider keys stay server-side (existing invariant).
+- **Back-compat:** `token`/`model_ids` default to `None`, so the bare proxy and all
+  existing proxy tests are unchanged.
+- **Proofs:** `tests/test_gateway.py` — config from TOML (key-env resolution, arg
+  overrides, acp-only entries skipped) + from `models.json`; `/v1/models` + token gate
+  (header, `?token=`, wrong/absent → 401); end-to-end forward through a mock upstream;
+  loopback guard refuses `0.0.0.0` untokened. **Live-smoked:** `charon gateway` started
+  on `:8099`, `GET /v1/models` returned the aggregated list.
+- **Gate:** 120 passed, ruff clean, mypy clean (28 files), boundary OK, version OK.
+- **Adversarial review:** security-critical surfaces (token gate, loopback guard,
+  models allowlist) sent to an independent reviewer (see next entry / verdict).
+
+---
+
+## 2026-06-26 — Gateway P1 security review (independent) — reconciled
+
+Independent read-only reviewer attacked the P1 token gate / loopback guard / forward
+path. Verdict: needs fixes (1 HIGH, 2 MED, 2 LOW). All accepted; fixed under P2's
+forward rewrite (same code path).
+
+- **[HIGH] `?token=` forwarded to the upstream → gateway-token leak.** `self.path`
+  (with query) was concatenated onto `upstream_base`, so a client authing via
+  `?token=` sent that bearer to every provider's access logs. **Fix:** build the
+  upstream URL from `urlsplit(self.path).path` only — the client query is never
+  forwarded (`_build_upstream_req`). Header-form auth was already safe
+  (`authorization` ∈ `_SKIP_HEADERS`).
+- **[MED] `build_server` bound the socket without the loopback guard.** A direct
+  caller (e.g. P4 console) could bind exposed+untokened. **Fix:** moved the
+  refuse-non-loopback-without-token check INTO `build_server` (raises
+  `GatewayBindRefused`); `run` translates it to exit 2. Guard now holds at bind time
+  for every caller.
+- **[MED] Unbounded request-body read (memory DoS).** **Fix:** `max_body_bytes`
+  (default 10 MiB) → `413` over the cap.
+- **[LOW] Empty-string token silently UNGATED on loopback.** **Fix:** `run` warns
+  when `CHARON_GATEWAY_TOKEN` is set but empty.
+- **[LOW] `str(exc)` echoed to client on upstream error.** **Fix:** the failover
+  path returns a generic "upstream unreachable" message; no exception string leaked.
+- **Verified-correct by the reviewer (kept):** token gate covers all paths before
+  forwarding; constant-time compare fails closed; `/v1/models` is id-only; provider
+  keys are header-injected and never logged/echoed; bare-proxy defaults unchanged.
+
+## 2026-06-26 — Gateway P2: transparent in-request failover
+
+- **Change under review:** in-request failover across a cost-ranked pool, on the
+  existing `GatewayProxyServer`. New: `chain_for`/`order_by_cooldown`/`set_cooldown`/
+  `note_request` + a provider-keyed cooldown and a bounded failover-event log;
+  `GatewayProxy` split into pure `classify` + `record(count_usage)`; `gateway.py`
+  builds pools from `charon.toml [pools]` or `.charon/pools.json` (free-first sorted).
+- **Failover semantics (ADR R1/R6/R7/R10):** on 429/402/503/404, `Retry-After`, a
+  silent downgrade, or an unreachable provider, the next pool member serves **within
+  the same client request**; **400/401/403 are returned immediately** (never failed
+  over — R6, don't burn money / mask bad requests). 1-element chains never fail over
+  (exact pre-P2 single-upstream behavior — all prior proxy tests still green).
+- **R10 fixes folded in:** R10a — `count_usage=False` for discarded attempts, so a
+  failed-over response's tokens/cost are **not** billed (live-proven: only the served
+  provider's 0.02 counted). R10b — each attempt rebuilds the body from the ORIGINAL
+  request with that provider's `upstream_model` (proven: A got `ma`, B got `mb`).
+  R10c — cooldown is **provider-keyed** (upstream_base) with `Retry-After`/default
+  expiry, distinct from the model-keyed per-run `_exhausted`.
+- **Streaming (R1):** pre-body status failover is transparent (no bytes sent);
+  silent-downgrade is detected by buffering the SSE head until `model` appears (capped
+  at 64 KiB) and failed over pre-commit, or surfaced via `X-Charon-Downgrade` if
+  already committed. Non-streaming is fully buffered then classified.
+- **Visibility (D3):** `X-Charon-Provider`, `X-Charon-Failovers` (count = providers
+  moved PAST, not the served one), `X-Charon-Failover-Reasons`, `X-Charon-Downgrade`;
+  + an in-memory ring buffer and optional JSONL log.
+- **Security (P1 review fixes baked in):** path-only upstream URL (no `?token=` leak),
+  bind guard in `build_server`, body-size cap.
+- **Proofs:** `tests/test_gateway_failover.py` — 429 failover + visibility headers;
+  downgrade failover with NO double-count; client-error NOT failed over; unreachable
+  failover; whole-pool-exhausted relays the real last error. Plus a cost-ranked-pool
+  config test. **Live-smoked** end-to-end through a real `charon.toml` pool.
+- **Gate:** 126 passed, ruff clean, mypy clean (28 files), boundary OK, version OK.
+- **Adversarial review:** the failover state machine (the critical surface) is being
+  sent to an independent reviewer per the operator's standing instruction.
+
+---
+
+## 2026-06-26 — Gateway P3: provider registry + presets
+
+- **Change under review:** `src/charon/providers.py` (preset table + `resolve`) and
+  gateway config support for a `provider` reference on a model.
+- **Abstraction:** a *provider* groups `base_url` + `key_env` + quirks
+  (`strip_v1`, `downgrade_prone`); a model references a provider + `upstream_model`
+  instead of repeating the base URL. `UpstreamRoute` gains an optional `strip_v1`
+  quirk (per-provider; None → server default). Presets:
+  `opencode-go`, `openrouter`, `nanogpt`, `zai`, `lmstudio`, `jan`, `ollama`,
+  `local`. Direct `upstream_base` entries (P1/P2) still work — providers are additive.
+- **Honesty (work-order rule — don't guess provider quirks):** `openrouter` and
+  `opencode-go` bases are verified; **`nanogpt` and `zai` bases are marked UNVERIFIED**
+  (no key to live-check) with a note, and every preset is overridable via
+  `[providers.<name>]`. OpenRouter free tiers flagged `downgrade_prone` (the P2
+  failover guard covers them). No real provider was called — the contract is proven
+  against config + the mock-upstream tests.
+- **Cost-rank:** unchanged — pools sort free-first/cheapest-first from registry
+  metadata (D4), editable per entry.
+- **Proofs:** `tests/test_providers.py` — preset resolution, override-over-preset,
+  unknown-provider error, `zai` strip_v1 quirk, and a model→provider→route end-to-end
+  (base/key/upstream_model/strip_v1 all resolved).
+- **Gate:** 132 passed, ruff clean, mypy clean (29 files), boundary OK, version OK.
+
+---
+
+## 2026-06-26 — Gateway P2 failover independent review — reconciled
+
+Verdict: **sound to keep** — the two subtle pillars verified correct: R10a cost
+accounting (discarded attempts never billed; served billed exactly once, incl. the
+streaming path) and R1 streaming transparency (no client bytes before the downgrade
+decision; head prepended intact; no hang when no `model` within the 64 KiB cap).
+Two MED + two LOW gaps fixed:
+
+- **[MED] Streaming `resp.read` loops were not exception-guarded** — an interrupted/
+  malformed upstream stream would crash `_handle` with no client response and no
+  failover. **Fixed:** the head loop is wrapped — a pre-commit stream error is treated
+  like a failed attempt and fails over (or 502s if terminal); the commit loop swallows
+  read errors (headers already sent → partial is unavoidable).
+- **[MED] The streaming path had ZERO test coverage.** **Fixed:** added an SSE mock +
+  tests — streaming served (usage billed once), streaming pre-commit downgrade failover
+  (A's bytes never reach the client; only B billed — R10a for streams), a stream with
+  no `model` is served not hung, and the 402/404 failover buckets.
+- **[LOW] Upstream responses weren't explicitly closed** → fd reliance on GC.
+  **Fixed:** per-attempt `try/finally: resp.close()`.
+- **[LOW] A 404 cooled the whole provider** (contradicting "drop the model, not the
+  provider"). **Fixed:** cooldown is set only for `exhausted` (429/402/503), not
+  `dropped` (404).
+- **[LOW, noted not fixed] Exact-match downgrade detection** false-positives when a
+  provider honestly answers a versioned id (`gpt-4` → `gpt-4-0613`). Pre-existing in
+  the observer; recorded in ADR-0005 R10 as a P3+ refinement (prefix/normalized
+  compare) — low risk while pools are explicit.
+- **Gate after fixes:** 136 passed, ruff clean, mypy clean (29 files), boundary OK.
+
+---
+
+## 2026-06-26 — Gateway P4: stdlib web console (visibility)
+
+- **Change under review:** a self-contained console on the gateway server itself
+  (not FastAPI) so it bundles into the Windows `.exe` (operator decision: ship BOTH
+  the stdlib gateway console AND the existing FastAPI Ledger dashboard).
+- **Surface:** `GET /` → a zero-external-asset HTML page (polls `/charon/status` every
+  2 s); `GET /charon/status` → JSON `{pools, providers, cooldown_seconds, usage,
+  recent_failovers}`. Both are gateway-mode only and behind the **same token gate**
+  (verified live: 401 without token). Per-provider served/failed/cost accounting was
+  folded into `note_request` (one place, called on every exit path) so the hot loop
+  gains no new branches; a `status_snapshot()` assembles the view.
+- **No secret exposure:** the snapshot exposes provider **labels** (host netloc),
+  counts, cost, cooldown seconds, and pool ordering — never `api_key`, `key_env`, or a
+  full upstream base/path. The console escapes all interpolated values (no XSS) and
+  loads nothing external (zero egress, like the read-only dashboard).
+- **Proofs:** `test_gateway_failover.py::test_console_and_status_endpoints` — after a
+  429→200 failover, the console HTML is self-contained + titled, and the status JSON
+  reports the pool, the served provider (served>0) vs the failed one (failed>0), the
+  billed cost (0.02, served only), and the recorded failover. **Live-smoked:** token
+  gate (401 without token), cooldown surfaced (5 s from a `Retry-After`), 2.4 KB page.
+- **Gate:** 137 passed, ruff clean, mypy clean (29 files), boundary OK, version OK.
+- **Independent review — verdict PASS** (no secret/topology leak; both endpoints
+  token-gated + gateway-mode-only; every HTML sink escaped; the upstream-influenced
+  `reason` field isn't even rendered; no P1–P3 regression). Three LOW fixes applied:
+  (1) `note_request` counts a provider as **served only on 200**; terminal failures/
+  relayed errors now increment a distinct `errors` counter (console no longer
+  overstates health). (2) `esc()` hardened to also escape `"`/`'` (safe regardless of
+  future sink). (3) `UpstreamRoute.label` uses `host[:port]` not `netloc`, so any
+  `user:pass@` in a misconfigured base can never surface in a header/console.
+
+---
+
+## 2026-06-26 — Gateway P3.5: provider/key setup CLI (operator-requested)
+
+- **Why:** a user needs to enter provider account info (keys) without hand-editing
+  config. Operator decisions: **CLI wizard now, web setup page later** (P5); keys in a
+  **user-local 0600 secrets file** (not OS keyring, not repo).
+- **Change:** `src/charon/secrets.py` (`config_dir`/`secrets_path`/`load_secrets`/
+  `set_secret`/`apply_to_env`) + a `charon providers` subcommand (`list`/`add`/`test`).
+- **Security model (operator hard rule — keys NEVER in the repo):**
+  - Keys live ONLY in `~/.charon/secrets.json` (or `%APPDATA%\charon`; override via
+    `$CHARON_HOME`), written via `os.open(..., 0o600)` so the file is never briefly
+    world-readable; dir `0700`. `.gitignore` now blocks `secrets*`/`*.key`/`.env*`/
+    `*-keys.env` defensively.
+  - `charon.toml`/`.charon/*.json` hold only preset names + `key_env` references — no
+    literal keys — so config stays shareable/committable.
+  - `apply_to_env()` loads stored keys via `setdefault` (an explicit env var always
+    wins). `providers add` reads the key via `getpass` (no echo) when `--key` is
+    omitted; the key is never printed or logged anywhere.
+  - `providers test` probes `GET <base>/models` with the key only as an
+    `Authorization` header (never in the URL/output); even a 401/404 confirms the base
+    resolves — the way to verify the UNVERIFIED nanogpt/zai presets once keys exist.
+- **Proofs:** `tests/test_secrets.py` — 0600 perms, explicit-env-wins, CLI add stores
+  the key WITHOUT echoing it, list shows SET/MISSING, unknown-without-base_url errors,
+  custom provider with base_url. **Live-smoked:** `providers add/list` wrote a 0600
+  `secrets.json`, key not echoed.
+- **Gate:** 143 passed, ruff clean, mypy clean (30 files), boundary OK, version OK.
+- **Adversarial review — verdict SAFE TO KEEP** (keys never in a tracked file; no
+  add/list/test/log path prints a key; 0600-on-create verified). Three MED + LOWs
+  fixed:
+  - **[MED] `providers test` shipped the real key to the (possibly unverified/
+    redirecting) base** — and the key wasn't even needed (a 401 proves the base
+    resolves). **Fixed:** `test` now sends **no credentials**, **disables redirects**
+    (urllib doesn't strip `Authorization` cross-host), and **rejects non-http(s)** +
+    link-local (cloud-metadata SSRF) hosts. A 401/403/404 now counts as "base
+    resolves". This is the safe way to verify the UNVERIFIED nanogpt/zai bases.
+  - **[MED] TOCTOU on `set_secret`** (pre-existing loose-perm/symlink file written
+    before chmod). **Fixed:** write a fresh `O_NOFOLLOW` 0600 temp + atomic
+    `os.replace` — no world-readable window, symlink-safe, atomic.
+  - **[MED→LOW] `apply_to_env` loaded every name** (LD_PRELOAD/PATH injection if the
+    file were tampered). **Fixed:** only valid env-name-shaped keys load, and a
+    loader-sensitive denylist (PATH/LD_PRELOAD/PYTHONPATH/…) is never injected.
+  - **[LOW] `set_secret` key-env validation** (`^[A-Za-z_][A-Za-z0-9_]*$`); no-echo
+    test now also checks stderr.
+  - New tests: key-never-sent-on-test (mock records no `Authorization`), non-http
+    scheme rejected, bad key-env rejected, sensitive/malformed env skipped.
+- **Gate after fixes:** 147 passed, ruff clean, mypy clean (30 files), boundary OK.

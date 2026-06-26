@@ -116,6 +116,7 @@ class GatewayProxy:
         headers: dict | None = None,
         body: dict | None = None,
         expected_model: str | None = None,
+        count_usage: bool = True,
     ) -> ProxyObservation:
         """Classify one upstream response and fold it into proxy state (atomically).
 
@@ -125,7 +126,31 @@ class GatewayProxy:
         provider prefix (``opencode-go/kimi-k2.7-code`` vs the upstream's bare
         ``kimi-k2.7-code``), so comparing the returned id against the pool id would
         false-positive every honest 200 as a silent downgrade. Defaults to
-        ``requested_model`` (the two coincide when there is no prefix)."""
+        ``requested_model`` (the two coincide when there is no prefix).
+
+        ``count_usage`` is False for a gateway attempt that is **discarded and
+        failed over from** — its tokens/cost must NOT be billed, since the client
+        never receives that response (ADR-0005 R10a, double-counting fix). Exclusion
+        is still recorded so the next request skips it.
+
+        ``observe`` = ``classify`` (pure) + ``record`` (mutate). The gateway's
+        in-request failover loop calls them separately, so it can classify an
+        attempt, decide whether to serve it, then bill usage only for the one it
+        actually returns to the client."""
+        obs = self.classify(requested_model, status, headers, body, expected_model)
+        self.record(obs, count_usage=count_usage)
+        return obs
+
+    def classify(
+        self,
+        requested_model: str,
+        status: int,
+        headers: dict | None = None,
+        body: dict | None = None,
+        expected_model: str | None = None,
+    ) -> ProxyObservation:
+        """Classify one upstream response into a ``ProxyObservation`` — PURE, no
+        state mutation (so the gateway can classify before deciding to serve)."""
         returned = (body or {}).get("model")
         exhausted = status in _EXHAUSTION_STATUSES
         dropped = status in _DROP_STATUSES
@@ -142,7 +167,7 @@ class GatewayProxy:
         elif pseudo:
             note = f"silent downgrade: asked {expected!r}, got {returned!r}"
 
-        obs = ProxyObservation(
+        return ProxyObservation(
             requested_model=requested_model,
             returned_model=returned,
             status=status,
@@ -153,18 +178,23 @@ class GatewayProxy:
             usage=usage,
             note=note,
         )
+
+    def record(self, obs: ProxyObservation, *, count_usage: bool = True) -> None:
+        """Fold a classified observation into proxy state (atomically). Exclusion is
+        always recorded on failover; usage is folded only when ``count_usage`` (the
+        attempt was actually served to the client — ADR-0005 R10a)."""
         with self._lock:
             if obs.failover:
                 # record under the requested model — the router excludes by model id.
-                self._exhausted[requested_model] = obs
-            if usage is not None:
+                self._exhausted[obs.requested_model] = obs
+            if obs.usage is not None and count_usage:
+                u = obs.usage
                 self._usage = Usage(
-                    tokens_in=self._usage.tokens_in + usage.tokens_in,
-                    tokens_out=self._usage.tokens_out + usage.tokens_out,
-                    cost_usd=self._usage.cost_usd + usage.cost_usd,
-                    latency_ms=self._usage.latency_ms + usage.latency_ms,
+                    tokens_in=self._usage.tokens_in + u.tokens_in,
+                    tokens_out=self._usage.tokens_out + u.tokens_out,
+                    cost_usd=self._usage.cost_usd + u.cost_usd,
+                    latency_ms=self._usage.latency_ms + u.latency_ms,
                 )
-        return obs
 
     def is_exhausted(self, model: str) -> bool:
         with self._lock:

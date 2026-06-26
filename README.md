@@ -55,6 +55,93 @@ charon ledger <task-id>
 charon doctor --backend-cmd "claude-code acp"
 ```
 
+## Gateway mode (ADR-0005) — a local OpenAI-compatible failover gateway
+
+Point any OpenAI-compatible client (Cursor, Cline, Aider, Chatbox, Jan, LM Studio,
+…) at `http://127.0.0.1:8080/v1` and Charon fronts your providers. The gateway is
+pure-stdlib, holds your provider keys server-side (never sent to the client), and
+binds **loopback by default** — a non-loopback bind refuses to start without a token.
+
+First, store your provider keys (kept in a **0600 user-local file**, never in the repo
+— `~/.charon/secrets.json`, or `%APPDATA%\charon` on Windows; loaded into the env at
+start):
+
+```bash
+charon providers list                 # presets + which keys are set
+charon providers add openrouter       # prompts for the key WITHOUT echoing it
+charon providers test openrouter      # probe the base URL resolves (verify a preset)
+```
+
+Then run the gateway:
+
+```bash
+# from a charon.toml (providers/models + bind/token), or from .charon/models.json
+charon gateway --config charon.toml
+charon gateway --state-dir .charon --port 8080
+
+# expose on a LAN (must set a token — the gateway holds your keys)
+CHARON_GATEWAY_TOKEN=$(openssl rand -hex 16) charon gateway --host 0.0.0.0
+```
+
+`charon.toml` (one schema, mirrors `.charon/models.json` field names):
+
+```toml
+[gateway]
+host = "127.0.0.1"
+port = 8080
+# token = "..."   # or $CHARON_GATEWAY_TOKEN; required for a non-loopback host
+
+[models."kimi-k2.7-code"]
+upstream_base   = "https://opencode.ai/zen/go/v1"
+key_env         = "OPENCODE_GO_KEY"   # env var holding the upstream key
+# upstream_model = "..."              # real upstream id, if it differs
+```
+
+Define a `[pools]` table (a virtual model id → an ordered set of providers) and the
+gateway does **transparent, visible, cost-ranked failover** (P2): when a provider
+returns 429/402/503, a `Retry-After`, a silent model-downgrade, or is unreachable,
+the next provider in the pool serves **within the same request**. A client/auth error
+(400/401/403) is returned immediately — never failed over. Every response carries
+`X-Charon-Provider` (who served it) and `X-Charon-Failovers` (how many were skipped,
+and why); failover events are logged for the console.
+
+```toml
+[pools]
+auto = ["qwen-free", "kimi-k2.7-code"]   # ordered free-first / cheapest-first
+```
+
+**Provider presets** (P3) save repeating base URLs: a model references a `provider`,
+and the base URL + quirks come from a built-in preset (`opencode-go`, `openrouter`,
+`nanogpt`, `zai`, `lmstudio`, `jan`, `ollama`, `local`). You only supply the key env.
+Any preset is overridable (some vendor base URLs ship **unverified** — override if a
+call 404s).
+
+```toml
+[providers.openrouter]
+key_env = "OPENROUTER_API_KEY"           # base_url comes from the preset
+
+[providers.lmstudio]
+base_url = "http://localhost:1234/v1"    # local server, no key
+
+[models."qwen-free"]
+provider       = "openrouter"
+upstream_model = "qwen/qwen-2.5-coder:free"
+free = true
+
+[models."local-coder"]
+provider       = "lmstudio"
+upstream_model = "qwen2.5-coder-7b"
+```
+
+**Web console** (P4): the gateway serves a self-contained console at
+`http://127.0.0.1:<port>/` (zero external assets, same loopback + token gate) — live
+per-provider served/failed/cost, cooldown/health, the pool config, and a recent-
+failover stream. JSON at `/charon/status`. A richer FastAPI dashboard for the
+orchestrator's Work Ledger also ships (`python -m charon.service`).
+
+The autonomous orchestrator (`charon run`, above) is an opt-in feature on the same
+core.
+
 ## What it builds vs. integrates
 
 | Concern | Charon | Why |

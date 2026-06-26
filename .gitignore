@@ -10,3 +10,16 @@ dist/
 .venv/
 venv/
 work/
+
+# Secrets — provider API keys must NEVER be committed (operator hard rule).
+# Keys live in a user-local secrets file outside the repo / loaded into env.
+# NB: patterns target the DATA file (secrets.json), NOT the source module secrets.py.
+secrets.json
+secrets.*.json
+*.key
+*.pem
+.env
+.env.*
+*-keys.env
+charon.secrets.*
+.charon/secrets*
