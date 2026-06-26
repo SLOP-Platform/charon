@@ -7,6 +7,49 @@ physics and records it here.
 
 ---
 
+## 2026-06-26 — T8 plan: real consensus reviewer + circuit breaker
+
+**Change under review:** feat/consensus-breaker — `adapters/review.py` (real
+HTTP reviewer via the loopback gateway) + circuit breaker in `failover.py` +
+`ReviewerError` promoted to `ports/reviewer.py`.
+
+**Design decisions (pre-code):**
+
+- **Real reviewer lives in `adapters/review.py`**, not review_mock.py. The mock
+  stays exactly as-is for the test harness; only `ReviewerError` is promoted to
+  `ports/reviewer.py` so both adapters import from one place.
+- **Calls the loopback Charon gateway** (`CHARON_REVIEW_BASE_URL`, default
+  `http://127.0.0.1:8080/v1`) with the gateway token (`CHARON_GATEWAY_TOKEN`).
+  No provider key goes in the repo (reads env at call time). If the env vars are
+  absent the reviewer raises `ReviewerError` immediately — config-error, not a
+  silent pass-through.
+- **Prompt** sends `unit.goal` + the outcome's commit/status/note as a user
+  message and asks the model to identify blocking issues in JSON:
+  `{"blocking": [...]}`. An unparseable response is treated as a blocking
+  finding (fail-closed). All I/O via `urllib.request` (stdlib only).
+- **Circuit breaker in `failover.py`** — a `ReviewerCircuitBreaker` wraps any
+  `Reviewer` and tracks consecutive failures (both `ReviewerError` raises and
+  unexpected exceptions). After `threshold` consecutive failures the breaker
+  opens; calls during the open window immediately raise `ReviewerError`
+  ("circuit open") without forwarding. After `cooldown_s` seconds the breaker
+  goes half-open and allows one probe call; success closes it, failure re-opens.
+- **Does NOT touch coordinator.py** — the breaker is a transparent `Reviewer`
+  wrapper; the coordinator sees only the `Reviewer` protocol.
+- **Tests** extend `test_consensus_gate.py` (breaker wrapping the mock; breaker
+  half-open recovery) and `test_failover.py` (breaker state transitions).
+
+**Risk register:**
+
+| ID | Risk | Mitigation |
+|----|------|------------|
+| R1 | Real reviewer unavailable in tests | `GatewayReviewer` reads env at call time; tests mock the HTTP layer or use MockReviewer |
+| R2 | Breaker bypasses consensus silently | Breaker raises `ReviewerError`; coordinator's existing fail-closed path handles it |
+| R3 | ReviewerError location (currently in review_mock) | Promote to `ports/reviewer.py`; both adapters import from there; no breaking change |
+
+**Net:** plan accepted. Proceeding to implementation.
+
+---
+
 ## 2026-06-23 — Tier 1 build plan (ADR-0001/0002/0003)
 
 - **Change under review:** `docs/PLAN-tier1.md` — initial standalone repo + the
