@@ -48,6 +48,18 @@ PRESETS: dict[str, ProviderPreset] = {
         "https://api.z.ai/api/paas/v4", "ZAI_API_KEY",
         note="Verified live: chat at /api/paas/v4/chat/completions (strip_v1 strips "
              "the client's /v1 and appends to the /v4 base)."),
+    # More hosted providers — all base URLs verified live via `providers test`
+    # (2026-06-26): /models returns 200 (chutes) or 401-needs-key (the rest).
+    "deepseek": ProviderPreset("https://api.deepseek.com/v1", "DEEPSEEK_API_KEY",
+                               note="DeepSeek (base verified)."),
+    "chutes": ProviderPreset("https://llm.chutes.ai/v1", "CHUTES_API_KEY",
+                            note="Chutes.ai (base verified, /models open)."),
+    "groq": ProviderPreset("https://api.groq.com/openai/v1", "GROQ_API_KEY",
+                          note="Groq (base verified)."),
+    "together": ProviderPreset("https://api.together.xyz/v1", "TOGETHER_API_KEY",
+                              note="Together AI (base verified)."),
+    "mistral": ProviderPreset("https://api.mistral.ai/v1", "MISTRAL_API_KEY",
+                             note="Mistral (base verified)."),
     # Local OpenAI-compatible servers (usually no auth). Default ports shown.
     "lmstudio": ProviderPreset("http://localhost:1234/v1", None,
                                note="LM Studio (default port 1234)."),

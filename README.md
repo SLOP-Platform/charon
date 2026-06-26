@@ -89,11 +89,18 @@ and why); failover events are logged for the console.
 auto = ["qwen-free", "kimi-k2.7-code"]   # ordered free-first / cheapest-first
 ```
 
-**Provider presets** (P3) save repeating base URLs: a model references a `provider`,
-and the base URL + quirks come from a built-in preset (`opencode-go`, `openrouter`,
-`nanogpt`, `zai`, `lmstudio`, `jan`, `ollama`, `local`). You only supply the key env.
-Any preset is overridable (some vendor base URLs ship **unverified** — override if a
-call 404s).
+**Provider presets** save repeating base URLs: a model references a `provider`, and
+the base URL + quirks come from a built-in preset — `opencode-go`, `openrouter`,
+`nanogpt`, `zai`, `deepseek`, `chutes`, `groq`, `together`, `mistral`, plus local
+(`lmstudio`, `jan`, `ollama`, `local`). You only supply the key. **Any other
+OpenAI-compatible provider works too** — just give a base URL:
+
+```bash
+charon providers add chatllm --base-url https://your-provider/v1   # then enter the key
+```
+
+`charon providers add <preset>` / `charon setup` persist the provider to
+`~/.charon/`, so the gateway picks it up with no hand-edited config.
 
 ```toml
 [providers.openrouter]

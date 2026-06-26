@@ -6,6 +6,18 @@ import pytest
 from charon import gateway, providers
 
 
+def test_all_presets_have_valid_http_base():
+    from urllib.parse import urlsplit
+    for name, p in providers.PRESETS.items():
+        parts = urlsplit(p.base_url)
+        assert parts.scheme in ("http", "https") and parts.netloc, name
+
+
+def test_hosted_presets_present():
+    for n in ("deepseek", "chutes", "groq", "together", "mistral"):
+        assert n in providers.PRESETS and providers.PRESETS[n].key_env
+
+
 def test_preset_resolves_known_provider():
     p = providers.resolve("openrouter")
     assert p.base_url == "https://openrouter.ai/api/v1"
