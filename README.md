@@ -31,6 +31,7 @@ Then set your client's **base URL** to `http://127.0.0.1:8080/v1`.
 charon providers list                                  # presets + which keys are set
 charon providers add openrouter                        # prompts for the key (not echoed)
 charon providers add my-llm --base-url https://host/v1 # ANY OpenAI-compatible provider
+charon models import openrouter [--free-only]          # add the provider's whole catalog
 ```
 
 Presets: `openrouter, nanogpt, zai, deepseek, chutes, groq, together, mistral,

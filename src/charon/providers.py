@@ -14,7 +14,10 @@ providers ship no key (localhost servers are usually unauthenticated).
 """
 from __future__ import annotations
 
+import json
+import urllib.request
 from dataclasses import dataclass, replace
+from urllib.parse import urlsplit
 
 
 @dataclass(frozen=True)
@@ -75,6 +78,78 @@ PRESETS: dict[str, ProviderPreset] = {
     "local": ProviderPreset("http://localhost:1234/v1", None,
                            note="Generic OpenAI-compatible localhost — set base_url."),
 }
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects — a redirect could carry the ``Authorization`` Bearer to
+    another host (urllib does NOT strip it cross-host). Key-exfil guard."""
+    def redirect_request(self, *a, **k):  # noqa: ANN002, ANN003
+        return None
+
+
+_MAX_MODELS_BYTES = 1_000_000  # cap the /models response (memory-DoS guard)
+
+
+def _is_free(item: dict) -> bool:
+    """Best-effort free detection from an OpenAI-style /models entry: an OpenRouter
+    ``:free`` id suffix, or a ``pricing`` map whose prompt+completion are all 0."""
+    mid = item.get("id")
+    if isinstance(mid, str) and mid.endswith(":free"):
+        return True
+    pricing = item.get("pricing")
+    if isinstance(pricing, dict):
+        vals = []
+        for k in ("prompt", "completion"):
+            try:
+                vals.append(float(pricing[k]))
+            except (KeyError, TypeError, ValueError):
+                return False
+        return bool(vals) and all(v == 0 for v in vals)
+    return False
+
+
+def _parse_models(data: object) -> list[dict]:
+    """Pull ``[{id, free}]`` out of a provider's /models payload — the OpenAI
+    ``{"data": [...]}`` shape, a bare list, or a list of strings. Pure (testable)."""
+    items = data.get("data") if isinstance(data, dict) else data
+    out: list[dict] = []
+    if not isinstance(items, list):
+        return out
+    for it in items:
+        if isinstance(it, dict) and isinstance(it.get("id"), str):
+            out.append({"id": it["id"], "free": _is_free(it)})
+        elif isinstance(it, str):
+            out.append({"id": it, "free": False})
+    return out
+
+
+def list_models(name: str, overrides: dict | None = None, *,
+                api_key: str | None = None, timeout: float = 20.0) -> list[dict]:
+    """``GET <base>/models`` for a provider and return ``[{id, free}]`` it advertises.
+
+    Security (the key rides as a Bearer): non-http(s) and link-local/metadata bases
+    are refused (SSRF), redirects are disabled (no cross-host key leak), and the
+    response is size-capped. Raises ``ValueError`` for a bad base; urllib errors
+    propagate (the caller reports them)."""
+    preset = resolve(name, overrides)
+    base = preset.base_url
+    parts = urlsplit(base)
+    if parts.scheme not in ("http", "https"):
+        raise ValueError(f"base URL must be http(s), got {parts.scheme!r}")
+    host = parts.hostname or ""
+    if host.startswith("169.254.") or host == "metadata.google.internal":
+        raise ValueError(f"refusing link-local / metadata host {host!r}")
+    url = base.rstrip("/") + "/models"
+    req = urllib.request.Request(url, method="GET")
+    req.add_header("User-Agent", "charon-proxy/0.1")
+    if api_key:
+        req.add_header("Authorization", "Bearer " + api_key)
+    opener = urllib.request.build_opener(_NoRedirect())
+    resp = opener.open(req, timeout=timeout)
+    raw = resp.read(_MAX_MODELS_BYTES + 1)
+    if len(raw) > _MAX_MODELS_BYTES:
+        raise ValueError("models response too large")
+    return _parse_models(json.loads(raw.decode("utf-8", "replace")))
 
 
 def resolve(name: str, overrides: dict | None = None) -> ProviderPreset:

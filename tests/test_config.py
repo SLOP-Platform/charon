@@ -62,8 +62,8 @@ def test_custom_provider_resolves_to_gateway_route(monkeypatch, tmp_path):
 def test_setup_wizard_end_to_end(monkeypatch, tmp_path):
     monkeypatch.setenv("CHARON_HOME", str(tmp_path))
     inputs = iter([
-        "openrouter", "gpt-4o", "", "n", "",      # provider 1 + model (paid); key via getpass
-        "deepseek", "deepseek-chat", "", "y", "",  # provider 2 + model (free)
+        "openrouter", "n", "gpt-4o", "", "n", "",      # provider 1: key, NO import, model (paid)
+        "deepseek", "n", "deepseek-chat", "", "y", "",  # provider 2: key, NO import, model (free)
         "",                                        # finish providers
         "y", "auto",                               # build a pool named "auto"
     ])

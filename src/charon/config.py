@@ -113,6 +113,33 @@ def add_model(model_id: str, *, provider: str | None = None, upstream_base: str 
     return _save("models.json", models)
 
 
+def add_models_bulk(entries: list[dict], *, provider: str) -> tuple[list[str], list[str]]:
+    """Add many catalog models for one provider in a SINGLE atomic write (the
+    `charon models import` path). Each entry is ``{id, free?, cost_rank?}``; the
+    catalog id doubles as the upstream id (no ``upstream_model``). Ids failing
+    ``_ID_RE`` are SKIPPED (not raised — an upstream list is untrusted). Returns
+    ``(added, skipped)``."""
+    _check_id("provider", provider)
+    models = load_models()
+    added: list[str] = []
+    skipped: list[str] = []
+    for e in entries:
+        mid = e.get("id")
+        if not isinstance(mid, str) or not _ID_RE.match(mid):
+            skipped.append(str(mid))
+            continue
+        free = bool(e.get("free"))
+        models[mid] = {
+            "free": free,
+            "cost_rank": int(e.get("cost_rank", 0 if free else 1000)),
+            "provider": provider,
+        }
+        added.append(mid)
+    if added:
+        _save("models.json", models)
+    return added, skipped
+
+
 def set_pool(vid: str, members: list[str]) -> Path:
     """Define/replace a pool (virtual model id → ordered list of model ids)."""
     _check_id("pool", vid)

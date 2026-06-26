@@ -135,6 +135,53 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def _import_models(name: str, *, free_only: bool = False, into_pool: str | None = None,
+                   quiet: bool = False) -> tuple[list[str], list[str]] | None:
+    """Fetch ``<provider>/models`` with the stored key and add them all to the
+    CATALOG. Shared by ``charon models import`` and the setup wizard. Returns
+    ``(added, skipped)`` or ``None`` on failure (a message is already printed).
+    POOLS stay curated — ``into_pool`` is an explicit opt-in escape hatch."""
+    from . import config, providers
+    provs = config.load_providers()
+    overrides = provs.get(name)
+    try:
+        preset = providers.resolve(name, overrides)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return None
+    key_env = (overrides or {}).get("key_env") or preset.key_env
+    api_key = os.environ.get(key_env) if key_env else None
+    try:
+        found = providers.list_models(name, overrides, api_key=api_key)
+    except Exception as exc:  # network/HTTP/parse — report, don't crash
+        print(f"error: could not list models for {name!r}: {type(exc).__name__} "
+              f"(key set? base reachable?)", file=sys.stderr)
+        return None
+    if free_only:
+        found = [m for m in found if m["free"]]
+    entries = [{"id": m["id"], "free": m["free"], "cost_rank": 0 if m["free"] else 1000}
+               for m in found]
+    added, skipped = config.add_models_bulk(entries, provider=name)
+    if not quiet:
+        tail = f", skipped {len(skipped)} invalid id(s)" if skipped else ""
+        print(f"imported {len(added)} model(s) from {name!r} into the catalog{tail}")
+    if into_pool and added:
+        config.set_pool(into_pool, added)
+        if not quiet:
+            print(f"note: pool {into_pool!r} now holds all {len(added)} imported models — "
+                  "pools work best as a small, cost-ranked, comparable set")
+    return added, skipped
+
+
+def _cmd_models(args: argparse.Namespace) -> int:
+    from . import secrets
+    secrets.apply_to_env()
+    if args.action == "import":
+        res = _import_models(args.name, free_only=args.free_only, into_pool=args.into_pool)
+        return 0 if res is not None else 1
+    return 2
+
+
 def _cmd_setup(args: argparse.Namespace) -> int:
     """Guided setup: add providers (+ keys), models, and an optional failover pool —
     all written to the user config dir so `charon gateway` then just works."""
@@ -179,13 +226,24 @@ def _cmd_setup(args: argparse.Namespace) -> int:
             except ValueError as exc:
                 print(f"  {exc}")
                 continue
+            stored = False
             if key_env:
                 key = getpass.getpass(f"  paste the API key for {name} [blank to skip]: ")
                 if key:
                     secrets.set_secret(key_env, key)
+                    stored = True
                     print(f"  key stored (0600, as {key_env})")
             else:
                 print(f"  added '{name}' (local provider — no key needed)")
+            # offer a catalog import when we can actually reach /models (have a key, or
+            # a keyless local provider). Imports the catalog only — pools stay curated.
+            if (key_env is None or stored) and ask(
+                    f"  import ALL available models from '{name}' into the catalog now?",
+                    "n").lower().startswith("y"):
+                secrets.apply_to_env()  # make the just-stored key visible to the probe
+                res = _import_models(name)
+                if res:
+                    print(f"    + {len(res[0])} model(s) added to the catalog")
             while True:
                 mid = ask(f"  model served by '{name}' (the id clients request; blank to stop)")
                 if not mid:
@@ -362,6 +420,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     su = sub.add_parser("setup", help="guided gateway setup (providers, keys, models, pool)")
     su.set_defaults(func=_cmd_setup)
+
+    md = sub.add_parser("models", help="manage the model catalog")
+    mdsub = md.add_subparsers(dest="action", required=True)
+    mi = mdsub.add_parser("import",
+                          help="import a provider's full model list into the catalog")
+    mi.add_argument("name", help="provider name (a preset or one you've added)")
+    mi.add_argument("--free-only", action="store_true", help="import only free models")
+    mi.add_argument("--into-pool", default=None,
+                    help="ALSO add the imported models to this pool (opt-in; pools work "
+                         "best small + cost-ranked, so this is rarely what you want)")
+    md.set_defaults(func=_cmd_models)
 
     rs = sub.add_parser("reset",
                         help="remove local config (providers/models/pools); --all also drops keys")

@@ -215,6 +215,27 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
             )
             _reload()
             return 200, {"ok": True}
+        if action == "models/import":
+            name = str(payload.get("provider") or "").strip()
+            overrides = config.load_providers().get(name)
+            preset = P.resolve(name, overrides)  # validates the provider/base
+            key_env = (overrides or {}).get("key_env") or preset.key_env
+            secrets.apply_to_env()
+            api_key = os.environ.get(key_env) if key_env else None
+            try:
+                found = P.list_models(name, overrides, api_key=api_key)
+            except ValueError:
+                raise  # bad base → 400 with the validation message
+            except Exception as exc:  # network/HTTP/parse → friendly 400, no leak
+                raise ValueError(
+                    f"could not reach provider {name!r} ({type(exc).__name__})") from exc
+            if payload.get("free_only"):
+                found = [m for m in found if m["free"]]
+            entries = [{"id": m["id"], "free": m["free"],
+                        "cost_rank": 0 if m["free"] else 1000} for m in found]
+            added, skipped = config.add_models_bulk(entries, provider=name)
+            _reload()
+            return 200, {"ok": True, "added": len(added), "skipped": len(skipped)}
         if action == "pools":
             config.set_pool(str(payload.get("id") or ""),
                             [str(m) for m in (payload.get("members") or [])])

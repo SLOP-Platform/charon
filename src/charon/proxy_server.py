@@ -136,7 +136,14 @@ td,th{text-align:left;padding:.2rem .5rem;border-bottom:1px solid #313244}
 <div><label>provider</label><input id=mprov></div>
 <div><label>upstream id</label><input id=mups placeholder="(blank = same)"></div>
 <div><label>free?</label><input id=mfree type=checkbox></div>
-<button onclick=addModel()>Add model</button></fieldset>
+<button onclick=addModel()>Add model</button>
+<div style="margin-top:.5rem;border-top:1px solid #313244;padding-top:.4rem">
+  <label>or import all</label>
+  <input id=ifree type=checkbox><span class=muted>free only</span>
+  <button onclick=importModels()>Import provider's catalog</button>
+  <div class=muted>imports every model the provider above advertises
+    (catalog only; pools stay curated)</div>
+</div></fieldset>
 <fieldset><h2>Failover pool</h2>
 <div><label>pool id</label><input id=plid placeholder="auto"></div>
 <div><label>models</label><input id=plmem size=36 placeholder="comma,separated,model,ids"></div>
@@ -164,6 +171,14 @@ async function addModel(){
     upstream_model:val('mups')||null,free:free,cost_rank:free?0:1000};
   const {ok,d}=await post('/charon/models',b);
   msg(ok?('added model '+b.id):('error: '+(d.error&&d.error.message)),ok); if(ok)load();}
+async function importModels(){
+  const prov=val('mprov');
+  if(!prov){msg('enter a provider name above first',false);return}
+  msg('importing models from '+prov+'…',true);
+  const b={provider:prov,free_only:document.getElementById('ifree').checked};
+  const {ok,d}=await post('/charon/models/import',b);
+  msg(ok?('imported '+d.added+' model(s)'+(d.skipped?(' ('+d.skipped+' skipped)'):'')):
+    ('error: '+(d.error&&d.error.message)),ok); if(ok)load();}
 async function addPool(){
   const b={id:val('plid')||'auto',members:val('plmem').split(',').map(s=>s.trim()).filter(Boolean)};
   const {ok,d}=await post('/charon/pools',b);
@@ -392,7 +407,8 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 self._json(status, obj)
                 return
             if self.command == "POST" and path_only in (
-                    "/charon/providers", "/charon/models", "/charon/pools", "/charon/remove"):
+                    "/charon/providers", "/charon/models", "/charon/models/import",
+                    "/charon/pools", "/charon/remove"):
                 host = self.headers.get("Host", "")
                 origin = self.headers.get("Origin")
                 if origin and urlsplit(origin).netloc != host:  # CSRF: cross-origin write
