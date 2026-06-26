@@ -84,18 +84,22 @@ Run with `charon gateway --config charon.toml`. Every response carries
 `X-Charon-Provider` and `X-Charon-Failovers`; the console at `/` shows live
 per-provider usage, cost, and health.
 
-## Expose it / Docker (optional)
+## Expose it / Docker
+
+By default, `docker compose up` starts the gateway:
 
 ```bash
-# LAN (token required — the gateway holds your keys)
-CHARON_GATEWAY_TOKEN=$(openssl rand -hex 16) charon gateway --host 0.0.0.0
-
-# shared / always-on (Docker)
-docker compose --profile gateway up gateway
+# Generate a token to hold your provider keys
+CHARON_GATEWAY_TOKEN=$(openssl rand -hex 16) docker compose up gateway
 ```
 
-In Docker, point **local** providers' `base_url` at `host.docker.internal:<port>`
+In the container, local providers' `base_url` should point to `host.docker.internal:<port>`
 (the container's `localhost` isn't the host's). Image: `ghcr.io/slop-platform/charon:v0.2.0`.
+
+To run the service container instead (Mode-B orchestrator, optional):
+```bash
+docker compose --profile service up charon-service
+```
 
 ## Autonomous mode (optional)
 
