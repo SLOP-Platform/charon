@@ -34,10 +34,10 @@ can apply their diffs **unattended**. Treat it accordingly:
 
 ```bash
 # isolated, on PATH (recommended)
-pipx install git+https://gitlab.com/slop-platform/charon
+pipx install git+https://github.com/SLOP-Platform/charon
 
 # or for development
-git clone https://gitlab.com/slop-platform/charon && cd charon
+git clone https://github.com/SLOP-Platform/charon && cd charon
 pip install -e '.[dev]'
 ```
 

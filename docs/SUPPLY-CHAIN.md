@@ -64,45 +64,46 @@ No third-party dependency has entered the privileged loop. When one is proposed
 ## 5. Container images (Tier 2b — publish policy, reconciled)
 
 Reviewed adversarially (REVIEW-LOG references BR2-8; GHCR-publish focused review
-2026-06-24). Migrated GHCR → GitLab Container Registry 2026-06-25 (HANDOFF §9);
-the deterministic guarantees below are preserved, only the host plumbing changed
-(see `.gitlab-ci.yml` `publish`). Decisions:
+2026-06-24). The GitLab Container Registry detour (2026-06-25) was UNWOUND the
+same day (HANDOFF §9 — GitLab abandoned for the public GitHub `SLOP-Platform`
+org); the registry/provenance path is back to the original GHCR + GitHub-native
+SLSA design, which is the cleanest option here. The deterministic guarantees
+below are unchanged across all of this — only the host plumbing moved (see
+`.github/workflows/release.yml` `publish`). Decisions:
 
 - **Base pinned by digest, resolved at release time.** The `Dockerfile` base is a
   build-arg (`BASE_IMAGE=python:3.12-slim`); the `publish` CI job resolves the
-  current digest (`docker pull` then read `RepoDigests`, no buildx dependency) and
+  current digest (`docker buildx imagetools inspect`) and
   builds with `BASE_IMAGE=python:3.12-slim@sha256:…`. The pin is therefore real
   and fresh, recorded in the build log — never a stale hardcoded value, never
   fabricated. The plain tag is used only for the non-publishing CI build-smoke.
 - **Installed `charon` is the checked-out source** at the release tag; the
   `publish` job asserts the **git tag matches `pyproject.toml` version** (no
   drift), so the image contains exactly the released version.
-- **Trigger = a `vX.Y.Z` git tag** (`rules: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/`);
-  stage ordering (test → image → publish) gates it so the gate + image-smoke must
-  pass first — an untested image can never be published (the GitHub
-  `needs: [gate, image-smoke]` equivalent). Off the tag path there is **no
-  publish token surface**.
+- **Trigger = a published GitHub Release** (`on: release: [published]`); the
+  `publish` job `needs: [gate, image-smoke]` so the full gate + image build-smoke
+  must pass first — an untested image can never be published (BR2-8). The job also
+  asserts the release tag `vX.Y.Z` matches the package version. Off the release
+  path there is **no publish token surface**.
 - **Only `:vX.Y.Z` is pushed** (immutable per semver). `:latest` is **not**
   published — it is a silent-upgrade footgun. Operators pin explicit versions.
   Do not delete/re-create a published tag (silent swap of a different image).
-- **Provenance (OPEN ITEM on GitLab).** The GHCR policy used GitHub-native
-  `actions/attest-build-provenance` (OIDC + transparency log), verified with
-  `gh attestation verify`. That mechanism is GitHub-specific and **has no
-  drop-in GitLab equivalent that meets the no-key-management constraint** —
-  **cosign is still deliberately not used** (it adds key-management burden
-  without addressing the real threat: a compromised runner would hold the cosign
-  key too). So on GitLab, SLSA attestation for the pushed image is an explicit
-  **deferred decision for the operator** (GitLab's evolving native artifact
-  attestation vs cosign-keyless via GitLab OIDC `id_tokens`), tracked here, not
-  silently dropped. The deterministic integrity guarantees (digest-pinned base,
+- **Provenance — RESTORED (the GitLab "open item" evaporated).** Back on GitHub,
+  the publish job attests build provenance with GitHub-native
+  `actions/attest-build-provenance` (OIDC + transparency log), verifiable with
+  `gh attestation verify`. No key management: the GitHub OIDC `id-token` is
+  minted per-run and scoped to the workflow. **cosign is still deliberately not
+  used** (it adds key-management burden without addressing the real threat: a
+  compromised runner would hold the cosign key too) — the OIDC path needs no
+  stored key. The deterministic integrity guarantees (digest-pinned base,
   tag↔version match, gated-on-tests, immutable tag) hold regardless. Honesty
   (unchanged): provenance attests *build integrity*, **not** dependency safety —
   that is `pip-audit` + this gate's job.
-- **Credentials** are the minimum: the publish job uses GitLab's per-job
-  `$CI_REGISTRY_USER`/`$CI_REGISTRY_PASSWORD` (job-token scoped to this project's
-  registry), never a long-lived personal token; it exists only on the tag path.
-- **Namespace** is lowercase `registry.gitlab.com/slop-platform/charon`
-  (`$CI_REGISTRY_IMAGE`; the registry lowercases names).
+- **Credentials** are the minimum: the publish job logs into GHCR with the
+  per-run `${{ secrets.GITHUB_TOKEN }}` (scoped `packages: write` only on the
+  release path), never a long-lived personal token; it exists only on that path.
+- **Namespace** is lowercase `ghcr.io/slop-platform/charon` (GHCR lowercases org
+  names; the public web repo is `github.com/SLOP-Platform/charon`).
 - **Multi-arch (arm64)** is deferred (YAGNI until a consumer deploys on arm64);
   v0.1.0 publishes `linux/amd64` only, disclosed as such.
 - **Base-digest renewal** is manual + intentional (no auto-bump bot yet): the

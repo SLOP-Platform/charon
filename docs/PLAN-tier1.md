@@ -89,7 +89,7 @@ delete/deploy) · L2 apply-with-consensus (Tier 3) · L3 full-auto-within-fence
 
 ## 7. Install / deploy — "best way locally" (ADR-0002 §2.3)
 
-- **Mode A primary:** `pipx install git+https://gitlab.com/slop-platform/charon`
+- **Mode A primary:** `pipx install git+https://github.com/SLOP-Platform/charon`
   (isolated, on PATH). `pip install -e .` for dev.
 - `Makefile`: `make install` / `make test` / `make lint` / `make demo`.
 - `install.sh` one-liner: ensure pipx present → pipx install. Honest about
