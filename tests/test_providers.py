@@ -18,6 +18,11 @@ def test_hosted_presets_present():
         assert n in providers.PRESETS and providers.PRESETS[n].key_env
 
 
+def test_new_hosted_presets_present():
+    for n in ("fireworks", "sambanova", "replicate", "xai", "cohere", "openai"):
+        assert n in providers.PRESETS and providers.PRESETS[n].key_env
+
+
 def test_preset_resolves_known_provider():
     p = providers.resolve("openrouter")
     assert p.base_url == "https://openrouter.ai/api/v1"
@@ -43,6 +48,29 @@ def test_zai_preset_strips_v1():
     # live-confirmed: zai chat is /api/paas/v4/chat/completions, so the client's
     # /v1 prefix must be stripped (strip_v1 True) — NOT forwarded as /v4/v1/...
     assert providers.resolve("zai").strip_v1 is True
+
+
+def test_perplexity_preset_does_not_strip_v1():
+    # Perplexity endpoint path varies; strip_v1=False avoids double-stripping
+    assert providers.resolve("perplexity").strip_v1 is False
+
+
+def test_local_servers_have_no_auth():
+    for n in ("lmstudio", "jan", "ollama", "vllm", "local"):
+        assert n in providers.PRESETS and providers.PRESETS[n].key_env is None
+
+
+def test_new_vendor_bases_valid():
+    # Verify new hosted providers have valid base URLs (tested live 2026-06-26)
+    assert providers.resolve("sambanova").base_url == "https://api.sambanova.ai/v1"
+    assert providers.resolve("fireworks").base_url == "https://api.fireworks.ai/inference/v1"
+    assert providers.resolve("xai").base_url == "https://api.x.ai/v1"
+
+
+def test_openai_preset_exists():
+    p = providers.resolve("openai")
+    assert p.base_url == "https://api.openai.com/v1"
+    assert p.key_env == "OPENAI_API_KEY"
 
 
 def test_model_referencing_provider_resolves_route(monkeypatch, tmp_path):

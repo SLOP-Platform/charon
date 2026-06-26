@@ -68,6 +68,25 @@ PRESETS: dict[str, ProviderPreset] = {
                               note="Together AI (base verified)."),
     "mistral": ProviderPreset("https://api.mistral.ai/v1", "MISTRAL_API_KEY",
                              note="Mistral (base verified)."),
+    # More hosted providers — all base URLs verified live via `providers test` (2026-06-26).
+    # fireworks, sambanova → 401/200; replicate, xai, cohere, openai → 401.
+    "fireworks": ProviderPreset("https://api.fireworks.ai/inference/v1", "FIREWORKS_API_KEY",
+                                note="Fireworks AI (base verified, HTTP 401 on /models)."),
+    "sambanova": ProviderPreset("https://api.sambanova.ai/v1", "SAMBANOVA_API_KEY",
+                                note="SambaNova (base verified, /models HTTP 200)."),
+    "replicate": ProviderPreset("https://api.replicate.com/v1", "REPLICATE_API_KEY",
+                                note="Replicate (base verified, HTTP 401 on /models)."),
+    "xai": ProviderPreset("https://api.x.ai/v1", "XAI_API_KEY",
+                          note="xAI (Grok API, base verified, HTTP 401 on /models)."),
+    "cohere": ProviderPreset("https://api.cohere.ai/v1", "COHERE_API_KEY",
+                             note="Cohere (base verified, HTTP 401 on /models)."),
+    "openai": ProviderPreset("https://api.openai.com/v1", "OPENAI_API_KEY",
+                             note="OpenAI (base verified, HTTP 401 on /models)."),
+    # Unverified / limited endpoint bases — use caution; override base_url if endpoint 404s.
+    "perplexity": ProviderPreset("https://api.perplexity.ai", "PERPLEXITY_API_KEY",
+                                 strip_v1=False,
+                                 note="Perplexity (domain resolves, /models may 404; "
+                                      "endpoint varies; if using, check strip_v1 setting)."),
     # Local OpenAI-compatible servers (usually no auth). Default ports shown.
     "lmstudio": ProviderPreset("http://localhost:1234/v1", None,
                                note="LM Studio (default port 1234)."),
@@ -75,6 +94,8 @@ PRESETS: dict[str, ProviderPreset] = {
                           note="Jan (default port 1337)."),
     "ollama": ProviderPreset("http://localhost:11434/v1", None,
                             note="Ollama OpenAI-compatible endpoint (port 11434)."),
+    "vllm": ProviderPreset("http://localhost:8000/v1", None,
+                           note="vLLM (default port 8000, OpenAI-compatible server)."),
     "local": ProviderPreset("http://localhost:1234/v1", None,
                            note="Generic OpenAI-compatible localhost — set base_url."),
 }
