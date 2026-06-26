@@ -92,6 +92,50 @@ def test_web_setup_rejects_cross_origin_write(monkeypatch, tmp_path):
         server.shutdown()
 
 
+def test_dns_rebinding_host_rejected_even_ungated(monkeypatch, tmp_path):
+    """The HIGH: on the UNGATED loopback default, a rebound attacker Host must be
+    rejected (else a web page could drive the gateway and steal keys)."""
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    server = gateway.build_server(  # token=None → ungated (the dangerous default)
+        GatewayConfig(host="127.0.0.1", port=0, model_ids=[]), setup_dir=tmp_path)
+    server.serve_in_thread()
+    try:
+        req = urllib.request.Request(
+            server.url + "/charon/providers", method="POST", data=b'{"name":"openrouter"}',
+            headers={"Content-Type": "application/json", "Host": "evil.example"})
+        try:
+            urllib.request.urlopen(req, timeout=5)
+            raise AssertionError("rebinding Host was not rejected")
+        except urllib.error.HTTPError as e:
+            assert e.code == 403
+        assert _req(server.url + "/charon/config")[0] == 200  # legit loopback Host still works
+    finally:
+        server.shutdown()
+
+
+def test_web_add_provider_rejects_bad_base_url(monkeypatch, tmp_path):
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    server = gateway.build_server(
+        GatewayConfig(host="127.0.0.1", port=0, token="t", model_ids=[]), setup_dir=tmp_path)
+    server.serve_in_thread()
+    try:
+        for bad in ("file:///etc/passwd", "http://169.254.169.254/latest/meta-data"):
+            st, _, _ = _req(server.url + "/charon/providers", "POST", token="t",
+                            body={"name": "evil", "base_url": bad, "key": "k"})
+            assert st == 400  # SSRF / non-http base rejected
+        assert "evil" not in config.load_providers()
+    finally:
+        server.shutdown()
+
+
+def test_config_add_provider_validates_base_url(monkeypatch, tmp_path):
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    import pytest
+    for bad in ("file:///x", "ftp://h/v1", "http://169.254.169.254/"):
+        with pytest.raises(ValueError):
+            config.add_provider("p", base_url=bad)
+
+
 def test_web_setup_disabled_when_no_handler(monkeypatch, tmp_path):
     monkeypatch.setenv("CHARON_HOME", str(tmp_path))
     # no setup_dir → setup_handler is None → setup endpoints are not served (read-only)

@@ -19,8 +19,10 @@ _KEY_ENV_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # Never load these from the secrets file into the process env, even if present —
 # they steer code loading/execution (defense-in-depth; the file is 0600 user-owned).
 _SENSITIVE_ENV = frozenset({
-    "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "PYTHONPATH",
-    "PATH", "BROWSER", "GIT_SSH", "GIT_SSH_COMMAND", "IFS", "SHELL", "PYTHONSTARTUP",
+    "LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "DYLD_INSERT_LIBRARIES",
+    "PYTHONPATH", "PYTHONSTARTUP", "PATH", "BROWSER", "IFS", "SHELL",
+    "GIT_SSH", "GIT_SSH_COMMAND", "GIT_EXTERNAL_DIFF", "GIT_PAGER", "PAGER",
+    "NODE_OPTIONS", "BASH_ENV", "ENV",
 })
 
 

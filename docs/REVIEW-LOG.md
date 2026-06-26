@@ -836,3 +836,25 @@ users are devs). Live-validated against real providers throughout.
 - **Gate:** 161 passed, ruff clean, mypy clean (31 files), boundary OK, version OK.
 - **Adversarial review:** the web write endpoint (key handling + CSRF + hot-reload) is
   being sent to an independent security reviewer.
+- **Independent security review — reconciled (verdict was NEEDS FIXES):**
+  - **[HIGH] DNS-rebinding defeated the Origin-only CSRF guard on the ungated-loopback
+    default** → a web page could add a provider with a victim `key_env` + attacker
+    `base_url`, then a completion would ship the real key to the attacker. **Fixed:**
+    an **anti-DNS-rebinding Host guard** — on a loopback bind, any request whose `Host`
+    header is not a loopback literal is 403'd (defeats `Host: evil.com` rebinding),
+    applied to the WHOLE gateway (forward + setup), failing closed. Tested ungated.
+  - **[MED] web-added `base_url` was unvalidated** (SSRF / key-exfil sink). **Fixed:**
+    `config.add_provider` now rejects non-http(s) and link-local/metadata hosts
+    (mirrors `providers test`) — covers CLI + web. Tested.
+  - **[MED/LOW] Origin guard fail-open when header absent** — closed by the
+    fail-closed Host guard above.
+  - **[LOW] hot-reload 3-attr swap not atomic** → `server.apply_routes(...)` swaps
+    under the lock `chain_for` reads, so no torn routes/pools view.
+  - **[LOW] `_SENSITIVE_ENV` incomplete / error-path path-disclosure / key-env on
+    half-write** — hardened the denylist (LD_AUDIT/NODE_OPTIONS/BASH_ENV/…), the setup
+    error path now returns a generic message for non-ValueError (no secrets-path leak),
+    and `add_provider` validates `key_env`.
+  - **Verified-correct (kept):** token gate covers all endpoints when set; no key
+    leak (0600, never echoed/rendered/returned); cross-origin + null-origin blocked;
+    non-loopback bind without token refused at build time; no path traversal; body cap.
+  - **Gate after fixes:** 164 passed, ruff clean, mypy clean (31 files), boundary OK.

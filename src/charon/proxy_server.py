@@ -24,6 +24,7 @@ import urllib.request
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlsplit
 
+from .netutil import is_loopback
 from .proxy import GatewayProxy
 
 
@@ -347,6 +348,15 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
     def _handle(self) -> None:
         srv: GatewayProxyServer = self.server  # type: ignore[assignment]
 
+        # Anti-DNS-rebinding (security review HIGH): on a loopback bind, reject a Host
+        # header that isn't a loopback literal — defeats the rebinding that would
+        # otherwise let a web page drive the ungated-default gateway and exfiltrate keys.
+        if srv.require_loopback_host:
+            hosthdr = self.headers.get("Host", "")
+            if hosthdr and not is_loopback(urlsplit("//" + hosthdr).hostname or ""):
+                self._json(403, {"error": {"message": "host not allowed"}})
+                return
+
         # Token gate (gateway mode). Default ``token=None`` keeps the bare proxy
         # open — exactly its prior behavior; a set token requires it on every call.
         if srv.token is not None and not self._authorized(srv.token):
@@ -407,8 +417,11 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                     return
                 try:
                     status, obj = srv.setup_handler(path_only[len("/charon/"):], payload)
-                except Exception as exc:
-                    self._json(400, {"error": {"message": str(exc)}})
+                except ValueError as exc:
+                    self._json(400, {"error": {"message": str(exc)}})  # validation msg only
+                    return
+                except Exception:
+                    self._json(400, {"error": {"message": "setup write failed"}})  # no path leak
                     return
                 self._json(status, obj)
                 return
@@ -601,6 +614,11 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         self.observer = observer or GatewayProxy()
         self.fwd_timeout = fwd_timeout
         self.strip_v1 = strip_v1
+        # Anti-DNS-rebinding: when bound to loopback, only accept requests whose Host
+        # header is a loopback literal — a rebound attacker domain (Host: evil.com) is
+        # rejected, so a malicious web page can't drive the ungated-loopback gateway
+        # (security review HIGH). A non-loopback (tokened) bind relies on the token.
+        self.require_loopback_host = is_loopback(host)
         # Gateway mode (ADR-0005 P1): a bearer token (None = open) and the
         # agent-facing model ids to serve at /v1/models (None = don't intercept).
         self.token = token
@@ -631,15 +649,25 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
             return UpstreamRoute(self.upstream_base, self.api_key)
         return None
 
+    def apply_routes(self, routes: dict, pools: dict, model_ids: list[str]) -> None:
+        """Atomically swap the live routing config (web-setup hot-reload) under the
+        same lock ``chain_for`` reads — so an in-flight request never sees a torn
+        (mixed old/new) routes-vs-pools view (security review LOW)."""
+        with self._cooldown_lock:
+            self.routes = routes
+            self.pools = pools
+            self.model_ids = model_ids
+
     def chain_for(self, model: str) -> list[UpstreamRoute]:
         """The ordered failover chain for ``model``: a configured pool (multiple
         cost-ranked providers), else a single route/upstream (a chain of one), else
         ``[]`` (no route → 502). A 1-element chain never fails over — exactly the
         pre-P2 single-upstream behavior."""
-        if model in self.pools:
-            return list(self.pools[model])
-        single = self.route_for(model)
-        return [single] if single is not None else []
+        with self._cooldown_lock:  # paired with apply_routes → consistent snapshot
+            if model in self.pools:
+                return list(self.pools[model])
+            single = self.route_for(model)
+            return [single] if single is not None else []
 
     def order_by_cooldown(self, chain: list[UpstreamRoute]) -> list[UpstreamRoute]:
         """Try providers NOT in active cooldown first; keep cooled ones as a

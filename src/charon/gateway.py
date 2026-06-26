@@ -185,7 +185,7 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
     def _reload() -> None:
         secrets.apply_to_env()  # newly-stored keys → env so routes resolve
         new = load_config(state_dir=setup_dir)
-        server.routes, server.pools, server.model_ids = new.routes, new.pools, new.model_ids
+        server.apply_routes(new.routes, new.pools, new.model_ids)  # atomic (LOW fix)
 
     def handler(action: str, payload: dict):
         if action == "summary":

@@ -12,8 +12,21 @@ import json
 import os
 import re
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from . import secrets
+
+
+def _validate_base_url(base_url: str) -> None:
+    """A provider base URL later receives the real key as a Bearer on forward, so it
+    must be http(s) and not a link-local/cloud-metadata host (SSRF / key-exfil guard,
+    security review MED) — mirrors `charon providers test`."""
+    parts = urlsplit(base_url)
+    if parts.scheme not in ("http", "https"):
+        raise ValueError(f"base_url must be http(s), got {parts.scheme!r}")
+    host = parts.hostname or ""
+    if host.startswith("169.254.") or host == "metadata.google.internal":
+        raise ValueError(f"refusing link-local / metadata base_url host {host!r}")
 
 # Safe identifier for a provider/model/pool name (provider-prefixed model ids and
 # version suffixes are common, so allow ``. / : -`` alongside word chars).
@@ -68,6 +81,10 @@ def add_provider(name: str, *, base_url: str | None = None, key_env: str | None 
     a custom provider works without hand-edited config. Merges into any existing
     entry. Stores no secret value."""
     _check_id("provider", name)
+    if base_url is not None:
+        _validate_base_url(str(base_url))
+    if key_env is not None and not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", str(key_env)):
+        raise ValueError(f"invalid key-env name {key_env!r}")
     provs = load_providers()
     entry = dict(provs.get(name) or {})
     for k, v in (("base_url", base_url), ("key_env", key_env),
