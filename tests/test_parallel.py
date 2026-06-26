@@ -149,6 +149,50 @@ def test_run_parallel_shared_cap_bounds_the_set(tmp_path: Path) -> None:
     assert res.budget_capped  # at least one unit stopped at the shared cap
 
 
+def test_run_parallel_real_repo_units_never_share_a_guard_dir(tmp_path: Path) -> None:
+    """D2/CONC-1 (ADR-0007): N units pointed at ONE real ``--repo`` each get their
+    own per-unit ``git worktree`` off base, so their guard_dirs are distinct — no
+    two real-repo units share a working tree (the gap D2 closes).
+
+    Proven-red: before D2 a real repo was used AS-IS, so every unit's
+    ``target_repo`` was the same shared repo → one shared guard_dir."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    gitutil.init_repo(repo)
+    state = tmp_path / "state"
+    units = [Unit(goal=f"u{i}", accept=[f"test -f f{i}.txt"], autonomy="L1",
+                  repo=str(repo), creates=[f"f{i}.txt"]) for i in range(3)]
+    res = run_parallel(units, max_parallel=3, state_dir=str(state))
+    assert all(u["status"] == "complete" for u in res.units)
+    targets = [Path(u["target_repo"]) for u in res.units]
+    # no unit operates in the shared real repo itself …
+    assert all(t != repo.resolve() for t in targets)
+    # … and every unit's guard_dir (worktree.parent) is unique to that unit.
+    guard_dirs = {str(t.parent) for t in targets}
+    assert len(guard_dirs) == len(units)
+
+
+def test_run_parallel_real_repo_one_unit_escape_does_not_corrupt_siblings(
+    tmp_path: Path,
+) -> None:
+    """The per-unit real-repo worktree carries the isolation invariant end-to-end:
+    an ESCAPE unit is rejected on its own ledger while real-repo siblings still
+    complete — one unit's escape is invisible to the others."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    gitutil.init_repo(repo)
+    state = tmp_path / "state"
+    good = [Unit(goal=f"good {i}", accept=[f"test -f g{i}.txt"], autonomy="L1",
+                 repo=str(repo), creates=[f"g{i}.txt"]) for i in range(3)]
+    bad = Unit(goal="escaper", accept=["test -f never.txt"], autonomy="L1",
+               repo=str(repo), backend_mode="escape")
+    res = run_parallel([*good, bad], max_parallel=4, state_dir=str(state))
+    by_goal = {u["goal"]: u for u in res.units}
+    assert by_goal["escaper"]["status"] == "escaped"
+    for i in range(3):
+        assert by_goal[f"good {i}"]["status"] == "complete"
+
+
 # ------------------------------------------------- parallel + decomposition (D6 §3)
 
 def test_run_parallel_decomposed_units_fan_out(tmp_path: Path) -> None:

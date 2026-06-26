@@ -8,9 +8,10 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import threading
 import uuid
 from collections.abc import Mapping
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from . import gitutil
@@ -34,25 +35,66 @@ def make_task_id(goal: str) -> str:
     return f"{slug or 'task'}-{uuid.uuid4().hex[:8]}"
 
 
-def _prepare_repo(repo: str | None, state_dir: Path, task_id: str) -> str:
-    """Return a git worktree to operate in. If ``repo`` is given it must be a
-    git repo; otherwise a fresh sandbox repo is created (demo path).
+# Serialize concurrent `git worktree add` against one base repo: under
+# `run_parallel` N units prepare worktrees off the same `--repo` in N threads,
+# and git's worktree bookkeeping (`.git/worktrees`) is not concurrency-safe.
+_WORKTREE_LOCK = threading.Lock()
 
-    D2/CONC-1 (ADR-0006): the sandbox repo is nested at
-    ``sandbox/<task_id>/repo`` — NOT ``sandbox/<task_id>`` — so the coordinator's
-    ``guard_dir = worktree.parent`` resolves to ``sandbox/<task_id>/``, a
-    directory UNIQUE to this unit. Sibling units in the same ``state_dir`` then
-    never share a guard parent, so one unit's escape scan can never see another's
-    legitimate writes (the parallel-units isolation invariant)."""
+
+@dataclass
+class _PreparedRepo:
+    """What ``_prepare_repo`` hands back: the per-unit worktree to operate in
+    plus its teardown. ``base_repo`` is the real ``--repo`` a linked worktree was
+    cut from (ADR-0007 D2); it is ``None`` for the demo sandbox, which is left in
+    place for inspection rather than torn down."""
+
+    target: str
+    base_repo: str | None = None
+
+    def cleanup(self) -> None:
+        """Remove a real-repo per-unit worktree on teardown (no-op for the
+        sandbox). The committed objects survive in the base repo's object store;
+        only the isolated working tree is reclaimed."""
+        if self.base_repo is not None:
+            gitutil.remove_worktree(Path(self.base_repo), Path(self.target))
+
+
+def _prepare_repo(repo: str | None, state_dir: Path, task_id: str) -> _PreparedRepo:
+    """Return the per-unit worktree to operate in, plus its teardown.
+
+    D2/CONC-1 (ADR-0007): EVERY unit gets its OWN working tree nested one level
+    down (``…/<task_id>/repo``) so the coordinator's ``guard_dir =
+    worktree.parent`` resolves to ``…/<task_id>/`` — a directory UNIQUE to this
+    unit. Sibling units in the same ``state_dir`` then never share a guard parent,
+    so one unit's escape scan can never see another's legitimate writes (the
+    parallel-units isolation invariant).
+
+    - A real ``--repo`` gets a ``git worktree add`` off its current HEAD at
+      ``work/<task_id>/repo`` (it was previously used AS-IS, so N units shared one
+      tree + ``guard_dir``, silently defeating CONC-1 — the gap D2 closes). Charon
+      refuses to reuse an existing per-unit worktree dir, so two units can never
+      share one real working tree.
+    - Otherwise a fresh sandbox repo is created at ``sandbox/<task_id>/repo`` (the
+      demo path), left in place on teardown."""
     if repo:
-        p = Path(repo).resolve()
-        if not gitutil.is_repo(p):
-            raise ValueError(f"--repo {p} is not a git repository")
-        return str(p)
+        base = Path(repo).resolve()
+        if not gitutil.is_repo(base):
+            raise ValueError(f"--repo {base} is not a git repository")
+        work = (state_dir / "work" / task_id / "repo").resolve()
+        # Refuse >1 unit sharing one real working tree: an existing per-unit dir
+        # means a task_id collision / leftover — isolate or fail, never share.
+        if work.exists():
+            raise ValueError(
+                f"per-unit worktree {work} already exists; refusing to share a "
+                "real working tree across units"
+            )
+        with _WORKTREE_LOCK:
+            gitutil.add_worktree(base, work, gitutil.head(base))
+        return _PreparedRepo(target=str(work), base_repo=str(base))
     sandbox = (state_dir / "sandbox" / task_id / "repo").resolve()
     sandbox.mkdir(parents=True, exist_ok=True)
     gitutil.init_repo(sandbox)
-    return str(sandbox)
+    return _PreparedRepo(target=str(sandbox))
 
 
 def run_task(
@@ -95,7 +137,8 @@ def run_task(
         raise ValueError("at least one --accept executable check is required")
     sdir = Path(state_dir).resolve()
     task_id = make_task_id(goal)
-    target = _prepare_repo(repo, sdir, task_id)
+    prepared = _prepare_repo(repo, sdir, task_id)
+    target = prepared.target
     base_ref = gitutil.head(Path(target))
 
     checks = [AcceptanceCheck(id=f"a{i}", cmd=c) for i, c in enumerate(accept)]
@@ -104,82 +147,87 @@ def run_task(
     proxy_server = None
     failover_note = ""
     acp_names = [n.strip() for n in backend_name.split(",")]
-    if role is not None and backend is None and backends is None:
-        # Pool mode: cost-first failover across the role's pool, live.
-        if not acp_cmd:
-            raise ValueError("--role needs --acp-cmd")
-        from .failover import select_live_entry
-        from .proxy import GatewayProxy
-        from .proxy_server import GatewayProxyServer
-        prouter = StaticRouter.from_charon_dir(sdir)
-        pool = prouter.pools.get(role)
-        if not pool:
-            raise ValueError(f"no pool for role {role!r} in {sdir}/pools.json")
-        proxy_server = GatewayProxyServer(routes=_pool_routes(pool), observer=GatewayProxy())
-        proxy_server.serve_in_thread()
-        chosen = select_live_entry(prouter, role, proxy_server.observer,
-                                   _http_probe(proxy_server))
-        if chosen is None:
-            proxy_server.shutdown()
-            skipped = sorted(proxy_server.observer.exhausted_models())
-            return {"status": "exhausted", "task_id": task_id, "checkpoints": 0,
-                    "verified": [], "remaining": sorted(ledger.remaining()),
-                    "note": f"pool for {role!r} dry; all probed models unavailable: {skipped}",
-                    "target_repo": target, "state_dir": str(sdir)}
-        failover_note = (f"role {role!r} → {chosen.model} ({chosen.cost_tier})"
-                         + (f"; skipped {sorted(proxy_server.observer.exhausted_models())}"
-                            if proxy_server.observer.exhausted_models() else ""))
-        run_backends: dict = {"acp": _acp_for_proxy(acp_cmd, proxy_server, chosen.model)}
-    elif proxy_upstream and backend is None and backends is None and "acp" in acp_names:
-        if not acp_cmd:
-            raise ValueError("--proxy with an acp backend needs --acp-cmd")
-        key = os.environ.get(proxy_key_env or "", "")
-        if not key:
-            raise ValueError(f"proxy key env {proxy_key_env!r} is not set")
-        acp_backend, proxy_server = _start_proxy_acp(
-            acp_cmd, proxy_upstream, key, acp_model or "default")
-        run_backends = {"acp": acp_backend}
-    else:
-        run_backends = _resolve_backends(backend, backends, backend_name, checks, acp_cmd)
-
-    router = StaticRouter(backends=list(run_backends))
-    fence = Fence(autonomy=Autonomy[autonomy])
-    budget = Budget(max_checkpoints=max_checkpoints,
-                    max_cost_usd=max_cost_usd, max_tokens=max_tokens)
+    # Outer guard: whatever happens during setup or the run, the per-unit
+    # worktree is torn down on teardown (D2 — no leaked working trees).
     try:
-        work_unit = WorkUnit(task_id=task_id, goal=goal)
-        if decompose:
-            from .decompose import run_decomposed
-            result: RunResult = run_decomposed(
-                work_unit, run_backends, ledger, fence, router,
-                reviewer=reviewer, cost_gate=cost_gate,
-            )
+        if role is not None and backend is None and backends is None:
+            # Pool mode: cost-first failover across the role's pool, live.
+            if not acp_cmd:
+                raise ValueError("--role needs --acp-cmd")
+            from .failover import select_live_entry
+            from .proxy import GatewayProxy
+            from .proxy_server import GatewayProxyServer
+            prouter = StaticRouter.from_charon_dir(sdir)
+            pool = prouter.pools.get(role)
+            if not pool:
+                raise ValueError(f"no pool for role {role!r} in {sdir}/pools.json")
+            proxy_server = GatewayProxyServer(routes=_pool_routes(pool), observer=GatewayProxy())
+            proxy_server.serve_in_thread()
+            chosen = select_live_entry(prouter, role, proxy_server.observer,
+                                       _http_probe(proxy_server))
+            if chosen is None:
+                proxy_server.shutdown()
+                skipped = sorted(proxy_server.observer.exhausted_models())
+                return {"status": "exhausted", "task_id": task_id, "checkpoints": 0,
+                        "verified": [], "remaining": sorted(ledger.remaining()),
+                        "note": f"pool for {role!r} dry; all probed models unavailable: {skipped}",
+                        "target_repo": target, "state_dir": str(sdir)}
+            failover_note = (f"role {role!r} → {chosen.model} ({chosen.cost_tier})"
+                             + (f"; skipped {sorted(proxy_server.observer.exhausted_models())}"
+                                if proxy_server.observer.exhausted_models() else ""))
+            run_backends: dict = {"acp": _acp_for_proxy(acp_cmd, proxy_server, chosen.model)}
+        elif proxy_upstream and backend is None and backends is None and "acp" in acp_names:
+            if not acp_cmd:
+                raise ValueError("--proxy with an acp backend needs --acp-cmd")
+            key = os.environ.get(proxy_key_env or "", "")
+            if not key:
+                raise ValueError(f"proxy key env {proxy_key_env!r} is not set")
+            acp_backend, proxy_server = _start_proxy_acp(
+                acp_cmd, proxy_upstream, key, acp_model or "default")
+            run_backends = {"acp": acp_backend}
         else:
-            result = _run(
-                work_unit, run_backends, ledger, fence, router,
-                reviewer=reviewer,
-                max_checkpoints=max_checkpoints, budget=budget,
-                cost_gate=cost_gate,
-            )
+            run_backends = _resolve_backends(backend, backends, backend_name, checks, acp_cmd)
+
+        router = StaticRouter(backends=list(run_backends))
+        fence = Fence(autonomy=Autonomy[autonomy])
+        budget = Budget(max_checkpoints=max_checkpoints,
+                        max_cost_usd=max_cost_usd, max_tokens=max_tokens)
+        try:
+            work_unit = WorkUnit(task_id=task_id, goal=goal)
+            if decompose:
+                from .decompose import run_decomposed
+                result: RunResult = run_decomposed(
+                    work_unit, run_backends, ledger, fence, router,
+                    reviewer=reviewer, cost_gate=cost_gate,
+                )
+            else:
+                result = _run(
+                    work_unit, run_backends, ledger, fence, router,
+                    reviewer=reviewer,
+                    max_checkpoints=max_checkpoints, budget=budget,
+                    cost_gate=cost_gate,
+                )
+        finally:
+            # Always reap the agent subprocess(es) and the proxy (review #8 — no
+            # orphaned opencode processes left holding file handles).
+            for b in run_backends.values():
+                try:
+                    b.kill()
+                except Exception:
+                    pass
+            if proxy_server is not None:
+                proxy_server.shutdown()
+        out = asdict(result)
+        out["task_id"] = task_id
+        out["target_repo"] = target
+        out["state_dir"] = str(sdir)
+        if proxy_upstream:
+            out["proxy"] = {"upstream": proxy_upstream, "model": acp_model}
+        if failover_note:
+            out["failover"] = failover_note
+        return out
     finally:
-        # Always reap the agent subprocess(es) and the proxy (review #8 — no
-        # orphaned opencode processes left holding file handles).
-        for b in run_backends.values():
-            try:
-                b.kill()
-            except Exception:
-                pass
-        if proxy_server is not None:
-            proxy_server.shutdown()
-    out = asdict(result)
-    out["task_id"] = task_id
-    out["target_repo"] = target
-    out["state_dir"] = str(sdir)
-    if proxy_upstream:
-        out["proxy"] = {"upstream": proxy_upstream, "model": acp_model}
-    if failover_note:
-        out["failover"] = failover_note
-    return out
+        prepared.cleanup()
 
 
 # Env the live ACP agent needs to find its own config — merged back over the

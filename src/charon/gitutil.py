@@ -47,3 +47,24 @@ def commit_all(cwd: Path, message: str) -> str | None:
 
 def reset_hard(cwd: Path, ref: str) -> None:
     _run(["reset", "--hard", "-q", ref], cwd)
+
+
+def add_worktree(repo: Path, dest: Path, ref: str) -> None:
+    """Add a linked git worktree of ``repo`` at ``dest``, checked out (detached)
+    at ``ref``. The worktree shares ``repo``'s object store but is an isolated
+    working tree — the per-unit isolation primitive (ADR-0007 D2). ``dest``'s
+    parent is created first so the worktree nests one level down, making that
+    parent a unit-unique ``guard_dir`` for the fence escape scan."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    _run(["worktree", "add", "--detach", str(dest), ref], repo)
+
+
+def remove_worktree(repo: Path, dest: Path) -> None:
+    """Remove the linked worktree at ``dest`` (created by ``add_worktree``) and
+    prune its admin entry. Best-effort: an already-removed/missing worktree is not
+    an error — teardown must never raise."""
+    for args in (["worktree", "remove", "--force", str(dest)], ["worktree", "prune"]):
+        try:
+            _run(args, repo)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
