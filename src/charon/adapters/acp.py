@@ -56,6 +56,8 @@ class AcpBackend:
         self._lock = threading.Lock()
         self._last_usage: dict = {}
         self._buf = b""
+        # Set after each session/new so probe/resume logic can surface it.
+        self.last_session_id: str | None = None
 
     # ----------------------------------------------------------- lifecycle
     def _start(self, worktree: Path, env: dict[str, str]) -> None:
@@ -147,6 +149,7 @@ class AcpBackend:
         session = self._rpc("session/new", {"cwd": str(worktree),
                                             "mcpServers": []})
         session_id = session.get("sessionId") or session.get("session_id")
+        self.last_session_id = session_id
         try:
             self._rpc(
                 "session/prompt",

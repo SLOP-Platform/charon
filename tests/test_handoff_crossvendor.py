@@ -1,8 +1,6 @@
-"""Tier 2a — cross-vendor handoff, proven against two MOCK vendors.
+"""Cross-vendor handoff — mock contract proofs + live ACP integration proof.
 
-These are the re-shaped, non-tautological proofs the adversarial review demanded
-(REVIEW-LOG 2026-06-24, OOB2-2 / OOB2-8 / BR2-4):
-
+Mock proofs (re-shaped per REVIEW-LOG 2026-06-24, OOB2-2 / OOB2-8 / BR2-4):
 - the handoff loop excludes the FULL exhausted set, never re-picks a dead backend;
 - progress truth lives in the ledger+disk, so a LYING backend's claim does not
   survive a vendor switch (the real H3 content, not two well-behaved mocks
@@ -10,17 +8,24 @@ These are the re-shaped, non-tautological proofs the adversarial review demanded
 - a killed coordinator rehydrates without replaying committed work (H5);
 - exhaustion (H4) routes to a *different* vendor, which finishes from the ledger.
 
-Live ACP-to-ACP handoff still needs two real agents (not in this env); that is
-gated behind `charon doctor`. What is proven here is the vendor-agnostic
-contract, honestly.
+Live ACP proofs (REVIEW-LOG 2026-06-26 — feat/live-acp-handoff):
+- test_live_acp_crossvendor_handoff: two AcpBackend instances backed by Python
+  stdlib stubs (no keys, no network) prove the same contract through real
+  subprocess ACP dispatch. Stub A signals H4 exhaustion via session/update
+  rate_limited; stub B completes. Closes the OOB2-1 honesty gap honestly.
+- test_live_doctor_probe_handoff: probe_handoff() confirmed green with stubs.
 """
 from __future__ import annotations
 
+import sys
+import textwrap
 from pathlib import Path
 
 from charon import coordinator, gitutil, handoff
 from charon.acceptance import AcceptanceCheck
+from charon.adapters.acp import AcpBackend
 from charon.adapters.mock import MockBackend, MockMode
+from charon.doctor import probe_handoff
 from charon.fence import Fence
 from charon.ledger import Ledger
 from charon.router import StaticRouter
@@ -155,3 +160,125 @@ def test_lying_vendor_claim_does_not_survive_handoff(
     assert res.status == "complete"
     assert led.provider_history[0] == "mock-a"
     assert "mock-b" in led.provider_history
+
+
+# ========================================================= live ACP proof
+# These tests run real ACP subprocess clients (AcpBackend) backed by Python
+# stdlib stubs — no API keys, no network. The stubs speak the ACP protocol
+# over stdio and create files in the shared worktree, exercising the same code
+# paths a real Claude Code / Codex agent would hit.
+
+def _write_stubs(tmp_path: Path) -> tuple[Path, Path]:
+    """Write two self-contained ACP stub scripts to tmp_path.
+
+    Stub A: creates handoff-a.txt then emits session/update {rate_limited:true}
+    before returning success — the H4 exhaustion signal absorbed by health().
+    Stub B: creates handoff-b.txt and returns success.
+    Both stubs respect the cwd supplied in session/new params.
+    """
+    stub_a = tmp_path / "stub_a.py"
+    stub_a.write_text(textwrap.dedent("""\
+        import json, os, sys
+        def respond(obj):
+            sys.stdout.buffer.write(json.dumps(obj).encode() + b"\\n")
+            sys.stdout.buffer.flush()
+        cwd = os.getcwd()
+        for raw in sys.stdin.buffer:
+            raw = raw.strip()
+            if not raw: continue
+            try: req = json.loads(raw)
+            except Exception: continue
+            m, rid = req.get("method", ""), req.get("id")
+            if m == "initialize":
+                respond({"jsonrpc": "2.0", "id": rid,
+                         "result": {"protocolVersion": 1, "capabilities": {}}})
+            elif m == "session/new":
+                cwd = req.get("params", {}).get("cwd", cwd)
+                respond({"jsonrpc": "2.0", "id": rid, "result": {"sessionId": "a-1"}})
+            elif m == "session/prompt":
+                open(os.path.join(cwd, "handoff-a.txt"), "w").write("by stub-a\\n")
+                respond({"jsonrpc": "2.0", "method": "session/update",
+                         "params": {"usage": {"rate_limited": True}}})
+                respond({"jsonrpc": "2.0", "id": rid, "result": {"done": True}})
+                break
+    """))
+
+    stub_b = tmp_path / "stub_b.py"
+    stub_b.write_text(textwrap.dedent("""\
+        import json, os, sys
+        def respond(obj):
+            sys.stdout.buffer.write(json.dumps(obj).encode() + b"\\n")
+            sys.stdout.buffer.flush()
+        cwd = os.getcwd()
+        for raw in sys.stdin.buffer:
+            raw = raw.strip()
+            if not raw: continue
+            try: req = json.loads(raw)
+            except Exception: continue
+            m, rid = req.get("method", ""), req.get("id")
+            if m == "initialize":
+                respond({"jsonrpc": "2.0", "id": rid,
+                         "result": {"protocolVersion": 1, "capabilities": {}}})
+            elif m == "session/new":
+                cwd = req.get("params", {}).get("cwd", cwd)
+                respond({"jsonrpc": "2.0", "id": rid, "result": {"sessionId": "b-1"}})
+            elif m == "session/prompt":
+                open(os.path.join(cwd, "handoff-b.txt"), "w").write("by stub-b\\n")
+                respond({"jsonrpc": "2.0", "id": rid, "result": {"done": True}})
+                break
+    """))
+
+    return stub_a, stub_b
+
+
+def test_live_acp_crossvendor_handoff(
+    state_dir: Path, git_repo: Path, tmp_path: Path
+) -> None:
+    """Live ACP cross-vendor handoff: real AcpBackend subprocess dispatch, no mocks.
+
+    Stub A creates handoff-a.txt and signals H4 exhaustion via session/update
+    rate_limited (absorbed by health()). Coordinator routes to stub B, which
+    creates handoff-b.txt. Asserts the full handoff contract:
+    - res.status == "complete"
+    - provider_history records both vendors in order
+    - both acceptance checks pass on disk
+    - lkg_ref advances (INV-2: only after full verification)
+    """
+    stub_a_path, stub_b_path = _write_stubs(tmp_path)
+    checks = [
+        AcceptanceCheck("ha", "test -f handoff-a.txt"),
+        AcceptanceCheck("hb", "test -f handoff-b.txt"),
+    ]
+    unit = WorkUnit(task_id="live-handoff", goal="create handoff-a.txt and handoff-b.txt")
+    led = Ledger.create(state_dir, "live-handoff", unit.goal, checks,
+                        str(git_repo), gitutil.head(git_repo))
+
+    backend_a = AcpBackend(command=[sys.executable, str(stub_a_path)], name="stub-a")
+    backend_b = AcpBackend(command=[sys.executable, str(stub_b_path)], name="stub-b")
+
+    res = coordinator.run(
+        unit,
+        {"stub-a": backend_a, "stub-b": backend_b},
+        led,
+        Fence(Autonomy.L1),
+        StaticRouter(backends=["stub-a", "stub-b"]),
+    )
+
+    assert res.status == "complete"
+    assert led.provider_history == ["stub-a", "stub-b"]
+    assert (git_repo / "handoff-a.txt").exists()
+    assert (git_repo / "handoff-b.txt").exists()
+    assert led.lkg_ref != led.base_ref
+
+
+def test_live_doctor_probe_handoff(tmp_path: Path) -> None:
+    """probe_handoff() returns ok when driven by real ACP subprocess stubs."""
+    stub_a_path, stub_b_path = _write_stubs(tmp_path)
+    rep = probe_handoff(
+        [sys.executable, str(stub_a_path)],
+        [sys.executable, str(stub_b_path)],
+    )
+    assert rep.a_dispatched, rep.notes
+    assert rep.b_dispatched, rep.notes
+    assert rep.handoff_completes, rep.notes
+    assert rep.ok
