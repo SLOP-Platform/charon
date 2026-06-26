@@ -12,6 +12,17 @@ the first plan (feasibility / security / scope) — see REVIEW-LOG.
 > AIMD capacity, scanner matrix) remain **deliberately deferred behind their D10
 > tripwires** — accepting this ADR accepts that deferral, not their construction.
 
+> **AMENDED by ADR-0010 (2026-06-26).** D10 over-reached: it folded the **coordination
+> substrate** (board + atomic claim/lease + worker-liveness + `WorkerBackend` port +
+> spawn-to-demand scheduler) into indefinite deferral, inverting the operator's decision
+> that the work-engine is **core, built native, sooner** ([[charon-own-work-engine]]).
+> ADR-0010 promotes that substrate to a roadmapped native build (the fleet rig is its
+> reference impl); the D10 tripwires for those items become **sequencing, not deferral**.
+> The **trust-extending** items the review was right about — D5 auto-land,
+> scanner-as-required, ADR-0008 Phase-2 autonomous run, AIMD — **stay gated**. See
+> ADR-0010 for the substrate design + the intelligent (lightweight/measured) scanner
+> matrix.
+
 ## Context
 Operator vision (settled): Charon is a **work engine** — *analyze* work → *decompose*
 it → *assign* to multiple parallel workers → land safely, so work runs concurrently
