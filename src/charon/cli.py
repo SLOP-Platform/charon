@@ -73,7 +73,10 @@ def _cmd_gateway(args: argparse.Namespace) -> int:
         port=args.port,
         token=args.token,
     )
-    return gateway.run(cfg)
+    # enable the read-write web setup page for the config-dir/state-dir flow (not for
+    # --config TOML, where the user manages the file directly)
+    setup_dir = None if args.config else state_dir
+    return gateway.run(cfg, setup_dir=setup_dir)
 
 
 def _cmd_providers(args: argparse.Namespace) -> int:

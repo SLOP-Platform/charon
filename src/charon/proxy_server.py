@@ -104,6 +104,85 @@ async function tick(){
 tick();setInterval(tick,2000);
 </script></body></html>"""
 
+# Self-contained web SETUP page (read-write). Posts to /charon/{providers,models,
+# pools}; the key field is a password input and is never rendered back.
+_SETUP_HTML = """<!doctype html><html><head><meta charset="utf-8">
+<title>Charon Setup</title><style>
+body{font:14px system-ui,sans-serif;margin:1.5rem;max-width:46rem;background:#0b0e14;color:#cdd6f4}
+h1{font-size:1.2rem}h2{font-size:1rem;color:#89b4fa;margin-top:1.4rem}
+fieldset{border:1px solid #313244;border-radius:6px;margin:.6rem 0;padding:.6rem .8rem}
+label{display:inline-block;min-width:7rem}
+input{background:#1e1e2e;color:#cdd6f4;border:1px solid #313244;
+  border-radius:4px;padding:.25rem .4rem;margin:.15rem 0}
+button{background:#89b4fa;color:#11111b;border:0;border-radius:4px;
+  padding:.3rem .8rem;cursor:pointer;margin-top:.3rem}
+code{background:#1e1e2e;padding:.1rem .3rem;border-radius:3px}.ok{color:#a6e3a1}.bad{color:#f38ba8}
+table{border-collapse:collapse;width:100%}
+td,th{text-align:left;padding:.2rem .5rem;border-bottom:1px solid #313244}
+</style></head><body>
+<h1>Charon Setup</h1><div id=msg class=muted></div>
+<fieldset><h2>Add provider</h2>
+<div><label>name</label>
+  <input id=pname list=presets placeholder="openrouter / deepseek / my-provider">
+  <datalist id=presets></datalist></div>
+<div><label>base URL</label><input id=pbase size=36 placeholder="(blank if it's a preset)"></div>
+<div><label>key env</label><input id=pkenv placeholder="(blank = preset default)"></div>
+<div><label>API key</label>
+  <input id=pkey type=password size=36 placeholder="paste key (stored 0600)"></div>
+<button onclick=addProvider()>Add provider</button></fieldset>
+<fieldset><h2>Add model</h2>
+<div><label>model id</label><input id=mid placeholder="id clients request"></div>
+<div><label>provider</label><input id=mprov></div>
+<div><label>upstream id</label><input id=mups placeholder="(blank = same)"></div>
+<div><label>free?</label><input id=mfree type=checkbox></div>
+<button onclick=addModel()>Add model</button></fieldset>
+<fieldset><h2>Failover pool</h2>
+<div><label>pool id</label><input id=plid placeholder="auto"></div>
+<div><label>models</label><input id=plmem size=36 placeholder="comma,separated,model,ids"></div>
+<button onclick=addPool()>Create pool</button></fieldset>
+<h2>Current config</h2><div id=cfg></div>
+<script>
+const tok=new URLSearchParams(location.search).get('token');
+const H=Object.assign({'Content-Type':'application/json'},tok?{'Authorization':'Bearer '+tok}:{});
+function esc(s){return String(s).replace(/[&<>"']/g,
+  c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function val(id){return document.getElementById(id).value.trim()}
+function msg(t,ok){const m=document.getElementById('msg');m.textContent=t;m.className=ok?'ok':'bad'}
+async function post(path,body){
+  const r=await fetch(path,{method:'POST',headers:H,body:JSON.stringify(body)});
+  const d=await r.json().catch(()=>({})); return {ok:r.ok,d};}
+async function addProvider(){
+  const b={name:val('pname'),base_url:val('pbase')||null,
+    key_env:val('pkenv')||null,key:val('pkey')||null};
+  const {ok,d}=await post('/charon/providers',b);
+  msg(ok?('added provider '+b.name):('error: '+(d.error&&d.error.message)),ok);
+  if(ok){document.getElementById('pkey').value='';load();}}
+async function addModel(){
+  const free=document.getElementById('mfree').checked;
+  const b={id:val('mid'),provider:val('mprov')||null,
+    upstream_model:val('mups')||null,free:free,cost_rank:free?0:1000};
+  const {ok,d}=await post('/charon/models',b);
+  msg(ok?('added model '+b.id):('error: '+(d.error&&d.error.message)),ok); if(ok)load();}
+async function addPool(){
+  const b={id:val('plid')||'auto',members:val('plmem').split(',').map(s=>s.trim()).filter(Boolean)};
+  const {ok,d}=await post('/charon/pools',b);
+  msg(ok?('created pool '+b.id):('error: '+(d.error&&d.error.message)),ok); if(ok)load();}
+async function load(){
+  let r; try{r=await fetch('/charon/config',{headers:H})}catch(e){return}
+  if(!r.ok){msg('not authorized — append ?token=… to the URL',false);return}
+  const d=await r.json();
+  document.getElementById('presets').innerHTML=
+    (d.presets||[]).map(p=>'<option value="'+esc(p)+'">').join('');
+  let h='<table><tr><th>provider<th>base<th>key</tr>';
+  for(const[n,p]of Object.entries(d.providers||{}))h+='<tr><td><code>'+esc(n)+
+    '</code><td>'+esc(p.base_url||'(preset)')+'<td>'+
+    (p.key_set?'<span class=ok>set</span>':'<span class=bad>missing</span>')+'</tr>';
+  h+='</table><b>models:</b> '+Object.keys(d.models||{}).map(esc).join(', ')+'<br><b>pools:</b> '+
+     Object.entries(d.pools||{}).map(([k,v])=>esc(k)+'=['+v.map(esc).join(', ')+']').join('  ');
+  document.getElementById('cfg').innerHTML=h;}
+load();
+</script></body></html>"""
+
 
 def _extract(raw: bytes, content_type: str) -> dict:
     """Pull a ``{model, usage}`` view out of an upstream response — JSON for a
@@ -290,6 +369,48 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 return
             if path_only in ("", "/charon"):
                 self._html(_CONSOLE_HTML)
+                return
+
+        # Web setup (read-WRITE) — only when a setup handler is wired (gateway mode,
+        # token-gated above). A CSRF/Origin guard backs the token gate on writes.
+        if srv.setup_handler is not None and srv.model_ids is not None:
+            if self.command == "GET" and path_only == "/charon/setup":
+                self._html(_SETUP_HTML)
+                return
+            if self.command == "GET" and path_only == "/charon/config":
+                status, obj = srv.setup_handler("summary", {})
+                self._json(status, obj)
+                return
+            if self.command == "POST" and path_only in (
+                    "/charon/providers", "/charon/models", "/charon/pools", "/charon/remove"):
+                host = self.headers.get("Host", "")
+                origin = self.headers.get("Origin")
+                if origin and urlsplit(origin).netloc != host:  # CSRF: cross-origin write
+                    self._json(403, {"error": {"message": "cross-origin write refused"}})
+                    return
+                sfs = self.headers.get("Sec-Fetch-Site")
+                if sfs and sfs not in ("same-origin", "none"):
+                    self._json(403, {"error": {"message": "cross-site write refused"}})
+                    return
+                length = int(self.headers.get("Content-Length") or 0)
+                if length > srv.max_body_bytes:
+                    self._json(413, {"error": {"message": "request body too large"}})
+                    return
+                raw = self.rfile.read(length) if length else b""
+                try:
+                    payload = json.loads(raw) if raw else {}
+                except Exception:
+                    self._json(400, {"error": {"message": "invalid JSON"}})
+                    return
+                if not isinstance(payload, dict):
+                    self._json(400, {"error": {"message": "expected a JSON object"}})
+                    return
+                try:
+                    status, obj = srv.setup_handler(path_only[len("/charon/"):], payload)
+                except Exception as exc:
+                    self._json(400, {"error": {"message": str(exc)}})
+                    return
+                self._json(status, obj)
                 return
 
         # Read the client request (size-capped — memory-DoS guard on an exposed bind).
@@ -496,6 +617,10 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         self.failover_events: collections.deque[dict] = collections.deque(maxlen=200)
         # per-provider counters for the console (P4): label → served/failed/cost.
         self.provider_stats: dict[str, dict] = {}
+        # Optional web-setup write handler (Setup phase): callable(action, payload) ->
+        # (status, dict). None (default) keeps the console READ-ONLY. The gateway wires
+        # this only for the user-config-dir flow; it writes config + reloads routes.
+        self.setup_handler = None
 
     def route_for(self, model: str) -> UpstreamRoute | None:
         """Which upstream serves ``model``: an explicit route, else the single

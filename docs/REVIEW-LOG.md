@@ -802,3 +802,37 @@ Two MED + two LOW gaps fixed:
   - New tests: key-never-sent-on-test (mock records no `Authorization`), non-http
     scheme rejected, bad key-env rejected, sensitive/malformed env skipped.
 - **Gate after fixes:** 147 passed, ruff clean, mypy clean (30 files), boundary OK.
+
+---
+
+## 2026-06-26 — P6 (gateway-first README) + Setup phase
+
+Operator-approved reshape: P6 + a real setup experience; the Windows `.exe`
+deferred (most tools like this ship `pipx`/`uvx`, not an `.exe`; the operator's
+users are devs). Live-validated against real providers throughout.
+
+- **P6:** README reframed gateway-first (gateway = headline + first section; the
+  orchestrator is a clearly-marked "Advanced: autonomous mode", with the autonomy
+  disclosure scoped to it). Test enforces ADR-0005 **R3**: the gateway shares the
+  `GatewayProxy` core AND never imports the privileged coordinator loop.
+- **Config layer** (`config.py`): one validated, atomic writer for
+  providers/models/pools JSON in the user config dir — shared by the CLI and the web
+  page; the gateway now defaults its config source to `~/.charon` so it "just works"
+  after setup. `providers add` now **persists the provider** (base_url/key_env), so a
+  CUSTOM provider (DeepSeek, Chutes, …) works with no hand-edited TOML.
+- **More presets:** deepseek, chutes, groq, together, mistral — **all base URLs
+  verified live** via `providers test`. README: any OpenAI-compatible provider works
+  via `--base-url`.
+- **`charon setup` wizard:** guided providers→keys→models→pool, written to the config
+  dir; getpass (no echo); graceful no-TTY exit.
+- **Web setup page** (read-WRITE — security-sensitive): `GET /charon/setup` form +
+  `POST /charon/{providers,models,pools,remove}` behind a hook (`proxy_server` stays
+  lean). Token-gated (same gate); **CSRF/Origin guard** rejects cross-origin/cross-site
+  writes even with a leaked token; body-size capped; the key field is a password input
+  and **never rendered back**; the summary exposes key-SET state, not the value. Writes
+  persist config + keys (0600) and **hot-reload** the running routes (proven:
+  POST provider+model → `/v1/models` updates with no restart). Disabled (read-only)
+  for `--config` TOML mode.
+- **Gate:** 161 passed, ruff clean, mypy clean (31 files), boundary OK, version OK.
+- **Adversarial review:** the web write endpoint (key handling + CSRF + hot-reload) is
+  being sent to an independent security reviewer.

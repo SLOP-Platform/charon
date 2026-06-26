@@ -153,40 +153,104 @@ def load_config(
     )
 
 
-def build_server(cfg: GatewayConfig) -> GatewayProxyServer:
+def build_server(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> GatewayProxyServer:
     """Construct the gateway server. Enforces the loopback/token invariant HERE —
     at bind time — so it holds for ANY caller, not just ``run`` (security review
-    MED: ``__init__`` binds the socket, so the guard must precede construction)."""
+    MED: ``__init__`` binds the socket, so the guard must precede construction).
+
+    ``setup_dir`` wires the read-WRITE web setup endpoints (write config there +
+    hot-reload routes). None keeps the console read-only."""
     if not is_loopback(cfg.host) and not cfg.token:
         raise GatewayBindRefused(
             f"refusing to bind a non-loopback host ({cfg.host}) without a token — "
             f"the gateway holds your provider keys. Set CHARON_GATEWAY_TOKEN / "
             f"--token, or bind 127.0.0.1 for local use (ADR-0005 D5/R8)."
         )
-    return GatewayProxyServer(
+    server = GatewayProxyServer(
         routes=cfg.routes, pools=cfg.pools, host=cfg.host, port=cfg.port,
         token=cfg.token, model_ids=cfg.model_ids,
     )
+    if setup_dir is not None:
+        server.setup_handler = make_setup_handler(server, setup_dir)
+    return server
 
 
-def run(cfg: GatewayConfig) -> int:
-    """Start the gateway and serve until interrupted."""
+def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
+    """A web-setup write handler: ``(action, payload) -> (status, dict)`` that writes
+    config to ``setup_dir`` (+ keys to the 0600 secrets file) and hot-reloads the
+    running server's routes. Never returns a key. Bad input raises (→ 400 upstream)."""
+    from . import config, secrets
+    from . import providers as P
+
+    def _reload() -> None:
+        secrets.apply_to_env()  # newly-stored keys → env so routes resolve
+        new = load_config(state_dir=setup_dir)
+        server.routes, server.pools, server.model_ids = new.routes, new.pools, new.model_ids
+
+    def handler(action: str, payload: dict):
+        if action == "summary":
+            s = config.summary()
+            s["presets"] = sorted(P.PRESETS)
+            return 200, s
+        if action == "providers":
+            name = str(payload.get("name") or "").strip()
+            base_url = payload.get("base_url") or None
+            preset = P.resolve(name, {"base_url": base_url} if base_url else None)  # validates
+            key_env = (payload.get("key_env") or preset.key_env) or None
+            config.add_provider(name, base_url=base_url, key_env=key_env,
+                                strip_v1=(preset.strip_v1 if base_url else None))
+            key = payload.get("key")
+            if key_env and key:
+                secrets.set_secret(str(key_env), str(key))
+            _reload()
+            return 200, {"ok": True, "provider": name}
+        if action == "models":
+            config.add_model(
+                str(payload.get("id") or ""),
+                provider=(payload.get("provider") or None),
+                upstream_base=(payload.get("upstream_base") or None),
+                upstream_model=(payload.get("upstream_model") or None),
+                free=bool(payload.get("free")),
+                cost_rank=int(payload.get("cost_rank", 1000)),
+            )
+            _reload()
+            return 200, {"ok": True}
+        if action == "pools":
+            config.set_pool(str(payload.get("id") or ""),
+                            [str(m) for m in (payload.get("members") or [])])
+            _reload()
+            return 200, {"ok": True}
+        if action == "remove":
+            ok = config.remove(str(payload.get("kind")), str(payload.get("name")))
+            _reload()
+            return 200, {"ok": ok}
+        return 400, {"error": {"message": f"unknown action {action!r}"}}
+
+    return handler
+
+
+def run(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> int:
+    """Start the gateway and serve until interrupted. ``setup_dir`` enables the
+    read-write web setup page (writing config there)."""
     if cfg.token is None and os.environ.get(_TOKEN_ENV) == "":
         print(f"warning: {_TOKEN_ENV} is set but EMPTY — running UNGATED on loopback",
               file=sys.stderr)
     try:
-        server = build_server(cfg)
+        server = build_server(cfg, setup_dir=setup_dir)
     except GatewayBindRefused as exc:
         print(str(exc), file=sys.stderr)
         return 2
     if not cfg.routes and not cfg.pools:
-        print("warning: no models configured (need a charon.toml or "
-              ".charon/models.json with upstream_base entries)", file=sys.stderr)
+        print("warning: no models configured — run `charon setup`, "
+              "`charon providers add <name>`, or open the setup page below",
+              file=sys.stderr)
     gate = "token-gated" if cfg.token else "loopback, UNGATED"
     print(f"charon gateway ({gate}) on {server.url}/v1 — "
           f"{len(cfg.model_ids)} model(s), {len(cfg.pools)} pool(s)", file=sys.stderr)
     tq = f"?token={cfg.token}" if cfg.token else ""
     print(f"  console: {server.url}/{tq}", file=sys.stderr)
+    if setup_dir is not None:
+        print(f"  setup:   {server.url}/charon/setup{tq}", file=sys.stderr)
     try:
         server.serve_forever()
     except KeyboardInterrupt:  # pragma: no cover
