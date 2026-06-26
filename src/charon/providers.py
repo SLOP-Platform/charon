@@ -45,8 +45,9 @@ PRESETS: dict[str, ProviderPreset] = {
         "https://nano-gpt.com/api/v1", "NANOGPT_API_KEY",
         note="Base verified live (HTTP 200 from /models)."),
     "zai": ProviderPreset(
-        "https://api.z.ai/api/paas/v4", "ZAI_API_KEY", strip_v1=False,
-        note="Base verified live (HTTP 401 from /models — needs a key)."),
+        "https://api.z.ai/api/paas/v4", "ZAI_API_KEY",
+        note="Verified live: chat at /api/paas/v4/chat/completions (strip_v1 strips "
+             "the client's /v1 and appends to the /v4 base)."),
     # Local OpenAI-compatible servers (usually no auth). Default ports shown.
     "lmstudio": ProviderPreset("http://localhost:1234/v1", None,
                                note="LM Studio (default port 1234)."),

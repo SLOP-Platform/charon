@@ -27,8 +27,10 @@ def test_unknown_provider_with_base_url_ok():
     assert p.base_url == "http://localhost:9/v1" and p.key_env is None
 
 
-def test_zai_preset_keeps_strip_v1_false():
-    assert providers.resolve("zai").strip_v1 is False
+def test_zai_preset_strips_v1():
+    # live-confirmed: zai chat is /api/paas/v4/chat/completions, so the client's
+    # /v1 prefix must be stripped (strip_v1 True) — NOT forwarded as /v4/v1/...
+    assert providers.resolve("zai").strip_v1 is True
 
 
 def test_model_referencing_provider_resolves_route(monkeypatch, tmp_path):
