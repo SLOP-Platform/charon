@@ -17,7 +17,7 @@ from . import gitutil
 from .acceptance import AcceptanceCheck
 from .adapters.acp import AcpBackend
 from .adapters.mock import MockBackend
-from .coordinator import RunResult
+from .coordinator import CostGate, RunResult
 from .coordinator import run as _run
 from .fence import Fence
 from .ledger import Ledger
@@ -36,13 +36,20 @@ def make_task_id(goal: str) -> str:
 
 def _prepare_repo(repo: str | None, state_dir: Path, task_id: str) -> str:
     """Return a git worktree to operate in. If ``repo`` is given it must be a
-    git repo; otherwise a fresh sandbox repo is created (demo path)."""
+    git repo; otherwise a fresh sandbox repo is created (demo path).
+
+    D2/CONC-1 (ADR-0006): the sandbox repo is nested at
+    ``sandbox/<task_id>/repo`` — NOT ``sandbox/<task_id>`` — so the coordinator's
+    ``guard_dir = worktree.parent`` resolves to ``sandbox/<task_id>/``, a
+    directory UNIQUE to this unit. Sibling units in the same ``state_dir`` then
+    never share a guard parent, so one unit's escape scan can never see another's
+    legitimate writes (the parallel-units isolation invariant)."""
     if repo:
         p = Path(repo).resolve()
         if not gitutil.is_repo(p):
             raise ValueError(f"--repo {p} is not a git repository")
         return str(p)
-    sandbox = (state_dir / "sandbox" / task_id).resolve()
+    sandbox = (state_dir / "sandbox" / task_id / "repo").resolve()
     sandbox.mkdir(parents=True, exist_ok=True)
     gitutil.init_repo(sandbox)
     return str(sandbox)
@@ -67,6 +74,8 @@ def run_task(
     max_checkpoints: int = 8,
     max_cost_usd: float | None = None,
     max_tokens: int | None = None,
+    cost_gate: CostGate | None = None,
+    decompose: bool = False,
 ) -> dict:
     """Create a Work Ledger and drive the goal to acceptance or a bounded stop.
 
@@ -75,6 +84,11 @@ def run_task(
     ``backend_name`` parsed as a comma-separated list, each name becoming a
     satisfying mock vendor (the Tier-1/2 demo path; real ACP needs a live agent —
     see ``charon doctor``).
+
+    ``cost_gate`` (PERF-4) is the shared, race-free aggregate budget when this run
+    is one of N dispatched by ``parallel.run_parallel``; ``None`` for a solo run.
+    ``decompose`` (PERF-4/D5) drives the goal through the sequential role-DAG
+    (Triage→…→Close) instead of the plain single-unit loop — one ledger either way.
 
     Returns a JSON-serializable dict (the RunResult plus task id + lkg)."""
     if not accept:
@@ -133,12 +147,20 @@ def run_task(
     budget = Budget(max_checkpoints=max_checkpoints,
                     max_cost_usd=max_cost_usd, max_tokens=max_tokens)
     try:
-        result: RunResult = _run(
-            WorkUnit(task_id=task_id, goal=goal),
-            run_backends, ledger, fence, router,
-            reviewer=reviewer,
-            max_checkpoints=max_checkpoints, budget=budget,
-        )
+        work_unit = WorkUnit(task_id=task_id, goal=goal)
+        if decompose:
+            from .decompose import run_decomposed
+            result: RunResult = run_decomposed(
+                work_unit, run_backends, ledger, fence, router,
+                reviewer=reviewer, cost_gate=cost_gate,
+            )
+        else:
+            result = _run(
+                work_unit, run_backends, ledger, fence, router,
+                reviewer=reviewer,
+                max_checkpoints=max_checkpoints, budget=budget,
+                cost_gate=cost_gate,
+            )
     finally:
         # Always reap the agent subprocess(es) and the proxy (review #8 — no
         # orphaned opencode processes left holding file handles).

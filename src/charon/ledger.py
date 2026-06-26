@@ -69,6 +69,10 @@ class Checkpoint:
     # consulted, None if not (L0/L1, or no reviewer). Recorded for audit (INV-1).
     reviewer_passed: bool | None = None
     reviewer_note: str = ""
+    # PERF-4 / D5 (ADR-0006): the role-DAG stage that produced this checkpoint
+    # (triage/plan/…); "" for a plain single-unit run. Stages are checkpoint
+    # METADATA on the ONE ledger — never a ledger per stage (INV-1).
+    role: str = ""
 
     def to_dict(self) -> dict:
         d: dict = {
@@ -84,6 +88,8 @@ class Checkpoint:
         if self.reviewer_passed is not None:
             d["reviewer_passed"] = self.reviewer_passed
             d["reviewer_note"] = self.reviewer_note
+        if self.role:
+            d["role"] = self.role
         return d
 
 
@@ -220,6 +226,7 @@ class Ledger:
                     usage=Usage.from_dict(d.get("usage")),
                     reviewer_passed=d.get("reviewer_passed"),
                     reviewer_note=d.get("reviewer_note", ""),
+                    role=d.get("role", ""),
                 )
             )
         return out
@@ -283,8 +290,15 @@ class Ledger:
     def _acquire_lock(self) -> None:
         if self._lock_path.exists():
             age = time.time() - self._lock_path.stat().st_mtime
-            if age < _LOCK_TTL_SECONDS:
-                holder = self._lock_path.read_text().strip()
+            holder = self._lock_path.read_text().strip()
+            # CONC-4 (ADR-0006): a stale lock is reclaimed by HOLDER LIVENESS, not
+            # only by the TTL. Under parallel units a crashed unit must not wedge a
+            # fresh coordinator on a shared `.charon` for the full TTL — if the
+            # recorded pid is gone, the lock is dead and reclaimable now. We only
+            # refuse when the holder is BOTH still alive AND within the TTL (a real
+            # concurrent coordinator). An unparseable holder falls back to TTL.
+            holder_pid = _holder_pid(holder)
+            if age < _LOCK_TTL_SECONDS and (holder_pid is None or _pid_alive(holder_pid)):
                 raise LedgerLocked(
                     f"task {self.task_id!r} is locked by {holder} "
                     f"({int(age)}s old); another coordinator is running"
@@ -296,6 +310,33 @@ class Ledger:
             self._lock_path.unlink()
         except FileNotFoundError:
             pass
+
+
+def _holder_pid(holder: str) -> int | None:
+    """Parse the pid out of a ``pid=<n> t=<n>`` lockfile body, or None if the
+    format is unrecognized (then liveness can't be checked → fall back to TTL)."""
+    for tok in holder.split():
+        if tok.startswith("pid="):
+            try:
+                return int(tok[4:])
+            except ValueError:
+                return None
+    return None
+
+
+def _pid_alive(pid: int) -> bool:
+    """True iff ``pid`` is a live process. ``kill(pid, 0)`` probes existence
+    without signalling; a PermissionError means it exists but is not ours (alive),
+    ProcessLookupError means it is gone."""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def _atomic_write(path: Path, text: str) -> None:

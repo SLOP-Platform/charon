@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import time
 from pathlib import Path
 
 import pytest
@@ -90,3 +92,37 @@ def test_concurrent_coordinator_lock(state_dir: Path, git_repo: Path) -> None:
         with pytest.raises(LedgerLocked):
             with led2.lock():
                 pass
+
+
+def test_live_holder_lock_is_not_reclaimed(state_dir: Path, git_repo: Path) -> None:
+    """CONC-4: a lock held by a LIVE pid within TTL still blocks — a real
+    concurrent coordinator is never stolen from."""
+    led = _mk(state_dir, git_repo)
+    # write a lock owned by THIS process (alive), fresh.
+    led._lock_path.write_text(f"pid={os.getpid()} t={int(time.time())}")
+    with pytest.raises(LedgerLocked):
+        led._acquire_lock()
+
+
+def test_dead_holder_stale_lock_is_reclaimed_by_liveness(state_dir: Path, git_repo: Path) -> None:
+    """CONC-4: a stale lock whose holder PID is DEAD is reclaimed by liveness even
+    when younger than the TTL — so a crashed unit on a shared `.charon` does not
+    wedge a fresh coordinator until the 15-minute TTL elapses."""
+    led = _mk(state_dir, git_repo)
+    dead_pid = _a_dead_pid()
+    led._lock_path.write_text(f"pid={dead_pid} t={int(__import__('time').time())}")
+    # younger than TTL, but the holder is gone → reclaimable immediately.
+    led._acquire_lock()  # must NOT raise
+    led._release_lock()
+
+
+def _a_dead_pid() -> int:
+    """Find a PID that is not currently alive (best-effort, deterministic-ish)."""
+    for pid in range(2_000_000, 2_000_050):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return pid
+        except PermissionError:
+            continue
+    return 2_000_000
