@@ -33,6 +33,7 @@ from .ports.backend import AgentBackend
 from .ports.reviewer import Reviewer
 from .router import StaticRouter
 from .types import Autonomy, PrivilegedOp, WorkUnit
+from .validate import validate as _run_validate
 
 # The fixed Triage→…→Close pipeline (ADR-0004 D8). Order IS the dependency graph.
 ROLE_DAG = ["triage", "plan", "implement", "review", "validate", "close"]
@@ -147,15 +148,30 @@ def run_decomposed(
                 reviewer_passed, rnote = _consult_reviewer(reviewer, su, outcome)
                 cp_passed = reviewer_passed
 
+            # D12: quality gate at the Validate stage. After the backend exercises
+            # the product, run executable acceptance. On fail: hold + propose fix.
+            _validate_fix = ""
+            _cp_note = rnote
+            if stage.role == "validate":
+                _vr = _run_validate(ledger.acceptance, str(worktree))
+                cp_passed = _vr.passed
+                _validate_fix = _vr.fix_proposal
+                _cp_note = _vr.note
+
             ledger.append_checkpoint(
                 Checkpoint(seq, route.backend, outcome.commit, verified, remaining,
                            note=outcome.note, usage=outcome.usage, role=stage.role,
                            reviewer_passed=cp_passed,
-                           reviewer_note=rnote if cp_passed is not None else "")
+                           reviewer_note=_cp_note if cp_passed is not None else "")
             )
             ledger.record_provider(route.backend)
             if cost_gate is not None and outcome.usage is not None:
                 cost_gate.add(outcome.usage.cost_usd, outcome.usage.tokens)
+
+            if stage.role == "validate" and cp_passed is False:
+                gitutil.reset_hard(worktree, ledger.lkg_ref)
+                return _result("validate-failed", seq, ledger,
+                               note=f"validate-failed: {_validate_fix}")
 
         # Pipeline finished — evaluate acceptance once, then apply per autonomy.
         remaining = sorted(ledger.remaining())
