@@ -130,6 +130,79 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def _cmd_setup(args: argparse.Namespace) -> int:
+    """Guided setup: add providers (+ keys), models, and an optional failover pool —
+    all written to the user config dir so `charon gateway` then just works."""
+    import getpass
+
+    from . import config, providers, secrets
+
+    def ask(msg: str, default: str = "") -> str:
+        suffix = f" [{default}]" if default else ""
+        return (input(f"{msg}{suffix}: ").strip() or default)
+
+    try:
+        print("Charon setup — configure providers, keys, models, and a failover pool.")
+        print(f"(config → {secrets.config_dir()};  keys → secrets.json at 0600)")
+        print("Presets:", ", ".join(sorted(providers.PRESETS)))
+        added_models: list[str] = []
+        while True:
+            name = ask("\nAdd a provider (preset name, or a custom name; blank to finish)")
+            if not name:
+                break
+            base_url = None
+            if name not in providers.PRESETS:
+                base_url = ask(f"  base URL for '{name}' (OpenAI-compatible, ends in /v1)")
+                if not base_url:
+                    print("  skipped — a custom provider needs a base URL")
+                    continue
+            try:
+                preset = providers.resolve(name, {"base_url": base_url} if base_url else None)
+            except ValueError as exc:
+                print(f"  {exc}")
+                continue
+            key_env = ask("  key env-var name", preset.key_env or f"{name.upper()}_API_KEY")
+            try:
+                config.add_provider(name, base_url=base_url, key_env=key_env,
+                                    strip_v1=(preset.strip_v1 if base_url else None))
+            except ValueError as exc:
+                print(f"  {exc}")
+                continue
+            if key_env:
+                key = getpass.getpass(f"  paste the API key ({key_env}) [blank to skip]: ")
+                if key:
+                    secrets.set_secret(key_env, key)
+                    print("  key stored (0600)")
+            while True:
+                mid = ask(f"  model served by '{name}' (the id clients request; blank to stop)")
+                if not mid:
+                    break
+                upm = ask("    upstream model id", mid)
+                free = ask("    free tier?", "n").lower().startswith("y")
+                try:
+                    config.add_model(mid, provider=name,
+                                     upstream_model=(upm if upm != mid else None),
+                                     free=free, cost_rank=(0 if free else 1000))
+                except ValueError as exc:
+                    print(f"    {exc}")
+                    continue
+                added_models.append(mid)
+                print(f"    added model '{mid}'")
+        if len(added_models) >= 2 and ask(
+                "\nGroup these models into a failover pool?", "y").lower().startswith("y"):
+            vid = ask("  pool name (the id clients request for auto-failover)", "auto")
+            config.set_pool(vid, added_models)
+            print(f"  pool '{vid}' = {added_models} (auto-ordered free-first)")
+    except (EOFError, KeyboardInterrupt):
+        print("\nsetup needs an interactive terminal. Alternatively use "
+              "`charon providers add <name>` or edit the files in "
+              f"{secrets.config_dir()}.", file=sys.stderr)
+        return 2
+    print(f"\nDone. {len(added_models)} model(s) configured. Start the gateway:\n"
+          "  charon gateway")
+    return 0
+
+
 def _provider_test(name: str, base_url: str | None) -> int:
     """Probe whether a provider's base URL RESOLVES, with GET /models — **no
     credentials sent** (even a 401/403 proves the base resolves, which is the whole
@@ -242,6 +315,9 @@ def build_parser() -> argparse.ArgumentParser:
     pt.add_argument("name")
     pt.add_argument("--base-url")
     pv.set_defaults(func=_cmd_providers)
+
+    su = sub.add_parser("setup", help="guided gateway setup (providers, keys, models, pool)")
+    su.set_defaults(func=_cmd_setup)
 
     lg = sub.add_parser("ledger", help="show a task's derived ledger state")
     lg.add_argument("task_id")

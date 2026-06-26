@@ -59,6 +59,38 @@ def test_custom_provider_resolves_to_gateway_route(monkeypatch, tmp_path):
     assert r.api_key == "sk-deep" and r.upstream_model == "deepseek-chat"
 
 
+def test_setup_wizard_end_to_end(monkeypatch, tmp_path):
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    inputs = iter([
+        "openrouter", "", "gpt-4o", "", "n", "",      # provider 1 + model (paid)
+        "deepseek", "", "deepseek-chat", "", "y", "",  # provider 2 + model (free)
+        "",                                            # finish providers
+        "y", "auto",                                   # build a pool named "auto"
+    ])
+    keys = iter(["sk-or", "sk-deep"])
+    monkeypatch.setattr("builtins.input", lambda *a: next(inputs))
+    import getpass
+    monkeypatch.setattr(getpass, "getpass", lambda *a: next(keys))
+
+    assert cli.main(["setup"]) == 0
+    provs, models, pools = config.load_providers(), config.load_models(), config.load_pools()
+    assert "openrouter" in provs and "deepseek" in provs
+    assert "gpt-4o" in models and models["deepseek-chat"]["free"] is True
+    assert pools["auto"] == ["gpt-4o", "deepseek-chat"]
+    secs = secrets.load_secrets()
+    assert secs["OPENROUTER_API_KEY"] == "sk-or" and secs["DEEPSEEK_API_KEY"] == "sk-deep"
+
+
+def test_setup_no_tty_exits_gracefully(monkeypatch, tmp_path):
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+
+    def _raise(*a):
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", _raise)
+    assert cli.main(["setup"]) == 2
+
+
 def test_providers_add_custom_persists_provider(monkeypatch, tmp_path):
     """CLI: `providers add` a non-preset provider persists base_url+key_env to config
     AND stores the key — so it's usable immediately."""
