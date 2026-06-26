@@ -1,8 +1,16 @@
 # ADR-0007 — Parallel work engine: safe landing first, engine deferred in stages
 
-Status: **Proposed** (2026-06-26). Builds on ADR-0005 (gateway-first), ADR-0006
+Status: **Accepted** (2026-06-26). Builds on ADR-0005 (gateway-first), ADR-0006
 (PERF-4). Reconciles the 2026-06-26 DTC (4 lenses) + a 3-lens adversarial review of
 the first plan (feasibility / security / scope) — see REVIEW-LOG.
+
+> **Accepted = the safe-landing-first increment + the staged-deferral strategy.** The
+> shipped scope is realized: D2 per-unit worktree (PR #12), D3/D4/D6 propose-default
+> gated landing + units loader (PR #13), D12 end-product Validator (PR #14), and L3
+> unattended autonomy escalation gate (PR #15 / ADR-0009). The engine items (D5
+> batch-atomic auto-land, board/claim/scheduler, `WorkerBackend` port, auto-decompose,
+> AIMD capacity, scanner matrix) remain **deliberately deferred behind their D10
+> tripwires** — accepting this ADR accepts that deferral, not their construction.
 
 ## Context
 Operator vision (settled): Charon is a **work engine** — *analyze* work → *decompose*
