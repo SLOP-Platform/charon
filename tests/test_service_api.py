@@ -1,13 +1,16 @@
-"""Read-only API helpers behind the web dashboard (ADR-0004 D7/R3).
+"""Read-only API helpers behind the web dashboard (ADR-0004 D7/R3) and
+the enqueue / worker helpers added in Tier 2b.
 
-These run in the core gate (no [service] extra needed) — they exercise the
-listing/config functions directly, no HTTP. The FastAPI layer is covered by
-test_service_ui.py (skipped when the extra is absent).
+Core-gate tests (no [service] extra needed) exercise listing/config functions
+directly.  HTTP-layer tests require the [service] extra and are guarded with
+``pytest.importorskip``.
 """
 from __future__ import annotations
 
 import json
 from pathlib import Path
+
+import pytest
 
 from charon import api
 
@@ -89,3 +92,113 @@ def test_show_config_invalid_json_surfaces_error_not_crash(tmp_path: Path) -> No
     (state / "models.json").write_text("{ broken")
     cfg = api.show_config(str(state))
     assert "error" in cfg["models"]
+
+
+# ---------------------------------------------------------------------------
+# Tier 2b: enqueue helper (no [service] extra needed for the stdlib side)
+# ---------------------------------------------------------------------------
+
+def test_enqueue_writes_job_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("fastapi")
+    from charon.service.app import RunRequest, _enqueue
+
+    qd = tmp_path / "queue"
+    monkeypatch.setenv("CHARON_QUEUE_DIR", str(qd))
+
+    req = RunRequest(goal="make hello", accept=["test -f hello.txt"])
+    job_id = _enqueue(req)
+
+    job_file = qd / "pending" / f"{job_id}.json"
+    assert job_file.is_file()
+    job = json.loads(job_file.read_text())
+    assert job["job_id"] == job_id
+    assert job["goal"] == "make hello"
+    assert job["accept"] == ["test -f hello.txt"]
+    assert job["autonomy"] == "L0"
+    assert job["budget"] == 8
+    # no `repo` field: worker always uses an auto-created sandbox
+    assert "repo" not in job
+
+
+def test_enqueue_generates_unique_job_ids(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("fastapi")
+    from charon.service.app import RunRequest, _enqueue
+
+    monkeypatch.setenv("CHARON_QUEUE_DIR", str(tmp_path / "queue"))
+    req = RunRequest(goal="do something", accept=["true"])
+    ids = {_enqueue(req) for _ in range(5)}
+    assert len(ids) == 5  # all distinct
+
+
+def test_enqueue_503_when_queue_dir_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi import HTTPException
+
+    from charon.service.app import RunRequest, _enqueue
+
+    monkeypatch.delenv("CHARON_QUEUE_DIR", raising=False)
+    with pytest.raises(HTTPException) as exc_info:
+        _enqueue(RunRequest(goal="x", accept=["true"]))
+    assert exc_info.value.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# Tier 2b: HTTP round-trip for POST /v1/runs (requires [service] extra)
+# ---------------------------------------------------------------------------
+
+def test_post_runs_returns_202_and_queues_job(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from charon.service.app import app
+
+    qd = tmp_path / "queue"
+    monkeypatch.setenv("CHARON_QUEUE_DIR", str(qd))
+    monkeypatch.delenv("CHARON_SERVICE_TOKEN", raising=False)
+
+    client = TestClient(app, raise_server_exceptions=True)
+    resp = client.post("/v1/runs", json={"goal": "build it", "accept": ["true"]})
+
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["status"] == "queued"
+    job_id = body["job_id"]
+    assert (qd / "pending" / f"{job_id}.json").is_file()
+
+
+def test_post_runs_without_token_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from charon.service.app import app
+
+    monkeypatch.setenv("CHARON_QUEUE_DIR", str(tmp_path / "queue"))
+    monkeypatch.setenv("CHARON_SERVICE_TOKEN", "secret")
+
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.post("/v1/runs", json={"goal": "x", "accept": ["true"]})
+    assert resp.status_code == 401
+
+
+def test_post_runs_503_when_queue_not_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from charon.service.app import app
+
+    monkeypatch.delenv("CHARON_QUEUE_DIR", raising=False)
+    monkeypatch.delenv("CHARON_SERVICE_TOKEN", raising=False)
+
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.post("/v1/runs", json={"goal": "x", "accept": ["true"]})
+    assert resp.status_code == 503
