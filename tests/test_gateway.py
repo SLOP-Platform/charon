@@ -3,16 +3,42 @@ loopback guard, and an end-to-end forward through a mock upstream.
 """
 from __future__ import annotations
 
+import ast
 import http.server
 import json
+import pathlib
 import socketserver
 import threading
 import urllib.error
 import urllib.request
 
+import charon
 from charon import gateway
 from charon.gateway import GatewayConfig
-from charon.proxy_server import UpstreamRoute
+from charon.proxy import GatewayProxy
+from charon.proxy_server import GatewayProxyServer, UpstreamRoute
+
+
+def test_gateway_shares_core_and_excludes_privileged_loop():
+    """P6/ADR-0005 R3: the gateway and the orchestrator share ONE provider/failover
+    core (the `GatewayProxy` observer), and the gateway request path must NEVER
+    import the privileged coordinator loop."""
+    src_dir = pathlib.Path(charon.__file__).parent
+    for mod in ("gateway.py", "proxy_server.py"):
+        tree = ast.parse((src_dir / mod).read_text())
+        imported: set[str] = set()
+        for n in ast.walk(tree):
+            if isinstance(n, ast.ImportFrom) and n.module:
+                imported.add(n.module)
+            elif isinstance(n, ast.Import):
+                imported.update(a.name for a in n.names)
+        assert not any("coordinator" in m for m in imported), f"{mod} imports the loop"
+    # shared core: the gateway observes via the same classifier the orchestrator uses
+    srv = GatewayProxyServer()
+    try:
+        assert isinstance(srv.observer, GatewayProxy)
+    finally:
+        srv.server_close()
 
 
 class _MockUpstream(http.server.BaseHTTPRequestHandler):

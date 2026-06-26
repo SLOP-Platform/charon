@@ -19,3 +19,31 @@ services:
       - CHARON_STATE_DIR=/work/.charon
     # No host docker socket, no privileged flag — keep the fence intact.
     restart: unless-stopped
+
+  # --- Optional: run the GATEWAY in a container (hosted / always-on use) ---------
+  # For the everyday LOCAL gateway, native `pipx install charon && charon gateway`
+  # is simpler (reaches host-local model servers directly, no token needed on
+  # loopback). Use this for a shared/VPS/always-on gateway. `build: .` because the
+  # published v0.1.0 image predates `charon gateway` — switch to an image tag once a
+  # release is republished with the gateway.
+  gateway:
+    build: .
+    command: ["charon", "gateway", "--host", "0.0.0.0", "--port", "8080"]
+    ports:
+      # publish to the HOST's loopback only (not your LAN). Clients on the host use
+      # http://127.0.0.1:8080/v1 ; the token below is their API key.
+      - "127.0.0.1:8080:8080"
+    environment:
+      # REQUIRED: the gateway binds 0.0.0.0 inside the container and holds your keys,
+      # so it refuses to start without a token. Generate one: openssl rand -hex 16
+      - CHARON_GATEWAY_TOKEN=${CHARON_GATEWAY_TOKEN:?set CHARON_GATEWAY_TOKEN (the gateway holds your provider keys)}
+      - CHARON_HOME=/config
+    volumes:
+      # providers/models/pools config + the 0600 secrets file persist here
+      - ./charon-config:/config
+    extra_hosts:
+      # so providers running on the HOST (LM Studio :1234, Ollama :11434, Jan :1337)
+      # are reachable — set those providers' base_url to host.docker.internal:<port>
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    profiles: ["gateway"]   # opt-in: `docker compose --profile gateway up gateway`

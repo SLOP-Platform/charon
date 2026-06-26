@@ -1,34 +1,27 @@
 # Charon
 
-**A thin orchestrator that ferries one unit of work across swappable
-coding-agent backends, keeping a single vendor-neutral Work Ledger as the source
-of truth.**
+**A local, OpenAI-compatible gateway that fronts many LLM providers with
+visible, cost-ranked failover.** Point any OpenAI-compatible client at
+`http://localhost:<port>/v1`; when one provider hits a rate/credit cap, the next
+provider serves **transparently, within the same request** — no waiting on
+resets, no lost work.
 
-Charon drives existing CLI coding agents (Claude Code, Codex, Gemini CLI, … via
-the [Agent Client Protocol](https://agentclientprotocol.com)) as interchangeable
-execution backends. It owns only what nothing else owns: a **Work Ledger**,
-**cross-vendor handoff**, and a **control-plane fence** with a graded autonomy
-ladder. Routing and review are integrations, not rebuilds.
+Charon holds your provider keys server-side (never sent to the client), ranks
+providers **free-first / cheapest-first**, and fails over on
+429/402/503/`Retry-After`/silent-downgrade/unreachable — with every failover
+**visible** in `X-Charon-*` response headers and a live local console. Any
+OpenAI-compatible client works: Cursor, Cline, Aider, Chatbox, Jan, LM Studio,
+Msty, … "If it takes an OpenAI base URL, it's supported."
 
-> Named for the ferryman who carries across the boundary — which is exactly what
-> the novel part does: ferry a task from an exhausted backend to the next one.
+> Named for the ferryman who carries across the boundary — here, carrying a
+> request from an exhausted provider to the next.
 
-## ⚠️ Honest disclosure — read before installing
+Charon also ships an **opt-in autonomous orchestrator** (`charon run`) that drives
+coding agents over [ACP](https://agentclientprotocol.com) with a vendor-neutral
+Work Ledger, on the **same** provider/failover core — see
+[Advanced: autonomous mode](#advanced-autonomous-mode-charon-run) below.
 
-Charon is a **control plane**. At autonomy ≥ L1 it spawns CLI coding agents and
-can apply their diffs **unattended**. Treat it accordingly:
-
-- The **default autonomy is L0 (propose-only)** — nothing is applied.
-- Per-backend **OS-level isolation is the container (Mode B)**, not the in-process
-  fence. The fence hardens the subprocess env and *detects* worktree escapes, but
-  a determined local agent process is only truly bounded by the container. **Do
-  not run unattended (L2/L3) outside the container on a machine you care about.**
-- **Scope:** Charon runs goals with **executable acceptance** (a command that
-  exits 0 == done). Prose-only goals ("make it nicer") are out of scope by
-  design — `remaining` must be machine-decidable.
-- **Sunset clause:** this is a tactical bridge. As frontier agents grow native
-  cross-vendor continuity, Charon's coordinator becomes removable — and your
-  Work Ledger is just git + JSON, so it outlives Charon.
+**[→ jump to the Gateway quickstart](#gateway-the-main-event)**
 
 ## Install (Mode A — standalone)
 
@@ -41,21 +34,7 @@ git clone https://github.com/SLOP-Platform/charon && cd charon
 pip install -e '.[dev]'
 ```
 
-## Quickstart
-
-```bash
-# Run a goal against a built-in mock backend, in an auto-created sandbox repo.
-# (proves the loop with no live agent; nothing applied at the default L0)
-charon run --goal "create hello" --accept "test -f hello.txt" --backend mock --autonomy L1
-
-# Inspect the derived ledger state (verified / remaining are re-derived from disk)
-charon ledger <task-id>
-
-# Tier-0: probe a REAL ACP agent for usage/resume fidelity before trusting it
-charon doctor --backend-cmd "claude-code acp"
-```
-
-## Gateway mode (ADR-0005) — a local OpenAI-compatible failover gateway
+## Gateway (the main event)
 
 Point any OpenAI-compatible client (Cursor, Cline, Aider, Chatbox, Jan, LM Studio,
 …) at `http://127.0.0.1:8080/v1` and Charon fronts your providers. The gateway is
@@ -82,6 +61,54 @@ charon gateway --state-dir .charon --port 8080
 # expose on a LAN (must set a token — the gateway holds your keys)
 CHARON_GATEWAY_TOKEN=$(openssl rand -hex 16) charon gateway --host 0.0.0.0
 ```
+
+### Point a client at Charon
+
+Every OpenAI-compatible client (desktop or CLI) has three settings — set them the
+same way everywhere:
+
+| Setting (named various things) | Value |
+|---|---|
+| **Base URL** / API base / endpoint / "OpenAI base URL" | `http://127.0.0.1:8080/v1` (use `localhost` if the app prefers it — both work) |
+| **API key** | If the gateway is token-gated, your **`CHARON_GATEWAY_TOKEN`**; if it's the ungated loopback default, **any non-empty value** (apps require *something*) |
+| **Model** | a model id Charon serves — see `GET /v1/models`, the console, or a pool name like `auto` (which gives failover) |
+
+The rule: **if it accepts an OpenAI-compatible base URL, point it at
+`http://127.0.0.1:8080/v1`.** A few common ones:
+
+- **Cursor** → Settings → Models → enable *Override OpenAI Base URL* → the URL above;
+  put the key/model in the same panel.
+- **Cline / Roo (VS Code)** → API Provider = *OpenAI Compatible* → Base URL + key + model.
+- **Aider** → `aider --openai-api-base http://127.0.0.1:8080/v1 --openai-api-key <token> --model <id>`
+  (or env `OPENAI_API_BASE` / `OPENAI_API_KEY`).
+- **Codex CLI** → `OPENAI_BASE_URL=http://127.0.0.1:8080/v1 OPENAI_API_KEY=<token>`.
+- **OpenCode** → add a custom provider with `baseURL` = the URL above.
+- **Jan / LM Studio / Msty / Chatbox / AnythingLLM** → add a *custom OpenAI-compatible*
+  provider/endpoint = the URL above; key as a above.
+
+**Windows + WSL2:** if Charon runs inside WSL2 and the client is a Windows app,
+`http://127.0.0.1:8080` usually works (WSL2 forwards localhost). If a client can't
+reach it, run the gateway with `--host 0.0.0.0` **+ a token** and point the client at
+`http://<wsl-ip>:8080/v1` (`hostname -I` in WSL gives the IP). The token then goes in
+the client's API-key field.
+
+### Run the gateway in Docker (optional)
+
+For the everyday **local** gateway, native install (above) is simpler — it reaches
+host-local model servers directly and needs no token on loopback. Docker is for a
+**shared / always-on / VPS** gateway:
+
+```bash
+export CHARON_GATEWAY_TOKEN=$(openssl rand -hex 16)
+docker compose --profile gateway up gateway        # builds from source
+# clients → http://127.0.0.1:8080/v1, API key = the token
+```
+
+Caveats inside a container: a **token is required** (it binds `0.0.0.0`); set
+**local** providers' `base_url` to `host.docker.internal:<port>` (the compose adds
+that host) since the container's `localhost` is not the host's. (The published
+`v0.1.0` image predates the gateway, so the service builds from source until a
+release is republished.)
 
 `charon.toml` (one schema, mirrors `.charon/models.json` field names):
 
@@ -110,11 +137,18 @@ and why); failover events are logged for the console.
 auto = ["qwen-free", "kimi-k2.7-code"]   # ordered free-first / cheapest-first
 ```
 
-**Provider presets** (P3) save repeating base URLs: a model references a `provider`,
-and the base URL + quirks come from a built-in preset (`opencode-go`, `openrouter`,
-`nanogpt`, `zai`, `lmstudio`, `jan`, `ollama`, `local`). You only supply the key env.
-Any preset is overridable (some vendor base URLs ship **unverified** — override if a
-call 404s).
+**Provider presets** save repeating base URLs: a model references a `provider`, and
+the base URL + quirks come from a built-in preset — `opencode-go`, `openrouter`,
+`nanogpt`, `zai`, `deepseek`, `chutes`, `groq`, `together`, `mistral`, plus local
+(`lmstudio`, `jan`, `ollama`, `local`). You only supply the key. **Any other
+OpenAI-compatible provider works too** — just give a base URL:
+
+```bash
+charon providers add chatllm --base-url https://your-provider/v1   # then enter the key
+```
+
+`charon providers add <preset>` / `charon setup` persist the provider to
+`~/.charon/`, so the gateway picks it up with no hand-edited config.
 
 ```toml
 [providers.openrouter]
@@ -139,8 +173,46 @@ per-provider served/failed/cost, cooldown/health, the pool config, and a recent-
 failover stream. JSON at `/charon/status`. A richer FastAPI dashboard for the
 orchestrator's Work Ledger also ships (`python -m charon.service`).
 
-The autonomous orchestrator (`charon run`, above) is an opt-in feature on the same
-core.
+
+## Advanced: autonomous mode (charon run)
+
+Everything above is the gateway. This is the **opt-in** autonomous orchestrator — it drives coding agents over ACP with a vendor-neutral Work Ledger, on the same provider/failover core. Skip it if you only want the gateway.
+
+### Honest disclosure (autonomous mode)
+
+**The gateway is a passive proxy** — it forwards requests and holds keys; it does
+not execute agents or apply changes. The disclosure below applies only to the
+**opt-in orchestrator** (`charon run`): a **control plane** that at autonomy ≥ L1
+spawns CLI coding agents and can apply their diffs **unattended**. If you only use
+the gateway, none of this applies. For `charon run`, treat it accordingly:
+
+- The **default autonomy is L0 (propose-only)** — nothing is applied.
+- Per-backend **OS-level isolation is the container (Mode B)**, not the in-process
+  fence. The fence hardens the subprocess env and *detects* worktree escapes, but
+  a determined local agent process is only truly bounded by the container. **Do
+  not run unattended (L2/L3) outside the container on a machine you care about.**
+- **Scope:** Charon runs goals with **executable acceptance** (a command that
+  exits 0 == done). Prose-only goals ("make it nicer") are out of scope by
+  design — `remaining` must be machine-decidable.
+- **Sunset clause:** this is a tactical bridge. As frontier agents grow native
+  cross-vendor continuity, Charon's coordinator becomes removable — and your
+  Work Ledger is just git + JSON, so it outlives Charon.
+
+
+### Run a goal
+
+```bash
+# Run a goal against a built-in mock backend, in an auto-created sandbox repo.
+# (proves the loop with no live agent; nothing applied at the default L0)
+charon run --goal "create hello" --accept "test -f hello.txt" --backend mock --autonomy L1
+
+# Inspect the derived ledger state (verified / remaining are re-derived from disk)
+charon ledger <task-id>
+
+# Tier-0: probe a REAL ACP agent for usage/resume fidelity before trusting it
+charon doctor --backend-cmd "claude-code acp"
+```
+
 
 ## What it builds vs. integrates
 

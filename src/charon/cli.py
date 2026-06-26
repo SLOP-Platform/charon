@@ -63,14 +63,20 @@ def _cmd_ledger(args: argparse.Namespace) -> int:
 def _cmd_gateway(args: argparse.Namespace) -> int:
     from . import gateway, secrets
     secrets.apply_to_env()  # load stored provider keys (0600 user-local file) into env
+    # default config source = the user-local config dir (where `providers add` /
+    # `charon setup` write), so the gateway "just works" after setup with no flags.
+    state_dir = args.state_dir or (None if args.config else str(secrets.config_dir()))
     cfg = gateway.load_config(
         toml_path=args.config,
-        state_dir=None if args.config else args.state_dir,
+        state_dir=state_dir,
         host=args.host,
         port=args.port,
         token=args.token,
     )
-    return gateway.run(cfg)
+    # enable the read-write web setup page for the config-dir/state-dir flow (not for
+    # --config TOML, where the user manages the file directly)
+    setup_dir = None if args.config else state_dir
+    return gateway.run(cfg, setup_dir=setup_dir)
 
 
 def _cmd_providers(args: argparse.Namespace) -> int:
@@ -86,6 +92,7 @@ def _cmd_providers(args: argparse.Namespace) -> int:
             print(f"{name:12} {p.base_url:34} key_env={p.key_env or '-':20} [{state}]{note}")
         return 0
     if args.action == "add":
+        from . import config
         overrides = {"base_url": args.base_url} if args.base_url else None
         try:
             preset = providers.resolve(args.name, overrides)
@@ -93,19 +100,26 @@ def _cmd_providers(args: argparse.Namespace) -> int:
             print(f"error: {exc}", file=sys.stderr)
             return 2
         key_env = args.key_env or preset.key_env
+        # persist the provider so it works with NO hand-edited config (custom or preset)
+        try:
+            config.add_provider(args.name, base_url=args.base_url, key_env=key_env,
+                                strip_v1=(preset.strip_v1 if args.base_url else None))
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
         if not key_env:
-            print(f'{args.name}: local provider, no key needed — reference it as '
-                  f'provider = "{args.name}" in your config.')
+            print(f'added local provider "{args.name}" (no key needed).')
             return 0
         value = args.key
         if not value:
             import getpass
             value = getpass.getpass(f"Paste the API key for {args.name} ({key_env}): ")
         if not value:
-            print("no key entered; nothing stored", file=sys.stderr)
+            print(f'provider "{args.name}" saved, but no key entered — add it later '
+                  f"with `charon providers add {args.name}`", file=sys.stderr)
             return 2
         path = secrets.set_secret(key_env, value)
-        print(f'stored {key_env} in {path} (0600). Reference it as provider = "{args.name}".')
+        print(f'stored {key_env} in {path} (0600) + provider "{args.name}" in config.')
         return 0
     if args.action == "test":
         return _provider_test(args.name, args.base_url)
@@ -117,6 +131,79 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
     another host (urllib does NOT strip Authorization cross-host)."""
     def redirect_request(self, *a, **k):
         return None
+
+
+def _cmd_setup(args: argparse.Namespace) -> int:
+    """Guided setup: add providers (+ keys), models, and an optional failover pool —
+    all written to the user config dir so `charon gateway` then just works."""
+    import getpass
+
+    from . import config, providers, secrets
+
+    def ask(msg: str, default: str = "") -> str:
+        suffix = f" [{default}]" if default else ""
+        return (input(f"{msg}{suffix}: ").strip() or default)
+
+    try:
+        print("Charon setup — configure providers, keys, models, and a failover pool.")
+        print(f"(config → {secrets.config_dir()};  keys → secrets.json at 0600)")
+        print("Presets:", ", ".join(sorted(providers.PRESETS)))
+        added_models: list[str] = []
+        while True:
+            name = ask("\nAdd a provider (preset name, or a custom name; blank to finish)")
+            if not name:
+                break
+            base_url = None
+            if name not in providers.PRESETS:
+                base_url = ask(f"  base URL for '{name}' (OpenAI-compatible, ends in /v1)")
+                if not base_url:
+                    print("  skipped — a custom provider needs a base URL")
+                    continue
+            try:
+                preset = providers.resolve(name, {"base_url": base_url} if base_url else None)
+            except ValueError as exc:
+                print(f"  {exc}")
+                continue
+            key_env = ask("  key env-var name", preset.key_env or f"{name.upper()}_API_KEY")
+            try:
+                config.add_provider(name, base_url=base_url, key_env=key_env,
+                                    strip_v1=(preset.strip_v1 if base_url else None))
+            except ValueError as exc:
+                print(f"  {exc}")
+                continue
+            if key_env:
+                key = getpass.getpass(f"  paste the API key ({key_env}) [blank to skip]: ")
+                if key:
+                    secrets.set_secret(key_env, key)
+                    print("  key stored (0600)")
+            while True:
+                mid = ask(f"  model served by '{name}' (the id clients request; blank to stop)")
+                if not mid:
+                    break
+                upm = ask("    upstream model id", mid)
+                free = ask("    free tier?", "n").lower().startswith("y")
+                try:
+                    config.add_model(mid, provider=name,
+                                     upstream_model=(upm if upm != mid else None),
+                                     free=free, cost_rank=(0 if free else 1000))
+                except ValueError as exc:
+                    print(f"    {exc}")
+                    continue
+                added_models.append(mid)
+                print(f"    added model '{mid}'")
+        if len(added_models) >= 2 and ask(
+                "\nGroup these models into a failover pool?", "y").lower().startswith("y"):
+            vid = ask("  pool name (the id clients request for auto-failover)", "auto")
+            config.set_pool(vid, added_models)
+            print(f"  pool '{vid}' = {added_models} (auto-ordered free-first)")
+    except (EOFError, KeyboardInterrupt):
+        print("\nsetup needs an interactive terminal. Alternatively use "
+              "`charon providers add <name>` or edit the files in "
+              f"{secrets.config_dir()}.", file=sys.stderr)
+        return 2
+    print(f"\nDone. {len(added_models)} model(s) configured. Start the gateway:\n"
+          "  charon gateway")
+    return 0
 
 
 def _provider_test(name: str, base_url: str | None) -> int:
@@ -208,8 +295,9 @@ def build_parser() -> argparse.ArgumentParser:
                        help="run the standalone OpenAI-compatible failover gateway")
     g.add_argument("--config", default=None,
                    help="charon.toml config file (takes precedence over --state-dir)")
-    g.add_argument("--state-dir", default=api.DEFAULT_STATE_DIR,
-                   help="dir holding models.json (used when --config is absent)")
+    g.add_argument("--state-dir", default=None,
+                   help="dir holding models/pools/providers.json (default: the "
+                        "user config dir ~/.charon; used when --config is absent)")
     g.add_argument("--host", default=None, help="bind host (default 127.0.0.1)")
     g.add_argument("--port", type=int, default=None, help="bind port (default 8080)")
     g.add_argument("--token", default=None,
@@ -230,6 +318,9 @@ def build_parser() -> argparse.ArgumentParser:
     pt.add_argument("name")
     pt.add_argument("--base-url")
     pv.set_defaults(func=_cmd_providers)
+
+    su = sub.add_parser("setup", help="guided gateway setup (providers, keys, models, pool)")
+    su.set_defaults(func=_cmd_setup)
 
     lg = sub.add_parser("ledger", help="show a task's derived ledger state")
     lg.add_argument("task_id")
