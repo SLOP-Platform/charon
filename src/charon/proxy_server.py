@@ -12,6 +12,7 @@ integration test (mock upstream) and live via a real OpenCode-Go call.
 """
 from __future__ import annotations
 
+import hmac
 import http.server
 import json
 import socketserver
@@ -19,6 +20,7 @@ import threading
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from urllib.parse import parse_qs, urlsplit
 
 from .proxy import GatewayProxy
 
@@ -86,8 +88,47 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         self._handle()
 
+    def _json(self, status: int, obj: dict) -> None:
+        data = json.dumps(obj).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        try:
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def _authorized(self, token: str) -> bool:
+        """Bearer token via ``Authorization`` header or ``?token=`` query (so a
+        browser URL works); constant-time compare to avoid leaking via timing."""
+        presented = ""
+        auth = self.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            presented = auth[len("Bearer "):].strip()
+        if not presented:
+            qs = parse_qs(urlsplit(self.path).query)
+            presented = (qs.get("token") or [""])[0]
+        return bool(presented) and hmac.compare_digest(presented, token)
+
     def _handle(self) -> None:
         srv: GatewayProxyServer = self.server  # type: ignore[assignment]
+
+        # Token gate (gateway mode). Default ``token=None`` keeps the bare proxy
+        # open — exactly its prior behavior; a set token requires it on every call.
+        if srv.token is not None and not self._authorized(srv.token):
+            self._json(401, {"error": {"message": "missing or invalid bearer token"}})
+            return
+
+        # Aggregated model list (gateway mode). Served locally — never forwarded —
+        # and field-allowlisted to ids only (no key_env/upstream_base leak, ADR R4).
+        path_only = urlsplit(self.path).path.rstrip("/")
+        if (self.command == "GET" and srv.model_ids is not None
+                and path_only in ("/v1/models", "/models")):
+            self._json(200, {"object": "list", "data": [
+                {"id": m, "object": "model", "owned_by": "charon"} for m in srv.model_ids]})
+            return
+
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length else b""
 
@@ -212,6 +253,8 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         port: int = 0,
         fwd_timeout: float = 180.0,
         strip_v1: bool = True,
+        token: str | None = None,
+        model_ids: list[str] | None = None,
     ) -> None:
         super().__init__((host, port), _ProxyHandler)
         self.upstream_base = upstream_base
@@ -220,6 +263,10 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         self.observer = observer or GatewayProxy()
         self.fwd_timeout = fwd_timeout
         self.strip_v1 = strip_v1
+        # Gateway mode (ADR-0005 P1): a bearer token (None = open) and the
+        # agent-facing model ids to serve at /v1/models (None = don't intercept).
+        self.token = token
+        self.model_ids = model_ids
 
     def route_for(self, model: str) -> UpstreamRoute | None:
         """Which upstream serves ``model``: an explicit route, else the single

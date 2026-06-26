@@ -55,6 +55,41 @@ charon ledger <task-id>
 charon doctor --backend-cmd "claude-code acp"
 ```
 
+## Gateway mode (ADR-0005) — a local OpenAI-compatible failover gateway
+
+Point any OpenAI-compatible client (Cursor, Cline, Aider, Chatbox, Jan, LM Studio,
+…) at `http://127.0.0.1:8080/v1` and Charon fronts your providers. The gateway is
+pure-stdlib, holds your provider keys server-side (never sent to the client), and
+binds **loopback by default** — a non-loopback bind refuses to start without a token.
+
+```bash
+# from a charon.toml (providers/models + bind/token), or from .charon/models.json
+charon gateway --config charon.toml
+charon gateway --state-dir .charon --port 8080
+
+# expose on a LAN (must set a token — the gateway holds your keys)
+CHARON_GATEWAY_TOKEN=$(openssl rand -hex 16) charon gateway --host 0.0.0.0
+```
+
+`charon.toml` (one schema, mirrors `.charon/models.json` field names):
+
+```toml
+[gateway]
+host = "127.0.0.1"
+port = 8080
+# token = "..."   # or $CHARON_GATEWAY_TOKEN; required for a non-loopback host
+
+[models."kimi-k2.7-code"]
+upstream_base   = "https://opencode.ai/zen/go/v1"
+key_env         = "OPENCODE_GO_KEY"   # env var holding the upstream key
+# upstream_model = "..."              # real upstream id, if it differs
+```
+
+P1 forwards each model to its configured upstream and serves an aggregated
+`/v1/models`. **Transparent, visible, cost-ranked failover across providers is P2.**
+The autonomous orchestrator (`charon run`, above) is an opt-in feature on the same
+core.
+
 ## What it builds vs. integrates
 
 | Concern | Charon | Why |

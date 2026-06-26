@@ -2,6 +2,8 @@
 
     charon run    --goal G --accept "CMD" [--accept ...] [--repo P]
                   [--backend mock|acp] [--autonomy L0|L1] [--budget N]
+    charon gateway [--config charon.toml | --state-dir D] [--host H] [--port P]
+                  [--token T]
     charon ledger <task-id> [--state-dir D]
     charon doctor [--backend-cmd "<agent> acp"]
     charon version
@@ -56,6 +58,18 @@ def _cmd_ledger(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_gateway(args: argparse.Namespace) -> int:
+    from . import gateway
+    cfg = gateway.load_config(
+        toml_path=args.config,
+        state_dir=None if args.config else args.state_dir,
+        host=args.host,
+        port=args.port,
+        token=args.token,
+    )
+    return gateway.run(cfg)
+
+
 def _cmd_doctor(args: argparse.Namespace) -> int:
     cmd = args.backend_cmd.split() if args.backend_cmd else None
     rep = probe(cmd)
@@ -99,6 +113,19 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--max-tokens", type=int, default=None,
                    help="cumulative token cap; stop before exceeding")
     r.set_defaults(func=_cmd_run)
+
+    g = sub.add_parser("gateway",
+                       help="run the standalone OpenAI-compatible failover gateway")
+    g.add_argument("--config", default=None,
+                   help="charon.toml config file (takes precedence over --state-dir)")
+    g.add_argument("--state-dir", default=api.DEFAULT_STATE_DIR,
+                   help="dir holding models.json (used when --config is absent)")
+    g.add_argument("--host", default=None, help="bind host (default 127.0.0.1)")
+    g.add_argument("--port", type=int, default=None, help="bind port (default 8080)")
+    g.add_argument("--token", default=None,
+                   help="bearer token (or set CHARON_GATEWAY_TOKEN); REQUIRED to "
+                        "bind a non-loopback host")
+    g.set_defaults(func=_cmd_gateway)
 
     lg = sub.add_parser("ledger", help="show a task's derived ledger state")
     lg.add_argument("task_id")
