@@ -205,6 +205,38 @@ existing self-contained-HTML approach); keep the FastAPI `service/app.py` as the
 **orchestrator-side** read-only Ledger dashboard. This avoids bundling FastAPI/uvicorn
 into the gateway `.exe`. **This is the main open architectural question for P1/P4.**
 
+### R10 — gaps surfaced by independent adversarial review (must fix in P2)
+A second, independent reviewer pressure-tested R1–R9 against the code and found three
+real correctness hazards the self-review missed. They are design constraints on P2:
+
+- **R10a — cost double-counting on failed-over attempts.** `GatewayProxy.observe`
+  folds `usage` into cumulative spend whenever a 200 carries usage
+  (`proxy.py:135,160-166`), *regardless of `obs.failover`*. A silent-downgrade is a
+  200-with-usage that we discard and fail over from — yet its tokens/cost are still
+  billed, and the successful retry bills again. **Fix:** `observe()` must not fold
+  usage for a failed-over attempt (pseudo_success/dropped), or P2 must reconcile it;
+  per-attempt cost (D3/R6) must reflect only what was actually served.
+- **R10b — per-attempt body must be rebuilt from the original request.**
+  `proxy_server.py:115-122` mutates `bj["model"]` to the route's `upstream_model` and
+  re-serializes. Each pool provider has a *different* `upstream_model`, so a retry
+  loop that reuses the already-mutated body would send provider A's model id to
+  provider B. **Fix:** each attempt re-derives the body from the *original* parsed
+  request + that provider's route.
+- **R10c — exclusion is model-keyed, cooldown is provider-keyed.**
+  `proxy.py:159` keys `_exhausted` by **model id**, but a 429/402 is usually
+  account/provider-level (R2/R7's cooldown is per-provider). Model-keyed exclusion
+  leaves other models on the same exhausted provider selectable → repeated 429s.
+  **Fix:** state whether the provider cooldown replaces or supplements `_exhausted`,
+  and key capacity exclusion at the provider level.
+
+Also specify (R1/D3): the **terminal client response when the whole pool is excluded**
+(status + headers) — bounded-by-pool-size covers the loop, not the final answer.
+
+(The reviewer also confirmed: concurrency is largely pre-addressed — `proxy.py:110`
+`self._lock` already guards all observer state, so a cooldown map inherits it; and the
+gateway-imports-no-coordinator boundary (R3) is enforceable by extending the existing
+AST check in `tests/test_boundary.py`.)
+
 ### Honesty flags (carried forward)
 - Real provider quirks (downgrade behavior, header bans, `Retry-After` semantics)
   differ per vendor and are unverifiable without keys. Where a key is absent, prove
