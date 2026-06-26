@@ -3,7 +3,7 @@
 > **Supersedes** the earlier "build-four-planes" draft of this ADR. Same goal,
 > inverted build posture: integrate established tools; build only the gap.
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-06-26; product framing & §7 routing posture amended by ADR-0005)
 - **Deciders:** Rafael (solo operator)
 - **Repo:** `github.com/SLOP-Platform/charon` *(name TBD)*
 - **Relates to:** ADR-0002 (project boundary & SLOP integration)
@@ -156,6 +156,14 @@ L2 apply with consensus · L3 full-auto within fence.
 ---
 
 ## 7. Build vs. integrate (revised posture)
+
+> **Amended by ADR-0005 (2026-06-26).** The "INTEGRATE routing/fallback" row below is
+> superseded for the primary product: Charon now **builds** the gateway/failover plane
+> (`proxy_server.py` + in-request failover) rather than depending on an external
+> OpenAI-compatible gateway. ADR-0001's thin-core invariants — stdlib-only privileged
+> core, gateway imports no coordinator, observe-don't-relay on the *orchestrator* path —
+> are preserved (see ADR-0005 R3). PERF-1 ("never a proxy in the token stream") now
+> scopes to the orchestrator hot path only; gateway mode is a proxy by design.
 
 | Concern        | Decision     | Basis |
 |----------------|--------------|-------|

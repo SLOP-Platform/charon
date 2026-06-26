@@ -1,6 +1,6 @@
 # ADR-0002 — Project Boundary & SLOP Integration
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-06-26)
 - **Deciders:** Rafael (solo operator)
 - **Repo:** `github.com/SLOP-Platform/charon` *(name TBD; `charon` is a placeholder)*
 - **Relates to:** ADR-0001 (orchestration harness architecture — the prior

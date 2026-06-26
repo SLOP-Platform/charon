@@ -1,6 +1,6 @@
 # ADR-0006 — Parallel independent units + work-decomposition (PERF-4)
 
-Status: **Proposed** (design gate; implementation is ticket T1, deferred to build).
+Status: **Accepted** (2026-06-26; T1/PERF-4 implementation shipped in PR #9).
 Date: 2026-06-26. Supersedes the PERF-4 deferral in PLAN-tier4 §6.
 Builds on: ADR-0001 §5 (PERF-4), ADR-0004 D6 (thin DAG runner) / D8 (role
 decomposition), PLAN-tier4 §3 + §6 (CONC-1..4 binding directives), ADR-0005

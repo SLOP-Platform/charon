@@ -1,6 +1,12 @@
 # ADR-0005 — Gateway-first Charon: a local OpenAI-compatible failover gateway, orchestrator as opt-in
 
-- **Status:** Proposed (2026-06-26)
+> **Supersedes in part ADR-0001:** its §1 orchestrator-first framing, its §7
+> "INTEGRATE routing/fallback" decision (Charon now *builds* the gateway plane), and the
+> scope of PERF-1 "never a proxy in the token stream" (now the orchestrator hot path
+> only, not gateway mode). ADR-0001's continuity plane, fence/autonomy ladder, and
+> thin-core invariants remain in force.
+
+- **Status:** Accepted (2026-06-26)
 - **Deciders:** Rafael (operator)
 - **Relates to:** ADR-0001 (thin orchestrator), ADR-0002 (boundary), ADR-0003 (planes),
   ADR-0004 (routing/gateway/pools/frontend — this ADR promotes its R1 proxy to the product)
