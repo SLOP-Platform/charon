@@ -62,6 +62,36 @@ charon gateway --state-dir .charon --port 8080
 CHARON_GATEWAY_TOKEN=$(openssl rand -hex 16) charon gateway --host 0.0.0.0
 ```
 
+### Point a client at Charon
+
+Every OpenAI-compatible client (desktop or CLI) has three settings — set them the
+same way everywhere:
+
+| Setting (named various things) | Value |
+|---|---|
+| **Base URL** / API base / endpoint / "OpenAI base URL" | `http://127.0.0.1:8080/v1` (use `localhost` if the app prefers it — both work) |
+| **API key** | If the gateway is token-gated, your **`CHARON_GATEWAY_TOKEN`**; if it's the ungated loopback default, **any non-empty value** (apps require *something*) |
+| **Model** | a model id Charon serves — see `GET /v1/models`, the console, or a pool name like `auto` (which gives failover) |
+
+The rule: **if it accepts an OpenAI-compatible base URL, point it at
+`http://127.0.0.1:8080/v1`.** A few common ones:
+
+- **Cursor** → Settings → Models → enable *Override OpenAI Base URL* → the URL above;
+  put the key/model in the same panel.
+- **Cline / Roo (VS Code)** → API Provider = *OpenAI Compatible* → Base URL + key + model.
+- **Aider** → `aider --openai-api-base http://127.0.0.1:8080/v1 --openai-api-key <token> --model <id>`
+  (or env `OPENAI_API_BASE` / `OPENAI_API_KEY`).
+- **Codex CLI** → `OPENAI_BASE_URL=http://127.0.0.1:8080/v1 OPENAI_API_KEY=<token>`.
+- **OpenCode** → add a custom provider with `baseURL` = the URL above.
+- **Jan / LM Studio / Msty / Chatbox / AnythingLLM** → add a *custom OpenAI-compatible*
+  provider/endpoint = the URL above; key as a above.
+
+**Windows + WSL2:** if Charon runs inside WSL2 and the client is a Windows app,
+`http://127.0.0.1:8080` usually works (WSL2 forwards localhost). If a client can't
+reach it, run the gateway with `--host 0.0.0.0` **+ a token** and point the client at
+`http://<wsl-ip>:8080/v1` (`hostname -I` in WSL gives the IP). The token then goes in
+the client's API-key field.
+
 `charon.toml` (one schema, mirrors `.charon/models.json` field names):
 
 ```toml
