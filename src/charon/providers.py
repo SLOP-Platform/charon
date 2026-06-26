@@ -38,13 +38,15 @@ PRESETS: dict[str, ProviderPreset] = {
         "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY",
         downgrade_prone=True,
         note="Free tiers can silently route to a different model — failover-guarded."),
-    # NanoGPT / ZAI — bases UNVERIFIED (no key to live-check); override if they 404.
+    # NanoGPT / ZAI — base URLs verified live via `providers test` (2026-06-26):
+    # nano-gpt.com/api/v1 → 200 from /models; api.z.ai/api/paas/v4 → 401 (needs key).
+    # The full chat-completion contract is still pending a real key.
     "nanogpt": ProviderPreset(
         "https://nano-gpt.com/api/v1", "NANOGPT_API_KEY",
-        note="UNVERIFIED base — confirm or override base_url before production use."),
+        note="Base verified live (HTTP 200 from /models)."),
     "zai": ProviderPreset(
         "https://api.z.ai/api/paas/v4", "ZAI_API_KEY", strip_v1=False,
-        note="UNVERIFIED base — confirm or override base_url before production use."),
+        note="Base verified live (HTTP 401 from /models — needs a key)."),
     # Local OpenAI-compatible servers (usually no auth). Default ports shown.
     "lmstudio": ProviderPreset("http://localhost:1234/v1", None,
                                note="LM Studio (default port 1234)."),
