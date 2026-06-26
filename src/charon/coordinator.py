@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Protocol, runtime_checkable
 
 from . import gitutil
 from .fence import Fence, detect_escape, snapshot_outside
@@ -26,6 +27,26 @@ from .ports.backend import AgentBackend
 from .ports.reviewer import Reviewer
 from .router import StaticRouter
 from .types import Autonomy, Budget, Outcome, OutcomeStatus, PrivilegedOp, WorkUnit
+
+
+@runtime_checkable
+class CostGate(Protocol):
+    """The shared, race-free budget seam (D3/CONC-2, ADR-0006).
+
+    The coordinator consults ``allow()`` before EACH dispatch (atomic
+    check-claim-slot) and reports the dispatch's actual spend via ``add()`` after
+    each costed checkpoint (atomic add-actual). Both happen under the gate's own
+    lock. Honest guarantee = **bounded overshoot**: ≤ one in-flight checkpoint per
+    active unit over the cap (NOT "never exceeds to the cent"). A single-unit run
+    passes ``cost_gate=None``; ``parallel.SharedBudget`` is the parallel impl."""
+
+    def allow(self) -> bool:
+        """True iff a new dispatch may proceed (shared running total < cap)."""
+        ...
+
+    def add(self, cost_usd: float, tokens: int) -> None:
+        """Atomically fold one checkpoint's actual spend into the shared total."""
+        ...
 
 
 @dataclass
@@ -50,6 +71,7 @@ def run(
     reviewer: Reviewer | None = None,
     max_checkpoints: int = 8,
     budget: Budget | None = None,
+    cost_gate: CostGate | None = None,
 ) -> RunResult:
     """Drive ``unit`` to acceptance or a bounded stop. One Ledger, one lock.
 
@@ -86,6 +108,15 @@ def run(
             return _result("complete", seq, ledger)
 
         while seq < max_checkpoints:
+            # D3/CONC-2: the SHARED budget is the cross-unit safety net. Consult
+            # it before every dispatch (atomic check-claim-slot) so NEW dispatches
+            # halt once the running total of the whole SET has reached the cap —
+            # even a unit that has itself spent nothing (a sibling exhausted it).
+            # Bounded overshoot: the dispatch we let through is the ≤1 in-flight
+            # checkpoint per active unit the honest guarantee permits.
+            if cost_gate is not None and not cost_gate.allow():
+                return _result("budget", seq, ledger,
+                               note="shared budget cap reached (set-level, bounded overshoot)")
             # Tier 3: stop before starting a dispatch once cumulative spend
             # (derived from the ledger spans) has reached a budget cap. The cap
             # binds at checkpoint boundaries — like max_checkpoints bounds count.
@@ -151,6 +182,11 @@ def run(
                            reviewer_passed=reviewer_passed, reviewer_note=rnote)
             )
             ledger.record_provider(route.backend)
+            # D3/CONC-2: add-actual after the checkpoint — fold this dispatch's
+            # real spend into the shared total so sibling units see it on their
+            # next allow() check. Under the gate's own lock (race-free).
+            if cost_gate is not None and outcome.usage is not None:
+                cost_gate.add(outcome.usage.cost_usd, outcome.usage.tokens)
 
             if propose_only:
                 # L0 propose-only: discard the worktree changes.
