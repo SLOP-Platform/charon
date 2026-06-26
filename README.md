@@ -92,6 +92,24 @@ reach it, run the gateway with `--host 0.0.0.0` **+ a token** and point the clie
 `http://<wsl-ip>:8080/v1` (`hostname -I` in WSL gives the IP). The token then goes in
 the client's API-key field.
 
+### Run the gateway in Docker (optional)
+
+For the everyday **local** gateway, native install (above) is simpler — it reaches
+host-local model servers directly and needs no token on loopback. Docker is for a
+**shared / always-on / VPS** gateway:
+
+```bash
+export CHARON_GATEWAY_TOKEN=$(openssl rand -hex 16)
+docker compose --profile gateway up gateway        # builds from source
+# clients → http://127.0.0.1:8080/v1, API key = the token
+```
+
+Caveats inside a container: a **token is required** (it binds `0.0.0.0`); set
+**local** providers' `base_url` to `host.docker.internal:<port>` (the compose adds
+that host) since the container's `localhost` is not the host's. (The published
+`v0.1.0` image predates the gateway, so the service builds from source until a
+release is republished.)
+
 `charon.toml` (one schema, mirrors `.charon/models.json` field names):
 
 ```toml
