@@ -4,6 +4,7 @@ from pathlib import Path
 
 from charon import gitutil, handoff
 from charon.acceptance import AcceptanceCheck
+from charon.doctor import probe_handoff
 from charon.ledger import Ledger
 from charon.router import StaticRouter
 
@@ -40,3 +41,21 @@ def test_h6_handoff_excludes_exhausted_backend() -> None:
     router = StaticRouter(backends=["alpha", "beta"])
     route = handoff.choose_next_backend(router, "codegen", exclude={"alpha"})
     assert route.backend == "beta"
+
+
+# ------------------------------------------------ probe_handoff unit coverage
+def test_doctor_probe_handoff_no_cmds() -> None:
+    """probe_handoff with no commands returns not-ok and explains what would run."""
+    rep = probe_handoff(None, None)
+    assert rep.ok is False
+    assert not rep.a_dispatched
+    assert not rep.b_dispatched
+    assert rep.notes  # guidance message present
+
+
+def test_doctor_probe_handoff_missing_exe() -> None:
+    """probe_handoff with a nonexistent executable returns before dispatching."""
+    rep = probe_handoff(["__no_such_agent__"], ["__no_such_agent_b__"])
+    assert rep.ok is False
+    assert not rep.a_dispatched
+    assert any("not found" in n for n in rep.notes)
