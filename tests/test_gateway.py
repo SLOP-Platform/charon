@@ -97,6 +97,19 @@ def test_token_falls_back_to_env(monkeypatch, tmp_path):
     assert cfg.token == "envtok"
 
 
+def test_load_config_builds_cost_ranked_pool(tmp_path):
+    toml = tmp_path / "charon.toml"
+    toml.write_text(
+        '[models."paid"]\nupstream_base = "http://paid/v1"\ncost_rank = 10\n\n'
+        '[models."free1"]\nupstream_base = "http://free/v1"\nfree = true\ncost_rank = 0\n\n'
+        '[pools]\nauto = ["paid", "free1"]\n'  # listed paid-first; free must sort first
+    )
+    cfg = gateway.load_config(toml_path=toml)
+    assert "auto" in cfg.pools and "auto" in cfg.model_ids and "paid" in cfg.model_ids
+    # the failover chain is ordered free-first / cheapest-first regardless of listing
+    assert [r.upstream_base for r in cfg.pools["auto"]] == ["http://free/v1", "http://paid/v1"]
+
+
 # ---- /v1/models + token gate ---------------------------------------------
 
 def test_models_endpoint_and_token_gate():

@@ -85,8 +85,19 @@ key_env         = "OPENCODE_GO_KEY"   # env var holding the upstream key
 # upstream_model = "..."              # real upstream id, if it differs
 ```
 
-P1 forwards each model to its configured upstream and serves an aggregated
-`/v1/models`. **Transparent, visible, cost-ranked failover across providers is P2.**
+Define a `[pools]` table (a virtual model id → an ordered set of providers) and the
+gateway does **transparent, visible, cost-ranked failover** (P2): when a provider
+returns 429/402/503, a `Retry-After`, a silent model-downgrade, or is unreachable,
+the next provider in the pool serves **within the same request**. A client/auth error
+(400/401/403) is returned immediately — never failed over. Every response carries
+`X-Charon-Provider` (who served it) and `X-Charon-Failovers` (how many were skipped,
+and why); failover events are logged for the console.
+
+```toml
+[pools]
+auto = ["qwen-free", "kimi-k2.7-code"]   # ordered free-first / cheapest-first
+```
+
 The autonomous orchestrator (`charon run`, above) is an opt-in feature on the same
 core.
 

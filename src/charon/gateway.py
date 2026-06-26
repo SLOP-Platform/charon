@@ -33,33 +33,61 @@ _DEFAULT_PORT = 8080
 _TOKEN_ENV = "CHARON_GATEWAY_TOKEN"
 
 
+class GatewayBindRefused(Exception):
+    """Raised when a non-loopback bind is requested without a token (D5/R8)."""
+
+
 @dataclass(frozen=True)
 class GatewayConfig:
     host: str = _DEFAULT_HOST
     port: int = _DEFAULT_PORT
     token: str | None = None
     routes: dict[str, UpstreamRoute] = field(default_factory=dict)
+    pools: dict[str, list[UpstreamRoute]] = field(default_factory=dict)
     model_ids: list[str] = field(default_factory=list)
 
 
-def _routes_from_registry(registry: dict) -> tuple[dict[str, UpstreamRoute], list[str]]:
-    """Build agent-facing-id → UpstreamRoute from a model registry, resolving each
-    ``key_env`` against the environment. Models without an ``upstream_base`` are
-    skipped (not HTTP-serveable). The same shape backs both config surfaces."""
+def _route_from_spec(spec: dict) -> UpstreamRoute | None:
+    """One registry entry → UpstreamRoute, resolving ``key_env`` against the env.
+    Returns None for entries without an ``upstream_base`` (not HTTP-serveable)."""
+    base = spec.get("upstream_base")
+    if not base:
+        return None
+    key_env = spec.get("key_env")
+    return UpstreamRoute(
+        upstream_base=str(base),
+        api_key=os.environ.get(key_env) if key_env else None,
+        upstream_model=spec.get("upstream_model"),
+    )
+
+
+def _build_routes_and_pools(
+    registry: dict, pool_map: dict,
+) -> tuple[dict[str, UpstreamRoute], dict[str, list[UpstreamRoute]], list[str]]:
+    """Compile a model registry + ``pool_map`` (virtual id → [model id]) into
+    single routes (concrete models) and failover chains (virtual ids). Each chain
+    is ordered **free-first then cheapest-first** from the registry's cost metadata
+    (stable → the listed order breaks ties), matching `pools.load_pools` (D4)."""
     routes: dict[str, UpstreamRoute] = {}
     for mid, spec in registry.items():
-        if not isinstance(spec, dict):
+        if isinstance(spec, dict):
+            r = _route_from_spec(spec)
+            if r is not None:
+                routes[mid] = r
+
+    def _rank(mid: str) -> tuple[bool, int]:
+        spec = registry.get(mid, {})
+        return (not bool(spec.get("free", False)), int(spec.get("cost_rank", 1000)))
+
+    pools: dict[str, list[UpstreamRoute]] = {}
+    for vid, members in pool_map.items():
+        if not isinstance(members, list):
             continue
-        base = spec.get("upstream_base")
-        if not base:
-            continue
-        key_env = spec.get("key_env")
-        routes[mid] = UpstreamRoute(
-            upstream_base=str(base),
-            api_key=os.environ.get(key_env) if key_env else None,
-            upstream_model=spec.get("upstream_model"),
-        )
-    return routes, sorted(routes)
+        ordered = sorted([m for m in members if m in routes], key=_rank)
+        if ordered:
+            pools[vid] = [routes[m] for m in ordered]
+
+    return routes, pools, sorted(set(routes) | set(pools))
 
 
 def load_config(
@@ -77,6 +105,7 @@ def load_config(
     cfg_port: int = _DEFAULT_PORT
     cfg_token: str | None = None
     registry: dict = {}
+    pool_map: dict = {}
 
     if toml_path is not None:
         data = tomllib.loads(Path(toml_path).read_text())
@@ -85,48 +114,58 @@ def load_config(
         cfg_port = int(gw.get("port", cfg_port))
         cfg_token = gw.get("token")
         registry = data.get("models") or {}
+        pool_map = data.get("pools") or {}  # virtual id → ordered [model id]
     elif state_dir is not None:
         models_path = Path(state_dir) / "models.json"
+        pools_path = Path(state_dir) / "pools.json"
         if models_path.exists():
             registry = json.loads(models_path.read_text())
+        if pools_path.exists():
+            pool_map = json.loads(pools_path.read_text())  # role → [model id]
 
-    routes, model_ids = _routes_from_registry(registry)
+    routes, pools, model_ids = _build_routes_and_pools(registry, pool_map)
     return GatewayConfig(
         host=host or cfg_host,
         port=port if port is not None else cfg_port,
         token=token or cfg_token or os.environ.get(_TOKEN_ENV) or None,
         routes=routes,
+        pools=pools,
         model_ids=model_ids,
     )
 
 
 def build_server(cfg: GatewayConfig) -> GatewayProxyServer:
-    """Construct (do not start) the gateway server from config."""
+    """Construct the gateway server. Enforces the loopback/token invariant HERE —
+    at bind time — so it holds for ANY caller, not just ``run`` (security review
+    MED: ``__init__`` binds the socket, so the guard must precede construction)."""
+    if not is_loopback(cfg.host) and not cfg.token:
+        raise GatewayBindRefused(
+            f"refusing to bind a non-loopback host ({cfg.host}) without a token — "
+            f"the gateway holds your provider keys. Set CHARON_GATEWAY_TOKEN / "
+            f"--token, or bind 127.0.0.1 for local use (ADR-0005 D5/R8)."
+        )
     return GatewayProxyServer(
-        routes=cfg.routes, host=cfg.host, port=cfg.port,
+        routes=cfg.routes, pools=cfg.pools, host=cfg.host, port=cfg.port,
         token=cfg.token, model_ids=cfg.model_ids,
     )
 
 
 def run(cfg: GatewayConfig) -> int:
-    """Start the gateway and serve until interrupted. Refuses a non-loopback bind
-    without a token (the gateway holds provider keys — an exposed untokened bind
-    is open credit; ADR-0005 D5/R8)."""
-    if not is_loopback(cfg.host) and not cfg.token:
-        print(
-            f"refusing to bind a non-loopback host ({cfg.host}) without a token — "
-            f"the gateway holds your provider keys. Set CHARON_GATEWAY_TOKEN / "
-            f"--token, or bind 127.0.0.1 for local use (ADR-0005 D5/R8).",
-            file=sys.stderr,
-        )
+    """Start the gateway and serve until interrupted."""
+    if cfg.token is None and os.environ.get(_TOKEN_ENV) == "":
+        print(f"warning: {_TOKEN_ENV} is set but EMPTY — running UNGATED on loopback",
+              file=sys.stderr)
+    try:
+        server = build_server(cfg)
+    except GatewayBindRefused as exc:
+        print(str(exc), file=sys.stderr)
         return 2
-    if not cfg.routes:
+    if not cfg.routes and not cfg.pools:
         print("warning: no models configured (need a charon.toml or "
               ".charon/models.json with upstream_base entries)", file=sys.stderr)
-    server = build_server(cfg)
     gate = "token-gated" if cfg.token else "loopback, UNGATED"
-    print(f"charon gateway ({gate}) on {server.url}/v1 — {len(cfg.routes)} model(s)",
-          file=sys.stderr)
+    print(f"charon gateway ({gate}) on {server.url}/v1 — "
+          f"{len(cfg.model_ids)} model(s), {len(cfg.pools)} pool(s)", file=sys.stderr)
     try:
         server.serve_forever()
     except KeyboardInterrupt:  # pragma: no cover

@@ -12,11 +12,13 @@ integration test (mock upstream) and live via a real OpenCode-Go call.
 """
 from __future__ import annotations
 
+import collections
 import hmac
 import http.server
 import json
 import socketserver
 import threading
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -33,6 +35,12 @@ class UpstreamRoute:
     api_key: str | None = None
     upstream_model: str | None = None  # rewrite the body's model to this id upstream
     pool_id: str | None = None  # observe under this id (the router's pool id) if set
+    provider: str | None = None  # display label for failover visibility (X-Charon-Provider)
+
+    @property
+    def label(self) -> str:
+        """Human-facing provider id for failover headers/logs — never a secret."""
+        return self.provider or urlsplit(self.upstream_base).netloc or self.upstream_base
 
 _SKIP_HEADERS = {"host", "authorization", "content-length", "connection",
                  "accept-encoding", "proxy-authorization"}
@@ -40,6 +48,10 @@ _DEFAULT_UA = "charon-proxy/0.1"
 # Library-default UAs upstream bot-protection bans (Cloudflare 1010); normalize
 # these to the proxy's own identity so an internal urllib caller isn't blocked.
 _BANNED_UA_PREFIXES = ("python-urllib", "python-requests")
+# Cap the streamed bytes buffered while looking for the response `model` id (the
+# silent-downgrade check before committing a stream); bounds memory on a stream
+# that never carries a model field.
+_STREAM_HEAD_CAP = 65536
 
 
 def _extract(raw: bytes, content_type: str) -> dict:
@@ -111,6 +123,85 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
             presented = (qs.get("token") or [""])[0]
         return bool(presented) and hmac.compare_digest(presented, token)
 
+    # ---- helpers ---------------------------------------------------------
+
+    def _write(self, data: bytes) -> bool:
+        """Write to the client; False if the client hung up (so we stop)."""
+        try:
+            self.wfile.write(data)
+            self.wfile.flush()
+            return True
+        except (BrokenPipeError, ConnectionResetError):
+            return False
+
+    def _drain(self, resp) -> bytes:
+        out: list[bytes] = []
+        try:
+            while True:
+                c = resp.read(8192)
+                if not c:
+                    break
+                out.append(c)
+        except Exception:
+            pass
+        return b"".join(out)
+
+    def _send_resp_headers(self, status: int, ctype: str, provider: str | None,
+                           failovers: list[dict], downgrade: bool) -> None:
+        """Send status + Content-Type + the failover-visibility headers (ADR D3)."""
+        self.send_response(status)
+        self.send_header("Content-Type", ctype)
+        if provider:
+            self.send_header("X-Charon-Provider", provider)
+        self.send_header("X-Charon-Failovers", str(len(failovers)))
+        if failovers:
+            self.send_header("X-Charon-Failover-Reasons",
+                             "; ".join(f"{f['provider']}={f['status']}" for f in failovers))
+        if downgrade:
+            self.send_header("X-Charon-Downgrade", "served a different model than requested")
+        self.end_headers()
+
+    def _build_upstream_req(self, srv, route: UpstreamRoute, orig_bj: dict,
+                            raw_body: bytes) -> urllib.request.Request:
+        """Build the upstream request for ONE attempt from the ORIGINAL request —
+        each provider gets its own ``upstream_model`` (ADR R10b), and the client
+        query string is dropped so our ``?token=`` bearer never leaks upstream
+        (security review HIGH)."""
+        bj = dict(orig_bj)
+        if bj:
+            if route.upstream_model:
+                bj["model"] = route.upstream_model
+            if bj.get("stream") is True:
+                opts = dict(bj.get("stream_options") or {})
+                opts["include_usage"] = True
+                bj["stream_options"] = opts
+            data: bytes | None = json.dumps(bj).encode()
+        else:
+            data = raw_body or None
+
+        path = urlsplit(self.path).path  # PATH ONLY — never forward the query string
+        if srv.strip_v1 and path.startswith("/v1"):
+            path = path[len("/v1"):]  # upstream_base already ends in /v1
+        url = route.upstream_base.rstrip("/") + path
+
+        req = urllib.request.Request(url, data=data, method=self.command)
+        for hk in self.headers.keys():
+            # User-Agent is normalized separately (below) — never forwarded raw.
+            if hk.lower() not in _SKIP_HEADERS and hk.lower() != "user-agent":
+                req.add_header(hk, self.headers[hk])
+        req.add_header("Content-Type", "application/json")
+        # Egress identity: forward the agent's real UA (some gateways 403 an unknown
+        # one), but replace an absent/library-default UA — "Python-urllib/3.x" trips
+        # Cloudflare 1010 (→403). Live-verified.
+        client_ua = self.headers.get("User-Agent", "")
+        if client_ua and not client_ua.lower().startswith(_BANNED_UA_PREFIXES):
+            req.add_header("User-Agent", client_ua)
+        else:
+            req.add_header("User-Agent", _DEFAULT_UA)
+        if route.api_key:
+            req.add_header("Authorization", f"Bearer {route.api_key}")
+        return req
+
     def _handle(self) -> None:
         srv: GatewayProxyServer = self.server  # type: ignore[assignment]
 
@@ -129,107 +220,125 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 {"id": m, "object": "model", "owned_by": "charon"} for m in srv.model_ids]})
             return
 
+        # Read the client request (size-capped — memory-DoS guard on an exposed bind).
         length = int(self.headers.get("Content-Length") or 0)
-        body = self.rfile.read(length) if length else b""
+        if length > srv.max_body_bytes:
+            self._json(413, {"error": {"message": "request body too large"}})
+            return
+        raw_body = self.rfile.read(length) if length else b""
 
-        bj: dict = {}
+        orig_bj: dict = {}
         requested = ""
         try:
-            bj = json.loads(body) if body else {}
-            requested = bj.get("model", "")
+            orig_bj = json.loads(raw_body) if raw_body else {}
+            requested = orig_bj.get("model", "")
         except Exception:
             pass
 
-        # Which upstream serves this model (multi-provider pools)?
-        route = srv.route_for(requested)
-        if route is None:
-            srv.observer.observe(requested, 502, {}, {})
-            data = json.dumps({"error": {"message": f"no route for model {requested!r}"}}).encode()
-            self.send_response(502)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(data)
+        chain = srv.chain_for(requested)
+        if not chain:
+            srv.observer.observe(requested, 502, {}, {}, count_usage=False)
+            self._json(502, {"error": {"message": f"no route for model {requested!r}"}})
             return
 
-        # Rewrite the body: the upstream's real model id, and (if streaming) ask
-        # for usage in the stream so we can still see tokens/cost.
-        if bj:
-            if route.upstream_model:
-                bj["model"] = route.upstream_model
-            if bj.get("stream") is True:
-                opts = dict(bj.get("stream_options") or {})
-                opts["include_usage"] = True
-                bj["stream_options"] = opts
-            body = json.dumps(bj).encode()
+        is_stream = orig_bj.get("stream") is True
+        ordered = srv.order_by_cooldown(chain)  # fresh providers first, cooled last (R7)
+        failovers: list[dict] = []
 
-        path = self.path
-        if srv.strip_v1 and path.startswith("/v1"):
-            path = path[len("/v1"):]  # upstream_base already ends in /v1
-        url = route.upstream_base.rstrip("/") + path
+        for i, route in enumerate(ordered):
+            more = i < len(ordered) - 1
+            okey = route.pool_id or requested  # exclusion/observe key (orchestrator compat)
+            expected = route.upstream_model or requested or None
+            req = self._build_upstream_req(srv, route, orig_bj, raw_body)
 
-        req = urllib.request.Request(url, data=(body or None), method=self.command)
-        for hk in self.headers.keys():
-            # User-Agent is normalized separately (below) — never forwarded raw.
-            if hk.lower() not in _SKIP_HEADERS and hk.lower() != "user-agent":
-                req.add_header(hk, self.headers[hk])
-        req.add_header("Content-Type", "application/json")
-        # Egress identity: forward the agent's real UA (e.g. opencode/x — some
-        # gateways 403 an unknown one), but replace an absent or library-default
-        # UA with the proxy's own. A urllib/requests default leaks through as
-        # "Python-urllib/3.x", which upstream bot-protection bans (Cloudflare
-        # error 1010 → 403) — e.g. Charon's own pre-flight probe. Live-verified.
-        client_ua = self.headers.get("User-Agent", "")
-        if client_ua and not client_ua.lower().startswith(_BANNED_UA_PREFIXES):
-            req.add_header("User-Agent", client_ua)
-        else:
-            req.add_header("User-Agent", _DEFAULT_UA)
-        if route.api_key:
-            req.add_header("Authorization", f"Bearer {route.api_key}")
+            try:
+                resp = urllib.request.urlopen(req, timeout=srv.fwd_timeout)
+                status, rhdrs = resp.status, dict(resp.headers)
+            except urllib.error.HTTPError as exc:
+                resp, status, rhdrs = exc, exc.code, dict(exc.headers)
+            except Exception:  # provider unreachable → fail over (don't 502 outright)
+                srv.observer.record(srv.observer.classify(okey, 503, {}, {},
+                                    expected_model=expected), count_usage=False)
+                srv.set_cooldown(route, None)
+                if more:  # count only providers we actually move PAST
+                    failovers.append({"provider": route.label, "status": "unreachable",
+                                      "reason": "connection error"})
+                    continue
+                self._send_resp_headers(502, "application/json", route.label, failovers, False)
+                self._write(json.dumps(
+                    {"error": {"message": "all upstreams unreachable"}}).encode())
+                srv.note_request(requested, route.label, failovers)
+                return
 
-        try:
-            resp = urllib.request.urlopen(req, timeout=srv.fwd_timeout)
-            status, rhdrs = resp.status, dict(resp.headers)
-        except urllib.error.HTTPError as exc:
-            resp, status, rhdrs = exc, exc.code, dict(exc.headers)
-        except Exception as exc:  # upstream unreachable
-            srv.observer.observe(requested, 502, {}, {})
-            data = json.dumps({"error": {"message": str(exc)}}).encode()
-            self.send_response(502)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(data)
+            ctype = rhdrs.get("Content-Type", "application/json")
+
+            # ---- non-200 ----
+            if status != 200:
+                body_bytes = self._drain(resp)
+                obs = srv.observer.classify(okey, status, rhdrs, {}, expected_model=expected)
+                srv.observer.record(obs, count_usage=False)
+                if obs.failover:  # 429/402/503/404 = capacity/gone → fail over (R6)
+                    srv.set_cooldown(route, obs.retry_after)  # provider-keyed (R10c)
+                    if more:  # count only providers we actually move PAST
+                        failovers.append({"provider": route.label, "status": status,
+                                          "reason": obs.note or "exhausted"})
+                        continue
+                # terminal capacity error, OR a 400/401/403 client/auth error we must
+                # NOT fail over (R6) — relay the real upstream response as-is.
+                self._send_resp_headers(status, ctype, route.label, failovers, False)
+                self._write(body_bytes)
+                srv.note_request(requested, route.label, failovers)
+                return
+
+            # ---- 200, non-streaming: buffer, then check for a silent downgrade ----
+            if not is_stream:
+                body_bytes = self._drain(resp)
+                observed = _extract(body_bytes, ctype)
+                obs = srv.observer.classify(okey, 200, rhdrs, observed, expected_model=expected)
+                if obs.pseudo_success and more:  # downgrade + alternatives left → fail over
+                    srv.observer.record(obs, count_usage=False)
+                    failovers.append({"provider": route.label, "status": 200,
+                                      "reason": obs.note})
+                    continue
+                srv.observer.record(obs, count_usage=True)  # served → bill usage (R10a)
+                self._send_resp_headers(200, ctype, route.label, failovers, obs.pseudo_success)
+                self._write(body_bytes)
+                srv.note_request(requested, route.label, failovers)
+                return
+
+            # ---- 200, streaming: buffer the head until `model` is seen (or a cap),
+            #      so we can fail over a downgrade BEFORE committing bytes (ADR R1) ----
+            head: list[bytes] = []
+            head_bytes = 0
+            while head_bytes < _STREAM_HEAD_CAP:
+                c = resp.read(8192)
+                if not c:
+                    break
+                head.append(c)
+                head_bytes += len(c)
+                if _extract(b"".join(head), ctype).get("model"):
+                    break
+            obs = srv.observer.classify(okey, 200, rhdrs, _extract(b"".join(head), ctype),
+                                        expected_model=expected)
+            if obs.pseudo_success and more:  # downgrade detected pre-commit → fail over
+                srv.observer.record(obs, count_usage=False)
+                failovers.append({"provider": route.label, "status": 200, "reason": obs.note})
+                continue
+            # commit: stream the buffered head + the remainder
+            self._send_resp_headers(200, ctype, route.label, failovers, obs.pseudo_success)
+            full = list(head)
+            ok = all(self._write(c) for c in head)
+            while ok:
+                c = resp.read(8192)
+                if not c:
+                    break
+                full.append(c)
+                ok = self._write(c)
+            srv.observer.record(srv.observer.classify(okey, 200, rhdrs,
+                                _extract(b"".join(full), ctype), expected_model=expected),
+                                count_usage=True)
+            srv.note_request(requested, route.label, failovers)
             return
-
-        # Stream the response straight through (so the agent's SSE keeps flowing)
-        # while accumulating it to extract the observation afterward.
-        ctype = rhdrs.get("Content-Type", "application/json")
-        self.send_response(status)
-        self.send_header("Content-Type", ctype)
-        self.end_headers()
-        chunks: list[bytes] = []
-        try:
-            while True:
-                chunk = resp.read(8192)
-                if not chunk:
-                    break
-                chunks.append(chunk)
-                try:
-                    self.wfile.write(chunk)
-                    self.wfile.flush()
-                except (BrokenPipeError, ConnectionResetError):
-                    break
-        except Exception:
-            pass
-
-        observed = _extract(b"".join(chunks), ctype)
-        # observe under the router's pool id (so failover/exclusion line up), or
-        # the requested model when single-upstream.
-        observe_id = route.pool_id or requested or observed.get("model", "")
-        # The native id actually served upstream (after any model rewrite) — the
-        # baseline for the pseudo-success/silent-downgrade check, so a prefixed
-        # pool id doesn't false-positive an honest 200 (see GatewayProxy.observe).
-        expected = route.upstream_model or requested or None
-        srv.observer.observe(observe_id, status, rhdrs, observed, expected_model=expected)
 
 
 class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
@@ -255,6 +364,10 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         strip_v1: bool = True,
         token: str | None = None,
         model_ids: list[str] | None = None,
+        pools: dict[str, list[UpstreamRoute]] | None = None,
+        max_body_bytes: int = 10 * 1024 * 1024,
+        default_cooldown: float = 60.0,
+        failover_log_path: str | None = None,
     ) -> None:
         super().__init__((host, port), _ProxyHandler)
         self.upstream_base = upstream_base
@@ -267,6 +380,16 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         # agent-facing model ids to serve at /v1/models (None = don't intercept).
         self.token = token
         self.model_ids = model_ids
+        # P2 failover: model id → ordered (cost-ranked) candidate chain; a
+        # provider-keyed cooldown with Retry-After expiry (R7/R10c); and a bounded
+        # in-memory failover event log (+ optional JSONL file) for visibility (D3).
+        self.pools = pools or {}
+        self.max_body_bytes = max_body_bytes
+        self.default_cooldown = default_cooldown
+        self.failover_log_path = failover_log_path
+        self._cooldown: dict[str, float] = {}
+        self._cooldown_lock = threading.Lock()
+        self.failover_events: collections.deque[dict] = collections.deque(maxlen=200)
 
     def route_for(self, model: str) -> UpstreamRoute | None:
         """Which upstream serves ``model``: an explicit route, else the single
@@ -276,6 +399,49 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         if self.upstream_base:
             return UpstreamRoute(self.upstream_base, self.api_key)
         return None
+
+    def chain_for(self, model: str) -> list[UpstreamRoute]:
+        """The ordered failover chain for ``model``: a configured pool (multiple
+        cost-ranked providers), else a single route/upstream (a chain of one), else
+        ``[]`` (no route → 502). A 1-element chain never fails over — exactly the
+        pre-P2 single-upstream behavior."""
+        if model in self.pools:
+            return list(self.pools[model])
+        single = self.route_for(model)
+        return [single] if single is not None else []
+
+    def order_by_cooldown(self, chain: list[UpstreamRoute]) -> list[UpstreamRoute]:
+        """Try providers NOT in active cooldown first; keep cooled ones as a
+        last resort so a stale cooldown never permanently blocks a request (R7)."""
+        now = time.monotonic()
+        with self._cooldown_lock:
+            fresh = [r for r in chain if self._cooldown.get(r.upstream_base, 0.0) <= now]
+            cooled = [r for r in chain if self._cooldown.get(r.upstream_base, 0.0) > now]
+        return fresh + cooled
+
+    def set_cooldown(self, route: UpstreamRoute, retry_after: int | None) -> None:
+        """Mark a provider out-of-capacity until ``Retry-After`` (or a default),
+        keyed by provider (upstream_base) — a 429 is account-level, so all of that
+        provider's models are skipped, not just the one (R10c)."""
+        secs = float(retry_after) if (retry_after and retry_after > 0) else self.default_cooldown
+        with self._cooldown_lock:
+            self._cooldown[route.upstream_base] = time.monotonic() + secs
+
+    def note_request(self, model: str, served_by: str, failovers: list[dict]) -> None:
+        """Record a request that involved failover (visibility, D3): an in-memory
+        ring buffer the console reads, plus an optional JSONL append. No-op when no
+        failover happened (the common path stays silent and cheap)."""
+        if not failovers:
+            return
+        event = {"model": model, "served_by": served_by, "failovers": list(failovers)}
+        with self._cooldown_lock:
+            self.failover_events.append(event)
+        if self.failover_log_path:
+            try:
+                with open(self.failover_log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(event) + "\n")
+            except OSError:
+                pass
 
     @property
     def url(self) -> str:
