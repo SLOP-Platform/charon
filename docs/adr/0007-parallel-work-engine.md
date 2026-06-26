@@ -153,6 +153,20 @@ consumer of the same pools/proxy core; it must never import into or bloat the ga
 request path or install footprint (ADR-0005 R3). "Charon is a work engine" is the
 orchestrator's charter, not a redefinition of the product whose default is the gateway.
 
+**D12 — End-product validation is a distinct role (Validate), after units land, before
+close.** Per-unit acceptance verifies *each unit*; the integration land-gate (D5/D6)
+verifies *mechanical integration*; **neither verifies the assembled product meets the
+original goal.** Add a **Validator worker** (a tier-appropriate model; role=Validate in
+the role-DAG) that exercises the integrated result against the **top-level acceptance
+captured at intake** (ADR-0008) and reports pass/fail. It is a **quality gate (does it
+work) — explicitly NOT a security/trust boundary**: an automated validator is
+gameable/prompt-injectable (cf. coordinator D-GATE-6 — the reviewer "can be wrong or
+gamed, NOT a security boundary"), so it catches *broken/incomplete*, not *hostile*.
+It **complements, never replaces** per-unit acceptance, the land-gate, and human review
+of sensitive paths. In propose mode its report accompanies the PR (informs the human);
+in opt-in auto-land it is a **required pass**. Distinct from a per-unit L2 reviewer: the
+validator runs once on the *whole product*, not per unit.
+
 ## Invariants preserved
 ADR-0003 default-deny / L0-propose default (D4); L2+ container-gated; fence escape-scan
 per unit; INV-1 one ledger per task. ADR-0005 R3 (gateway never imports the
