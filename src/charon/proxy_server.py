@@ -40,8 +40,14 @@ class UpstreamRoute:
 
     @property
     def label(self) -> str:
-        """Human-facing provider id for failover headers/logs — never a secret."""
-        return self.provider or urlsplit(self.upstream_base).netloc or self.upstream_base
+        """Human-facing provider id for failover headers/logs — never a secret. Uses
+        host[:port] (NOT netloc) so any ``user:pass@`` userinfo in a misconfigured
+        base never surfaces in a header/console (P4 review)."""
+        if self.provider:
+            return self.provider
+        parts = urlsplit(self.upstream_base)
+        host = parts.hostname or self.upstream_base
+        return f"{host}:{parts.port}" if parts.port else host
 
 _SKIP_HEADERS = {"host", "authorization", "content-length", "connection",
                  "accept-encoding", "proxy-authorization"}
@@ -69,13 +75,14 @@ code{background:#1e1e2e;padding:.1rem .3rem;border-radius:3px}
 <h1>Charon Gateway <span class=muted id=ts></span></h1>
 <div id=usage></div>
 <h2>Providers</h2><table id=providers><thead><tr><th>provider<th>served<th>failed
-<th>cost $<th>last<th>cooldown</tr></thead><tbody></tbody></table>
+<th>errors<th>cost $<th>last<th>cooldown</tr></thead><tbody></tbody></table>
 <h2>Pools</h2><table id=pools><tbody></tbody></table>
 <h2>Recent failovers</h2><div id=failovers class=muted>none yet</div>
 <script>
 const tok=new URLSearchParams(location.search).get('token');
 const q=tok?('?token='+encodeURIComponent(tok)):'';
-function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+function esc(s){return String(s).replace(/[&<>"']/g,
+  c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 async function tick(){
  let r; try{r=await fetch('/charon/status'+q)}catch(e){return}
  if(!r.ok)return; const d=await r.json();
@@ -85,8 +92,8 @@ async function tick(){
  const pb=document.querySelector('#providers tbody');pb.innerHTML='';
  for(const [n,s] of Object.entries(d.providers)){const cd=d.cooldown_seconds[n];
   pb.insertAdjacentHTML('beforeend','<tr><td><code>'+esc(n)+'</code><td>'+s.served+
-   '<td>'+s.failed+'<td>'+(s.cost||0).toFixed(4)+'<td>'+esc(s.last_status)+'<td>'+
-   (cd?('<span class=cool>'+cd+'s</span>'):'<span class=ok>ok</span>')+'</tr>')}
+   '<td>'+s.failed+'<td>'+(s.errors||0)+'<td>'+(s.cost||0).toFixed(4)+'<td>'+esc(s.last_status)+
+   '<td>'+(cd?('<span class=cool>'+cd+'s</span>'):'<span class=ok>ok</span>')+'</tr>')}
  const lb=document.querySelector('#pools tbody');lb.innerHTML='';
  for(const [m,ps] of Object.entries(d.pools)){lb.insertAdjacentHTML('beforeend',
    '<tr><td><code>'+esc(m)+'</code><td>'+ps.map(esc).join(' &rarr; ')+'</tr>')}
@@ -533,12 +540,15 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         counter (per-provider visibility, D3/P4), and — when failover happened —
         append a failover event (ring buffer + optional JSONL)."""
         def _slot(stats, label):
-            return stats.setdefault(label, {"served": 0, "failed": 0, "cost": 0.0,
-                                            "last_status": None})
+            return stats.setdefault(label, {"served": 0, "failed": 0, "errors": 0,
+                                            "cost": 0.0, "last_status": None})
         with self._cooldown_lock:
             s = _slot(self.provider_stats, served_by)
-            s["served"] += 1
-            s["cost"] += cost
+            if status == 200:
+                s["served"] += 1   # a real success
+                s["cost"] += cost
+            else:
+                s["errors"] += 1   # terminal failure/relayed error — NOT a success (P4 review)
             s["last_status"] = status
             for f in failovers:
                 fs = _slot(self.provider_stats, f["provider"])

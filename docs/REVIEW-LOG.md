@@ -746,3 +746,11 @@ Two MED + two LOW gaps fixed:
   billed cost (0.02, served only), and the recorded failover. **Live-smoked:** token
   gate (401 without token), cooldown surfaced (5 s from a `Retry-After`), 2.4 KB page.
 - **Gate:** 137 passed, ruff clean, mypy clean (29 files), boundary OK, version OK.
+- **Independent review — verdict PASS** (no secret/topology leak; both endpoints
+  token-gated + gateway-mode-only; every HTML sink escaped; the upstream-influenced
+  `reason` field isn't even rendered; no P1–P3 regression). Three LOW fixes applied:
+  (1) `note_request` counts a provider as **served only on 200**; terminal failures/
+  relayed errors now increment a distinct `errors` counter (console no longer
+  overstates health). (2) `esc()` hardened to also escape `"`/`'` (safe regardless of
+  future sink). (3) `UpstreamRoute.label` uses `host[:port]` not `netloc`, so any
+  `user:pass@` in a misconfigured base can never surface in a header/console.
