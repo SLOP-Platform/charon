@@ -100,6 +100,8 @@ def _cmd_providers(args: argparse.Namespace) -> int:
             print(f"error: {exc}", file=sys.stderr)
             return 2
         key_env = args.key_env or preset.key_env
+        if not key_env and args.base_url:  # custom provider → derive so a key CAN be stored
+            key_env = f"{args.name.upper().replace('-', '_')}_API_KEY"
         # persist the provider so it works with NO hand-edited config (custom or preset)
         try:
             config.add_provider(args.name, base_url=args.base_url, key_env=key_env,
@@ -147,11 +149,12 @@ def _cmd_setup(args: argparse.Namespace) -> int:
     try:
         print("Charon setup — configure providers, keys, models, and a failover pool.")
         print(f"(config → {secrets.config_dir()};  keys → secrets.json at 0600)")
+        print("(Ctrl-C cancels anytime; 'done' or a blank Enter finishes a step)")
         print("Presets:", ", ".join(sorted(providers.PRESETS)))
         added_models: list[str] = []
         while True:
-            name = ask("\nAdd a provider (preset name, or a custom name; blank to finish)")
-            if not name:
+            name = ask("\nAdd a provider (preset or custom name; blank or 'done' to finish)")
+            if not name or name.lower() in ("done", "q", "quit", "exit"):
                 break
             base_url = None
             if name not in providers.PRESETS:
@@ -164,7 +167,12 @@ def _cmd_setup(args: argparse.Namespace) -> int:
             except ValueError as exc:
                 print(f"  {exc}")
                 continue
-            key_env = ask("  key env-var name", preset.key_env or f"{name.upper()}_API_KEY")
+            # env-var name is an internal detail — derive it; only a CUSTOM provider needs
+            # one derived (<NAME>_API_KEY, hyphens→underscores). A keyless local preset
+            # (lmstudio/ollama/…) stays keyless — no key prompt.
+            key_env = preset.key_env
+            if not key_env and base_url:
+                key_env = f"{name.upper().replace('-', '_')}_API_KEY"
             try:
                 config.add_provider(name, base_url=base_url, key_env=key_env,
                                     strip_v1=(preset.strip_v1 if base_url else None))
@@ -172,10 +180,12 @@ def _cmd_setup(args: argparse.Namespace) -> int:
                 print(f"  {exc}")
                 continue
             if key_env:
-                key = getpass.getpass(f"  paste the API key ({key_env}) [blank to skip]: ")
+                key = getpass.getpass(f"  paste the API key for {name} [blank to skip]: ")
                 if key:
                     secrets.set_secret(key_env, key)
-                    print("  key stored (0600)")
+                    print(f"  key stored (0600, as {key_env})")
+            else:
+                print(f"  added '{name}' (local provider — no key needed)")
             while True:
                 mid = ask(f"  model served by '{name}' (the id clients request; blank to stop)")
                 if not mid:
@@ -196,10 +206,12 @@ def _cmd_setup(args: argparse.Namespace) -> int:
             vid = ask("  pool name (the id clients request for auto-failover)", "auto")
             config.set_pool(vid, added_models)
             print(f"  pool '{vid}' = {added_models} (auto-ordered free-first)")
-    except (EOFError, KeyboardInterrupt):
-        print("\nsetup needs an interactive terminal. Alternatively use "
-              "`charon providers add <name>` or edit the files in "
-              f"{secrets.config_dir()}.", file=sys.stderr)
+    except KeyboardInterrupt:
+        print("\nsetup cancelled — anything you already added is saved.", file=sys.stderr)
+        return 0
+    except EOFError:
+        print("\nsetup needs an interactive terminal. Use `charon providers add <name>` "
+              f"or edit the files in {secrets.config_dir()}.", file=sys.stderr)
         return 2
     print(f"\nDone. {len(added_models)} model(s) configured. Start the gateway:\n"
           "  charon gateway")
@@ -245,6 +257,35 @@ def _provider_test(name: str, base_url: str | None) -> int:
         print(f"{name}: UNREACHABLE — {type(exc).__name__} (check base_url / network)",
               file=sys.stderr)
         return 1
+
+
+def _cmd_reset(args: argparse.Namespace) -> int:
+    """Wipe local gateway config so you can start fresh. Keeps your stored keys
+    unless --all. Files live in the user config dir (~/.charon)."""
+    from . import secrets
+    d = secrets.config_dir()
+    targets = ["providers.json", "models.json", "pools.json"]
+    if args.all:
+        targets.append("secrets.json")
+    existing = [t for t in targets if (d / t).exists()]
+    if not existing:
+        print(f"nothing to reset in {d}")
+        return 0
+    what = ", ".join(existing) + (" (this DELETES your stored keys)" if args.all else "")
+    if not args.yes:
+        try:
+            ans = input(f"Delete {what} in {d}? [y/N]: ").strip().lower()
+        except EOFError:
+            print("reset needs --yes in a non-interactive shell", file=sys.stderr)
+            return 2
+        if ans not in ("y", "yes"):
+            print("aborted")
+            return 1
+    for t in existing:
+        (d / t).unlink()
+    tail = "" if args.all else "  (keys kept — add --all to remove secrets.json too)"
+    print(f"reset: removed {', '.join(existing)} from {d}.{tail}")
+    return 0
 
 
 def _cmd_doctor(args: argparse.Namespace) -> int:
@@ -321,6 +362,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     su = sub.add_parser("setup", help="guided gateway setup (providers, keys, models, pool)")
     su.set_defaults(func=_cmd_setup)
+
+    rs = sub.add_parser("reset",
+                        help="remove local config (providers/models/pools); --all also drops keys")
+    rs.add_argument("--all", action="store_true",
+                    help="also delete secrets.json (your stored API keys)")
+    rs.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    rs.set_defaults(func=_cmd_reset)
 
     lg = sub.add_parser("ledger", help="show a task's derived ledger state")
     lg.add_argument("task_id")

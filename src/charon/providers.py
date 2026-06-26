@@ -29,10 +29,15 @@ class ProviderPreset:
 # Built-in presets. VERIFIED bases are marked; UNVERIFIED ones carry a note and
 # should be confirmed (or overridden) before trusting them with a real key.
 PRESETS: dict[str, ProviderPreset] = {
-    # OpenCode Zen — already wired as the project's `opencode-go` upstream.
+    # OpenCode Zen — one key (OPENCODE_ZEN_KEY), two endpoints with DIFFERENT model
+    # sets (verified live 2026-06-26): /zen/v1 = full catalog (~49: Claude/GPT/Gemini/
+    # Qwen + open); /zen/go/v1 = coding-focused subset (~20).
+    "opencode-zen": ProviderPreset(
+        "https://opencode.ai/zen/v1", "OPENCODE_ZEN_KEY",
+        note="OpenCode Zen — full catalog (Claude/GPT/Gemini/Qwen + open models)."),
     "opencode-go": ProviderPreset(
         "https://opencode.ai/zen/go/v1", "OPENCODE_ZEN_KEY",
-        note="OpenCode Zen 'go' endpoint (verified, already used by charon doctor)."),
+        note="OpenCode Zen 'go' — coding-focused subset; same OPENCODE_ZEN_KEY."),
     # OpenRouter — base verified.
     "openrouter": ProviderPreset(
         "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY",

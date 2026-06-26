@@ -34,7 +34,7 @@ charon providers add my-llm --base-url https://host/v1 # ANY OpenAI-compatible p
 ```
 
 Presets: `openrouter, nanogpt, zai, deepseek, chutes, groq, together, mistral,
-opencode-go, lmstudio, jan, ollama, local`. Keys are stored `0600` in
+opencode-zen, opencode-go, lmstudio, jan, ollama, local`. Keys are stored `0600` in
 `~/.charon/secrets.json` (`%APPDATA%\charon` on Windows) — never in config, never in
 the repo. Prefer a browser? Open `http://127.0.0.1:8080/charon/setup`.
 

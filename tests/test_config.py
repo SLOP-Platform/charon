@@ -62,10 +62,10 @@ def test_custom_provider_resolves_to_gateway_route(monkeypatch, tmp_path):
 def test_setup_wizard_end_to_end(monkeypatch, tmp_path):
     monkeypatch.setenv("CHARON_HOME", str(tmp_path))
     inputs = iter([
-        "openrouter", "", "gpt-4o", "", "n", "",      # provider 1 + model (paid)
-        "deepseek", "", "deepseek-chat", "", "y", "",  # provider 2 + model (free)
-        "",                                            # finish providers
-        "y", "auto",                                   # build a pool named "auto"
+        "openrouter", "gpt-4o", "", "n", "",      # provider 1 + model (paid); key via getpass
+        "deepseek", "deepseek-chat", "", "y", "",  # provider 2 + model (free)
+        "",                                        # finish providers
+        "y", "auto",                               # build a pool named "auto"
     ])
     keys = iter(["sk-or", "sk-deep"])
     monkeypatch.setattr("builtins.input", lambda *a: next(inputs))
@@ -89,6 +89,28 @@ def test_setup_no_tty_exits_gracefully(monkeypatch, tmp_path):
 
     monkeypatch.setattr("builtins.input", _raise)
     assert cli.main(["setup"]) == 2
+
+
+def test_reset_keeps_keys_by_default(monkeypatch, tmp_path):
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    config.add_provider("openrouter", key_env="OPENROUTER_API_KEY")
+    secrets.set_secret("OPENROUTER_API_KEY", "sk-x")
+    assert cli.main(["reset", "--yes"]) == 0
+    assert config.load_providers() == {}                            # config wiped
+    assert secrets.load_secrets()["OPENROUTER_API_KEY"] == "sk-x"   # keys kept
+
+
+def test_reset_all_removes_keys(monkeypatch, tmp_path):
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    config.add_provider("openrouter", key_env="OPENROUTER_API_KEY")
+    secrets.set_secret("OPENROUTER_API_KEY", "sk-x")
+    assert cli.main(["reset", "--all", "--yes"]) == 0
+    assert config.load_providers() == {} and secrets.load_secrets() == {}
+
+
+def test_reset_nothing(monkeypatch, tmp_path):
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    assert cli.main(["reset", "--yes"]) == 0  # empty config dir → no-op, exit 0
 
 
 def test_providers_add_custom_persists_provider(monkeypatch, tmp_path):
