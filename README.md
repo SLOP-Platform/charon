@@ -106,9 +106,8 @@ docker compose --profile gateway up gateway        # builds from source
 
 Caveats inside a container: a **token is required** (it binds `0.0.0.0`); set
 **local** providers' `base_url` to `host.docker.internal:<port>` (the compose adds
-that host) since the container's `localhost` is not the host's. (The published
-`v0.1.0` image predates the gateway, so the service builds from source until a
-release is republished.)
+that host) since the container's `localhost` is not the host's. (`v0.2.0`+ is the
+first image with the gateway; the compose `build: .`s from source by default.)
 
 `charon.toml` (one schema, mirrors `.charon/models.json` field names):
 

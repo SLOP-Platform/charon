@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "charon"
-version = "0.1.0"
+version = "0.2.0"
 description = "A thin orchestrator that ferries one unit of work across swappable coding-agent backends, keeping a vendor-neutral Work Ledger as the single source of truth."
 readme = "README.md"
 requires-python = ">=3.11"

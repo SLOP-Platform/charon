@@ -23,9 +23,9 @@ services:
   # --- Optional: run the GATEWAY in a container (hosted / always-on use) ---------
   # For the everyday LOCAL gateway, native `pipx install charon && charon gateway`
   # is simpler (reaches host-local model servers directly, no token needed on
-  # loopback). Use this for a shared/VPS/always-on gateway. `build: .` because the
-  # published v0.1.0 image predates `charon gateway` — switch to an image tag once a
-  # release is republished with the gateway.
+  # loopback). Use this for a shared/VPS/always-on gateway. `build: .` from source,
+  # or set `image: ghcr.io/slop-platform/charon:v0.2.0` (the first published image
+  # that contains `charon gateway`).
   gateway:
     build: .
     command: ["charon", "gateway", "--host", "0.0.0.0", "--port", "8080"]
