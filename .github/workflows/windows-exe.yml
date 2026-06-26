@@ -1,0 +1,52 @@
+name: Windows EXE
+
+# ADR-0005 D7 / P5 — builds charon.exe via PyInstaller on the free windows-latest
+# runner.  Intentionally separate from ci.yml/heavy.yml which run on the
+# self-hosted Linux [4-lom] runner; this workflow MUST NOT run on that runner.
+#
+# Triggers: manual dispatch OR a version tag push (v*).
+# NOT triggered on every push — keeps the self-hosted runner untouched.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-exe:
+    name: Build charon.exe
+    runs-on: windows-latest  # free GitHub-hosted runner; never self-hosted
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package + PyInstaller
+        run: pip install .[packaging]
+
+      - name: Build charon.exe
+        run: pyinstaller packaging/charon.spec
+
+      - name: Smoke test — charon.exe --help exits 0
+        run: |
+          $proc = Start-Process -FilePath "dist\charon.exe" -ArgumentList "--help" `
+            -Wait -PassThru -NoNewWindow
+          if ($proc.ExitCode -ne 0) {
+            Write-Error "charon.exe --help returned exit code $($proc.ExitCode)"
+            exit 1
+          }
+        shell: pwsh
+
+      - name: Upload charon.exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: charon-windows-exe
+          path: dist/charon.exe
+          if-no-files-found: error
+          retention-days: 30
