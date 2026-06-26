@@ -15,12 +15,20 @@ import json
 import os
 import sys
 import urllib.request
+from dataclasses import asdict
+from pathlib import Path
 
 from . import __version__, api
 from .doctor import probe
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
+    if args.units:
+        return _run_units(args)
+    if not args.goal or not args.accept:
+        print("error: run needs --goal and at least one --accept (or --units FILE)",
+              file=sys.stderr)
+        return 2
     reviewer = None
     if args.review:
         from .adapters.review_mock import MockReviewer, ReviewMode
@@ -49,6 +57,74 @@ def _cmd_run(args: argparse.Namespace) -> int:
         return 2
     print(json.dumps(out, indent=2))
     return 0 if out["status"] == "complete" else 1
+
+
+def _run_units(args: argparse.Namespace) -> int:
+    """ADR-0007 D3: load a consumer-supplied unit list (TOML/JSON) and fan it out
+    through the existing parallel run path."""
+    from . import land, parallel
+    try:
+        unit_dicts = land.load_units(args.units)
+        units = land.units_to_run(unit_dicts)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    res = parallel.run_parallel(
+        units,
+        max_parallel=args.max_parallel,
+        state_dir=args.state_dir,
+        max_cost_usd=args.max_cost_usd,
+        max_tokens=args.max_tokens,
+    )
+    print(json.dumps(asdict(res), indent=2))
+    return 0 if all(u.get("status") == "complete" for u in res.units) else 1
+
+
+def _cmd_land(args: argparse.Namespace) -> int:
+    """ADR-0007 D4/D6: run the propose-default land gate on a completed unit and,
+    when green, PROPOSE (open a PR). Never auto-merges."""
+    from . import land
+    from .ledger import Ledger
+    sdir = Path(args.state_dir).resolve()
+    try:
+        ledger = Ledger.load(sdir, args.task_id)
+    except Exception as exc:  # LedgerCorruption / missing — surface loudly
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    owned = list(args.owned or [])
+    if args.units:
+        try:
+            owned += land.owned_from_units(args.units, ledger.goal)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+    try:
+        outcome = land.land_unit(
+            ledger, owned,
+            tip_ref=args.tip,
+            base_ref=args.base_ref,
+            tests_cmd=args.tests,
+            gitleaks_expected=args.require_gitleaks,
+        )
+    except land.LandError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    pr = None
+    if outcome.decision == "propose" and args.open_pr:
+        if not args.branch:
+            print("error: --open-pr needs --branch (the unit's branch to propose)",
+                  file=sys.stderr)
+            return 2
+        try:
+            pr = land.open_pr(ledger, outcome, args.branch,
+                              base=args.base, repo_slug=args.repo_slug)
+        except land.LandError as exc:
+            print(f"error: opening PR failed: {exc}", file=sys.stderr)
+            return 2
+    out = outcome.to_dict()
+    out["pr"] = pr
+    print(json.dumps(out, indent=2))
+    return 0 if outcome.decision == "propose" else 1
 
 
 def _cmd_ledger(args: argparse.Namespace) -> int:
@@ -360,9 +436,17 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     r = sub.add_parser("run", help="run a goal to executable acceptance")
-    r.add_argument("--goal", required=True)
-    r.add_argument("--accept", action="append", required=True,
-                   help="executable acceptance check (repeatable); exit 0 == verified")
+    r.add_argument("--goal", default=None,
+                   help="the work goal (required unless --units is given)")
+    r.add_argument("--accept", action="append", default=None,
+                   help="executable acceptance check (repeatable); exit 0 == verified "
+                        "(required unless --units is given)")
+    r.add_argument("--units", default=None,
+                   help="consumer-supplied unit list (TOML/JSON of {goal, accept, "
+                        "tier, owned_paths}) fanned out through the parallel run "
+                        "path (ADR-0007 D3); ignores --goal/--accept")
+    r.add_argument("--max-parallel", type=int, default=4,
+                   help="max concurrent units when running a --units list")
     r.add_argument("--repo", default=None, help="target git repo (default: a sandbox)")
     r.add_argument("--state-dir", default=api.DEFAULT_STATE_DIR)
     r.add_argument("--backend", default="mock",
@@ -401,6 +485,34 @@ def build_parser() -> argparse.ArgumentParser:
                         "the plain single-unit loop — one ledger, role-tagged "
                         "checkpoints (PERF-4/D5)")
     r.set_defaults(func=_cmd_run)
+
+    ld = sub.add_parser("land",
+                        help="run the propose-default land gate on a completed unit "
+                             "and PROPOSE (open a PR); never auto-merges (ADR-0007 D4/D6)")
+    ld.add_argument("task_id", help="the completed unit's ledger/task id")
+    ld.add_argument("--state-dir", default=api.DEFAULT_STATE_DIR)
+    ld.add_argument("--owned", action="append", default=None,
+                    help="a declared owned path (repeatable); a write outside ALL "
+                         "owned paths holds the unit (diff-scope guard)")
+    ld.add_argument("--units", default=None,
+                    help="units file to pull this unit's owned_paths from (matched "
+                         "by goal), instead of repeated --owned flags")
+    ld.add_argument("--tip", default=None,
+                    help="commit to land (default: the ledger's lkg_ref)")
+    ld.add_argument("--base-ref", default=None,
+                    help="base to diff against (default: the ledger's base_ref)")
+    ld.add_argument("--tests", default=None,
+                    help="extra test command to run in the worktree (exit 0 == pass)")
+    ld.add_argument("--require-gitleaks", action="store_true",
+                    help="fail closed (hold) if gitleaks is not installed")
+    ld.add_argument("--open-pr", action="store_true",
+                    help="when the gate is green, open a draft PR (needs --branch); "
+                         "NEVER merges")
+    ld.add_argument("--branch", default=None, help="the unit's branch to propose")
+    ld.add_argument("--base", default="master", help="PR base branch (default: master)")
+    ld.add_argument("--repo-slug", default=None,
+                    help="owner/name for `gh pr create --repo` (default: gh infers it)")
+    ld.set_defaults(func=_cmd_land)
 
     g = sub.add_parser("gateway",
                        help="run the standalone OpenAI-compatible failover gateway")
