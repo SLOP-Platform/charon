@@ -36,6 +36,7 @@ class UpstreamRoute:
     upstream_model: str | None = None  # rewrite the body's model to this id upstream
     pool_id: str | None = None  # observe under this id (the router's pool id) if set
     provider: str | None = None  # display label for failover visibility (X-Charon-Provider)
+    strip_v1: bool | None = None  # per-provider quirk; None → use the server default
 
     @property
     def label(self) -> str:
@@ -180,7 +181,8 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
             data = raw_body or None
 
         path = urlsplit(self.path).path  # PATH ONLY — never forward the query string
-        if srv.strip_v1 and path.startswith("/v1"):
+        strip_v1 = route.strip_v1 if route.strip_v1 is not None else srv.strip_v1
+        if strip_v1 and path.startswith("/v1"):
             path = path[len("/v1"):]  # upstream_base already ends in /v1
         url = route.upstream_base.rstrip("/") + path
 
@@ -271,73 +273,102 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 return
 
             ctype = rhdrs.get("Content-Type", "application/json")
-
-            # ---- non-200 ----
-            if status != 200:
-                body_bytes = self._drain(resp)
-                obs = srv.observer.classify(okey, status, rhdrs, {}, expected_model=expected)
-                srv.observer.record(obs, count_usage=False)
-                if obs.failover:  # 429/402/503/404 = capacity/gone → fail over (R6)
-                    srv.set_cooldown(route, obs.retry_after)  # provider-keyed (R10c)
-                    if more:  # count only providers we actually move PAST
-                        failovers.append({"provider": route.label, "status": status,
-                                          "reason": obs.note or "exhausted"})
-                        continue
-                # terminal capacity error, OR a 400/401/403 client/auth error we must
-                # NOT fail over (R6) — relay the real upstream response as-is.
-                self._send_resp_headers(status, ctype, route.label, failovers, False)
-                self._write(body_bytes)
-                srv.note_request(requested, route.label, failovers)
-                return
-
-            # ---- 200, non-streaming: buffer, then check for a silent downgrade ----
-            if not is_stream:
-                body_bytes = self._drain(resp)
-                observed = _extract(body_bytes, ctype)
-                obs = srv.observer.classify(okey, 200, rhdrs, observed, expected_model=expected)
-                if obs.pseudo_success and more:  # downgrade + alternatives left → fail over
+            try:
+                # ---- non-200 ----
+                if status != 200:
+                    body_bytes = self._drain(resp)
+                    obs = srv.observer.classify(okey, status, rhdrs, {}, expected_model=expected)
                     srv.observer.record(obs, count_usage=False)
-                    failovers.append({"provider": route.label, "status": 200,
-                                      "reason": obs.note})
+                    if obs.failover:  # 429/402/503/404 = capacity/gone → fail over (R6)
+                        if obs.exhausted:  # 429/402/503 are account-level → cool the
+                            srv.set_cooldown(route, obs.retry_after)  # provider (R10c);
+                        # a 404 ("model gone") is model-level — do NOT cool the provider.
+                        if more:  # count only providers we actually move PAST
+                            failovers.append({"provider": route.label, "status": status,
+                                              "reason": obs.note or "exhausted"})
+                            continue
+                    # terminal capacity error, OR a 400/401/403 client/auth error we must
+                    # NOT fail over (R6) — relay the real upstream response as-is.
+                    self._send_resp_headers(status, ctype, route.label, failovers, False)
+                    self._write(body_bytes)
+                    srv.note_request(requested, route.label, failovers)
+                    return
+
+                # ---- 200, non-streaming: buffer, then check for a silent downgrade ----
+                if not is_stream:
+                    body_bytes = self._drain(resp)
+                    observed = _extract(body_bytes, ctype)
+                    obs = srv.observer.classify(okey, 200, rhdrs, observed, expected_model=expected)
+                    if obs.pseudo_success and more:  # downgrade + alternatives → fail over
+                        srv.observer.record(obs, count_usage=False)
+                        failovers.append({"provider": route.label, "status": 200,
+                                          "reason": obs.note})
+                        continue
+                    srv.observer.record(obs, count_usage=True)  # served → bill usage (R10a)
+                    self._send_resp_headers(200, ctype, route.label, failovers, obs.pseudo_success)
+                    self._write(body_bytes)
+                    srv.note_request(requested, route.label, failovers)
+                    return
+
+                # ---- 200, streaming: buffer the head until `model` is seen (or a cap),
+                #      so we can fail over a downgrade BEFORE committing bytes (R1) ----
+                head: list[bytes] = []
+                head_bytes = 0
+                stream_broke = False
+                try:
+                    while head_bytes < _STREAM_HEAD_CAP:
+                        c = resp.read(8192)
+                        if not c:
+                            break
+                        head.append(c)
+                        head_bytes += len(c)
+                        if _extract(b"".join(head), ctype).get("model"):
+                            break
+                except Exception:  # upstream dropped/garbled before we committed any byte
+                    stream_broke = True
+                if stream_broke:  # nothing sent yet → treat like a failed attempt, fail over
+                    srv.observer.record(srv.observer.classify(okey, 503, {}, {},
+                                        expected_model=expected), count_usage=False)
+                    if more:
+                        failovers.append({"provider": route.label, "status": "stream-error",
+                                          "reason": "upstream stream interrupted"})
+                        continue
+                    self._send_resp_headers(502, "application/json", route.label, failovers, False)
+                    self._write(json.dumps(
+                        {"error": {"message": "upstream stream failed"}}).encode())
+                    srv.note_request(requested, route.label, failovers)
+                    return
+
+                obs = srv.observer.classify(okey, 200, rhdrs, _extract(b"".join(head), ctype),
+                                            expected_model=expected)
+                if obs.pseudo_success and more:  # downgrade detected pre-commit → fail over
+                    srv.observer.record(obs, count_usage=False)
+                    failovers.append({"provider": route.label, "status": 200, "reason": obs.note})
                     continue
-                srv.observer.record(obs, count_usage=True)  # served → bill usage (R10a)
+                # commit: stream the buffered head + the remainder (headers now sent —
+                # a later read error can only truncate, never fail over).
                 self._send_resp_headers(200, ctype, route.label, failovers, obs.pseudo_success)
-                self._write(body_bytes)
+                full = list(head)
+                ok = all(self._write(c) for c in head)
+                try:
+                    while ok:
+                        c = resp.read(8192)
+                        if not c:
+                            break
+                        full.append(c)
+                        ok = self._write(c)
+                except Exception:
+                    pass  # headers committed; partial stream is unavoidable
+                srv.observer.record(srv.observer.classify(okey, 200, rhdrs,
+                                    _extract(b"".join(full), ctype), expected_model=expected),
+                                    count_usage=True)
                 srv.note_request(requested, route.label, failovers)
                 return
-
-            # ---- 200, streaming: buffer the head until `model` is seen (or a cap),
-            #      so we can fail over a downgrade BEFORE committing bytes (ADR R1) ----
-            head: list[bytes] = []
-            head_bytes = 0
-            while head_bytes < _STREAM_HEAD_CAP:
-                c = resp.read(8192)
-                if not c:
-                    break
-                head.append(c)
-                head_bytes += len(c)
-                if _extract(b"".join(head), ctype).get("model"):
-                    break
-            obs = srv.observer.classify(okey, 200, rhdrs, _extract(b"".join(head), ctype),
-                                        expected_model=expected)
-            if obs.pseudo_success and more:  # downgrade detected pre-commit → fail over
-                srv.observer.record(obs, count_usage=False)
-                failovers.append({"provider": route.label, "status": 200, "reason": obs.note})
-                continue
-            # commit: stream the buffered head + the remainder
-            self._send_resp_headers(200, ctype, route.label, failovers, obs.pseudo_success)
-            full = list(head)
-            ok = all(self._write(c) for c in head)
-            while ok:
-                c = resp.read(8192)
-                if not c:
-                    break
-                full.append(c)
-                ok = self._write(c)
-            srv.observer.record(srv.observer.classify(okey, 200, rhdrs,
-                                _extract(b"".join(full), ctype), expected_model=expected),
-                                count_usage=True)
-            srv.note_request(requested, route.label, failovers)
+            finally:
+                try:  # release the upstream socket/fd promptly (don't lean on GC)
+                    resp.close()
+                except Exception:
+                    pass
             return
 
 

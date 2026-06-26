@@ -25,6 +25,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import providers
 from .netutil import is_loopback
 from .proxy_server import GatewayProxyServer, UpstreamRoute
 
@@ -47,31 +48,44 @@ class GatewayConfig:
     model_ids: list[str] = field(default_factory=list)
 
 
-def _route_from_spec(spec: dict) -> UpstreamRoute | None:
-    """One registry entry → UpstreamRoute, resolving ``key_env`` against the env.
-    Returns None for entries without an ``upstream_base`` (not HTTP-serveable)."""
-    base = spec.get("upstream_base")
-    if not base:
-        return None
-    key_env = spec.get("key_env")
+def _route_from_spec(spec: dict, providers_cfg: dict) -> UpstreamRoute | None:
+    """One registry entry → UpstreamRoute. A ``provider`` reference (P3) resolves
+    base_url/key_env/quirks from a preset (+ ``[providers.<name>]`` overrides); a
+    direct ``upstream_base`` entry (P1/P2) still works. Returns None when neither
+    yields a base (not HTTP-serveable)."""
+    prov = spec.get("provider")
+    if prov:
+        preset = providers.resolve(prov, providers_cfg.get(prov))
+        base: str | None = preset.base_url
+        key_env = spec.get("key_env") or preset.key_env
+        strip_v1: bool | None = preset.strip_v1
+    else:
+        base = spec.get("upstream_base")
+        if not base:
+            return None
+        key_env = spec.get("key_env")
+        strip_v1 = spec.get("strip_v1")  # explicit only; else server default
     return UpstreamRoute(
         upstream_base=str(base),
         api_key=os.environ.get(key_env) if key_env else None,
         upstream_model=spec.get("upstream_model"),
+        provider=prov,
+        strip_v1=strip_v1,
     )
 
 
 def _build_routes_and_pools(
-    registry: dict, pool_map: dict,
+    registry: dict, pool_map: dict, providers_cfg: dict | None = None,
 ) -> tuple[dict[str, UpstreamRoute], dict[str, list[UpstreamRoute]], list[str]]:
     """Compile a model registry + ``pool_map`` (virtual id → [model id]) into
     single routes (concrete models) and failover chains (virtual ids). Each chain
     is ordered **free-first then cheapest-first** from the registry's cost metadata
     (stable → the listed order breaks ties), matching `pools.load_pools` (D4)."""
+    providers_cfg = providers_cfg or {}
     routes: dict[str, UpstreamRoute] = {}
     for mid, spec in registry.items():
         if isinstance(spec, dict):
-            r = _route_from_spec(spec)
+            r = _route_from_spec(spec, providers_cfg)
             if r is not None:
                 routes[mid] = r
 
@@ -106,6 +120,7 @@ def load_config(
     cfg_token: str | None = None
     registry: dict = {}
     pool_map: dict = {}
+    providers_cfg: dict = {}
 
     if toml_path is not None:
         data = tomllib.loads(Path(toml_path).read_text())
@@ -115,15 +130,19 @@ def load_config(
         cfg_token = gw.get("token")
         registry = data.get("models") or {}
         pool_map = data.get("pools") or {}  # virtual id → ordered [model id]
+        providers_cfg = data.get("providers") or {}  # preset overrides (P3)
     elif state_dir is not None:
         models_path = Path(state_dir) / "models.json"
         pools_path = Path(state_dir) / "pools.json"
+        providers_path = Path(state_dir) / "providers.json"
         if models_path.exists():
             registry = json.loads(models_path.read_text())
         if pools_path.exists():
             pool_map = json.loads(pools_path.read_text())  # role → [model id]
+        if providers_path.exists():
+            providers_cfg = json.loads(providers_path.read_text())
 
-    routes, pools, model_ids = _build_routes_and_pools(registry, pool_map)
+    routes, pools, model_ids = _build_routes_and_pools(registry, pool_map, providers_cfg)
     return GatewayConfig(
         host=host or cfg_host,
         port=port if port is not None else cfg_port,

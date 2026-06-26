@@ -98,6 +98,29 @@ and why); failover events are logged for the console.
 auto = ["qwen-free", "kimi-k2.7-code"]   # ordered free-first / cheapest-first
 ```
 
+**Provider presets** (P3) save repeating base URLs: a model references a `provider`,
+and the base URL + quirks come from a built-in preset (`opencode-go`, `openrouter`,
+`nanogpt`, `zai`, `lmstudio`, `jan`, `ollama`, `local`). You only supply the key env.
+Any preset is overridable (some vendor base URLs ship **unverified** — override if a
+call 404s).
+
+```toml
+[providers.openrouter]
+key_env = "OPENROUTER_API_KEY"           # base_url comes from the preset
+
+[providers.lmstudio]
+base_url = "http://localhost:1234/v1"    # local server, no key
+
+[models."qwen-free"]
+provider       = "openrouter"
+upstream_model = "qwen/qwen-2.5-coder:free"
+free = true
+
+[models."local-coder"]
+provider       = "lmstudio"
+upstream_model = "qwen2.5-coder-7b"
+```
+
 The autonomous orchestrator (`charon run`, above) is an opt-in feature on the same
 core.
 
