@@ -36,13 +36,20 @@ def make_task_id(goal: str) -> str:
 
 def _prepare_repo(repo: str | None, state_dir: Path, task_id: str) -> str:
     """Return a git worktree to operate in. If ``repo`` is given it must be a
-    git repo; otherwise a fresh sandbox repo is created (demo path)."""
+    git repo; otherwise a fresh sandbox repo is created (demo path).
+
+    D2/CONC-1 (ADR-0006): the sandbox repo is nested at
+    ``sandbox/<task_id>/repo`` — NOT ``sandbox/<task_id>`` — so the coordinator's
+    ``guard_dir = worktree.parent`` resolves to ``sandbox/<task_id>/``, a
+    directory UNIQUE to this unit. Sibling units in the same ``state_dir`` then
+    never share a guard parent, so one unit's escape scan can never see another's
+    legitimate writes (the parallel-units isolation invariant)."""
     if repo:
         p = Path(repo).resolve()
         if not gitutil.is_repo(p):
             raise ValueError(f"--repo {p} is not a git repository")
         return str(p)
-    sandbox = (state_dir / "sandbox" / task_id).resolve()
+    sandbox = (state_dir / "sandbox" / task_id / "repo").resolve()
     sandbox.mkdir(parents=True, exist_ok=True)
     gitutil.init_repo(sandbox)
     return str(sandbox)

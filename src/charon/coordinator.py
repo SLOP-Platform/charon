@@ -61,6 +61,12 @@ def run(
     (``Fence.assert_environment``)."""
     fence.assert_environment()  # L2+ refused outside the container (INV-B4)
     worktree = Path(ledger.target_repo)
+    # D2/CONC-1 (ADR-0006): guard_dir is the worktree's parent. For parallel units
+    # this MUST be unique per unit or one unit's escape scan would see a sibling's
+    # writes. The sandbox path nests as `sandbox/<task_id>/repo` so this parent is
+    # the per-unit `sandbox/<task_id>/` dir; a caller supplying real `--repo`
+    # worktrees to run_parallel is likewise responsible for giving each unit a
+    # worktree with its own parent.
     guard_dir = worktree.parent
     # "propose-only" = this level applies nothing even with consensus (L0 only);
     # L1+ keeps changes, and the consensus gate (L2+) decides the final advance.
