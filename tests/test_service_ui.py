@@ -1,6 +1,6 @@
-"""The read-only web service layer (ADR-0004 D7/R3) — token gating, the 501 run
-refusal, and the dashboard. Skipped unless the [service] extra is installed
-(FastAPI/httpx); the core gate stays stdlib-only.
+"""The web service layer (ADR-0004 D7/R3) — token gating, POST /v1/runs enqueue,
+and the dashboard. Skipped unless the [service] extra is installed (FastAPI/httpx);
+the core gate stays stdlib-only.
 """
 from __future__ import annotations
 
@@ -43,11 +43,24 @@ def test_token_gate_blocks_and_allows(monkeypatch) -> None:
     assert client.get("/v1/runs", headers={"Authorization": "Bearer nope"}).status_code == 401
 
 
-def test_runs_endpoint_refuses_execution(monkeypatch) -> None:
+def test_runs_endpoint_enqueues_when_queue_configured(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setenv("CHARON_SERVICE_TOKEN", TOKEN)
+    monkeypatch.setenv("CHARON_QUEUE_DIR", str(tmp_path / "queue"))
     h = {"Authorization": f"Bearer {TOKEN}"}
     r = client.post("/v1/runs", json={"goal": "x", "accept": ["true"]}, headers=h)
-    assert r.status_code == 501 and "worker container" in r.json()["detail"]
+    assert r.status_code == 202
+    body = r.json()
+    assert body["status"] == "queued" and "job_id" in body
+
+
+def test_runs_endpoint_503_when_queue_not_configured(monkeypatch) -> None:
+    monkeypatch.setenv("CHARON_SERVICE_TOKEN", TOKEN)
+    monkeypatch.delenv("CHARON_QUEUE_DIR", raising=False)
+    h = {"Authorization": f"Bearer {TOKEN}"}
+    r = client.post("/v1/runs", json={"goal": "x", "accept": ["true"]}, headers=h)
+    assert r.status_code == 503 and "CHARON_QUEUE_DIR" in r.json()["detail"]
 
 
 def test_dashboard_is_self_contained_html(monkeypatch) -> None:

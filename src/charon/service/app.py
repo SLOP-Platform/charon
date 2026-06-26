@@ -1,19 +1,19 @@
 """Mode B HTTP service + read-only web Ledger dashboard (ADR-0002 §2.4 surface #3;
 ADR-0004 D7/R3).
 
-DESIGN OF RECORD (DTC, 2026-06-24 — see docs/REVIEW-LOG.md and PLAN-tier2.md §8):
-the web process that SLOP reaches MUST NOT run the privileged coordinator loop
-in-process. ADR-0002 §2.3 / INV-B4 require the agent-spawning loop to live in its
-OWN process/container; the only real blast-radius boundary for a live
-skip-permissions agent is that container, never an in-process Python guard.
+DESIGN OF RECORD (DTC, 2026-06-24 / Tier 2b 2026-06-26 — see docs/REVIEW-LOG.md
+and PLAN-tier2.md §8): the web process that SLOP reaches MUST NOT run the
+privileged coordinator loop in-process. ADR-0002 §2.3 / INV-B4 require the
+agent-spawning loop to live in its OWN process/container; the only real
+blast-radius boundary for a live skip-permissions agent is that container, never
+an in-process Python guard.
 
-Therefore this surface is **read-only**: it serves liveness, derived ledger
-state, the routing config, and a minimal single-operator dashboard — and it
-explicitly **refuses** to execute runs (501) rather than running the privileged
-loop in the exposed process. It imports no privileged-exec symbol (no
-``coordinator``, no ``api.run_task``) — enforced structurally by
-``tests/test_boundary.py``. The live enqueue→worker run path is Tier 2b, shipped
-*with* its Tier-3 SLOP consumer (ADR-0004 R3).
+POST /v1/runs validates + writes one JSON job file to the filesystem queue
+(CHARON_QUEUE_DIR/pending/<job_id>.json) and returns 202 Accepted. The separate
+worker process (service/worker.py) picks up the job and runs api.run_task. This
+file imports NO privileged-exec symbol — enforced structurally by
+``tests/test_boundary.py`` (AST check for ``run_task``, ``coordinator``,
+``dispatch``).
 
 Posture (ADR-0004 D7): single-operator-on-your-fenced-box, **not** hardened
 multi-tenant SaaS. Token-gated (``CHARON_SERVICE_TOKEN``); the container is the
@@ -23,7 +23,10 @@ security boundary; deploy behind a reverse proxy + HTTPS. Run it with
 from __future__ import annotations
 
 import hmac
+import json
 import os
+import uuid
+from pathlib import Path
 
 try:
     from fastapi import Depends, FastAPI, Header, HTTPException, Query
@@ -37,6 +40,7 @@ except ImportError as exc:  # pragma: no cover
 from .. import __version__, api
 
 _TOKEN_ENV = "CHARON_SERVICE_TOKEN"
+_QUEUE_DIR_ENV = "CHARON_QUEUE_DIR"
 
 
 def require_token(
@@ -74,24 +78,44 @@ def require_token(
 app = FastAPI(title="charon", version=__version__,
               docs_url=None, redoc_url=None, openapi_url=None)
 
-_RUN_NOT_IMPLEMENTED = (
-    "live runs are not served by the exposed web process by design (ADR-0002 "
-    "§2.3 / INV-B4): the privileged coordinator loop must run in its own "
-    "no-network worker container, not in-process here. The web/worker split "
-    "ships in Tier 2b together with the Tier-3 SLOP adapter. Use the CLI "
-    "(`charon run`) or the Python API for runs today."
-)
-
 
 class RunRequest(BaseModel):
-    # NOTE (DTC): the future enqueue-only surface drops `repo` from the wire
-    # entirely so a caller can never direct a run at a host path; runs execute
-    # only in an auto-created throwaway sandbox. Kept minimal here; the live
-    # endpoint is not wired.
+    # `repo` is absent by design: the worker always runs in an auto-created
+    # sandbox so a caller cannot direct a run at an arbitrary host path.
     goal: str
     accept: list[str]
     autonomy: str = "L0"
     budget: int = 8
+
+
+def _enqueue(req: RunRequest) -> str:
+    """Write a job record to the filesystem queue; return the job_id.
+
+    The web process writes only. The worker (service/worker.py) reads and
+    processes. This function never calls run_task, coordinator, or dispatch —
+    the boundary is structural (test_boundary.py AST check)."""
+    queue_str = os.environ.get(_QUEUE_DIR_ENV, "")
+    if not queue_str:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"queue not configured: {_QUEUE_DIR_ENV} is not set. "
+                "Deploy the charon worker container and set CHARON_QUEUE_DIR "
+                "to the shared queue directory on both the web and worker processes."
+            ),
+        )
+    job_id = uuid.uuid4().hex
+    pending = Path(queue_str) / "pending"
+    pending.mkdir(parents=True, exist_ok=True)
+    job: dict = {
+        "job_id": job_id,
+        "goal": req.goal,
+        "accept": req.accept,
+        "autonomy": req.autonomy,
+        "budget": req.budget,
+    }
+    (pending / f"{job_id}.json").write_text(json.dumps(job))
+    return job_id
 
 
 @app.get("/healthz")
@@ -100,10 +124,11 @@ def healthz() -> dict:
     return {"status": "ok", "version": __version__}
 
 
-@app.post("/v1/runs", status_code=501, dependencies=[Depends(require_token)])
+@app.post("/v1/runs", status_code=202, dependencies=[Depends(require_token)])
 def create_run(req: RunRequest) -> dict:
-    # Refuse rather than run the privileged loop in the exposed process.
-    raise HTTPException(status_code=501, detail=_RUN_NOT_IMPLEMENTED)
+    # Enqueue the job; the worker container runs the privileged loop.
+    job_id = _enqueue(req)
+    return {"job_id": job_id, "status": "queued"}
 
 
 @app.get("/v1/runs", dependencies=[Depends(require_token)])
