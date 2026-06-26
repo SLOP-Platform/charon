@@ -31,7 +31,8 @@ Status: `Settled` · `Open` (leaning noted) · `Superseded→Dxxx`.
 | D010 | Worker lifetime = **warm pool default** (reuse subprocess); ephemeral reserved for untrusted/L2+; pick the default by **measurement** (cold-start > ~15% of runtime → ephemeral loses). | OP+AI | Settled | ADR-0007 D7 |
 | D011 | **A review/DTC must not silently override an operator (`OP`) decision** — surface it for re-confirmation. AI/plan decisions are evidence-revisable. | OP | Settled | REVIEW-LOG 2026-06-26, memory |
 | D012 | The **container is the trust boundary**, not process-isolation or env-munging; the fence escape-scan is best-effort, not a boundary. L2+/untrusted = container-gated. | AI | Settled | ADR-0007 (security), ADR-0009 |
-| D013 | Worker **sandbox posture** for any future non-ACP/uncontained worker: leaning **hybrid** (token-pair for trusted own-repo; container required for L2+/untrusted). | OP | Open (leaning hybrid) | DTC 2026-06-26 |
+| D013 | Worker **sandbox posture = hybrid by default**, exposed as a user-selectable `sandbox` policy (`hybrid`\|`container`\|`host`): host OK for trusted/own-repo behind the autonomy gate; container required for L2+/untrusted. | OP | Settled | ADR-0010, DTC 2026-06-26 |
+| D015 | Replace the **trust-based container flag** (`CHARON_CONTAINER_VERIFIED`) with **positive isolation verification** (probe that host-sensitive paths/egress are unreachable; the flag demotes to a loud fallback). Deferred — earns its keep on the untrusted/L2+/auto-land path, not trusted own-repo work. Bare WSL2 correctly fails; Docker-in-WSL/VM passes. | OP | Open (deferred) | DTC 2026-06-26 |
 | D014 | **ADR-0008 Phase 1** (human-gated intake→plan) is buildable now (no tripwire); **Phase 2** (autonomous run) stays gated on the measured PR-conflict rate (D10-C). | OP+AI | Settled | ADR-0008, ADR-0010 |
 
 <!-- Append new rows above this line. Keep each to ONE line; cite the ADR/REVIEW-LOG for detail. -->
