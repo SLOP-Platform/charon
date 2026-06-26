@@ -127,11 +127,59 @@ def test_sandbox_escape_into_own_guard_dir_is_rejected(tmp_path: Path) -> None:
     assert led_task.lkg_ref == led_task.base_ref
 
 
+def test_real_repo_units_get_isolated_per_unit_worktrees(tmp_path: Path) -> None:
+    """D2/CONC-1: two units off the SAME real ``--repo`` each get their own
+    ``git worktree`` nested one level down, so their guard_dirs are distinct and a
+    write into one unit's guard_dir is invisible to the other's escape scan.
+
+    Proven-red: before D2 a real repo was returned AS-IS, so both targets were the
+    repo itself — equal targets, one shared guard_dir, mutual visibility."""
+    from charon import api
+    from charon.fence import snapshot_outside
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    gitutil.init_repo(repo)
+    state = (tmp_path / "state").resolve()
+
+    a = api._prepare_repo(str(repo), state, "task-a")
+    b = api._prepare_repo(str(repo), state, "task-b")
+    wa, wb = Path(a.target), Path(b.target)
+    try:
+        # distinct per-unit worktrees, neither of which is the shared real repo …
+        assert wa != wb
+        assert wa != repo.resolve() and wb != repo.resolve()
+        # … each nested so the guard parent (= worktree.parent) is unit-unique.
+        assert wa.parent != wb.parent
+        # an escape landing in A's guard_dir is invisible to B's escape scan.
+        (wa.parent / "escaped.txt").write_text("x")
+        snap = snapshot_outside(wb, wb.parent)
+        assert not any("escaped.txt" in p for p in snap)
+    finally:
+        a.cleanup()
+        b.cleanup()
+
+
+def test_real_repo_worktree_is_removed_on_cleanup(tmp_path: Path) -> None:
+    """Teardown reclaims the per-unit working tree (the committed objects survive
+    in the base repo's store; only the isolated tree is removed)."""
+    from charon import api
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    gitutil.init_repo(repo)
+    prepared = api._prepare_repo(str(repo), (tmp_path / "state").resolve(), "task-x")
+    work = Path(prepared.target)
+    assert work.is_dir()  # worktree exists during the run
+    prepared.cleanup()
+    assert not work.exists()  # …and is gone after teardown
+
+
 def api_make_unit_ledger(state: Path, goal: str, accept: list[str]) -> Ledger:
     """Build a sandbox-backed ledger the way the API does (nested repo)."""
     from charon import api
     sdir = Path(state).resolve()
     task_id = api.make_task_id(goal)
-    target = api._prepare_repo(None, sdir, task_id)
+    target = api._prepare_repo(None, sdir, task_id).target
     checks = [AcceptanceCheck(f"a{i}", c) for i, c in enumerate(accept)]
     return Ledger.create(sdir, task_id, goal, checks, target, gitutil.head(Path(target)))
