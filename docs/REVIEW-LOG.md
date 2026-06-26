@@ -754,3 +754,33 @@ Two MED + two LOW gaps fixed:
   overstates health). (2) `esc()` hardened to also escape `"`/`'` (safe regardless of
   future sink). (3) `UpstreamRoute.label` uses `host[:port]` not `netloc`, so any
   `user:pass@` in a misconfigured base can never surface in a header/console.
+
+---
+
+## 2026-06-26 — Gateway P3.5: provider/key setup CLI (operator-requested)
+
+- **Why:** a user needs to enter provider account info (keys) without hand-editing
+  config. Operator decisions: **CLI wizard now, web setup page later** (P5); keys in a
+  **user-local 0600 secrets file** (not OS keyring, not repo).
+- **Change:** `src/charon/secrets.py` (`config_dir`/`secrets_path`/`load_secrets`/
+  `set_secret`/`apply_to_env`) + a `charon providers` subcommand (`list`/`add`/`test`).
+- **Security model (operator hard rule — keys NEVER in the repo):**
+  - Keys live ONLY in `~/.charon/secrets.json` (or `%APPDATA%\charon`; override via
+    `$CHARON_HOME`), written via `os.open(..., 0o600)` so the file is never briefly
+    world-readable; dir `0700`. `.gitignore` now blocks `secrets*`/`*.key`/`.env*`/
+    `*-keys.env` defensively.
+  - `charon.toml`/`.charon/*.json` hold only preset names + `key_env` references — no
+    literal keys — so config stays shareable/committable.
+  - `apply_to_env()` loads stored keys via `setdefault` (an explicit env var always
+    wins). `providers add` reads the key via `getpass` (no echo) when `--key` is
+    omitted; the key is never printed or logged anywhere.
+  - `providers test` probes `GET <base>/models` with the key only as an
+    `Authorization` header (never in the URL/output); even a 401/404 confirms the base
+    resolves — the way to verify the UNVERIFIED nanogpt/zai presets once keys exist.
+- **Proofs:** `tests/test_secrets.py` — 0600 perms, explicit-env-wins, CLI add stores
+  the key WITHOUT echoing it, list shows SET/MISSING, unknown-without-base_url errors,
+  custom provider with base_url. **Live-smoked:** `providers add/list` wrote a 0600
+  `secrets.json`, key not echoed.
+- **Gate:** 143 passed, ruff clean, mypy clean (30 files), boundary OK, version OK.
+- **Adversarial review:** security-sensitive (key handling/storage) — sent to an
+  independent reviewer.

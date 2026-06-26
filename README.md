@@ -62,6 +62,18 @@ Point any OpenAI-compatible client (Cursor, Cline, Aider, Chatbox, Jan, LM Studi
 pure-stdlib, holds your provider keys server-side (never sent to the client), and
 binds **loopback by default** — a non-loopback bind refuses to start without a token.
 
+First, store your provider keys (kept in a **0600 user-local file**, never in the repo
+— `~/.charon/secrets.json`, or `%APPDATA%\charon` on Windows; loaded into the env at
+start):
+
+```bash
+charon providers list                 # presets + which keys are set
+charon providers add openrouter       # prompts for the key WITHOUT echoing it
+charon providers test openrouter      # probe the base URL resolves (verify a preset)
+```
+
+Then run the gateway:
+
 ```bash
 # from a charon.toml (providers/models + bind/token), or from .charon/models.json
 charon gateway --config charon.toml
