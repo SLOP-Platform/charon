@@ -7,7 +7,7 @@
 > backlog item). It supersedes nothing; it promotes `ms-router` from a routing
 > *library* to the *brain* of an orchestrator.
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-06-26)
 - **Deciders:** Rafael (solo operator)
 - **Relates to:** `ms-router` decision; agent-framework evaluation (ZeroClaw Path C); memU schema lift for success-rate tracking
 - **Methodology:** ADR + tiered implementation; ports-and-adapters; derive-or-verify; structural enforcement over honor-system
