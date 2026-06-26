@@ -125,3 +125,57 @@ def test_concurrent_observe_loses_no_usage() -> None:
         t.join()
     # 8 threads × 200 calls × 2 tokens = 3200, none lost to a race
     assert p.cumulative_usage().tokens == 3200
+
+
+def test_upstream_returns_model_with_provider_prefix() -> None:
+    # R10d: an upstream returning a normalized model id with provider prefix
+    # should not false-positive as a silent downgrade. The expected model is
+    # bare ("kimi-k2.7-code"), but upstream returns it with prefix
+    # ("opencode-go/kimi-k2.7-code") — both resolve to the same model.
+    p = GatewayProxy()
+    obs = p.observe("opencode-go/kimi-k2.7-code", 200,
+                    body={"model": "opencode-go/kimi-k2.7-code",
+                          "usage": {"prompt_tokens": 10}},
+                    expected_model="kimi-k2.7-code")
+    assert not obs.pseudo_success and not obs.failover
+    assert obs.usage is not None and obs.usage.tokens_in == 10
+    assert p.exhausted_models() == set()
+
+
+def test_normalized_comparison_still_catches_real_downgrade() -> None:
+    # Ensure the normalization doesn't suppress REAL downgrades. If asked for
+    # one model and get a different one (even after stripping prefixes), flag it.
+    p = GatewayProxy()
+    obs = p.observe("opencode-go/gpt-4", 200,
+                    body={"model": "opencode-go/gpt-4-turbo",
+                          "usage": {"prompt_tokens": 10}},
+                    expected_model="gpt-4")
+    assert obs.pseudo_success and obs.failover
+    assert "silent downgrade" in obs.note
+    assert p.is_exhausted("opencode-go/gpt-4")
+
+
+def test_normalized_comparison_both_prefixed() -> None:
+    # Both sides have provider prefixes but the same model id.
+    p = GatewayProxy()
+    obs = p.observe("opencode-go/kimi-k2.7-code", 200,
+                    body={"model": "opencode-go/kimi-k2.7-code",
+                          "usage": {"prompt_tokens": 5}},
+                    expected_model="opencode-go/kimi-k2.7-code")
+    assert not obs.pseudo_success and not obs.failover
+    assert obs.usage is not None and obs.usage.tokens_in == 5
+    assert p.exhausted_models() == set()
+
+
+def test_normalized_comparison_different_prefixes_same_model() -> None:
+    # The upstream might return a model with a DIFFERENT provider prefix
+    # (e.g., the proxy normalizes "opencode-go/model" to "openai/model" or
+    # bare "model"). As long as the base model id matches, it's not a downgrade.
+    p = GatewayProxy()
+    obs = p.observe("opencode-go/gpt-4", 200,
+                    body={"model": "openai/gpt-4",
+                          "usage": {"prompt_tokens": 8}},
+                    expected_model="gpt-4")
+    assert not obs.pseudo_success and not obs.failover
+    assert obs.usage is not None
+    assert p.exhausted_models() == set()

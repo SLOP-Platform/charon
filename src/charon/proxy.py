@@ -95,6 +95,19 @@ def _error_type(body: dict | None) -> str:
     return ""
 
 
+def _normalize_model_id(model_id: str | None) -> str:
+    """Normalize a model id by stripping provider prefix for comparison.
+
+    Converts "provider/model-id" to "model-id", leaving bare ids unchanged.
+    Used for comparing returned vs expected models without false-positives on
+    provider-prefixed aliases (R10d)."""
+    if not model_id:
+        return ""
+    if "/" in model_id:
+        return model_id.split("/", 1)[1]
+    return model_id
+
+
 class GatewayProxy:
     """Observation core: feed it each upstream response, read exhaustion + cost.
 
@@ -155,8 +168,11 @@ class GatewayProxy:
         exhausted = status in _EXHAUSTION_STATUSES
         dropped = status in _DROP_STATUSES
         # pseudo-success: a 200 that silently served a different model than asked.
+        # Use normalized comparison to avoid false-positives when an upstream returns
+        # the model id with a provider prefix (e.g. "openai/gpt-4" vs "gpt-4").
         expected = expected_model if expected_model is not None else requested_model
-        pseudo = bool(status == 200 and returned and returned != expected)
+        pseudo = bool(status == 200 and returned and
+                      _normalize_model_id(returned) != _normalize_model_id(expected))
         usage = _gateway_usage(body) if status == 200 else None
 
         note = ""
