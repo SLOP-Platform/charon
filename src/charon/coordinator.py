@@ -78,10 +78,13 @@ def run(
     ``budget`` (Tier 3) adds cumulative cost/token caps on top of
     ``max_checkpoints``. ``reviewer`` (Tier 4) is the consensus gate: at autonomy
     **L2** a completed unit is applied only if the reviewer passes (fail-closed);
-    at L1 the reviewer is not consulted; at L3 (full-auto) it is consulted for the
-    record but does not block. L2+ also requires the Mode-B container
-    (``Fence.assert_environment``)."""
-    fence.assert_environment()  # L2+ refused outside the container (INV-B4)
+    at L1 the reviewer is not consulted; at L3 (full-auto, unattended) it is
+    consulted for the record but does not block. The escalation gate
+    (``Fence.assert_environment``, ADR-0009) is enforced once up front: L2+ needs
+    the Mode-B container (INV-B4) and L3 needs its own distinct unattended opt-in
+    on top — a requested level over the environment's ceiling fails LOUD here, not
+    silently clamped."""
+    fence.assert_environment()  # escalation gate: L2+ container, L3 unattended opt-in
     worktree = Path(ledger.target_repo)
     # D2/CONC-1 (ADR-0007): guard_dir is the worktree's parent. For parallel units
     # this MUST be unique per unit or one unit's escape scan would see a sibling's
@@ -203,7 +206,13 @@ def run(
                 consensus_signal = reviewer_passed if reviewer_passed is not None else True
                 if fence.authorize(PrivilegedOp.APPLY_REVERSIBLE, consensus=consensus_signal):
                     ledger.advance_lkg(outcome.commit)
-                    return _result("complete", seq, ledger, note=rnote)
+                    # L3 disclosure (ADR-0009): full-auto applies with no consensus
+                    # gate — record that on the result so the audit trail is honest.
+                    note = rnote
+                    if fence.autonomy >= Autonomy.L3:
+                        note = (note + "; " if note else "") + \
+                            "L3 unattended: applied full-auto without consensus"
+                    return _result("complete", seq, ledger, note=note)
                 # L2 fail-closed: reviewer blocked / errored / absent. Do not apply.
                 gitutil.reset_hard(worktree, ledger.lkg_ref)
                 return _result("blocked-consensus", seq, ledger,

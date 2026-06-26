@@ -7,6 +7,57 @@ physics and records it here.
 
 ---
 
+## 2026-06-26 — T7 (ADR-0009) — L3 unattended autonomy escalation gate — 3-lens review
+
+**Change under review:** feat/l3-unattended — an **autonomy escalation gate**
+(`AutonomyPolicy` in `fence.py`) closing the hole that one
+`CHARON_ALLOW_UNCONTAINED_AUTONOMY=1` flag silently authorizes both L2 *and* L3.
+Highest-blast-radius surface (unattended full-auto apply). Plan + ADR-0009 landed
+before code. Sent to three independent adversarial lenses (privilege-escalation ·
+ergonomics-footgun · scope/thinness); claims verified against the code.
+
+- **[HIGH, privesc] One flag silently grants two rungs (uncontained).** Verified:
+  `Fence.assert_environment` treated L2 and L3 identically — the override set to
+  test uncontained L2 also passed **uncontained L3**, where the consensus gate is
+  *removed* AND there is no container boundary (`coordinator.run`: at L3 the
+  reviewer is consulted "for the record" but `authorize(APPLY_REVERSIBLE)` returns
+  True regardless). **Reconciled:** *uncontained* L3 gets a *separate, distinct*
+  opt-in `CHARON_ALLOW_UNATTENDED=1` on **top** of the override (D-ESC-1); per-rung
+  default-deny ladder; proven-red test that override-only L3 now raises
+  `FenceDenied` where it previously passed. **Scope corrected mid-build:** the
+  first cut required the token even *inside* the container, which regressed the
+  blessed Tier-4 contract that container-L3 applies (a non-owned consensus-gate
+  test, verified red). The container IS the boundary, so the token gates only the
+  *uncontained* climb — closing the real hole without weakening or regressing the
+  intended path.
+- **[MED, footgun] Silent clamp hides operator intent.** A gate that silently
+  downgrades L3→L1 leaves the operator believing they run unattended while work
+  quietly stops applying. **Reconciled:** the enforcement path **raises** on
+  over-request (D-ESC-3); a *non-raising* `resolve()`/`ceiling()` exists only for
+  diagnostics, never as the apply path.
+- **[MED, thinness] Is a policy object over-built vs. a bare `if`?**
+  **Reconciled:** kept to one frozen dataclass in the already-owned `fence.py` —
+  no new module, no new owned source file; `assert_environment` delegates to it.
+  The `ceiling`/`resolve` pair is the minimum that makes the per-rung ladder
+  testable and reusable by `doctor`. Monotone/non-skipping encoded (D-ESC-2) so a
+  future rung cannot bypass the climb.
+- **[MED, privesc] Can a fenced agent read or forge the tokens?** Verified:
+  `scrubbed_env` allow-lists only `PATH/TERM/LANG/LC_ALL/TZ` (+HOME/git/
+  `CHARON_FENCED`); the three escalation tokens are **not** propagated.
+  **Reconciled:** asserted by test (D-ESC-5) — a spawned backend cannot see them.
+- **Honesty (carried):** L3 = "no *consensus* gate," not "no fence" — escape scan,
+  scrubbed env, always-denied DELETE/DEPLOY still bind at L3. The container stays
+  the only real boundary for a live agent (INV-B4); the gate prevents *accidental*
+  escalation, not a determined operator who sets every token (D-ESC-4, disclosed).
+- **Files touched:** `fence.py`, `coordinator.py`, `tests/test_fence.py`,
+  `tests/test_coordinator.py`, new `docs/adr/0009-*.md`, `docs/REVIEW-LOG.md`.
+  No other files.
+- **Net:** plan accepted; gate follows after this note. The escalation gate is a
+  policy layer on the existing predicate+container fence — no boundary weakened,
+  one accidental-escalation class closed.
+
+---
+
 ## 2026-06-26 — T8 plan: real consensus reviewer + circuit breaker
 
 **Change under review:** feat/consensus-breaker — `adapters/review.py` (real
