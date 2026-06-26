@@ -1,6 +1,6 @@
 name: ci
 
-# Fast gate (HANDOFF §9a): lint + typecheck + unit tests on every push/PR.
+# Fast gate: lint + typecheck + unit tests on every push/PR.
 # Runs on the shared self-hosted 4-LOM runner pool (zero GitHub minutes); if the
 # org runners aren't online yet the run just QUEUES until they are. Heavy/slow
 # suites (wheel-isolation smoke, image build-smoke, supply-chain audit) live in

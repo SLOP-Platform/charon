@@ -490,9 +490,9 @@ GitHub workflow is retained, not removed.
     `needs: [gate, image-smoke]` (an untested image can never be published, BR2-8).
   - `.github/actionlint.yaml` (new) teaches actionlint the `4-lom` label (§9a
     gotcha 2). Validated: `actionlint` clean across all three workflows.
-- **coordination note honored:** registered/configured **no** runners and touched
-  **no** org runner settings — the mediastack session owns all 4-LOM/runner setup
-  (internal ticket). These workflows only *reference* `[self-hosted, 4-lom]`; if the
+- **Runner-ownership boundary honored:** registered/configured **no** runners and
+  touched **no** org runner settings — runner/pool setup is owned elsewhere. These
+  workflows only *reference* `[self-hosted, 4-lom]`; if the
   pool isn't online yet, runs simply QUEUE. Disclosed honestly: **the workflows
   are YAML-/actionlint-valid but not proven green** until they run on the live
   runner — verify ONE gate goes green there (§9a gotcha 5) before trusting CI.
