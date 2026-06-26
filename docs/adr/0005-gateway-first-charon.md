@@ -199,11 +199,13 @@ README.
 `proxy_server.py` (gateway) is pure stdlib; `service/app.py` (the read-only dashboard)
 is **FastAPI**. For a lean Windows `.exe` and a zero-web-framework-attack-surface
 privileged gateway, the P4 console should ride on the gateway's **own stdlib
-`http.server`**, not FastAPI. **Resolution (proposed, needs operator nod):** build the
+`http.server`**, not FastAPI. **Resolution (operator-confirmed 2026-06-26 — ship BOTH):** build the
 gateway console on stdlib (server-rendered + a tiny poll/SSE endpoint, mirroring the
-existing self-contained-HTML approach); keep the FastAPI `service/app.py` as the
-**orchestrator-side** read-only Ledger dashboard. This avoids bundling FastAPI/uvicorn
-into the gateway `.exe`. **This is the main open architectural question for P1/P4.**
+existing self-contained-HTML approach) so the `.exe` bundles no web framework; AND
+keep the FastAPI `service/app.py` as the richer orchestrator/server-side dashboard.
+They target different deployments (lean Windows `.exe` vs full server), so shipping
+both is low marginal cost — the stdlib console is needed for the `.exe` regardless,
+and the FastAPI dashboard already exists. No single-console trade-off forced.
 
 ### R10 — gaps surfaced by independent adversarial review (must fix in P2)
 A second, independent reviewer pressure-tested R1–R9 against the code and found three
@@ -269,10 +271,12 @@ AST check in `tests/test_boundary.py`.)
 Each phase ends **green** (pytest, ruff, mypy `src/charon`, `check_boundary.py`,
 `check_version.py`) + committed + a REVIEW-LOG entry.
 
-## Open questions for the operator (confirm before P1)
-1. **Console framework (R9):** stdlib console on the gateway server (recommended) vs
-   reuse FastAPI? This shapes P1, P4, and the `.exe`.
-2. **Config (D6/R5):** OK to start the gateway on the existing `.charon/*.json` and add
-   `charon.toml` only at packaging (P5)?
-3. **Default bind/exposure (D5/R8):** confirm loopback-only default with non-loopback
-   strictly opt-in + token.
+## Resolved with the operator (2026-06-26) — P1 unblocked
+1. **Console (R9): ship BOTH** — a stdlib console on the gateway (for the lean `.exe`)
+   *and* the existing FastAPI dashboard (richer server view). Low marginal cost.
+2. **Config (D6/R5): add `charon.toml`** as a first-class gateway config surface
+   (`tomllib`, stdlib), sharing ONE schema with `.charon/*.json` (no parallel model).
+   Gateway may still read `.charon/*.json` directly to de-risk early P1.
+3. **Bind (D5/R8): confirmed** — loopback (`127.0.0.1`) by default; a non-loopback bind
+   requires explicit opt-in *and* a bearer token, refusing to start exposed without
+   one (the gateway holds provider keys; an exposed untokened bind = open credit).
