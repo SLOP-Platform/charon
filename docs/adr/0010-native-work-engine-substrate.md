@@ -1,9 +1,18 @@
 # ADR-0010 — Native work-engine substrate (promote the engine in-tree)
 
-Status: **Proposed** (2026-06-26). **Amends ADR-0007 D10** for the coordination
-substrate. Builds on ADR-0006 (PERF-4: `run_parallel`/ledger/SharedBudget), ADR-0007
-(safe-landing-first; `land.py`), ADR-0008 (intake→ticket-plan). Honors ADR-0005 R3 /
+Status: **Proposed** (2026-06-26; revised after a 4-lens DTC). **Amends ADR-0007 D10** for
+the coordination substrate. Builds on ADR-0006 (PERF-4: `run_parallel`/ledger/SharedBudget),
+ADR-0007 (safe-landing-first; `land.py`), ADR-0008 (intake→ticket-plan). Honors ADR-0005 R3 /
 ADR-0007 D11 (anti-dilution: never touch the gateway request path or install footprint).
+
+> **DTC correction (2026-06-26).** An earlier draft conflated the **dev-box build harness**
+> (the `charon-private/fleet/` rig running `claude -p` droids — how we BUILD Charon here)
+> with **Charon's product worker model**. They are different: **Charon's engine workers are
+> ACP agents, never `claude -p`.** ACP agents are warm-poolable and blocking-drivable by the
+> existing `AgentBackend`, so the engine is a **coordination layer over the existing
+> execution substrate** — no new worker port, no per-unit process restart. The
+> `WorkerBackend`/headless-CLI port (ADR-0007 D10-2) is therefore **deferred** (premature for
+> an all-ACP product). We port the rig's *coordination* design, not its *worker* model.
 
 ## Context — a decision was diluted, now restored
 The operator's settled vision ([[charon-vision-gateway-first]] "Vision EXTENSION") is that
@@ -31,19 +40,35 @@ reference implementation**, not the product. Port its design native over PERF-4'
 existing ledger/PID-lock/SharedBudget primitives. The rig stays as a sibling/operator tool
 ([[droid-robot-mode-harness]]); it is not the engine of record.
 
-### D2 — Components (all new modules, gateway path untouched — D11)
-- `engine/board.py` — a durable, file-backed work backlog (tickets: id, tier, owns,
+### D2 — Components (all new modules under `engine/`, gateway path untouched — D11)
+**Worker execution is NOT new.** Charon's product workers are **ACP agents**, which are
+warm-poolable (reuse the subprocess + `session/new` + a fresh per-unit worktree, as
+`AcpBackend` already does — ADR-0007 D7) and **blocking-drivable** by the existing
+`AgentBackend` port + `parallel.py` ThreadPool. The engine is a **coordination layer over
+that existing substrate** — it adds no worker port and no per-unit process restart.
+
+- `engine/board.py` — a durable, file-backed work backlog (units: id, tier, owns,
   depends_on, state). One Charon-owned schema; diffable/auditable artifact (ADR-0008 §6).
-- `engine/claim.py` — **atomic claim/lease** with a PID/heartbeat liveness check and lease
-  expiry (generalizes the ledger PID-lock to N independent workers); release on
-  crash/timeout for retry. This is the D10 item-1 substrate, built because the operator
-  owns the decision — tripwire becomes *sequencing*, not a gate.
-- `ports/worker.py` — a **`WorkerBackend` port** (D10 item-2): `dispatch`, `poll`,
-  `kill`, `liveness`. Adapters: in-process ACP (exists), **headless-CLI** (`claude -p` /
-  droid), and a mock. Lets a worker that a blocking `dispatch()` can't drive participate.
-- `engine/scheduler.py` — spawn-to-demand assignment over the board honoring
-  `depends_on` waves + disjoint-`owns` (the `coordinator.py` collision rule, mechanized),
-  bounded by SharedBudget + the fence.
+- `engine/claim.py` — **atomic claim** as a thin generalization of `ledger.py`'s existing
+  PID-liveness lock (CONC-4) to N units, plus a monotonic claim **epoch** as the
+  double-execution fencing token (DTC Lens-4). Release on completion/crash; reclaim a
+  stale claim only onto a *fresh* worktree. **Not** a second locking subsystem; **no**
+  heartbeat / remote-lease in v1.
+- `engine/scheduler.py` — assign claimed units to warm ACP workers honoring `depends_on`
+  waves + disjoint-`owns` (the `coordinator.py` collision rule, mechanized), bounded by
+  SharedBudget. **It drives each unit through the existing fenced `coordinator.run`**
+  (`assert_environment` + `scrubbed_env` + escape-scan + lkg/rollback) — the scheduler is
+  **never** a second, unfenced dispatch path (DTC Lens-2 R1). Liveness = ACP-deadline +
+  checkpoint-kill (ADR-0007 D8); no process-group/zombie machinery.
+- **Anti-dilution guard** (DTC Lens-3) — a transitive `sys.modules` import test (not AST)
+  asserting `proxy_server`/`gateway`/`service.app` import nothing from `engine.*`, plus a
+  stdlib-only scan over `engine/`. Built FIRST so the gateway boundary is locked before any
+  engine code lands.
+
+**Deferred (premature for an all-ACP product):** the `WorkerBackend` port + headless-CLI /
+remote adapters (ADR-0007 D10-2). Their sole justification was "a worker a blocking
+`dispatch()` can't drive" — the product has none (the `claude -p` fleet rig is dev-box
+build tooling, not a product worker). Revisit only when a real non-ACP worker is needed.
 
 ### D3 — Result landing stays propose-default (unchanged)
 Workers land through the existing `land.py` gate (diff-scope, sensitive-path hold,
@@ -98,21 +123,28 @@ not env-munging — is the isolation boundary.
   all new code under `engine/` + `ports/worker.py`; a boundary test (extend
   `test_boundary.py`) asserts the gateway server imports none of it, mirroring R3.
 - **Absorbability:** will the platform ship native multi-session claiming and make this
-  dead code? Partially possible, but the operator's need is **cross-vendor, gateway-routed
-  workers with a Charon-owned auditable backlog** — not a single-vendor feature. Build the
-  port thin so a platform primitive can sit *under* `WorkerBackend` if it arrives.
+  dead code? Partially possible, but the operator's need is **a Charon-owned auditable
+  backlog assigning warm ACP-agent workers** — not a single-vendor feature. The substrate
+  is `engine/`-local; if a platform primitive arrives it slots under the scheduler. (The
+  `WorkerBackend` abstraction is deferred until a non-ACP worker exists — see D2.)
 - **Performance/security of auto-land:** unchanged risk posture — D3 keeps propose-default;
   D4 keeps scanners advisory until measured + auto-land-on. Substrate adds concurrency, not
   new trust.
 
 Reconcile in REVIEW-LOG before code (house rule).
 
-## Build sequence (waves; fleet-built, file-disjoint)
-1. `ports/worker.py` + headless-CLI adapter + mock (the abstraction first).
-2. `engine/board.py` + `engine/claim.py` (durable backlog + atomic lease/liveness).
-3. `engine/scheduler.py` (spawn-to-demand over board, waves + disjoint-owns + budget).
-4. Scanner matrix per D4 — Tier A/B wired into `land.py` as **advisory**, change-scoped,
-   parallel, cached; benchmark harness to measure wall-time (gates "required" status).
-5. ADR-0008 Phase 1 (human-reviewed intake→plan front door) — parallelizable anytime;
-   captures the top-level acceptance that `validate.py` (D12) currently stubs.
-Then behind their gates: D5 auto-land + scanner-required; Phase 2 autonomous; AIMD.
+## Build sequence (fleet-built, file-disjoint, depends_on-gated)
+0. **Anti-dilution boundary guard** — extend `tools/check_boundary.py` + `tests/
+   test_boundary.py` (transitive `sys.modules` test + stdlib-only scan over `engine/`).
+   Lock the gateway boundary BEFORE any engine code. (no dep)
+1. `engine/board.py` + `engine/claim.py` — durable backlog + atomic claim over the ledger
+   lock + epoch fencing token. (dep: 0)
+2. `engine/scheduler.py` — assign warm-ACP units over the board (waves + disjoint-owns +
+   budget), driving each through fenced `coordinator.run`. (dep: 1)
+3. Scanner matrix per D4 — Tier A/B wired into `land.py` as **advisory**, change-scoped,
+   parallel, cached; benchmark harness measures wall-time (gates "required" status). (dep: 2)
+4. ADR-0008 Phase 1 (human-reviewed intake→plan front door) — captures the top-level
+   acceptance `validate.py` (D12) currently stubs. Independent of the substrate; gated
+   after it per operator sequencing. (dep: 2)
+Deferred behind their gates: `WorkerBackend` port (only if a non-ACP worker appears);
+D5 auto-land + scanner-required; ADR-0008 Phase 2 autonomous; AIMD adaptive capacity.
