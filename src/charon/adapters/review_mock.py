@@ -5,14 +5,17 @@ adversarial modes so the gate's *cross-cutting* properties are proven, not just
 asserted — a BLOCK must leave lkg unadvanced; an ERROR must fail **closed**.
 
 A real cross-model reviewer is integrated behind the same ``Reviewer`` port
-(ADR-0001 §2); it needs model access via the gated gateway and is not built here.
+(ADR-0001 §2); it needs model access via the gated gateway (see adapters/review.py).
 """
 from __future__ import annotations
 
 import enum
 
-from ..ports.reviewer import Findings
+from ..ports.reviewer import Findings, ReviewerError
 from ..types import Outcome, WorkUnit
+
+# Re-export so existing test imports don't break.
+__all__ = ["MockReviewer", "ReviewMode", "ReviewerError"]
 
 
 class ReviewMode(enum.Enum):
@@ -20,10 +23,6 @@ class ReviewMode(enum.Enum):
     BLOCK = "block"  # blocking findings → gate refuses
     ERROR = "error"  # raises → gate must fail CLOSED
     FLAKY = "flaky"  # errors `k` times then passes (breaker / recovery)
-
-
-class ReviewerError(RuntimeError):
-    """A reviewer failed to produce a verdict (timeout/unavailable/crash)."""
 
 
 class MockReviewer:

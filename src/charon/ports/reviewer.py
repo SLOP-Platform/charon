@@ -13,6 +13,10 @@ from typing import Protocol, runtime_checkable
 from ..types import Outcome, WorkUnit
 
 
+class ReviewerError(RuntimeError):
+    """A reviewer failed to produce a verdict (timeout/unavailable/crash/open circuit)."""
+
+
 @dataclass
 class Findings:
     blocking: list[str] = field(default_factory=list)
