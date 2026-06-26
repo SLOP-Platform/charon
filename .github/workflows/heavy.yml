@@ -1,6 +1,6 @@
 name: heavy
 
-# Heavy/slow suites (HANDOFF §9a): NOT on every push — only on a weekly schedule
+# Heavy/slow suites: NOT on every push — only on a weekly schedule
 # and on-demand via workflow_dispatch. Keeps the fast gate (ci.yml) fast while
 # still proving, regularly, that (a) the standalone wheel never bit-rots behind
 # the SLOP embed, (b) the Mode-B image still builds and the fenced service
