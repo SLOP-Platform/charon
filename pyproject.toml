@@ -26,6 +26,7 @@ charon = "charon.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/SLOP-Platform/charon"
+Repository = "https://github.com/SLOP-Platform/charon"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/charon"]
@@ -46,3 +47,6 @@ follow_imports = "skip"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = ["ignore::UserWarning"]
+# Repo root on sys.path so `tools.*` imports resolve under the bare `pytest`
+# console script in CI (not just `python -m pytest`, which adds CWD itself).
+pythonpath = ["."]

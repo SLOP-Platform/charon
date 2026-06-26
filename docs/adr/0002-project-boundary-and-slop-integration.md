@@ -49,7 +49,7 @@ SLOP consumes the harness as a **pinned, versioned dependency**, in two forms:
   `charon @ git+https://github.com/SLOP-Platform/charon@vX.Y.Z` (or a registry pin
   if/when published). The existing `~/.ssh/deploy-key` key already authenticates
   `Nnyan/*` repos.
-- **Container image** — published to `ghcr.io/nnyan/charon:vX.Y.Z` for the
+- **Container image** — published to `ghcr.io/slop-platform/charon:vX.Y.Z` for the
   service consumption mode (§2.3, Mode B).
 
 Vendoring and submodules are **rejected**: both duplicate the source of truth

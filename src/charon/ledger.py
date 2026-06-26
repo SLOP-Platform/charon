@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -22,9 +23,26 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .acceptance import AcceptanceCheck, derive_remaining, derive_verified
+from .types import Usage
 
 SCHEMA_VERSION = 1
 _LOCK_TTL_SECONDS = 900  # a lock older than this is considered abandoned
+
+# A task id is a single path segment under the state dir — never a path. This is
+# the boundary guard against traversal (reconciliation BR2-9): `../etc`, absolute
+# paths, and separators are rejected before any path join, so no surface (CLI,
+# API, or a future HTTP endpoint) can escape the state dir via a crafted id.
+_TASK_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+
+
+def validate_task_id(task_id: str) -> str:
+    """Return ``task_id`` iff it is a safe single path segment, else raise."""
+    if not _TASK_ID_RE.fullmatch(task_id):
+        raise LedgerCorruption(
+            f"invalid task id {task_id!r}: must match {_TASK_ID_RE.pattern} "
+            f"(no path separators, no traversal)"
+        )
+    return task_id
 
 
 class LedgerCorruption(RuntimeError):
@@ -45,9 +63,15 @@ class Checkpoint:
     verified: list[str]
     remaining: list[str]
     note: str = ""
+    # Resource span for this dispatch (Tier 3); None if the backend reported none.
+    usage: Usage | None = None
+    # Consensus verdict at completion (Tier 4): True/False if a reviewer was
+    # consulted, None if not (L0/L1, or no reviewer). Recorded for audit (INV-1).
+    reviewer_passed: bool | None = None
+    reviewer_note: str = ""
 
     def to_dict(self) -> dict:
-        return {
+        d: dict = {
             "seq": self.seq,
             "provider": self.provider,
             "commit": self.commit,
@@ -55,6 +79,12 @@ class Checkpoint:
             "remaining": self.remaining,
             "note": self.note,
         }
+        if self.usage is not None:
+            d["usage"] = self.usage.to_dict()
+        if self.reviewer_passed is not None:
+            d["reviewer_passed"] = self.reviewer_passed
+            d["reviewer_note"] = self.reviewer_note
+        return d
 
 
 @dataclass
@@ -95,6 +125,7 @@ class Ledger:
         target_repo: str,
         base_ref: str,
     ) -> Ledger:
+        validate_task_id(task_id)
         root = Path(state_dir) / task_id
         if (root / "ledger.json").exists():
             raise LedgerCorruption(
@@ -116,6 +147,7 @@ class Ledger:
 
     @classmethod
     def load(cls, state_dir: Path, task_id: str) -> Ledger:
+        validate_task_id(task_id)
         root = Path(state_dir) / task_id
         meta_path = root / "ledger.json"
         if not meta_path.exists():
@@ -185,6 +217,9 @@ class Ledger:
                     verified=list(d.get("verified", [])),
                     remaining=list(d.get("remaining", [])),
                     note=d.get("note", ""),
+                    usage=Usage.from_dict(d.get("usage")),
+                    reviewer_passed=d.get("reviewer_passed"),
+                    reviewer_note=d.get("reviewer_note", ""),
                 )
             )
         return out
@@ -204,6 +239,20 @@ class Ledger:
 
     def is_complete(self) -> bool:
         return not self.remaining()
+
+    def cumulative_usage(self) -> Usage:
+        """DERIVED truth: total spend re-summed from the recorded checkpoint
+        spans (INV-1 extended to cost). A handoff receiver reads the same total
+        from the ledger — it never resets per vendor (H3-for-cost)."""
+        ti = to = ms = 0
+        cost = 0.0
+        for cp in self.checkpoints():
+            if cp.usage is not None:
+                ti += cp.usage.tokens_in
+                to += cp.usage.tokens_out
+                cost += cp.usage.cost_usd
+                ms += cp.usage.latency_ms
+        return Usage(tokens_in=ti, tokens_out=to, cost_usd=cost, latency_ms=ms)
 
     # -------------------------------------------------------------- lkg / INV-2
     def advance_lkg(self, ref: str) -> None:

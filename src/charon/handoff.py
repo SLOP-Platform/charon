@@ -38,8 +38,10 @@ def rehydrate_remaining(ledger: Ledger) -> set[str]:
 
 
 def choose_next_backend(
-    router: StaticRouter, task_class: str, exhausted: str
+    router: StaticRouter, task_class: str, exclude: set[str]
 ) -> Route:
-    """H6: the next provider is chosen by re-running the router with the
-    exhausted provider excluded — not a static fallback list."""
-    return router.route(task_class, exclude={exhausted})
+    """H6: the next provider is chosen by re-running the router with **all**
+    exhausted providers excluded — not a static fallback list, and not just the
+    most-recently-exhausted one (reconciliation BR2-4: excluding only the last
+    one can re-pick an already-exhausted backend when ≥2 are down)."""
+    return router.route(task_class, exclude=set(exclude))

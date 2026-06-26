@@ -85,11 +85,85 @@ for the adversarial review of the build plan and its reconciliation.
 
 ## Status
 
-**Tier 1** (this release): standalone repo, CLI, CI, the continuity core (Ledger,
-fence, ports), proven end-to-end on the mock backend; real ACP adapter shipped
-to-spec (validate with `charon doctor`). Cross-vendor handoff logic is built and
-unit-tested; **live** cross-vendor handoff, the gateway, the consensus gate, and
-L2/L3 unattended operation are Tier 2–4.
+**Tier 1:** standalone repo, CLI, CI, the continuity core (Ledger, fence, ports),
+proven end-to-end on the mock backend; real ACP adapter shipped to-spec (validate
+with `charon doctor`).
+
+**Tier 2a** (this release): **multi-backend cross-vendor handoff**, proven
+end-to-end across two mock vendors — exhaustion (H4) routes to a *different*
+backend (H6), which rehydrates `remaining` from the ledger+disk alone (H3) and
+finishes without replaying committed work (H5). The proof is deliberately
+adversarial, not a happy path: a **lying** backend's forged "done" claim does not
+survive the vendor boundary, and `lkg` never advances past an unverified commit
+(INV-2). Routing stays a static native policy; the network gateway is gated on
+[`docs/SUPPLY-CHAIN.md`](docs/SUPPLY-CHAIN.md) before it may enter the privileged
+loop. The Mode-B container is built and health-checked in CI.
+
+**Honest scope of the handoff proof:** what is proven is the *vendor-agnostic
+contract* (the portable unit is files+ledger, not a vendor session). **Live**
+ACP-to-ACP handoff needs two real ACP agents (not in this env) and stays gated
+behind `charon doctor`.
+
+**Tier 2b:** GHCR image-publish path (release-triggered, gated on tests, base
+digest-pinned at release, SLSA provenance) + the web surface made honestly
+read-only (it returns `501` rather than running the privileged loop in-process —
+ADR-0002 §2.3). The live `POST /v1/runs` web/worker split is the recorded design
+of record, built *with* its Tier-3 SLOP consumer (see
+[`docs/PLAN-tier2.md`](docs/PLAN-tier2.md) §8).
+
+**Web Ledger dashboard (read-only).** A minimal, single-operator web view of the
+Work Ledger — project/run list, a run view (progress/cost/handoffs/checkpoints),
+and a routing-config pane. Run it:
+
+```
+pip install 'charon[service]'
+CHARON_SERVICE_TOKEN=$(openssl rand -hex 16) python -m charon.service   # http://127.0.0.1:8001
+```
+
+It is **read-only** (no run launch — `POST /v1/runs` is `501` by design),
+**token-gated** (`CHARON_SERVICE_TOKEN`; the entrypoint refuses a non-loopback
+bind without one), and serves **self-contained HTML with no external assets**
+(zero egress). The container is the security boundary (INV-B4); for a VPS, front
+it with a reverse proxy + HTTPS. Watch-the-agent-work (live diffs/stream) stays
+CLI/TUI by design (ADR-0004 D7).
+
+**Tier 3** (this release): **Ledger-native cost & budget accounting.** Each
+checkpoint records a usage span (`tokens_in/out`, `cost_usd`, `latency_ms`);
+cumulative spend is **derived** from the ledger (like progress), so it survives a
+cross-vendor handoff and a reload without resetting (H3-for-cost). A
+`--max-cost-usd` / `--max-tokens` cap stops a run *before* exceeding it — "always
+working" never means "unbounded cost." Live token/cost come from real ACP
+`session/usage` (gated on `charon doctor`); the mock proves the accounting
+contract. *(Re-scoped from a consensus gate after adversarial review found the
+gate's only consumer is L2 — built in Tier 4 with it; see
+[`docs/REVIEW-LOG.md`](docs/REVIEW-LOG.md).)*
+
+**Tier 4** (this release): autonomy **L2 (apply-with-consensus)** + the consensus
+gate. At L2 a completed unit is applied only if a configured reviewer passes; a
+**block, an error, or no reviewer all fail _closed_** (`blocked-consensus`, lkg
+unchanged). L1 never consults the reviewer (unchanged); **L3** (full-auto) applies
+regardless but records the verdict. **L2+ is refused outside the Mode-B
+container** (`Fence.assert_environment` — set `CHARON_CONTAINER_VERIFIED=1` inside
+it, or opt out loudly), enforcing ADR-0002 §2.3 in code, not just docs.
+
+> **Consensus is _not_ a security boundary.** The reviewer is an automated check
+> (an LLM, behind the gateway) that can be wrong or gamed. L2 consensus is
+> *additive quality insurance* on top of executable acceptance — not a human
+> review and not a security audit. For security-sensitive code, require human
+> review outside Charon.
+
+**Parallel independent units (PERF-4) are deferred** — adversarial review found
+the thin design unsafe as drafted (escape-scan races on shared worktree parents,
+a shared-budget overspend race, sticky backend subprocess state) and no consumer
+needs the throughput yet. The binding fixes for when it is built are recorded in
+[`docs/PLAN-tier4.md`](docs/PLAN-tier4.md) §6. The live web/worker service + GHCR
+publish-on-tag land with the Tier-3 SLOP adapter (SLOP-side).
+
+To configure multiple vendors from the CLI:
+
+```bash
+charon run --goal "..." --accept "test -f ok.txt" --backend mock-a,mock-b --autonomy L1
+```
 
 ## License
 

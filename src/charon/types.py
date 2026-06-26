@@ -40,10 +40,56 @@ class PrivilegedOp(enum.Enum):
 
 @dataclass(frozen=True)
 class Budget:
-    """Bounds a run so 'always working' cannot mean 'unbounded cost'."""
+    """Bounds a run so 'always working' cannot mean 'unbounded cost'.
+
+    ``max_cost_usd`` / ``max_tokens`` are CUMULATIVE caps across checkpoints
+    (Tier 3): the coordinator stops before the next dispatch would exceed them.
+    ``None`` means uncapped on that axis."""
 
     max_checkpoints: int = 8
     max_seconds: int | None = None
+    max_cost_usd: float | None = None
+    max_tokens: int | None = None
+
+
+@dataclass(frozen=True)
+class Usage:
+    """Resource spend reported by a backend for one dispatch (Tier 3).
+
+    Vendor-neutral and additive: the ledger sums these across checkpoints, so
+    cumulative cost is derived truth (INV-1 extended to cost), the same for any
+    backend that picks the task up (H3-for-cost). Live numbers come from ACP
+    ``session/usage``; the mock reports deterministic values to prove the
+    accounting contract. All-zero by default (a backend that reports nothing
+    costs nothing in the ledger, honestly)."""
+
+    tokens_in: int = 0
+    tokens_out: int = 0
+    cost_usd: float = 0.0
+    latency_ms: int = 0
+
+    @property
+    def tokens(self) -> int:
+        return self.tokens_in + self.tokens_out
+
+    def to_dict(self) -> dict:
+        return {
+            "tokens_in": self.tokens_in,
+            "tokens_out": self.tokens_out,
+            "cost_usd": self.cost_usd,
+            "latency_ms": self.latency_ms,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict | None) -> Usage | None:
+        if not d:
+            return None
+        return cls(
+            tokens_in=int(d.get("tokens_in", 0)),
+            tokens_out=int(d.get("tokens_out", 0)),
+            cost_usd=float(d.get("cost_usd", 0.0)),
+            latency_ms=int(d.get("latency_ms", 0)),
+        )
 
 
 @dataclass(frozen=True)
@@ -76,6 +122,7 @@ class WorkUnit:
     task_id: str
     goal: str
     task_class: str = "codegen"
+    role: str = "coder"  # selects the model-pool for cross-model failover (ADR-0004)
 
 
 class OutcomeStatus(enum.Enum):
@@ -94,3 +141,5 @@ class Outcome:
     # commit SHA in the target repo produced by this dispatch, if any.
     commit: str | None = None
     note: str = ""
+    # Resource spend for this dispatch (Tier 3); None if the backend reports none.
+    usage: Usage | None = None

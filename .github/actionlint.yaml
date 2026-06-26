@@ -1,0 +1,7 @@
+# Teach actionlint about the shared self-hosted runner label (HANDOFF §9a gotcha
+# 2) so `runs-on: [self-hosted, 4-lom]` doesn't error "unknown label". The 4-LOM
+# runner pool is owned/registered by the mediastack session (coordination note);
+# this repo only references it.
+self-hosted-runner:
+  labels:
+    - 4-lom
