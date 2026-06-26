@@ -2,9 +2,10 @@
 # SLOP (or any operator) talks to it over the HTTP surface; the privileged loop
 # stays inside this container.
 services:
-  charon:
+  charon-service:
     build: .
     image: ghcr.io/slop-platform/charon:v0.1.0
+    command: ["uvicorn", "charon.service.app:app", "--host", "0.0.0.0", "--port", "8473"]
     ports:
       # Bind the host side to LOOPBACK by default (reconciliation BR2-1/D3): the
       # service fronts the privileged loop, so it must not be reachable off-host
@@ -19,6 +20,7 @@ services:
       - CHARON_STATE_DIR=/work/.charon
     # No host docker socket, no privileged flag — keep the fence intact.
     restart: unless-stopped
+    profiles: ["service"]
 
   # --- Optional: run the GATEWAY in a container (hosted / always-on use) ---------
   # For the everyday LOCAL gateway, native `pipx install charon && charon gateway`
@@ -28,7 +30,7 @@ services:
   # that contains `charon gateway`).
   gateway:
     build: .
-    command: ["charon", "gateway", "--host", "0.0.0.0", "--port", "8080"]
+    image: ghcr.io/slop-platform/charon:v0.2.0
     ports:
       # publish to the HOST's loopback only (not your LAN). Clients on the host use
       # http://127.0.0.1:8080/v1 ; the token below is their API key.
@@ -46,4 +48,3 @@ services:
       # are reachable — set those providers' base_url to host.docker.internal:<port>
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
-    profiles: ["gateway"]   # opt-in: `docker compose --profile gateway up gateway`

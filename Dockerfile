@@ -26,6 +26,6 @@ ENV CHARON_STATE_DIR=/work/.charon
 ENV CHARON_CONTAINER_VERIFIED=1
 WORKDIR /work
 
-EXPOSE 8473
+EXPOSE 8080
 # Default autonomy stays L0 unless explicitly raised by the operator.
-CMD ["uvicorn", "charon.service.app:app", "--host", "0.0.0.0", "--port", "8473"]
+CMD ["charon", "gateway", "--host", "0.0.0.0", "--port", "8080"]
