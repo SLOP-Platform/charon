@@ -782,5 +782,23 @@ Two MED + two LOW gaps fixed:
   custom provider with base_url. **Live-smoked:** `providers add/list` wrote a 0600
   `secrets.json`, key not echoed.
 - **Gate:** 143 passed, ruff clean, mypy clean (30 files), boundary OK, version OK.
-- **Adversarial review:** security-sensitive (key handling/storage) — sent to an
-  independent reviewer.
+- **Adversarial review — verdict SAFE TO KEEP** (keys never in a tracked file; no
+  add/list/test/log path prints a key; 0600-on-create verified). Three MED + LOWs
+  fixed:
+  - **[MED] `providers test` shipped the real key to the (possibly unverified/
+    redirecting) base** — and the key wasn't even needed (a 401 proves the base
+    resolves). **Fixed:** `test` now sends **no credentials**, **disables redirects**
+    (urllib doesn't strip `Authorization` cross-host), and **rejects non-http(s)** +
+    link-local (cloud-metadata SSRF) hosts. A 401/403/404 now counts as "base
+    resolves". This is the safe way to verify the UNVERIFIED nanogpt/zai bases.
+  - **[MED] TOCTOU on `set_secret`** (pre-existing loose-perm/symlink file written
+    before chmod). **Fixed:** write a fresh `O_NOFOLLOW` 0600 temp + atomic
+    `os.replace` — no world-readable window, symlink-safe, atomic.
+  - **[MED→LOW] `apply_to_env` loaded every name** (LD_PRELOAD/PATH injection if the
+    file were tampered). **Fixed:** only valid env-name-shaped keys load, and a
+    loader-sensitive denylist (PATH/LD_PRELOAD/PYTHONPATH/…) is never injected.
+  - **[LOW] `set_secret` key-env validation** (`^[A-Za-z_][A-Za-z0-9_]*$`); no-echo
+    test now also checks stderr.
+  - New tests: key-never-sent-on-test (mock records no `Authorization`), non-http
+    scheme rejected, bad key-env rejected, sensitive/malformed env skipped.
+- **Gate after fixes:** 147 passed, ruff clean, mypy clean (30 files), boundary OK.

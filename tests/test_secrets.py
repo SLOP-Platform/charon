@@ -38,7 +38,71 @@ def test_providers_add_stores_key_without_echo(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("CHARON_HOME", str(tmp_path))
     assert cli.main(["providers", "add", "openrouter", "--key", "sk-xyz"]) == 0
     assert secrets.load_secrets()["OPENROUTER_API_KEY"] == "sk-xyz"
-    assert "sk-xyz" not in capsys.readouterr().out  # key is never printed
+    out = capsys.readouterr()
+    assert "sk-xyz" not in out.out and "sk-xyz" not in out.err  # never printed (stdout or stderr)
+
+
+def test_set_secret_rejects_bad_key_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    import pytest
+    for bad in ("", "BAD=NAME", "has space", "x\ny"):
+        with pytest.raises(ValueError):
+            secrets.set_secret(bad, "v")
+
+
+def test_apply_to_env_skips_sensitive_and_malformed(monkeypatch, tmp_path):
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    # write a hostile secrets.json directly (simulating a tampered file)
+    (tmp_path / "secrets.json").write_text(
+        '{"LD_PRELOAD": "/evil.so", "PATH": "/evil", "bad name": "x", "GOOD_KEY": "ok"}')
+    for v in ("LD_PRELOAD", "GOOD_KEY"):
+        monkeypatch.delenv(v, raising=False)
+    secrets.apply_to_env()
+    try:
+        assert os.environ.get("GOOD_KEY") == "ok"            # normal key loads
+        assert "LD_PRELOAD" not in os.environ                # loader-sensitive skipped
+        assert "bad name" not in os.environ                  # malformed name skipped
+    finally:
+        os.environ.pop("GOOD_KEY", None)
+
+
+def test_providers_test_never_sends_key(monkeypatch, tmp_path):
+    import http.server
+    import socketserver
+    import threading
+    seen: dict = {}
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            seen["auth"] = self.headers.get("Authorization")
+            self.send_response(200)
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+    class T(socketserver.ThreadingMixIn, http.server.HTTPServer):
+        daemon_threads = True
+        allow_reuse_address = True
+
+    srv = T(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}/v1"
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-should-not-leave")
+    try:
+        rc = cli.main(["providers", "test", "openrouter", "--base-url", base])
+        assert rc == 0
+        assert seen.get("auth") is None  # the key is NEVER sent on a base probe
+    finally:
+        srv.shutdown()
+
+
+def test_providers_test_rejects_non_http_scheme(monkeypatch, tmp_path):
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    assert cli.main(["providers", "test", "custom", "--base-url", "file:///etc/passwd"]) == 2
 
 
 def test_providers_list_reports_set_and_missing(monkeypatch, tmp_path, capsys):

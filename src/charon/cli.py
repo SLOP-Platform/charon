@@ -14,6 +14,7 @@ import argparse
 import json
 import os
 import sys
+import urllib.request
 
 from . import __version__, api
 from .doctor import probe
@@ -111,11 +112,21 @@ def _cmd_providers(args: argparse.Namespace) -> int:
     return 2
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse to follow redirects — a redirect could otherwise carry headers to
+    another host (urllib does NOT strip Authorization cross-host)."""
+    def redirect_request(self, *a, **k):
+        return None
+
+
 def _provider_test(name: str, base_url: str | None) -> int:
-    """Probe a provider's base URL with GET /models. Even a 401/404 proves the base
-    resolves (useful to verify an UNVERIFIED preset); never prints the key."""
+    """Probe whether a provider's base URL RESOLVES, with GET /models — **no
+    credentials sent** (even a 401/403 proves the base resolves, which is the whole
+    point) and **redirects disabled**, so a real key is never shipped to an
+    unverified/redirecting host (security review). Rejects non-http(s) schemes (SSRF
+    guard). The way to confirm the UNVERIFIED nanogpt/zai preset bases."""
     import urllib.error
-    import urllib.request
+    from urllib.parse import urlsplit
 
     from . import providers
     try:
@@ -123,25 +134,26 @@ def _provider_test(name: str, base_url: str | None) -> int:
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
-    key = os.environ.get(preset.key_env) if preset.key_env else None
-    if preset.key_env and not key:
-        print(f"no key for {name}: set {preset.key_env} or run `charon providers add {name}`",
-              file=sys.stderr)
+    parts = urlsplit(preset.base_url)
+    if parts.scheme not in ("http", "https"):
+        print(f"error: base URL must be http(s), got scheme {parts.scheme!r}", file=sys.stderr)
+        return 2
+    if (parts.hostname or "").startswith("169.254."):  # cloud-metadata SSRF guard
+        print(f"error: refusing to probe link-local host {parts.hostname}", file=sys.stderr)
         return 2
     url = preset.base_url.rstrip("/") + "/models"
+    opener = urllib.request.build_opener(_NoRedirect())
     req = urllib.request.Request(url, method="GET")
-    req.add_header("User-Agent", "charon-proxy/0.1")
-    if key:
-        req.add_header("Authorization", f"Bearer {key}")
+    req.add_header("User-Agent", "charon-proxy/0.1")  # NO Authorization header
     try:
-        resp = urllib.request.urlopen(req, timeout=20)
-        print(f"{name}: OK — HTTP {resp.status} from {url}")
+        resp = opener.open(req, timeout=20)
+        print(f"{name}: base OK — HTTP {resp.status} from {url}")
         return 0
     except urllib.error.HTTPError as exc:
-        hint = "auth/key issue" if exc.code in (401, 403) else "check base_url / path"
-        print(f"{name}: base reachable but HTTP {exc.code} from {url} ({hint})",
-              file=sys.stderr)
-        return 1
+        # any HTTP status (incl. 401/403/404) means the host + base path resolved
+        note = "needs a key (expected)" if exc.code in (401, 403) else "check the path"
+        print(f"{name}: base resolves — HTTP {exc.code} from {url} ({note})")
+        return 0
     except Exception as exc:
         print(f"{name}: UNREACHABLE — {type(exc).__name__} (check base_url / network)",
               file=sys.stderr)
