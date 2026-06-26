@@ -16,6 +16,7 @@ from pathlib import Path
 from charon import coordinator, gitutil
 from charon.acceptance import AcceptanceCheck
 from charon.adapters.mock import MockBackend
+from charon.adapters.review_mock import MockReviewer, ReviewMode
 from charon.fence import Fence
 from charon.ledger import Ledger
 from charon.parallel import SharedBudget, Unit, run_parallel
@@ -146,3 +147,41 @@ def test_run_parallel_shared_cap_bounds_the_set(tmp_path: Path) -> None:
     assert res.total_cost_usd <= 12.0
     assert res.total_cost_usd < 24.0
     assert res.budget_capped  # at least one unit stopped at the shared cap
+
+
+# ------------------------------------------------- parallel + decomposition (D6 §3)
+
+def test_run_parallel_decomposed_units_fan_out(tmp_path: Path) -> None:
+    """Each unit runs its own sequential role-DAG; run_parallel fans out ACROSS
+    the units (parallelism between units, sequential within each)."""
+    state = tmp_path / "state"
+    units = [Unit(goal=f"ticket {i}", accept=[f"test -f t{i}.txt"], autonomy="L1",
+                  decompose=True, creates=[f"t{i}.txt"]) for i in range(4)]
+    res = run_parallel(units, max_parallel=4, state_dir=str(state))
+    assert all(u["status"] == "complete" for u in res.units)
+
+
+def test_run_parallel_decomposed_l2_consensus_gates_each_unit(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """D6 step 3: parallel + L2 — the decomposed Review stage gates each unit's
+    apply, INDEPENDENTLY, with a PER-UNIT reviewer instance (globals audit: a
+    stateful reviewer is never shared across units). A blocked unit fails
+    consensus while its siblings still apply."""
+    monkeypatch.setenv("CHARON_CONTAINER_VERIFIED", "1")  # L2 honest in-container
+    state = tmp_path / "state"
+    pass_reviewers = [MockReviewer(ReviewMode.PASS) for _ in range(3)]
+    block_reviewer = MockReviewer(ReviewMode.BLOCK)
+    passing = [Unit(goal=f"ok {i}", accept=[f"test -f ok{i}.txt"], autonomy="L2",
+                    decompose=True, creates=[f"ok{i}.txt"], reviewer=pass_reviewers[i])
+               for i in range(3)]
+    blocked = Unit(goal="nope", accept=["test -f nope.txt"], autonomy="L2",
+                   decompose=True, creates=["nope.txt"], reviewer=block_reviewer)
+    res = run_parallel([*passing, blocked], max_parallel=4, state_dir=str(state))
+    by_goal = {u["goal"]: u for u in res.units}
+    for i in range(3):
+        assert by_goal[f"ok {i}"]["status"] == "complete"
+    assert by_goal["nope"]["status"] == "blocked-consensus"
+    # each unit's OWN reviewer was consulted exactly once (per-unit, not shared).
+    assert block_reviewer.calls == 1
+    assert all(r.calls == 1 for r in pass_reviewers)

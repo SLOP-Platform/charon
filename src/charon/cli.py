@@ -42,6 +42,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
             max_checkpoints=args.budget,
             max_cost_usd=args.max_cost_usd,
             max_tokens=args.max_tokens,
+            decompose=args.decompose,
         )
     except (ValueError, RuntimeError, PermissionError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -385,9 +386,20 @@ def build_parser() -> argparse.ArgumentParser:
                         "(from .charon/models.json + pools.json); needs --acp-cmd")
     r.add_argument("--budget", type=int, default=8, help="max checkpoints")
     r.add_argument("--max-cost-usd", type=float, default=None,
-                   help="cumulative cost cap (USD); stop before exceeding")
+                   help="cumulative cost cap (USD). Honest guarantee is BOUNDED "
+                        "OVERSHOOT: new dispatches halt once the running total "
+                        "reaches the cap, so the final total can exceed it by up "
+                        "to one in-flight checkpoint per active unit — not to the "
+                        "cent. Across parallel units the cap is the shared set-level "
+                        "total (PERF-4).")
     r.add_argument("--max-tokens", type=int, default=None,
-                   help="cumulative token cap; stop before exceeding")
+                   help="cumulative token cap; same bounded-overshoot semantics as "
+                        "--max-cost-usd")
+    r.add_argument("--decompose", action="store_true",
+                   help="drive the goal through the sequential role-DAG "
+                        "(Triage→Plan→Implement→Review→Validate→Close) instead of "
+                        "the plain single-unit loop — one ledger, role-tagged "
+                        "checkpoints (PERF-4/D5)")
     r.set_defaults(func=_cmd_run)
 
     g = sub.add_parser("gateway",

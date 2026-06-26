@@ -118,6 +118,10 @@ class Unit:
     max_cost_usd: float | None = None
     # Per-unit reviewer INSTANCE for L2 (globals audit: never shared across units).
     reviewer: Reviewer | None = None
+    # Drive this unit through the sequential role-DAG (D5) instead of the plain
+    # single-unit loop. The DAG is sequential WITHIN the unit; run_parallel still
+    # fans out across units (parallelism is between units, never between stages).
+    decompose: bool = False
     # Backend selection: an explicit per-unit factory (production), else the mock
     # knobs below build the deterministic demo backend.
     backend_factory: Callable[[Unit, list[AcceptanceCheck]], AgentBackend] | None = None
@@ -177,6 +181,7 @@ def _run_one(unit: Unit, gate: SharedBudget, state_dir: str) -> dict:
             max_checkpoints=unit.max_checkpoints,
             max_cost_usd=unit.max_cost_usd,
             cost_gate=gate,
+            decompose=unit.decompose,
         )
         out["goal"] = unit.goal  # so the consumer can map results back to units
         return out

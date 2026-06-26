@@ -106,6 +106,23 @@ def test_run_decomposed_l0_proposes_only(state_dir: Path, git_repo: Path) -> Non
     assert not (git_repo / "out.txt").exists()  # rolled back
 
 
+def test_cli_run_decompose_flag_drives_the_role_dag(tmp_path: Path, capsys) -> None:
+    """`charon run --decompose` drives the goal through the role-DAG end to end."""
+    import json
+
+    from charon.cli import main
+
+    state = tmp_path / "state"
+    rc = main(["run", "--goal", "make hello", "--accept", "test -f hello.txt",
+               "--backend", "mock", "--autonomy", "L1", "--decompose",
+               "--state-dir", str(state)])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0 and out["status"] == "complete"
+    # the single ledger carries role-tagged checkpoints for the whole pipeline.
+    led = Ledger.load(state, out["task_id"])
+    assert [cp.role for cp in led.checkpoints()] == decompose.ROLE_DAG
+
+
 def test_run_decomposed_respects_shared_cost_gate(state_dir: Path, git_repo: Path) -> None:
     """A decomposed unit honours the shared budget too — so it composes under
     run_parallel. A gate already at cap halts the pipeline before any stage."""

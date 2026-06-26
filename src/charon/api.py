@@ -75,6 +75,7 @@ def run_task(
     max_cost_usd: float | None = None,
     max_tokens: int | None = None,
     cost_gate: CostGate | None = None,
+    decompose: bool = False,
 ) -> dict:
     """Create a Work Ledger and drive the goal to acceptance or a bounded stop.
 
@@ -86,6 +87,8 @@ def run_task(
 
     ``cost_gate`` (PERF-4) is the shared, race-free aggregate budget when this run
     is one of N dispatched by ``parallel.run_parallel``; ``None`` for a solo run.
+    ``decompose`` (PERF-4/D5) drives the goal through the sequential role-DAG
+    (Triage→…→Close) instead of the plain single-unit loop — one ledger either way.
 
     Returns a JSON-serializable dict (the RunResult plus task id + lkg)."""
     if not accept:
@@ -144,13 +147,20 @@ def run_task(
     budget = Budget(max_checkpoints=max_checkpoints,
                     max_cost_usd=max_cost_usd, max_tokens=max_tokens)
     try:
-        result: RunResult = _run(
-            WorkUnit(task_id=task_id, goal=goal),
-            run_backends, ledger, fence, router,
-            reviewer=reviewer,
-            max_checkpoints=max_checkpoints, budget=budget,
-            cost_gate=cost_gate,
-        )
+        work_unit = WorkUnit(task_id=task_id, goal=goal)
+        if decompose:
+            from .decompose import run_decomposed
+            result: RunResult = run_decomposed(
+                work_unit, run_backends, ledger, fence, router,
+                reviewer=reviewer, cost_gate=cost_gate,
+            )
+        else:
+            result = _run(
+                work_unit, run_backends, ledger, fence, router,
+                reviewer=reviewer,
+                max_checkpoints=max_checkpoints, budget=budget,
+                cost_gate=cost_gate,
+            )
     finally:
         # Always reap the agent subprocess(es) and the proxy (review #8 — no
         # orphaned opencode processes left holding file handles).
