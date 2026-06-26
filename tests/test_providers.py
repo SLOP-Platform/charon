@@ -49,5 +49,5 @@ def test_model_referencing_provider_resolves_route(monkeypatch, tmp_path):
     assert qwen.upstream_base == "https://openrouter.ai/api/v1"
     assert qwen.api_key == "sekret" and qwen.upstream_model == "qwen/coder:free"
     assert qwen.provider == "openrouter" and qwen.strip_v1 is True
-    assert cfg.routes["glm"].strip_v1 is False           # zai preset quirk
+    assert cfg.routes["glm"].strip_v1 is True            # zai preset quirk (strips /v1)
     assert cfg.routes["n"].upstream_base == "http://my-nano/v1"  # override applied
