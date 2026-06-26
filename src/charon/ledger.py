@@ -69,6 +69,10 @@ class Checkpoint:
     # consulted, None if not (L0/L1, or no reviewer). Recorded for audit (INV-1).
     reviewer_passed: bool | None = None
     reviewer_note: str = ""
+    # PERF-4 / D5 (ADR-0006): the role-DAG stage that produced this checkpoint
+    # (triage/plan/…); "" for a plain single-unit run. Stages are checkpoint
+    # METADATA on the ONE ledger — never a ledger per stage (INV-1).
+    role: str = ""
 
     def to_dict(self) -> dict:
         d: dict = {
@@ -84,6 +88,8 @@ class Checkpoint:
         if self.reviewer_passed is not None:
             d["reviewer_passed"] = self.reviewer_passed
             d["reviewer_note"] = self.reviewer_note
+        if self.role:
+            d["role"] = self.role
         return d
 
 
@@ -220,6 +226,7 @@ class Ledger:
                     usage=Usage.from_dict(d.get("usage")),
                     reviewer_passed=d.get("reviewer_passed"),
                     reviewer_note=d.get("reviewer_note", ""),
+                    role=d.get("role", ""),
                 )
             )
         return out
