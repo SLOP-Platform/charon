@@ -63,9 +63,12 @@ def _cmd_ledger(args: argparse.Namespace) -> int:
 def _cmd_gateway(args: argparse.Namespace) -> int:
     from . import gateway, secrets
     secrets.apply_to_env()  # load stored provider keys (0600 user-local file) into env
+    # default config source = the user-local config dir (where `providers add` /
+    # `charon setup` write), so the gateway "just works" after setup with no flags.
+    state_dir = args.state_dir or (None if args.config else str(secrets.config_dir()))
     cfg = gateway.load_config(
         toml_path=args.config,
-        state_dir=None if args.config else args.state_dir,
+        state_dir=state_dir,
         host=args.host,
         port=args.port,
         token=args.token,
@@ -86,6 +89,7 @@ def _cmd_providers(args: argparse.Namespace) -> int:
             print(f"{name:12} {p.base_url:34} key_env={p.key_env or '-':20} [{state}]{note}")
         return 0
     if args.action == "add":
+        from . import config
         overrides = {"base_url": args.base_url} if args.base_url else None
         try:
             preset = providers.resolve(args.name, overrides)
@@ -93,19 +97,26 @@ def _cmd_providers(args: argparse.Namespace) -> int:
             print(f"error: {exc}", file=sys.stderr)
             return 2
         key_env = args.key_env or preset.key_env
+        # persist the provider so it works with NO hand-edited config (custom or preset)
+        try:
+            config.add_provider(args.name, base_url=args.base_url, key_env=key_env,
+                                strip_v1=(preset.strip_v1 if args.base_url else None))
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
         if not key_env:
-            print(f'{args.name}: local provider, no key needed — reference it as '
-                  f'provider = "{args.name}" in your config.')
+            print(f'added local provider "{args.name}" (no key needed).')
             return 0
         value = args.key
         if not value:
             import getpass
             value = getpass.getpass(f"Paste the API key for {args.name} ({key_env}): ")
         if not value:
-            print("no key entered; nothing stored", file=sys.stderr)
+            print(f'provider "{args.name}" saved, but no key entered — add it later '
+                  f"with `charon providers add {args.name}`", file=sys.stderr)
             return 2
         path = secrets.set_secret(key_env, value)
-        print(f'stored {key_env} in {path} (0600). Reference it as provider = "{args.name}".')
+        print(f'stored {key_env} in {path} (0600) + provider "{args.name}" in config.')
         return 0
     if args.action == "test":
         return _provider_test(args.name, args.base_url)
@@ -208,8 +219,9 @@ def build_parser() -> argparse.ArgumentParser:
                        help="run the standalone OpenAI-compatible failover gateway")
     g.add_argument("--config", default=None,
                    help="charon.toml config file (takes precedence over --state-dir)")
-    g.add_argument("--state-dir", default=api.DEFAULT_STATE_DIR,
-                   help="dir holding models.json (used when --config is absent)")
+    g.add_argument("--state-dir", default=None,
+                   help="dir holding models/pools/providers.json (default: the "
+                        "user config dir ~/.charon; used when --config is absent)")
     g.add_argument("--host", default=None, help="bind host (default 127.0.0.1)")
     g.add_argument("--port", type=int, default=None, help="bind port (default 8080)")
     g.add_argument("--token", default=None,
