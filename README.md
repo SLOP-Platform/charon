@@ -121,6 +121,12 @@ provider       = "lmstudio"
 upstream_model = "qwen2.5-coder-7b"
 ```
 
+**Web console** (P4): the gateway serves a self-contained console at
+`http://127.0.0.1:<port>/` (zero external assets, same loopback + token gate) — live
+per-provider served/failed/cost, cooldown/health, the pool config, and a recent-
+failover stream. JSON at `/charon/status`. A richer FastAPI dashboard for the
+orchestrator's Work Ledger also ships (`python -m charon.service`).
+
 The autonomous orchestrator (`charon run`, above) is an opt-in feature on the same
 core.
 

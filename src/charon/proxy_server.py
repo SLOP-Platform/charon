@@ -54,6 +54,49 @@ _BANNED_UA_PREFIXES = ("python-urllib", "python-requests")
 # that never carries a model field.
 _STREAM_HEAD_CAP = 65536
 
+# Self-contained gateway console (P4) — NO external assets (zero egress, like the
+# read-only dashboard). Polls /charon/status; carries the bearer via ?token= so a
+# browser URL works behind the token gate.
+_CONSOLE_HTML = """<!doctype html><html><head><meta charset="utf-8">
+<title>Charon Gateway</title><style>
+body{font:14px system-ui,sans-serif;margin:1.5rem;background:#0b0e14;color:#cdd6f4}
+h1{font-size:1.2rem} h2{font-size:1rem;margin-top:1.4rem;color:#89b4fa}
+table{border-collapse:collapse;width:100%;margin-top:.3rem}
+th,td{text-align:left;padding:.3rem .6rem;border-bottom:1px solid #313244}
+.cool{color:#f38ba8}.ok{color:#a6e3a1}.muted{color:#6c7086}
+code{background:#1e1e2e;padding:.1rem .3rem;border-radius:3px}
+</style></head><body>
+<h1>Charon Gateway <span class=muted id=ts></span></h1>
+<div id=usage></div>
+<h2>Providers</h2><table id=providers><thead><tr><th>provider<th>served<th>failed
+<th>cost $<th>last<th>cooldown</tr></thead><tbody></tbody></table>
+<h2>Pools</h2><table id=pools><tbody></tbody></table>
+<h2>Recent failovers</h2><div id=failovers class=muted>none yet</div>
+<script>
+const tok=new URLSearchParams(location.search).get('token');
+const q=tok?('?token='+encodeURIComponent(tok)):'';
+function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+async function tick(){
+ let r; try{r=await fetch('/charon/status'+q)}catch(e){return}
+ if(!r.ok)return; const d=await r.json();
+ document.getElementById('ts').textContent=new Date().toLocaleTimeString();
+ document.getElementById('usage').innerHTML='<b>Usage:</b> '+d.usage.tokens_in+
+   ' in / '+d.usage.tokens_out+' out / $'+d.usage.cost_usd;
+ const pb=document.querySelector('#providers tbody');pb.innerHTML='';
+ for(const [n,s] of Object.entries(d.providers)){const cd=d.cooldown_seconds[n];
+  pb.insertAdjacentHTML('beforeend','<tr><td><code>'+esc(n)+'</code><td>'+s.served+
+   '<td>'+s.failed+'<td>'+(s.cost||0).toFixed(4)+'<td>'+esc(s.last_status)+'<td>'+
+   (cd?('<span class=cool>'+cd+'s</span>'):'<span class=ok>ok</span>')+'</tr>')}
+ const lb=document.querySelector('#pools tbody');lb.innerHTML='';
+ for(const [m,ps] of Object.entries(d.pools)){lb.insertAdjacentHTML('beforeend',
+   '<tr><td><code>'+esc(m)+'</code><td>'+ps.map(esc).join(' &rarr; ')+'</tr>')}
+ const fb=document.getElementById('failovers');const ev=d.recent_failovers.slice(-15).reverse();
+ fb.innerHTML=ev.length?ev.map(e=>esc(e.model)+': '+e.failovers.map(f=>esc(f.provider)+
+   '='+esc(f.status)).join(', ')+' &rarr; '+esc(e.served_by)).join('<br>'):'none yet';
+}
+tick();setInterval(tick,2000);
+</script></body></html>"""
+
 
 def _extract(raw: bytes, content_type: str) -> dict:
     """Pull a ``{model, usage}`` view out of an upstream response — JSON for a
@@ -105,6 +148,17 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
         data = json.dumps(obj).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        try:
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def _html(self, html: str) -> None:
+        data = html.encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         try:
@@ -222,6 +276,15 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 {"id": m, "object": "model", "owned_by": "charon"} for m in srv.model_ids]})
             return
 
+        # Gateway console + status (P4) — gateway mode only, token-gated above.
+        if self.command == "GET" and srv.model_ids is not None:
+            if path_only == "/charon/status":
+                self._json(200, srv.status_snapshot())
+                return
+            if path_only in ("", "/charon"):
+                self._html(_CONSOLE_HTML)
+                return
+
         # Read the client request (size-capped — memory-DoS guard on an exposed bind).
         length = int(self.headers.get("Content-Length") or 0)
         if length > srv.max_body_bytes:
@@ -269,7 +332,7 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 self._send_resp_headers(502, "application/json", route.label, failovers, False)
                 self._write(json.dumps(
                     {"error": {"message": "all upstreams unreachable"}}).encode())
-                srv.note_request(requested, route.label, failovers)
+                srv.note_request(requested, route.label, "unreachable", 0.0, failovers)
                 return
 
             ctype = rhdrs.get("Content-Type", "application/json")
@@ -291,7 +354,7 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                     # NOT fail over (R6) — relay the real upstream response as-is.
                     self._send_resp_headers(status, ctype, route.label, failovers, False)
                     self._write(body_bytes)
-                    srv.note_request(requested, route.label, failovers)
+                    srv.note_request(requested, route.label, status, 0.0, failovers)
                     return
 
                 # ---- 200, non-streaming: buffer, then check for a silent downgrade ----
@@ -307,7 +370,8 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                     srv.observer.record(obs, count_usage=True)  # served → bill usage (R10a)
                     self._send_resp_headers(200, ctype, route.label, failovers, obs.pseudo_success)
                     self._write(body_bytes)
-                    srv.note_request(requested, route.label, failovers)
+                    cost = obs.usage.cost_usd if obs.usage else 0.0
+                    srv.note_request(requested, route.label, 200, cost, failovers)
                     return
 
                 # ---- 200, streaming: buffer the head until `model` is seen (or a cap),
@@ -336,7 +400,7 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                     self._send_resp_headers(502, "application/json", route.label, failovers, False)
                     self._write(json.dumps(
                         {"error": {"message": "upstream stream failed"}}).encode())
-                    srv.note_request(requested, route.label, failovers)
+                    srv.note_request(requested, route.label, "stream-error", 0.0, failovers)
                     return
 
                 obs = srv.observer.classify(okey, 200, rhdrs, _extract(b"".join(head), ctype),
@@ -359,10 +423,12 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                         ok = self._write(c)
                 except Exception:
                     pass  # headers committed; partial stream is unavoidable
-                srv.observer.record(srv.observer.classify(okey, 200, rhdrs,
-                                    _extract(b"".join(full), ctype), expected_model=expected),
-                                    count_usage=True)
-                srv.note_request(requested, route.label, failovers)
+                served_obs = srv.observer.classify(okey, 200, rhdrs,
+                                                   _extract(b"".join(full), ctype),
+                                                   expected_model=expected)
+                srv.observer.record(served_obs, count_usage=True)
+                cost = served_obs.usage.cost_usd if served_obs.usage else 0.0
+                srv.note_request(requested, route.label, 200, cost, failovers)
                 return
             finally:
                 try:  # release the upstream socket/fd promptly (don't lean on GC)
@@ -421,6 +487,8 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         self._cooldown: dict[str, float] = {}
         self._cooldown_lock = threading.Lock()
         self.failover_events: collections.deque[dict] = collections.deque(maxlen=200)
+        # per-provider counters for the console (P4): label → served/failed/cost.
+        self.provider_stats: dict[str, dict] = {}
 
     def route_for(self, model: str) -> UpstreamRoute | None:
         """Which upstream serves ``model``: an explicit route, else the single
@@ -458,21 +526,62 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         with self._cooldown_lock:
             self._cooldown[route.upstream_base] = time.monotonic() + secs
 
-    def note_request(self, model: str, served_by: str, failovers: list[dict]) -> None:
-        """Record a request that involved failover (visibility, D3): an in-memory
-        ring buffer the console reads, plus an optional JSONL append. No-op when no
-        failover happened (the common path stays silent and cheap)."""
-        if not failovers:
-            return
-        event = {"model": model, "served_by": served_by, "failovers": list(failovers)}
+    def note_request(self, model: str, served_by: str, status, cost: float,
+                     failovers: list[dict]) -> None:
+        """Account one finished request (called on EVERY exit path): bump the served
+        provider's served/cost counters and each failed-over provider's failure
+        counter (per-provider visibility, D3/P4), and — when failover happened —
+        append a failover event (ring buffer + optional JSONL)."""
+        def _slot(stats, label):
+            return stats.setdefault(label, {"served": 0, "failed": 0, "cost": 0.0,
+                                            "last_status": None})
         with self._cooldown_lock:
-            self.failover_events.append(event)
-        if self.failover_log_path:
+            s = _slot(self.provider_stats, served_by)
+            s["served"] += 1
+            s["cost"] += cost
+            s["last_status"] = status
+            for f in failovers:
+                fs = _slot(self.provider_stats, f["provider"])
+                fs["failed"] += 1
+                fs["last_status"] = f["status"]
+            if failovers:
+                self.failover_events.append(
+                    {"model": model, "served_by": served_by, "status": status,
+                     "failovers": list(failovers)})
+        if failovers and self.failover_log_path:
             try:
-                with open(self.failover_log_path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(event) + "\n")
+                with open(self.failover_log_path, "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(
+                        {"model": model, "served_by": served_by, "failovers": failovers}) + "\n")
             except OSError:
                 pass
+
+    def status_snapshot(self) -> dict:
+        """A JSON-able view for the console (P4): pool config, per-provider stats +
+        cooldown, cumulative usage, and the recent failover events."""
+        now = time.monotonic()
+        with self._cooldown_lock:
+            cooled = {base: round(t - now, 1) for base, t in self._cooldown.items() if t > now}
+            stats = {k: dict(v) for k, v in self.provider_stats.items()}
+            events = list(self.failover_events)
+        pools = {vid: [r.label for r in chain] for vid, chain in self.pools.items()}
+        for mid, r in self.routes.items():
+            pools.setdefault(mid, [r.label])
+        # map a provider label → seconds of cooldown remaining (via its base url)
+        label_cooldown: dict[str, float] = {}
+        for chain in list(self.pools.values()) + [[r] for r in self.routes.values()]:
+            for r in chain:
+                if r.upstream_base in cooled:
+                    label_cooldown[r.label] = cooled[r.upstream_base]
+        u = self.observer.cumulative_usage()
+        return {
+            "pools": pools,
+            "providers": stats,
+            "cooldown_seconds": label_cooldown,
+            "usage": {"tokens_in": u.tokens_in, "tokens_out": u.tokens_out,
+                      "cost_usd": round(u.cost_usd, 6)},
+            "recent_failovers": events[-50:],
+        }
 
     @property
     def url(self) -> str:

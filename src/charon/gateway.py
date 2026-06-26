@@ -185,6 +185,8 @@ def run(cfg: GatewayConfig) -> int:
     gate = "token-gated" if cfg.token else "loopback, UNGATED"
     print(f"charon gateway ({gate}) on {server.url}/v1 — "
           f"{len(cfg.model_ids)} model(s), {len(cfg.pools)} pool(s)", file=sys.stderr)
+    tq = f"?token={cfg.token}" if cfg.token else ""
+    print(f"  console: {server.url}/{tq}", file=sys.stderr)
     try:
         server.serve_forever()
     except KeyboardInterrupt:  # pragma: no cover

@@ -75,6 +75,39 @@ def _gw(pools):
     return gw
 
 
+def _get(url):
+    resp = urllib.request.urlopen(urllib.request.Request(url, method="GET"), timeout=10)
+    return resp.status, resp.read().decode(), dict(resp.headers)
+
+
+def test_console_and_status_endpoints():
+    a, ba = _up(status=429)
+    b, bb = _up(status=200, return_model="mb", cost=0.02)
+    gw = GatewayProxyServer(
+        pools={"v": [UpstreamRoute(ba, "ka"), UpstreamRoute(bb, "kb", upstream_model="mb")]},
+        model_ids=["v"])
+    gw.serve_in_thread()
+    try:
+        _req(gw.url + "/v1/chat/completions", {"model": "v"})  # 429 → 200 failover
+        # self-contained console HTML (zero egress)
+        st, html, hdrs = _get(gw.url + "/")
+        assert st == 200 and "Charon Gateway" in html
+        assert "text/html" in hdrs["Content-Type"]
+        assert "http://" not in html and "https://" not in html
+        # status JSON: pools, per-provider stats, usage, failover events
+        st, body, _ = _get(gw.url + "/charon/status")
+        snap = json.loads(body)
+        assert st == 200 and "v" in snap["pools"]
+        assert snap["usage"]["cost_usd"] == 0.02           # only the served provider billed
+        assert snap["recent_failovers"]                    # failover recorded for the console
+        assert any(v["served"] > 0 for v in snap["providers"].values())
+        assert any(v["failed"] > 0 for v in snap["providers"].values())
+    finally:
+        gw.shutdown()
+        a.shutdown()
+        b.shutdown()
+
+
 def test_failover_on_429_serves_next_and_is_visible():
     a, base_a = _up(status=429)
     b, base_b = _up(status=200, return_model="mb", cost=0.02)
