@@ -28,12 +28,15 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
+import tempfile
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from .acceptance import AcceptanceCheck
+from .config import AutoLandConfig
 from .ledger import Ledger
 from .scanners import run_scanners
 
@@ -113,6 +116,18 @@ def is_sensitive(path: str) -> str | None:
     if _INSTALL_SETUP_RE.search(base) or _REQUIREMENTS_RE.match(base):
         return parts[-1]
     return None
+
+
+def matches_prefix(path: str, prefixes: Sequence[str]) -> bool:
+    """True iff ``path`` is the same as, or nested under, one of ``prefixes`` —
+    the matcher behind ``AutoLandConfig.extra_sensitive`` (a config-supplied
+    always-hold path widens, never shrinks, the built-in sensitive set)."""
+    p = path.replace("\\", "/").removeprefix("./")
+    for raw in prefixes:
+        pref = _norm_owned(raw)
+        if pref and (p == pref or p.startswith(pref + "/")):
+            return True
+    return False
 
 
 # --------------------------------------------------------------- scope matching
@@ -233,6 +248,23 @@ def _default_scanner_runner(repo: str, files: list[str]) -> list[dict]:
         return []
 
 
+def _required_scanner_runner(repo: str, files: list[str]) -> list[dict]:
+    """Auto-land scanner runner (ADR-0012 D6): unlike the advisory default, a
+    catastrophic scanner-matrix failure is surfaced as an ``error`` row rather
+    than swallowed to ``[]`` — so ``scanners_required`` can fail closed on it
+    (a check that cannot run must never read as green)."""
+    try:
+        return [r.to_dict() for r in run_scanners(repo, files)]
+    except Exception as exc:  # noqa: BLE001
+        return [{
+            "name": "scanner-matrix",
+            "tier": "?",
+            "status": "error",
+            "findings": [],
+            "note": f"runner error: {exc}",
+        }]
+
+
 def land_unit(
     ledger: Ledger,
     owned_paths: Sequence[str],
@@ -244,6 +276,9 @@ def land_unit(
     gitleaks_expected: bool = False,
     gitleaks_runner: Callable[[str], GitleaksResult] = run_gitleaks,
     scanner_runner: Callable[[str, list[str]], list[dict]] = _default_scanner_runner,
+    allowlist: Sequence[str] | None = None,
+    extra_sensitive: Sequence[str] = (),
+    scanners_required: bool = False,
 ) -> GateOutcome:
     """Evaluate the tiered land gate for one completed unit and return a PROPOSE
     or HOLD verdict (D4/D6). Read-only: never advances lkg, never mutates the
@@ -251,7 +286,17 @@ def land_unit(
 
     ``tip_ref`` defaults to the ledger's ``lkg_ref`` (the blessed completion
     commit for an L1+ unit); ``base_ref`` to the ledger's ``base_ref`` (the floor
-    the unit was cut from)."""
+    the unit was cut from).
+
+    The last three parameters arm the **auto-land** posture (ADR-0012); their
+    defaults preserve the propose-default behavior byte-for-byte:
+      - ``allowlist`` (when not ``None``) — a changed file must ALSO be within this
+        engine-owned allowlist to land; anything else HOLDS (D3). An empty
+        allowlist holds everything (fail-closed).
+      - ``extra_sensitive`` — additional always-hold path prefixes layered on the
+        built-in sensitive set (D4); widen-only.
+      - ``scanners_required`` — flip D007: a scanner finding HOLDS and an
+        eligible-but-unavailable/timeout scanner fails closed (D6)."""
     repo = ledger.target_repo
     base = base_ref or ledger.base_ref
     tip = tip_ref or ledger.lkg_ref
@@ -271,10 +316,23 @@ def land_unit(
         if out_of_scope:
             holds.append(f"out-of-scope writes: {out_of_scope}")
 
-    # 2. sensitive-path HOLD — always, even if everything else is green.
-    sensitive = [f for f in files if is_sensitive(f) is not None]
+    # 1b. auto-land path-allowlist (ADR-0012 D3): even an in-scope file must be on
+    #     the engine-owned allowlist to auto-land; everything else HOLDS. ``None``
+    #     means "not armed" (propose-default); an empty allowlist holds all files.
+    out_of_allowlist: list[str] = []
+    if allowlist is not None:
+        out_of_allowlist = [f for f in files if not in_scope(f, allowlist)]
+        if out_of_allowlist:
+            holds.append(f"out-of-allowlist writes (auto-land): {out_of_allowlist}")
+
+    # 2. sensitive-path HOLD — always, even if everything else is green. The
+    #    config-supplied ``extra_sensitive`` set widens (never shrinks) the built-in.
+    sensitive = [
+        f for f in files
+        if is_sensitive(f) is not None or matches_prefix(f, extra_sensitive)
+    ]
     if sensitive:
-        labels = sorted({is_sensitive(f) or "" for f in sensitive})
+        labels = sorted({is_sensitive(f) or "extra-sensitive" for f in sensitive})
         holds.append(f"sensitive paths require human review: {sensitive} ({labels})")
 
     # 3. the unit's executable acceptance checks + optional tests.
@@ -305,6 +363,24 @@ def land_unit(
     #    auto-land (deferred).  A scanner error produces "unavailable", never a hold.
     advisory = scanner_runner(repo, files)
 
+    # 5b. auto-land flips D007: scanners become REQUIRED / fail-closed (ADR-0012 D6).
+    #     A finding HOLDS; an eligible-but-unavailable/timeout/errored scanner fails
+    #     closed (a check that cannot run must never read as green). "skipped" means
+    #     the file-domain is not in the diff — genuinely nothing to scan, not a hold.
+    if scanners_required:
+        for s in advisory:
+            status = s.get("status")
+            if status == "finding":
+                holds.append(
+                    f"required scanner {s.get('name')} reported findings: "
+                    f"{s.get('findings')}"
+                )
+            elif status in ("unavailable", "timeout", "error"):
+                holds.append(
+                    f"required scanner {s.get('name')} {status} (fail-closed): "
+                    f"{s.get('note', '')}".rstrip()
+                )
+
     decision = "propose" if not holds else "hold"
     return GateOutcome(
         task_id=ledger.task_id,
@@ -314,7 +390,7 @@ def land_unit(
         base_ref=base,
         tip_ref=tip,
         changed_files=files,
-        out_of_scope=out_of_scope,
+        out_of_scope=out_of_scope + out_of_allowlist,
         sensitive=sensitive,
         acceptance_failed=acceptance_failed,
         tests_passed=tests_passed,
@@ -493,3 +569,245 @@ def acceptance_from(accept: Sequence[str]) -> list[AcceptanceCheck]:
     """Helper mirroring the run path's id scheme, for callers that build checks
     from a raw command list."""
     return [AcceptanceCheck(id=f"a{i}", cmd=c) for i, c in enumerate(accept)]
+
+
+# ===================================================================== auto-land
+# ADR-0012 — the opt-in, batch-atomic auto-land path layered ON TOP of the
+# propose-default gate above. NEVER the default: off unless the engine-owned
+# config explicitly enables it, and fail-closed in every ambiguous branch.
+
+@dataclass(frozen=True)
+class AutoLandResult:
+    """Verdict for one auto-land batch (ADR-0012). ``landed`` is True only when the
+    base branch was actually fast-forwarded; otherwise the batch HELD and NOTHING
+    was merged (batch-atomic — never partial)."""
+
+    decision: str  # "auto-landed" | "hold"
+    landed: bool
+    holds: list[str] = field(default_factory=list)
+    outcomes: list[GateOutcome] = field(default_factory=list)
+    base_ref: str = ""
+    integrated_ref: str = ""
+    landed_ref: str = ""
+
+    @property
+    def held(self) -> bool:
+        return not self.landed
+
+    def to_dict(self) -> dict:
+        return {
+            "decision": self.decision,
+            "landed": self.landed,
+            "holds": self.holds,
+            "outcomes": [o.to_dict() for o in self.outcomes],
+            "base_ref": self.base_ref,
+            "integrated_ref": self.integrated_ref,
+            "landed_ref": self.landed_ref,
+        }
+
+
+def _git_ok(repo: str, *args: str, timeout: int = 120) -> str:
+    proc = _git(repo, *args, timeout=timeout)
+    if proc.returncode != 0:
+        raise LandError(f"git {' '.join(args)} failed: {proc.stderr.strip()}")
+    return proc.stdout.strip()
+
+
+def _ff_update_ref(repo: str, branch: str, new_ref: str, expected_old: str) -> None:
+    """Compare-and-swap the base branch to ``new_ref`` — succeeds only if the
+    branch still points at ``expected_old`` (atomic; rejects a concurrently-moved
+    branch, fail-closed). ``base`` must be an ancestor of ``new_ref``, so this only
+    ever fast-forwards, never rewrites history."""
+    _git_ok(repo, "update-ref", f"refs/heads/{branch}", new_ref, expected_old)
+
+
+def auto_land_batch(
+    units: Sequence[tuple[Ledger, Sequence[str]]],
+    cfg: AutoLandConfig,
+    *,
+    tests_cmd: str | None = None,
+    run_acceptance: bool = True,
+    gitleaks_runner: Callable[[str], GitleaksResult] = run_gitleaks,
+    scanner_runner: Callable[[str, list[str]], list[dict]] = _required_scanner_runner,
+) -> AutoLandResult:
+    """Evaluate + (only if fully green) atomically land one decomposition.
+
+    A *batch* is a list of ``(ledger, owned_paths)`` units cut from ONE shared
+    base. The contract (ADR-0012):
+      - **Opt-in:** if ``cfg.enabled`` is False the batch HOLDS and NO git mutation
+        happens — the default is always propose.
+      - **Per-unit strict gate:** every unit is gated with the auto-land posture
+        (allowlist + extra-sensitive + scanners-required + gitleaks-expected). If
+        ANY unit holds, the batch lands NOTHING (batch-atomic).
+      - **Integrated gate ONCE:** the unit tips are merged on a throwaway worktree
+        off base, the integrated tip is re-checked (scope/allowlist/sensitive +
+        gitleaks), and only a green integration fast-forwards the base branch in a
+        single CAS update-ref. Any conflict / mismatch / ambiguity → discard, HOLD.
+
+    Read-only on every HOLD path; the ONLY mutation is the final fast-forward of
+    ``cfg.base_branch`` when everything is green."""
+    holds: list[str] = []
+
+    # Master switch (ADR-0012 D1). Off → propose-default, never touch git.
+    if not cfg.enabled:
+        return AutoLandResult(
+            decision="hold", landed=False,
+            holds=["auto-land disabled (opt-in OFF) — propose-default"],
+        )
+    if not cfg.allowlist:
+        # An armed-but-empty allowlist can land nothing; say so loudly rather than
+        # silently holding every file one-by-one.
+        holds.append("auto-land enabled but allowlist is empty (fail-closed)")
+    if not units:
+        return AutoLandResult(decision="hold", landed=False,
+                              holds=holds + ["empty batch — nothing to land"])
+
+    # One batch == one decomposition off ONE base in ONE repo. A mismatch means the
+    # caller mixed floors/repos — fail closed rather than guess.
+    repo = units[0][0].target_repo
+    base = units[0][0].base_ref
+    for led, _owned in units:
+        if led.target_repo != repo:
+            holds.append(f"batch spans repos ({led.target_repo} != {repo})")
+        if led.base_ref != base:
+            holds.append(f"batch spans bases ({led.base_ref[:12]} != {base[:12]})")
+
+    # Per-unit strict gate, each in its OWN sandbox worktree checked out at the
+    # unit's tip (ADR-0012 D5) — acceptance + tests therefore run against the unit's
+    # proposed code, isolated from the live checkout, never executed in-place.
+    outcomes: list[GateOutcome] = []
+    for led, owned in units:
+        outcome = _gate_unit_sandboxed(
+            repo, led, owned,
+            tests_cmd=tests_cmd, run_acceptance=run_acceptance,
+            gitleaks_runner=gitleaks_runner, scanner_runner=scanner_runner,
+            cfg=cfg,
+        )
+        outcomes.append(outcome)
+        if outcome.decision != "propose":
+            holds.append(f"unit {led.task_id} held: {outcome.holds}")
+
+    # ANY hold → land NOTHING (batch-atomic). No git mutation has happened yet.
+    if holds:
+        return AutoLandResult(decision="hold", landed=False, holds=holds,
+                              outcomes=outcomes, base_ref=base)
+
+    tips = [led.lkg_ref for led, _ in units]
+    integrated_ref, landed_ref, integ_holds = _integrate_and_land(
+        repo, base, tips, cfg, gitleaks_runner,
+    )
+    if integ_holds:
+        return AutoLandResult(decision="hold", landed=False, holds=integ_holds,
+                              outcomes=outcomes, base_ref=base,
+                              integrated_ref=integrated_ref)
+    return AutoLandResult(
+        decision="auto-landed", landed=True, holds=[], outcomes=outcomes,
+        base_ref=base, integrated_ref=integrated_ref, landed_ref=landed_ref,
+    )
+
+
+def _gate_unit_sandboxed(
+    repo: str,
+    led: Ledger,
+    owned: Sequence[str],
+    *,
+    tests_cmd: str | None,
+    run_acceptance: bool,
+    gitleaks_runner: Callable[[str], GitleaksResult],
+    scanner_runner: Callable[[str, list[str]], list[dict]],
+    cfg: AutoLandConfig,
+) -> GateOutcome:
+    """Run the strict auto-land gate for one unit inside a disposable worktree
+    checked out at the unit's tip (D5 sandbox). If the sandbox cannot be staged,
+    fail closed with a synthetic HOLD outcome — never fall back to the live tree."""
+    sandbox = tempfile.mkdtemp(prefix="charon-unit-")
+    try:
+        try:
+            _git_ok(repo, "worktree", "add", "--detach", sandbox, led.lkg_ref)
+        except LandError as exc:
+            return GateOutcome(
+                task_id=led.task_id, goal=led.goal, decision="hold",
+                holds=[f"could not stage unit sandbox (fail-closed): {exc}"],
+                base_ref=led.base_ref, tip_ref=led.lkg_ref,
+            )
+        sandboxed = replace(led, target_repo=sandbox)
+        return land_unit(
+            sandboxed, owned,
+            tests_cmd=tests_cmd,
+            run_acceptance=run_acceptance,
+            gitleaks_expected=True,
+            gitleaks_runner=gitleaks_runner,
+            scanner_runner=scanner_runner,
+            allowlist=cfg.allowlist,
+            extra_sensitive=cfg.extra_sensitive,
+            scanners_required=True,
+        )
+    finally:
+        _git(repo, "worktree", "remove", "--force", sandbox)
+        _git(repo, "worktree", "prune")
+        shutil.rmtree(sandbox, ignore_errors=True)
+
+
+def _integrate_and_land(
+    repo: str,
+    base: str,
+    tips: Sequence[str],
+    cfg: AutoLandConfig,
+    gitleaks_runner: Callable[[str], GitleaksResult],
+) -> tuple[str, str, list[str]]:
+    """Merge ``tips`` onto a disposable integration worktree off ``base``, gate the
+    integrated tip ONCE, and fast-forward ``cfg.base_branch`` iff green. Returns
+    ``(integrated_ref, landed_ref, holds)``; a non-empty ``holds`` means the
+    integration was discarded and the base branch is untouched (land NOTHING)."""
+    workdir = tempfile.mkdtemp(prefix="charon-autoland-")
+    integrated_ref = ""
+    try:
+        # Disposable worktree off base — never the live checkout (D2). Detached so
+        # the fast-forward of the real branch is the only ref we ever move.
+        try:
+            _git_ok(repo, "worktree", "add", "--detach", workdir, base)
+        except LandError as exc:
+            return "", "", [f"could not stage integration worktree: {exc}"]
+
+        for tip in tips:
+            proc = _git(workdir, "merge", "--no-ff", "--no-edit", tip)
+            if proc.returncode != 0:
+                _git(workdir, "merge", "--abort")
+                return "", "", [
+                    f"integration conflict merging {tip[:12]} — batch lands nothing"
+                ]
+        integrated_ref = _git_ok(workdir, "rev-parse", "HEAD")
+
+        # Gate ONCE on the integrated tip (per-unit green != integrated green).
+        integ_files = changed_files(repo, base, integrated_ref)
+        bad_scope = [f for f in integ_files if not in_scope(f, cfg.allowlist)]
+        bad_sensitive = [
+            f for f in integ_files
+            if is_sensitive(f) is not None or matches_prefix(f, cfg.extra_sensitive)
+        ]
+        gl = gitleaks_runner(workdir)
+        holds: list[str] = []
+        if bad_scope:
+            holds.append(f"integrated diff escapes allowlist: {bad_scope}")
+        if bad_sensitive:
+            holds.append(f"integrated diff touches sensitive paths: {bad_sensitive}")
+        if gl.status == "leaks":
+            holds.append("gitleaks detected secrets in integrated tip")
+        elif gl.status == "unavailable":
+            holds.append("gitleaks unavailable on integrated tip (fail-closed)")
+        if holds:
+            return integrated_ref, "", holds
+
+        # All green → the ONE mutation: CAS fast-forward of the base branch.
+        try:
+            _ff_update_ref(repo, cfg.base_branch, integrated_ref, base)
+        except LandError as exc:
+            return integrated_ref, "", [
+                f"base branch {cfg.base_branch!r} moved or unavailable; "
+                f"refusing non-atomic land ({exc})"
+            ]
+        return integrated_ref, integrated_ref, []
+    finally:
+        _git(repo, "worktree", "remove", "--force", workdir)
+        _git(repo, "worktree", "prune")
+        shutil.rmtree(workdir, ignore_errors=True)
