@@ -180,6 +180,9 @@ def test_unknown_model_with_no_fallback_is_502() -> None:
     proxy.serve_in_thread()
     try:
         status, body = _post(proxy.url + "/v1/chat/completions", {"model": "unknown"})
-        assert status == 502 and "no route" in body["error"]["message"]
+        assert status == 502
+        msg = body["error"]["message"]
+        assert "no route" in msg
+        assert "charon setup" in msg  # remediation hint for fresh users
     finally:
         proxy.shutdown()

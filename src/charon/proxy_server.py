@@ -481,7 +481,10 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
         chain = srv.chain_for(requested)
         if not chain:
             srv.observer.observe(requested, 502, {}, {}, count_usage=False)
-            self._json(502, {"error": {"message": f"no route for model {requested!r}"}})
+            self._json(502, {"error": {"message": (
+                f"no route for model {requested!r} — no providers configured; "
+                "run 'charon setup' or open http://127.0.0.1:8080/charon/setup"
+            )}})
             return
 
         is_stream = orig_bj.get("stream") is True
