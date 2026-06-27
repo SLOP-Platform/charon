@@ -999,11 +999,79 @@ SECURITY (--run): --run EXECUTES each unit's `accept` command in a worktree.
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="charon", description="Thin cross-vendor agent orchestrator")
+    p = argparse.ArgumentParser(
+        prog="charon",
+        description="Charon — a local AI gateway with automatic failover across "
+                    "providers, plus optional coding-agent automation.")
     p.add_argument("--version", action="version", version=f"charon {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    r = sub.add_parser("run", help="run a goal to executable acceptance")
+    su = sub.add_parser("setup", help="Guided first-time setup (providers, keys, models)")
+    su.set_defaults(func=_cmd_setup)
+
+    g = sub.add_parser("gateway",
+                       help="Start the local API gateway your apps point at")
+    g.add_argument("--config", default=None,
+                   help="charon.toml config file (takes precedence over --state-dir)")
+    g.add_argument("--state-dir", default=None,
+                   help="dir holding models/pools/providers.json (default: the "
+                        "user config dir ~/.charon; used when --config is absent)")
+    g.add_argument("--host", default=None, help="bind host (default 127.0.0.1)")
+    g.add_argument("--port", type=int, default=None, help="bind port (default 8080)")
+    g.add_argument("--token", default=None,
+                   help="bearer token (or set CHARON_GATEWAY_TOKEN); REQUIRED to "
+                        "bind a non-loopback host")
+    g.set_defaults(func=_cmd_gateway)
+
+    pv = sub.add_parser("providers",
+                        help="Add AI providers and their API keys")
+    pvsub = pv.add_subparsers(dest="action", required=True)
+    pvsub.add_parser("list", help="list provider presets and which keys are set")
+    pa = pvsub.add_parser("add", help="store an API key for a provider")
+    pa.add_argument("name", help="preset name (openrouter, nanogpt, …) or a custom name")
+    pa.add_argument("--key", help="the API key (omit to be prompted WITHOUT echo)")
+    pa.add_argument("--key-env", help="override the env-var name to store the key under")
+    pa.add_argument("--base-url", help="base URL for a custom (non-preset) provider")
+    pt = pvsub.add_parser("test", help="probe a provider's base URL (verifies it resolves)")
+    pt.add_argument("name")
+    pt.add_argument("--base-url")
+    pv.set_defaults(func=_cmd_providers)
+
+    md = sub.add_parser("models", help="Manage your available models")
+    mdsub = md.add_subparsers(dest="action", required=True)
+    mi = mdsub.add_parser("import",
+                          help="import a provider's full model list into the catalog")
+    mi.add_argument("name", help="provider name (a preset or one you've added)")
+    mi.add_argument("--free-only", action="store_true", help="import only free models")
+    mi.add_argument("--into-pool", default=None,
+                    help="ALSO add the imported models to this pool (opt-in; pools work "
+                         "best small + cost-ranked, so this is rarely what you want)")
+    md.set_defaults(func=_cmd_models)
+
+    t = sub.add_parser("tier",
+                       help="Choose which models to use for each tier (low / med / high)")
+    tsub = t.add_subparsers(dest="tier_action", required=True)
+    tsub.add_parser("init",
+                    help="seed tiers.json with backward-compat defaults "
+                         "(order=low/med/high, legacy aliases, Anthropic day-one members)")
+    ts = tsub.add_parser("set", help="update a tier's members")
+    ts.add_argument("tier_name", help="canonical tier (low|med|high) or alias")
+    ts.add_argument("--members", default=None,
+                    help="comma-separated model ids (replaces current list)")
+    tsub.add_parser("list", help="show tier config (human-readable)")
+    tsub.add_parser("ranks",
+                    help="print canonical+alias rank rows for fleet parsing, "
+                         'e.g. "low 1\\nmed 2\\nhigh 3\\nopus 3\\n..." (TIER-5 contract)')
+    trv = tsub.add_parser("resolve",
+                          help="resolve a tier to its cheapest runnable model id "
+                               "(for fleet-droid.sh TIER-6; machine-parseable stdout)")
+    trv.add_argument("tier_name", help="canonical tier (low|med|high) or alias")
+    trv.add_argument("--executor", default=None,
+                     help="filter by executor (anthropic); exit non-zero if none found "
+                          "so shell || fallbacks fire")
+    t.set_defaults(func=_cmd_tier)
+
+    r = sub.add_parser("run", help="Run a coding goal until it passes its tests")
     r.add_argument("--goal", default=None,
                    help="the work goal (required unless --units is given)")
     r.add_argument("--accept", action="append", default=None,
@@ -1059,40 +1127,9 @@ def build_parser() -> argparse.ArgumentParser:
                         "loud override still required for L2+) — D013/ADR-0010")
     r.set_defaults(func=_cmd_run)
 
-    ld = sub.add_parser("land",
-                        help="run the propose-default land gate on a completed unit "
-                             "and PROPOSE (open a PR); never auto-merges (ADR-0007 D4/D6)")
-    ld.add_argument("task_id", help="the completed unit's ledger/task id")
-    ld.add_argument("--state-dir", default=api.DEFAULT_STATE_DIR)
-    ld.add_argument("--owned", action="append", default=None,
-                    help="a declared owned path (repeatable); a write outside ALL "
-                         "owned paths holds the unit (diff-scope guard)")
-    ld.add_argument("--units", default=None,
-                    help="units file to pull this unit's owned_paths from (matched "
-                         "by goal), instead of repeated --owned flags")
-    ld.add_argument("--tip", default=None,
-                    help="commit to land (default: the ledger's lkg_ref)")
-    ld.add_argument("--base-ref", default=None,
-                    help="base to diff against (default: the ledger's base_ref)")
-    ld.add_argument("--tests", default=None,
-                    help="extra test command to run in the worktree (exit 0 == pass)")
-    ld.add_argument("--require-gitleaks", action="store_true",
-                    help="fail closed (hold) if gitleaks is not installed")
-    ld.add_argument("--open-pr", action="store_true",
-                    help="when the gate is green, open a draft PR (needs --branch); "
-                         "NEVER merges")
-    ld.add_argument("--branch", default=None, help="the unit's branch to propose")
-    ld.add_argument("--base", default="master", help="PR base branch (default: master)")
-    ld.add_argument("--repo-slug", default=None,
-                    help="owner/name for `gh pr create --repo` (default: gh infers it)")
-    ld.set_defaults(func=_cmd_land)
-
     wk = sub.add_parser(
         "work",
-        help="run the OPT-IN native work-engine end-to-end: a unit plan → board → "
-             "scheduler (each unit through the fenced coordinator.run) → "
-             "propose-default land → end-product validation (ADR-0010; opt-in "
-             "orchestrator, never on the gateway path)")
+        help="Run a whole job end-to-end: plan → build → open a PR")
     wk.add_argument("--units", required=True,
                     help="a unit plan: an intake plan JSON (charon-intake-plan) or "
                          "a consumer units file (TOML/JSON of {goal, accept, tier, "
@@ -1125,10 +1162,36 @@ def build_parser() -> argparse.ArgumentParser:
                     help="sandbox posture (D013/ADR-0010)")
     wk.set_defaults(func=_cmd_work)
 
+    ld = sub.add_parser("land",
+                        help="Open a pull request for finished work (never auto-merges)")
+    ld.add_argument("task_id", help="the completed unit's ledger/task id")
+    ld.add_argument("--state-dir", default=api.DEFAULT_STATE_DIR)
+    ld.add_argument("--owned", action="append", default=None,
+                    help="a declared owned path (repeatable); a write outside ALL "
+                         "owned paths holds the unit (diff-scope guard)")
+    ld.add_argument("--units", default=None,
+                    help="units file to pull this unit's owned_paths from (matched "
+                         "by goal), instead of repeated --owned flags")
+    ld.add_argument("--tip", default=None,
+                    help="commit to land (default: the ledger's lkg_ref)")
+    ld.add_argument("--base-ref", default=None,
+                    help="base to diff against (default: the ledger's base_ref)")
+    ld.add_argument("--tests", default=None,
+                    help="extra test command to run in the worktree (exit 0 == pass)")
+    ld.add_argument("--require-gitleaks", action="store_true",
+                    help="fail closed (hold) if gitleaks is not installed")
+    ld.add_argument("--open-pr", action="store_true",
+                    help="when the gate is green, open a draft PR (needs --branch); "
+                         "NEVER merges")
+    ld.add_argument("--branch", default=None, help="the unit's branch to propose")
+    ld.add_argument("--base", default="master", help="PR base branch (default: master)")
+    ld.add_argument("--repo-slug", default=None,
+                    help="owner/name for `gh pr create --repo` (default: gh infers it)")
+    ld.set_defaults(func=_cmd_land)
+
     ik = sub.add_parser(
         "intake",
-        help="turn an external work-list into a reviewable Charon ticket plan "
-             "(the non-coder front door, ADR-0008/0011)")
+        help="Turn a backlog or to-do list into a runnable plan")
     iksub = ik.add_subparsers(dest="intake_action", required=True)
     ii = iksub.add_parser(
         "import",
@@ -1157,87 +1220,23 @@ def build_parser() -> argparse.ArgumentParser:
                     help="[--run] per-unit autonomy (default L1)")
     ii.set_defaults(func=_cmd_intake)
 
-    g = sub.add_parser("gateway",
-                       help="run the standalone OpenAI-compatible failover gateway")
-    g.add_argument("--config", default=None,
-                   help="charon.toml config file (takes precedence over --state-dir)")
-    g.add_argument("--state-dir", default=None,
-                   help="dir holding models/pools/providers.json (default: the "
-                        "user config dir ~/.charon; used when --config is absent)")
-    g.add_argument("--host", default=None, help="bind host (default 127.0.0.1)")
-    g.add_argument("--port", type=int, default=None, help="bind port (default 8080)")
-    g.add_argument("--token", default=None,
-                   help="bearer token (or set CHARON_GATEWAY_TOKEN); REQUIRED to "
-                        "bind a non-loopback host")
-    g.set_defaults(func=_cmd_gateway)
+    lg = sub.add_parser("ledger", help="Show a task's progress and history")
+    lg.add_argument("task_id")
+    lg.add_argument("--state-dir", default=api.DEFAULT_STATE_DIR)
+    lg.set_defaults(func=_cmd_ledger)
 
-    pv = sub.add_parser("providers",
-                        help="configure providers + API keys (stored 0600, never in the repo)")
-    pvsub = pv.add_subparsers(dest="action", required=True)
-    pvsub.add_parser("list", help="list provider presets and which keys are set")
-    pa = pvsub.add_parser("add", help="store an API key for a provider")
-    pa.add_argument("name", help="preset name (openrouter, nanogpt, …) or a custom name")
-    pa.add_argument("--key", help="the API key (omit to be prompted WITHOUT echo)")
-    pa.add_argument("--key-env", help="override the env-var name to store the key under")
-    pa.add_argument("--base-url", help="base URL for a custom (non-preset) provider")
-    pt = pvsub.add_parser("test", help="probe a provider's base URL (verifies it resolves)")
-    pt.add_argument("name")
-    pt.add_argument("--base-url")
-    pv.set_defaults(func=_cmd_providers)
-
-    su = sub.add_parser("setup", help="guided gateway setup (providers, keys, models, pool)")
-    su.set_defaults(func=_cmd_setup)
-
-    md = sub.add_parser("models", help="manage the model catalog")
-    mdsub = md.add_subparsers(dest="action", required=True)
-    mi = mdsub.add_parser("import",
-                          help="import a provider's full model list into the catalog")
-    mi.add_argument("name", help="provider name (a preset or one you've added)")
-    mi.add_argument("--free-only", action="store_true", help="import only free models")
-    mi.add_argument("--into-pool", default=None,
-                    help="ALSO add the imported models to this pool (opt-in; pools work "
-                         "best small + cost-ranked, so this is rarely what you want)")
-    md.set_defaults(func=_cmd_models)
+    d = sub.add_parser("doctor", help="Check that your coding-agent setup works")
+    d.add_argument("--backend-cmd", default=None, help='e.g. "claude-code acp"')
+    d.set_defaults(func=_cmd_doctor)
 
     rs = sub.add_parser("reset",
-                        help="remove local config (providers/models/pools); --all also drops keys")
+                        help="Clear local config (--all also removes saved keys)")
     rs.add_argument("--all", action="store_true",
                     help="also delete secrets.json (your stored API keys)")
     rs.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     rs.set_defaults(func=_cmd_reset)
 
-    lg = sub.add_parser("ledger", help="show a task's derived ledger state")
-    lg.add_argument("task_id")
-    lg.add_argument("--state-dir", default=api.DEFAULT_STATE_DIR)
-    lg.set_defaults(func=_cmd_ledger)
-
-    d = sub.add_parser("doctor", help="probe a real ACP backend (Tier-0)")
-    d.add_argument("--backend-cmd", default=None, help='e.g. "claude-code acp"')
-    d.set_defaults(func=_cmd_doctor)
-
-    t = sub.add_parser("tier", help="manage model-tier config (low/med/high + aliases)")
-    tsub = t.add_subparsers(dest="tier_action", required=True)
-    tsub.add_parser("init",
-                    help="seed tiers.json with backward-compat defaults "
-                         "(order=low/med/high, legacy aliases, Anthropic day-one members)")
-    ts = tsub.add_parser("set", help="update a tier's members")
-    ts.add_argument("tier_name", help="canonical tier (low|med|high) or alias")
-    ts.add_argument("--members", default=None,
-                    help="comma-separated model ids (replaces current list)")
-    tsub.add_parser("list", help="show tier config (human-readable)")
-    tsub.add_parser("ranks",
-                    help="print canonical+alias rank rows for fleet parsing, "
-                         'e.g. "low 1\\nmed 2\\nhigh 3\\nopus 3\\n..." (TIER-5 contract)')
-    trv = tsub.add_parser("resolve",
-                          help="resolve a tier to its cheapest runnable model id "
-                               "(for fleet-droid.sh TIER-6; machine-parseable stdout)")
-    trv.add_argument("tier_name", help="canonical tier (low|med|high) or alias")
-    trv.add_argument("--executor", default=None,
-                     help="filter by executor (anthropic); exit non-zero if none found "
-                          "so shell || fallbacks fire")
-    t.set_defaults(func=_cmd_tier)
-
-    v = sub.add_parser("version", help="print version")
+    v = sub.add_parser("version", help="Show the Charon version")
     v.set_defaults(func=lambda a: (print(__version__), 0)[1])
     return p
 
