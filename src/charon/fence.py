@@ -16,6 +16,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from .config import SandboxPolicy, load_sandbox_policy
 from .types import Autonomy, PrivilegedOp
 
 # Minimal env passed to spawned agents. Everything else is scrubbed so a backend
@@ -74,11 +75,18 @@ class AutonomyPolicy:
     its own precondition and a rung is grantable only if every lower rung's
     precondition also holds (monotone, non-skipping) — so the gate can never grant
     a rung over a forbidden one. This is a *policy*, not OS isolation: the Mode-B
-    container stays the only real boundary for a live agent (INV-B4 / D-ESC-4)."""
+    container stays the only real boundary for a live agent (INV-B4 / D-ESC-4).
+
+    ``sandbox`` (D013): selects which precondition set is applied.
+      ``hybrid``    — default; byte-for-byte current behavior.
+      ``container`` — ALL rungs ≥L1 require the container; override refused.
+      ``host``      — L0/L1 free; L2+ requires the loud override (container alone
+                      insufficient — explicit acknowledgement required)."""
 
     contained: bool  # Mode-B container verified
     uncontained_override: bool  # loud opt-out: run L2+ uncontained anyway
     unattended_opt_in: bool  # distinct, loud opt-in required for L3 full-auto
+    sandbox: SandboxPolicy = SandboxPolicy.HYBRID  # D013 posture selector
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> AutonomyPolicy:
@@ -87,10 +95,27 @@ class AutonomyPolicy:
             contained=e.get(_CONTAINER_ENV) == "1",
             uncontained_override=e.get(_UNCONTAINED_OVERRIDE) == "1",
             unattended_opt_in=e.get(_UNATTENDED_OPT_IN) == "1",
+            sandbox=load_sandbox_policy(e),
         )
 
     def _rung_ok(self, level: Autonomy) -> bool:
         """Precondition for a SINGLE rung (no climb implied)."""
+        if self.sandbox is SandboxPolicy.CONTAINER:
+            # ALL rungs ≥L1 require the verified container; the uncontained
+            # override path is refused (D013: container is the trust boundary).
+            return self.contained
+        if self.sandbox is SandboxPolicy.HOST:
+            # Host is the declared environment. L0/L1 always OK. L2+ requires
+            # the loud uncontained override — the container flag alone is not
+            # sufficient; the operator must explicitly acknowledge the uncontained
+            # blast radius even when containerized (D013).
+            if level <= Autonomy.L1:
+                return True
+            if level is Autonomy.L2:
+                return self.uncontained_override
+            # L3: override PLUS the distinct unattended opt-in (D-ESC-1).
+            return self.uncontained_override and self.unattended_opt_in
+        # HYBRID (default): byte-for-byte current behavior (D013 regression gate).
         if level <= Autonomy.L1:
             return True  # L0 propose / L1 apply-reversible: always grantable
         # L2 (apply-with-consensus): container or the loud uncontained override.
@@ -124,6 +149,35 @@ class AutonomyPolicy:
         return EscalationDecision(requested, granted, cap, reason)
 
     def _deny_reason(self, requested: Autonomy) -> str:
+        if self.sandbox is SandboxPolicy.CONTAINER:
+            return (
+                f"{requested.name} denied: sandbox=container requires "
+                f"{_CONTAINER_ENV}=1 for ALL rungs — the uncontained override "
+                f"path is refused in this policy (D013)."
+            )
+        if self.sandbox is SandboxPolicy.HOST:
+            # In host policy L2+ needs the override; L3 additionally needs the
+            # distinct unattended opt-in.  Container alone is not sufficient.
+            if (
+                requested is Autonomy.L3
+                and self.uncontained_override
+                and not self.unattended_opt_in
+            ):
+                return (
+                    f"{requested.name} (full-auto, unattended) UNCONTAINED needs its "
+                    f"own explicit opt-in {_UNATTENDED_OPT_IN}=1 on top of "
+                    f"{_UNCONTAINED_OVERRIDE}=1 — it removes the consensus gate AND the "
+                    f"container boundary, so the flag that unlocks L2 testing does NOT "
+                    f"reach it (ADR-0009 D-ESC-1; dangerous, you accept the blast "
+                    f"radius)."
+                )
+            return (
+                f"{requested.name} requires {_UNCONTAINED_OVERRIDE}=1 "
+                f"(sandbox=host: the loud override is required for L2+; the "
+                f"container flag alone is not sufficient — you must explicitly "
+                f"acknowledge the uncontained blast radius, D013)."
+            )
+        # HYBRID (default).
         # Uncontained L3 with the override but no distinct opt-in: the specific
         # hole this gate closes (D-ESC-1).
         if (

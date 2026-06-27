@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from charon.config import SandboxPolicy
 from charon.fence import (
     ESCALATION_TOKENS,
     AutonomyPolicy,
@@ -144,6 +145,105 @@ def test_escalation_tokens_are_not_leaked_into_scrubbed_env() -> None:
     finally:
         for tok in ESCALATION_TOKENS:
             del os.environ[tok]
+
+
+# ----------------------------------------------- S1: sandbox policy (D013)
+
+def _pol(
+    sandbox: str,
+    *,
+    container: bool = False,
+    override: bool = False,
+    unattended: bool = False,
+) -> AutonomyPolicy:
+    e: dict[str, str] = {"CHARON_SANDBOX": sandbox}
+    if container:
+        e["CHARON_CONTAINER_VERIFIED"] = "1"
+    if override:
+        e["CHARON_ALLOW_UNCONTAINED_AUTONOMY"] = "1"
+    if unattended:
+        e["CHARON_ALLOW_UNATTENDED"] = "1"
+    return AutonomyPolicy.from_env(e)
+
+
+def test_hybrid_regression_matches_current_default_behavior() -> None:
+    """hybrid == byte-for-byte current behavior; no-sandbox-env also equals hybrid (D013)."""
+    # All of these are also tested by the pre-existing T7 suite above; repeating
+    # here with an explicit sandbox=hybrid to prove the policy is the identity.
+    assert _pol("hybrid").ceiling() is Autonomy.L1
+    assert _pol("hybrid", container=True).ceiling() is Autonomy.L3
+    assert _pol("hybrid", override=True).ceiling() is Autonomy.L2
+    assert _pol("hybrid", override=True, unattended=True).ceiling() is Autonomy.L3
+    assert _pol("hybrid", container=True).resolve(Autonomy.L2).clamped is False
+    # Absent CHARON_SANDBOX defaults to hybrid.
+    no_sandbox = AutonomyPolicy.from_env({})
+    assert no_sandbox.sandbox is SandboxPolicy.HYBRID
+    assert no_sandbox.ceiling() == _pol("hybrid").ceiling()
+
+
+def test_container_policy_requires_container_for_l1_plus() -> None:
+    """container: ≥L1 needs CHARON_CONTAINER_VERIFIED; override path is refused (D013)."""
+    # No container → ceiling L0 (L1 check fails without container).
+    assert _pol("container").ceiling() is Autonomy.L0
+    # Override alone is refused — container policy ignores the override.
+    assert _pol("container", override=True).ceiling() is Autonomy.L0
+    # Container satisfies all rungs.
+    assert _pol("container", container=True).ceiling() is Autonomy.L3
+    assert _pol("container", container=True).resolve(Autonomy.L2).clamped is False
+
+
+def test_container_policy_refuses_uncontained_l2_even_with_override() -> None:
+    """Spec: container refuses uncontained L2 even WITH the override (D013)."""
+    with pytest.raises(FenceDenied, match="container"):
+        Fence(Autonomy.L2).assert_environment(
+            env={
+                "CHARON_SANDBOX": "container",
+                "CHARON_ALLOW_UNCONTAINED_AUTONOMY": "1",
+            }
+        )
+
+
+def test_host_policy_requires_loud_override_for_l2_plus() -> None:
+    """host: L0/L1 free; L2+ requires the loud override; container alone is not sufficient."""
+    # No override → ceiling L1.
+    assert _pol("host").ceiling() is Autonomy.L1
+    # Override → L2.
+    assert _pol("host", override=True).ceiling() is Autonomy.L2
+    # Override + unattended → L3.
+    assert _pol("host", override=True, unattended=True).ceiling() is Autonomy.L3
+    # Container alone is NOT sufficient in host policy.
+    assert _pol("host", container=True).ceiling() is Autonomy.L1
+
+
+def test_host_policy_l2_denied_without_override_even_if_containerized() -> None:
+    """host: L2 with container only → denied; L2 with override → OK."""
+    # No override, no container → denied.
+    with pytest.raises(FenceDenied):
+        Fence(Autonomy.L2).assert_environment(env={"CHARON_SANDBOX": "host"})
+    # Container alone → still denied (host policy demands override).
+    with pytest.raises(FenceDenied, match="CHARON_ALLOW_UNCONTAINED_AUTONOMY"):
+        Fence(Autonomy.L2).assert_environment(
+            env={"CHARON_SANDBOX": "host", "CHARON_CONTAINER_VERIFIED": "1"}
+        )
+    # Override → OK.
+    Fence(Autonomy.L2).assert_environment(
+        env={"CHARON_SANDBOX": "host", "CHARON_ALLOW_UNCONTAINED_AUTONOMY": "1"}
+    )
+
+
+def test_host_policy_l3_still_needs_unattended_on_top_of_override() -> None:
+    """host L3: override alone is not enough; must also have unattended opt-in."""
+    with pytest.raises(FenceDenied, match="CHARON_ALLOW_UNATTENDED"):
+        Fence(Autonomy.L3).assert_environment(
+            env={"CHARON_SANDBOX": "host", "CHARON_ALLOW_UNCONTAINED_AUTONOMY": "1"}
+        )
+    Fence(Autonomy.L3).assert_environment(
+        env={
+            "CHARON_SANDBOX": "host",
+            "CHARON_ALLOW_UNCONTAINED_AUTONOMY": "1",
+            "CHARON_ALLOW_UNATTENDED": "1",
+        }
+    )
 
 
 def test_escape_detection(tmp_path: Path) -> None:
