@@ -154,6 +154,7 @@ def test_post_runs_returns_202_and_queues_job(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
     from fastapi.testclient import TestClient
 
     from charon.service.app import app
@@ -176,6 +177,7 @@ def test_post_runs_without_token_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
     from fastapi.testclient import TestClient
 
     from charon.service.app import app
@@ -192,6 +194,7 @@ def test_post_runs_503_when_queue_not_configured(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
     from fastapi.testclient import TestClient
 
     from charon.service.app import app
