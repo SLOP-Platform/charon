@@ -1,7 +1,17 @@
-# Mode B — run Charon as a fenced service (ADR-0002 §2.3).
-# SLOP (or any operator) talks to it over the HTTP surface; the privileged loop
-# stays inside this container.
+# Charon with Docker. A bare `docker compose up` brings up the GATEWAY (the
+# first-class fresh-install path): a token-gated, OpenAI-compatible endpoint on
+# the host's loopback with persistent config. See docs/docker.md.
+#
+#   cp .env.example .env        # then set CHARON_GATEWAY_TOKEN (openssl rand -hex 16)
+#   docker compose up           # gateway on http://127.0.0.1:8080/v1
+#
+# The Mode-B fenced service (ADR-0002 §2.3) stays behind `profile: service` so it
+# is NOT started by a bare `up`; bring it up deliberately:
+#   docker compose --profile service up charon-service
 services:
+  # --- Mode B — run Charon as a fenced service (ADR-0002 §2.3). -------------------
+  # SLOP (or any operator) talks to it over the HTTP surface; the privileged loop
+  # stays inside this container.
   charon-service:
     build: .
     image: ghcr.io/slop-platform/charon:v0.1.0
@@ -22,29 +32,50 @@ services:
     restart: unless-stopped
     profiles: ["service"]
 
-  # --- Optional: run the GATEWAY in a container (hosted / always-on use) ---------
-  # For the everyday LOCAL gateway, native `pipx install charon && charon gateway`
-  # is simpler (reaches host-local model servers directly, no token needed on
-  # loopback). Use this for a shared/VPS/always-on gateway. `build: .` from source,
-  # or set `image: ghcr.io/slop-platform/charon:v0.2.0` (the first published image
-  # that contains `charon gateway`).
+  # --- The GATEWAY — the default `docker compose up` target ----------------------
+  # A clean, token-gated, OpenAI-compatible gateway with PERSISTENT config and no
+  # host Python required. For an everyday LOCAL gateway, native
+  # `pipx install charon && charon gateway` is also fine; use this for a
+  # container / VPS / always-on gateway, or when host Python is unavailable.
   gateway:
     build: .
     image: ghcr.io/slop-platform/charon:v0.2.0
     ports:
-      # publish to the HOST's loopback only (not your LAN). Clients on the host use
-      # http://127.0.0.1:8080/v1 ; the token below is their API key.
+      # Publish to the HOST's loopback only (not your LAN). Clients on the host use
+      # http://127.0.0.1:8080/v1 ; the token below is their API key. To widen to the
+      # LAN deliberately, change this to "8080:8080" — it stays token-gated.
       - "127.0.0.1:8080:8080"
     environment:
       # REQUIRED: the gateway binds 0.0.0.0 inside the container and holds your keys,
-      # so it refuses to start without a token. Generate one: openssl rand -hex 16
-      - CHARON_GATEWAY_TOKEN=${CHARON_GATEWAY_TOKEN:?set CHARON_GATEWAY_TOKEN (the gateway holds your provider keys)}
-      - CHARON_HOME=/config
+      # so it refuses to start without a token. Copy .env.example to .env and set it:
+      #   openssl rand -hex 16
+      - CHARON_GATEWAY_TOKEN=${CHARON_GATEWAY_TOKEN:?set CHARON_GATEWAY_TOKEN — copy .env.example to .env, then run openssl rand -hex 16}
+      # Gateway config home — providers/models/pools + the 0600 secrets file.
+      - CHARON_HOME=/data
     volumes:
-      # providers/models/pools config + the 0600 secrets file persist here
-      - ./charon-config:/config
+      # A NAMED volume (not a bind) so Docker seeds it from the image's /data —
+      # owned by uid 10001 — and `charon setup` / `providers add` can write the
+      # 0600 secrets.json. Config persists across restarts; first-time setup:
+      #   docker compose run --rm gateway setup
+      - charon-config:/data
     extra_hosts:
       # so providers running on the HOST (LM Studio :1234, Ollama :11434, Jan :1337)
       # are reachable — set those providers' base_url to host.docker.internal:<port>
       - "host.docker.internal:host-gateway"
+    healthcheck:
+      # Token-aware probe on the gateway's real surface (GET /v1/models), stdlib
+      # urllib (no curl in the slim image). Mirrors the image-level HEALTHCHECK.
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import os,urllib.request as u;t=os.environ.get('CHARON_GATEWAY_TOKEN');r=u.Request('http://127.0.0.1:8080/v1/models',headers={'Authorization':'Bearer '+t} if t else {});u.urlopen(r,timeout=4).read()"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
+
+volumes:
+  # Persistent gateway config (providers/models/pools + 0600 secrets.json).
+  charon-config:
