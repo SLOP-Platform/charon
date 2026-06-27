@@ -7,6 +7,27 @@ physics and records it here.
 
 ---
 
+## 2026-06-26 — S1 (D013) — Sandbox policy: plan note (pre-code)
+
+**Change:** expose sandbox posture (`hybrid`|`container`|`host`) as a user-selectable
+policy on the existing fence/escalation gate. Files in scope: `config.py` (new `sandbox`
+setting), `fence.py` (`AutonomyPolicy.from_env` gains a `sandbox` param), `cli.py`
+(`--sandbox` flag + `doctor` output). Tests extend `test_fence.py` + `test_config.py`.
+
+**Design constraints locked before code:**
+- `hybrid` (default) must be *byte-for-byte* the current `AutonomyPolicy` gate — proven by
+  regression test comparing hybrid vs. today's code at every rung/env combination.
+- `container` mode refuses uncontained calls for *all* rungs, including L0/L1 that are
+  normally always-grantable; the uncontained-override flag is ignored (refused loudly).
+- `host` mode allows uncontained but still requires the *existing* loud override for L2+
+  and the unattended opt-in for uncontained L3 (D-ESC-1) — no weaker gate than today.
+- `scrubbed_env` is untouched (no new tokens, no wider allow-list).
+- No new dep, stdlib-only core. The `SandboxPolicy` enum lives in `config.py`; fence
+  consumes it by value, not by import of config (no circular dep risk — fence is lower-level).
+
+**Security invariant:** no existing gate is weakened in *any* mode. `container` is strictly
+stronger than `hybrid`; `host` is strictly equal to `hybrid`'s host path (not weaker).
+
 ## 2026-06-26 — ADR-0010 — Native work-engine substrate (process-failure correction)
 
 **Change under review:** promoting ADR-0007's coordination substrate from "deferred
