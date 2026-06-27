@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -19,12 +20,15 @@ from charon.adapters.mock import MockBackend, MockMode
 from charon.coordinator import RunResult
 from charon.engine.board import (
     BLOCKED,
+    CLAIMED,
     DONE,
     READY,
     Board,
     Unit,
 )
 from charon.engine.capacity import CapacityError, FixedCap, select_limiter
+from charon.engine.claim import _LOCK_TTL_SECONDS
+from charon.engine.claim import claim as claim_unit
 from charon.engine.claim import current as claim_current
 from charon.engine.scheduler import (
     CoordinatorRunner,
@@ -308,3 +312,115 @@ def test_in_wave_owns_collision_serializes(tmp_path: Path) -> None:
     assert runner.peak == 1  # colliding owns serialized despite spare capacity
     assert runner.started == ["u1", "u2"]
     assert all(board.get(i).state == DONE for i in ("u1", "u2"))
+
+
+# ------------------------------------------- RETRY actually re-runs (FB4 #2)
+def test_retry_relaunches_and_lands(tmp_path: Path) -> None:
+    """A unit that fails transiently once and succeeds on retry must actually land.
+    The old runner re-called ``Ledger.create`` (which raises when ``ledger.json``
+    exists), so every RETRY re-failed at ledger creation and looped to the attempt
+    cap. With create-or-load the second attempt resumes the ledger and completes."""
+    board = _board(
+        tmp_path, [Unit(id="u1", tier="opus", owns=["a.py"], accept=["test -f f.txt"])]
+    )
+    calls = {"n": 0}
+
+    def factory(unit: Unit, checks):  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {"mock": MockBackend(mode=MockMode.EXHAUST)}  # transient → RETRY
+        return {"mock": MockBackend.satisfying(checks)}  # second attempt succeeds
+
+    runner = CoordinatorRunner(
+        state_dir=str(tmp_path / "state"), backend_factory=factory, autonomy="L1"
+    )
+    sched = Scheduler(
+        board, _claims(tmp_path), runner, state_dir=str(tmp_path / "state"),
+        max_attempts=2,
+    )
+    out = sched.drain()
+    assert [r.status for r in out.results] == ["exhausted", "complete"]
+    assert out.results[0].disposition is Disposition.RETRY
+    assert board.get("u1").state == DONE  # the retry actually landed
+    assert claim_current(_claims(tmp_path), "u1") is None
+
+
+# --------------------------------- claim failure releases the slot (FB4 #3)
+def test_claim_failure_releases_slot_and_drain_continues(tmp_path: Path) -> None:
+    """A non-``ClaimContended`` failure in the claim path (here a worktree-factory
+    error) must release the capacity slot acquired just before AND not tear down the
+    drain. With a single opus slot, a leaked slot would starve the sibling forever;
+    the old code let the exception propagate out of the whole drain."""
+    board = _board(
+        tmp_path,
+        [
+            Unit(id="u1", tier="opus", owns=["a.py"]),
+            Unit(id="u2", tier="opus", owns=["b.py"]),
+        ],
+    )
+    calls: dict[str, int] = {}
+
+    def factory(unit: Unit) -> str:
+        calls[unit.id] = calls.get(unit.id, 0) + 1
+        if unit.id == "u1" and calls["u1"] == 1:
+            raise RuntimeError("worktree factory blew up")
+        p = tmp_path / "wt" / f"{unit.id}-{calls[unit.id]}"
+        p.mkdir(parents=True, exist_ok=True)
+        return str(p)
+
+    runner = RecordingRunner(status="complete")
+    sched = Scheduler(
+        board, _claims(tmp_path), runner, worktree_factory=factory,
+        limiter=FixedCap({"opus": 1}), max_parallel=4, max_attempts=2,
+    )
+    sched.drain()
+    assert board.get("u2").state == DONE  # sibling ran — slot was not leaked
+    assert board.get("u1").state == DONE  # recovered on its second attempt
+    assert sorted(runner.started) == ["u1", "u2"]
+    assert sched.limiter.active("opus") == 0  # type: ignore[attr-defined]
+
+
+# ----------------------- stale release does not abort siblings (FB4 #4)
+def test_stale_release_does_not_abort_sibling_settlement(tmp_path: Path) -> None:
+    """If a unit's epoch-fenced release raises ``StaleReclaim`` (a reclaim bumped
+    the epoch mid-flight — the exact double-exec the fence detects), settlement of
+    its in-flight siblings must NOT be aborted. The superseded unit is logged and
+    left CLAIMED (the fresh holder owns it), the sibling still advances to DONE."""
+    claims = _claims(tmp_path)
+    board = _board(
+        tmp_path,
+        [
+            Unit(id="u1", tier="opus", owns=["a.py"]),
+            Unit(id="u2", tier="opus", owns=["b.py"]),
+        ],
+    )
+    barrier = threading.Barrier(2)
+    lock = threading.Lock()
+    started: list[str] = []
+
+    def runner(unit: Unit, worktree: str, *, cost_gate) -> RunResult:  # type: ignore[no-untyped-def]
+        with lock:
+            started.append(unit.id)
+        barrier.wait(timeout=5)  # both units in flight together
+        if unit.id == "u1":
+            # Simulate a reclaim onto a FRESH worktree while this run is in flight:
+            # it bumps the epoch, so the scheduler's release (under the old epoch)
+            # is fenced out with StaleReclaim.
+            claim_unit(
+                claims, "u1", tmp_path / "reclaimed-wt",
+                now=time.time() + _LOCK_TTL_SECONDS + 5,
+            )
+        return RunResult(status="complete", checkpoints=1)
+
+    sched = Scheduler(
+        board, claims, runner, worktree_factory=_wt_factory(tmp_path),
+        limiter=FixedCap(default=2), max_parallel=2,
+    )
+    out = sched.drain()
+    by_id = {r.unit_id: r for r in out.results}
+    assert set(by_id) == {"u1", "u2"}  # the drain settled both (did not abort)
+    assert by_id["u2"].disposition is Disposition.DONE
+    assert board.get("u2").state == DONE  # sibling advanced normally
+    # the superseded unit is logged-and-skipped, never advanced
+    assert by_id["u1"].disposition is Disposition.SUPERSEDED
+    assert board.get("u1").state == CLAIMED

@@ -111,3 +111,77 @@ def test_in_flight_unreadable_claim_not_stolen(tmp_path: Path) -> None:
     (tmp_path / "u1.claim").write_text("")
     with pytest.raises(ClaimContended):
         claim(tmp_path, "u1", tmp_path / "wt-a")
+
+
+# ----------------------------------------------- two-holder reclaim race (FB4 #1)
+def test_concurrent_reclaim_never_two_holders(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two reclaimers that both read the SAME stale record must not BOTH become
+    live holders. The old reclaim did ``unlink`` then ``create`` with no lock and no
+    re-validation, so the second reclaimer's unlink clobbered the first's fresh
+    claim — two holders on distinct worktrees. Deterministically interleaved here:
+    R2 reads the stale record, blocks; R1 fully reclaims (epoch 2); R2 resumes and
+    must LOSE rather than clobber R1."""
+    import sys
+
+    # `charon.engine.__init__` rebinds the `claim` attribute to the function, so
+    # `import charon.engine.claim` resolves to it — fetch the real module instead.
+    claim_mod = sys.modules["charon.engine.claim"]
+
+    t0 = 1_000_000.0
+    claim(tmp_path, "u1", tmp_path / "wt0", now=t0)  # epoch 1, soon stale
+    stale_now = t0 + _LOCK_TTL_SECONDS + 1
+
+    real_read = claim_mod._read_claim
+    r2_read = threading.Event()  # R2 has read the stale record
+    r1_done = threading.Event()  # R1 has finished its reclaim
+    state = {"armed": True}
+
+    def slow_read(path: Path) -> Claim | None:
+        rec = real_read(path)
+        if (
+            state["armed"]
+            and rec is not None
+            and rec.epoch == 1
+            and threading.current_thread().name == "R2"
+        ):
+            state["armed"] = False
+            r2_read.set()
+            r1_done.wait(timeout=5)  # let R1 fully reclaim first
+        return rec
+
+    monkeypatch.setattr(claim_mod, "_read_claim", slow_read)
+
+    holders: list[Claim] = []
+    errors: list[Exception] = []
+
+    def run_r1() -> None:
+        r2_read.wait(timeout=5)  # only after R2 has read the stale record
+        try:
+            holders.append(claim(tmp_path, "u1", tmp_path / "wt1", now=stale_now))
+        except (ClaimContended, StaleReclaim) as exc:
+            errors.append(exc)
+        finally:
+            r1_done.set()
+
+    def run_r2() -> None:
+        try:
+            holders.append(claim(tmp_path, "u1", tmp_path / "wt2", now=stale_now))
+        except (ClaimContended, StaleReclaim) as exc:
+            errors.append(exc)
+
+    r1 = threading.Thread(target=run_r1, name="R1")
+    r2 = threading.Thread(target=run_r2, name="R2")
+    r2.start()
+    r1.start()
+    r1.join(timeout=10)
+    r2.join(timeout=10)
+
+    assert len(holders) == 1            # exactly one live holder
+    assert len(errors) == 1             # the other lost loudly
+    assert holders[0].worktree.endswith("wt1")  # R1, the one that captured first
+    assert holders[0].epoch == 2
+    # on-disk truth matches the sole holder (R2 never clobbered it)
+    survivor = current(tmp_path, "u1")
+    assert survivor is not None and survivor.epoch == 2
