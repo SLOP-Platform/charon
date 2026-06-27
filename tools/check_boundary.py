@@ -72,7 +72,9 @@ def scan_engine_file(path: Path) -> list[str]:
                         f"{path}:{node.lineno}: engine-stdlib-only: import {alias.name!r}"
                     )
         elif isinstance(node, ast.ImportFrom):
-            if not _engine_allowed(node.module):
+            # level >= 1 means a relative import (e.g. `from .board import X`);
+            # those are intra-charon and always allowed.
+            if (node.level or 0) == 0 and not _engine_allowed(node.module):
                 violations.append(
                     f"{path}:{node.lineno}: engine-stdlib-only: from {node.module!r} import ..."
                 )
