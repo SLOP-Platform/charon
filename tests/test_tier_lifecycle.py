@@ -393,3 +393,65 @@ def test_proxy_torn_down_when_warm_map_build_fails(tmp_path: Path, monkeypatch) 
         "per-run proxy thread leaked: it was not shut down when the warm-map "
         "build failed during setup"
     )
+
+
+def test_proxy_torn_down_when_router_setup_fails(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """TIER7B-FOLLOWUP nit: the residual leak window AFTER the warm-map build but
+    BEFORE the run's inner try/finally — the router/fence/budget/autonomy build. A
+    bad autonomy string KeyErrors at ``Autonomy[autonomy]`` once the proxy thread is
+    already running; assert the per-run proxy is still reaped (no orphaned thread)."""
+    charon_home = tmp_path / "charon_home"
+    charon_home.mkdir()
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    monkeypatch.setenv("CHARON_HOME", str(charon_home))
+
+    upstream, upstream_base = _up()
+    stub = tmp_path / "stub_agent.py"
+    stub.write_text(_STUB)
+
+    # Capture the serve thread of every per-run proxy started during the run.
+    started: list = []
+    real_serve = proxy_server_mod.GatewayProxyServer.serve_in_thread
+
+    def _spy_serve(self):  # type: ignore[no-untyped-def]
+        t = real_serve(self)
+        started.append((self, t))
+        return t
+
+    monkeypatch.setattr(
+        proxy_server_mod.GatewayProxyServer, "serve_in_thread", _spy_serve)
+
+    # Let the warm-map build succeed cheaply (no real agent subprocess) so the run
+    # REACHES the new window — the router/fence/budget/autonomy construction that sits
+    # after proxy-start but before the run's inner try/finally.
+    class _FakeBackend:
+        name = "fake"
+
+        def kill(self) -> None:
+            pass
+
+    monkeypatch.setattr(api, "_acp_via_renderer", lambda *a, **k: _FakeBackend())
+
+    try:
+        _write_two_tier_registry(state_dir, charon_home, upstream_base)
+        # Invalid autonomy KeyErrors at Autonomy[autonomy], inside the new window.
+        with pytest.raises(KeyError):
+            api.run_task(
+                goal="proxy teardown guard (router window)",
+                accept=["false"],
+                role="high",
+                acp_cmd=_acp_cmd(stub),
+                state_dir=str(state_dir),
+                autonomy="NOT_A_REAL_AUTONOMY",
+            )
+    finally:
+        upstream.shutdown()
+
+    assert started, "expected the per-run gateway proxy to have been started"
+    server, thread = started[0]
+    thread.join(timeout=5)
+    assert not thread.is_alive(), (
+        "per-run proxy thread leaked: it was not shut down when the "
+        "router/fence/budget/autonomy construction failed during setup"
+    )
