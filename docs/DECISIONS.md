@@ -35,4 +35,7 @@ Status: `Settled` · `Open` (leaning noted) · `Superseded→Dxxx`.
 | D014 | **ADR-0008 Phase 1** (human-gated intake→plan) is buildable now (no tripwire); **Phase 2** (autonomous run) stays gated on the measured PR-conflict rate (D10-C). | OP+AI | Settled | ADR-0008, ADR-0010 |
 | D015 | Replace the **trust-based container flag** (`CHARON_CONTAINER_VERIFIED`) with **positive isolation verification** (probe that host-sensitive paths/egress are unreachable; the flag demotes to a loud fallback). Deferred — earns its keep on the untrusted/L2+/auto-land path, not trusted own-repo work. Bare WSL2 correctly fails; Docker-in-WSL/VM passes. | OP | Open | ADR-0009 D-ESC-5 |
 
+| D017 | The engine routes by **consuming the gateway's existing `vid→pool→provider` failover** — per-run `GatewayProxyServer(pools={tier_vid:[…]}, model_ids=[tier_vid])`; no engine-side provider selection. | OP+AI | Settled | ADR-0014 D1/D2 |
+| D018 | A thin **`ports/agent_launch.py` `AgentLaunch` renderer seam** keeps the engine product-neutral; **ship the opencode renderer ONLY** (extra renderers gated on a live `charon doctor` probe). | OP+AI | Settled | ADR-0014 D3/D4 |
+| D019 | The **tier vid is resolved per-dispatch** (honor the `tier` param); **backend-selection-by-tier is the named extension point** so multi-tier (warm-agent-per-tier) is additive, not a rewrite. | OP | Settled | ADR-0014 D5/D6 |
 <!-- Append new rows above this line. Keep each to ONE line; cite the ADR/REVIEW-LOG for detail. -->
