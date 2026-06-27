@@ -110,6 +110,26 @@ def test_engine_scan_flags_third_party_from_import(tmp_path: Path) -> None:
     assert any("httpx" in v for v in violations)
 
 
+def test_engine_scan_allows_relative_import(tmp_path: Path) -> None:
+    """Relative imports (from ..ledger import X) are intra-charon — must not be flagged."""
+    eng = tmp_path / "charon" / "engine"
+    eng.mkdir(parents=True)
+    f = eng / "coordinator.py"
+    f.write_text("from ..ledger import Ledger\nfrom .board import Board\n")
+    assert scan_engine(tmp_path) == []
+
+
+def test_engine_scan_flags_absolute_third_party_not_relative(tmp_path: Path) -> None:
+    """Absolute third-party import must still fail; relative sibling must still pass."""
+    eng = tmp_path / "charon" / "engine"
+    eng.mkdir(parents=True)
+    f = eng / "mixed.py"
+    f.write_text("from .board import Board\nimport requests\n")
+    violations = scan_engine(tmp_path)
+    assert any("requests" in v for v in violations)
+    assert not any(".board" in v or "board" in v and "requests" not in v for v in violations)
+
+
 def test_ports_worker_scan_flags_third_party(tmp_path: Path) -> None:
     ports = tmp_path / "charon" / "ports"
     ports.mkdir(parents=True)
