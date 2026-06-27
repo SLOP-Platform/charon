@@ -135,20 +135,17 @@ per-provider usage, cost, and health.
 
 ## Expose it / Docker
 
-By default, `docker compose up` starts the gateway:
+A `docker compose up` brings up the gateway as a token-gated, OpenAI-compatible
+container with persistent config and **no host Python required**:
 
 ```bash
-# Generate a token to hold your provider keys
-CHARON_GATEWAY_TOKEN=$(openssl rand -hex 16) docker compose up gateway
+cp .env.example .env                       # set CHARON_GATEWAY_TOKEN (openssl rand -hex 16)
+docker compose run --rm gateway setup      # one-time provider/model setup
+docker compose up                          # gateway on http://127.0.0.1:8080/v1
 ```
 
-In the container, local providers' `base_url` should point to `host.docker.internal:<port>`
-(the container's `localhost` isn't the host's). Image: `ghcr.io/slop-platform/charon:v0.2.0`.
-
-To run the service container instead (Mode-B orchestrator, optional):
-```bash
-docker compose --profile service up charon-service
-```
+Full guide — `docker run`, host-local providers, the three setup paths, LAN
+exposure, and the optional Mode-B service — in **[docs/docker.md](docs/docker.md)**.
 
 ## Work engine (opt-in)
 

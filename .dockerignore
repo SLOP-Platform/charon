@@ -1,0 +1,38 @@
+# Keep the build context lean (faster builds, smaller image, no host state baked
+# in). Only pyproject.toml, README.md, and src/ are COPYed by the Dockerfile.
+.git
+.github
+.gitignore
+
+# Python caches / build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Local runtime state / secrets — must NEVER enter the image
+.env
+.env.*
+*-keys.env
+charon-config/
+work/
+.charon/
+
+# Tests, docs, tooling not needed at runtime
+tests/
+docs/
+tools/
+*.md
+!README.md
