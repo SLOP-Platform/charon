@@ -101,12 +101,69 @@ To run the service container instead (Mode-B orchestrator, optional):
 docker compose --profile service up charon-service
 ```
 
-## Autonomous mode (optional)
+## Work engine (opt-in)
 
-Charon also has an opt-in orchestrator — `charon run` drives coding agents over ACP
-to an executable acceptance check. It defaults to **L0 (proposes changes, applies
-nothing)**; higher autonomy applies diffs and should run in the Mode-B container. See
-[`docs/adr/`](docs/adr/) for the design.
+The gateway above is the product. Charon **also** ships a native work-engine — an
+**opt-in consumer on the shared core** that never touches the gateway request path
+(D001). It turns a unit plan into completed, *proposed* work:
+**analyze → decompose → assign to parallel workers → propose-default land → validate.**
+
+```bash
+charon work --units plan.json        # run the engine end-to-end; prints a JSON report
+```
+
+`--units` takes either an **intake plan** (`charon-intake-plan` JSON, below) or a
+consumer units file (TOML/JSON of `{goal, accept, tier, owned_paths}`). The engine
+builds a durable board, assigns each unit to a warm **ACP** worker honoring
+`depends_on` waves and disjoint file-ownership, and drives every unit through the same
+fenced `coordinator.run` the single-unit path uses — there is no second, unfenced
+dispatch path. Workers default to a `mock` backend; pass `--backend acp --acp-cmd
+'opencode acp'` for a real agent.
+
+**Propose-default, not auto-merge.** Completed units pass through the `land` gate
+(diff-scope guard, always-hold sensitive paths, executable acceptance, `gitleaks`) and
+Charon **opens a PR per unit — a human merges** (D006). Batch auto-land (ADR-0012) is
+built but stays **gated**: `charon work` reports proposals only. The engine adds
+concurrency, not new trust.
+
+**Sandbox policy (D013).** `--sandbox` selects the worker posture:
+
+| Posture | Meaning |
+|---|---|
+| `hybrid` *(default)* | host for trusted own-repo work behind the autonomy gate; container for L2+/untrusted |
+| `container` | require a verified Mode-B container (`CHARON_CONTAINER_VERIFIED=1`) for every rung |
+| `host` | host allowed; a loud override is still required for L2+ |
+
+The **container is the trust boundary** (D012) — the per-unit fence escape-scan is
+best-effort, not a boundary. Per-unit autonomy defaults to **L1** (keep + land
+changes); **L2+ requires the Mode-B container**. Per-tier concurrency uses a fixed
+conservative cap by default; **AIMD adaptive capacity is opt-in/gated** (`--capacity-policy aimd`, D007).
+
+### Intake — from a messy work-list to a plan
+
+Intake is the non-coder front door: it reads a markdown work-item list **as data** and
+emits a rule-abiding ticket plan (file-disjoint, tier-tagged, collision-free waves, plus
+a top-level product acceptance).
+
+- **Phase 1 (human-reviewed, default).** Intake analyzes input and emits a plan *proposal*
+  a human approves or edits. It never runs an acceptance command, spawns a unit, or lands —
+  there is no code path from input text to execution. Feed the approved plan to `charon work`.
+- **Phase 2 (autonomous, opt-in, default OFF).** `autonomous_intake(..., enabled=True)`
+  decomposes and runs without a per-plan human gate. It is **off by default**; even when
+  enabled a confidence gate stands between decompose and run, and on low confidence,
+  propose-only items, or scope explosion it **falls back to the Phase-1 proposal** rather
+  than running blind. Cost/runaway are bounded by a unit cap + shared budget.
+
+For a single goal without a plan, `charon run --goal … --accept …` drives one unit (or the
+`Triage→Plan→Implement→Review→Validate→Close` role-DAG with `--decompose`); it defaults to
+**L0 (proposes changes, applies nothing)**.
+
+This native engine **supersedes the external `charon-private/fleet/` dev harness** for real
+use — that bash rig is dev-box *build* tooling only (its workers are `claude -p`, not the
+product's ACP workers, D003). **Still gated / future:** positive-isolation verification
+(D015) that probes host-sensitive paths/egress are unreachable, rather than trusting the
+container flag. See [`docs/adr/`](docs/adr/) and [`docs/DECISIONS.md`](docs/DECISIONS.md)
+for the full design and decision register.
 
 ## License
 
