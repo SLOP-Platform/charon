@@ -266,6 +266,18 @@ def _cmd_models(args: argparse.Namespace) -> int:
     return 2
 
 
+def _ansi_emph(text: str) -> str:
+    """Bold-cyan ``text`` for an interactive TTY; plain on ``NO_COLOR`` (any value),
+    a non-TTY stdout, or ``TERM=dumb``. Stdlib-only — no new dependency."""
+    if os.environ.get("NO_COLOR") is not None:
+        return text
+    if os.environ.get("TERM") == "dumb":
+        return text
+    if not sys.stdout.isatty():
+        return text
+    return f"\x1b[1;36m{text}\x1b[0m"
+
+
 def _cmd_setup(args: argparse.Namespace) -> int:
     """Guided setup: add providers (+ keys), models, and an optional failover pool —
     all written to the user config dir so `charon gateway` then just works."""
@@ -277,12 +289,19 @@ def _cmd_setup(args: argparse.Namespace) -> int:
         suffix = f" [{default}]" if default else ""
         return (input(f"{msg}{suffix}: ").strip() or default)
 
+    def catalog_for(provider: str) -> list[str]:
+        """Model ids already in the CATALOG (models.json) for ``provider`` — exactly
+        what ``_import_models`` writes. The required, offline source of truth."""
+        return [m for m, e in config.load_models().items()
+                if isinstance(e, dict) and e.get("provider") == provider]
+
     try:
         print("Charon setup — configure providers, keys, models, and a failover pool.")
         print(f"(config → {secrets.config_dir()};  keys → secrets.json at 0600)")
         print("(Ctrl-C cancels anytime; 'done' or a blank Enter finishes a step)")
-        print("Presets:", ", ".join(sorted(providers.PRESETS)))
+        print(_ansi_emph("Presets: " + ", ".join(sorted(providers.PRESETS))))
         added_models: list[str] = []
+        configured: list[str] = []  # providers added this run (for the 0-served guard)
         while True:
             name = ask("\nAdd a provider (preset or custom name; blank or 'done' to finish)")
             if not name or name.lower() in ("done", "q", "quit", "exit"):
@@ -310,6 +329,7 @@ def _cmd_setup(args: argparse.Namespace) -> int:
             except ValueError as exc:
                 print(f"  {exc}")
                 continue
+            configured.append(name)
             stored = False
             if key_env:
                 key = getpass.getpass(f"  paste the API key for {name} [blank to skip]: ")
@@ -328,6 +348,26 @@ def _cmd_setup(args: argparse.Namespace) -> int:
                 res = _import_models(name)
                 if res:
                     print(f"    + {len(res[0])} model(s) added to the catalog")
+            # surface what the catalog already holds for this provider so the user
+            # picks from REAL ids instead of typing one blind, and offer a one-shot
+            # "serve all" that wires them into the served set (TIER-RECS Phase A).
+            catalog = catalog_for(name)
+            if catalog:
+                models_now = config.load_models()
+                shown = catalog[:20]
+                print(f"  {len(catalog)} model(s) imported for '{name}':")
+                for m in shown:
+                    free = bool((models_now.get(m) or {}).get("free"))
+                    print(f"    - {m}{' (free)' if free else ''}")
+                if len(catalog) > len(shown):
+                    print(f"    … and {len(catalog) - len(shown)} more")
+                if ask(f"  serve all {len(catalog)} imported model(s)? "
+                       "(else pick/enter ids below)", "y").lower().startswith("y"):
+                    for m in catalog:
+                        if m not in added_models:
+                            added_models.append(m)
+                    print(f"    serving {len(catalog)} model(s) from '{name}'")
+                    continue  # served whole catalog — skip the manual id loop
             while True:
                 mid = ask(f"  model served by '{name}' (the id clients request; blank to stop)")
                 if not mid:
@@ -343,6 +383,17 @@ def _cmd_setup(args: argparse.Namespace) -> int:
                     continue
                 added_models.append(mid)
                 print(f"    added model '{mid}'")
+        # 0-served guard: never finish on a silently non-serving gateway. If nothing
+        # was wired into the served set, offer to serve the catalog imported above.
+        if not added_models:
+            pending = [m for p in configured for m in catalog_for(p)]
+            if pending and ask(
+                    f"\n⚠ 0 models served. Serve all {len(pending)} imported model(s) now?",
+                    "y").lower().startswith("y"):
+                for m in pending:
+                    if m not in added_models:
+                        added_models.append(m)
+                print(f"  serving {len(added_models)} model(s)")
         if len(added_models) >= 2 and ask(
                 "\nGroup these models into a failover pool?", "y").lower().startswith("y"):
             vid = ask("  pool name (the id clients request for auto-failover)", "auto")
@@ -355,6 +406,22 @@ def _cmd_setup(args: argparse.Namespace) -> int:
         print("\nsetup needs an interactive terminal. Use `charon providers add <name>` "
               f"or edit the files in {secrets.config_dir()}.", file=sys.stderr)
         return 2
+    if not added_models:
+        # The gateway serves EVERY model in the catalog (models.json) by id, so a
+        # non-empty catalog means clients CAN still reach a model — the loud "won't
+        # respond" warning would be wrong. Only warn when there's truly nothing to
+        # serve (empty catalog); otherwise print an accurate note.
+        catalog_n = sum(1 for e in config.load_models().values()
+                        if isinstance(e, dict))
+        if not catalog_n:
+            print("\n⚠ 0 models served — your gateway won't respond to requests.\n"
+                  "  Import a provider's catalog with `charon models import <provider>`, "
+                  "or\n  re-run `charon setup` and serve a model when prompted.",
+                  file=sys.stderr)
+            return 0
+        print(f"\n{catalog_n} model(s) in your catalog are served by id; no failover "
+              "pool set — clients can request them directly.")
+        return 0
     print(f"\nDone. {len(added_models)} model(s) configured. Start the gateway:\n"
           "  charon gateway")
     return 0
