@@ -38,10 +38,12 @@ VOLUME /data
 # Container entrypoint (POSIX sh, embedded via BuildKit heredoc so no extra file
 # is needed). It guards ONLY the default gateway path: a non-loopback bind with
 # no token fails with a clear message (mirroring gateway.build_server's
-# GatewayBindRefused invariant) instead of a raw Python traceback. Every other
-# command — `setup`, `providers add …`, any `charon` subcommand, or the Mode-B
-# `uvicorn …` command — passes through untouched. `exec` keeps charon as PID 1
-# so signals/shutdown behave.
+# GatewayBindRefused invariant) instead of a raw Python traceback. An implicit
+# first arg matching one of charon's real subcommands (run/land/work/intake/
+# gateway/providers/models/tier/reset/ledger/doctor/version/setup) runs as
+# `charon <subcmd>`; anything else — the Mode-B `uvicorn …` command, `sh`, etc. —
+# is exec'd as a raw command untouched. `exec` keeps charon as PID 1 so
+# signals/shutdown behave.
 COPY --chmod=0755 <<'EOF' /usr/local/bin/charon-entrypoint
 #!/bin/sh
 # Charon container entrypoint. Guards the default gateway path; passes all else through.
@@ -49,7 +51,7 @@ set -eu
 
 case "${1:-}" in
     charon) shift ;;                                              # `… charon <subcmd>`
-    ''|gateway|setup|providers|provider|work|models|pools|tiers|intake|version|--help|-h)
+    ''|run|land|work|intake|gateway|providers|models|tier|reset|ledger|doctor|version|setup|--help|-h)
         : ;;                                                     # implicit `charon <subcmd>`
     *) exec "$@" ;;                                              # raw command (uvicorn, sh, …) → Mode-B etc.
 esac

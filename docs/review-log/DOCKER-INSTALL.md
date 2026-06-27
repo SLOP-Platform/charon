@@ -22,10 +22,11 @@ compose / GHCR scaffolding; did not greenfield.
   the default builder on Docker 23+ and on GitHub Actions runners).
 - **Entrypoint guards ONLY the gateway path.** It mirrors `gateway.build_server`'s
   `GatewayBindRefused` invariant (non-loopback bind + no token → friendly refusal
-  with `openssl rand -hex 16`, `exit 78`/EX_CONFIG) and passes through `setup`,
-  `providers …`, any `charon` subcommand, and — critically — the Mode-B `uvicorn …`
-  command (matched as a raw command → `exec "$@"`), so the Mode-B profile is NOT
-  broken. Token/host are also read from explicit `--token`/`--host` flags as a
+  with `openssl rand -hex 16`, `exit 78`/EX_CONFIG) and passes through an implicit
+  first arg matching charon's real subcommands — `run land work intake gateway
+  providers models tier reset ledger doctor version setup` — as `charon <subcmd>`,
+  while anything else (the Mode-B `uvicorn …` command, `sh`, …) is `exec "$@"`'d as a
+  raw command, so the Mode-B profile is NOT broken. Token/host are also read from explicit `--token`/`--host` flags as a
   belt-and-braces check; the in-app guard remains the final backstop.
 - **Healthcheck**: token-aware `GET /v1/models` via stdlib `urllib` (zero-dep; no
   curl in the slim image). Declared image-level (`HEALTHCHECK`) so `docker run`
