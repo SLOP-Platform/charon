@@ -53,6 +53,10 @@ Resume doc for a fresh MANAGER session. Read this + `MEMORY.md` + `WORKFLOW.md` 
   alarm).
 - **#11** minor: make the launcher enforce `diff⊆owns` pre-push (droid self-check went advisory;
   manager gate is the backstop).
+- **Security (tracked as SLOP #1323):** move `.claude` `defaultMode` off `bypassPermissions` —
+  the deny-list is porous (an interpreter rewrites even `settings.local.json` itself). Applies to
+  **Charon's** `.claude/settings.local.json` too. HARD REQs: regression-test the fleet FIRST;
+  add an operator full-auto bypass (like the `AUTONOMOUS` lever). See memory `charon-push-guard-gap`.
 
 ## KEY DOCS
 - `WORKFLOW.md` (the gate/lifecycle), `CONSOLIDATION-PLAN.md` (SLOP robot-mode upgrade +
