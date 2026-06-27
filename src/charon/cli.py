@@ -4,6 +4,7 @@
                   [--backend mock|acp] [--autonomy L0|L1] [--budget N]
     charon gateway [--config charon.toml | --state-dir D] [--host H] [--port P]
                   [--token T]
+    charon tier   init|set|list|ranks|resolve  (DTC tier-abstraction)
     charon ledger <task-id> [--state-dir D]
     charon doctor [--backend-cmd "<agent> acp"]
     charon version
@@ -439,6 +440,136 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     out["autonomy_ceiling"] = AutonomyPolicy.from_env().ceiling().name
     print(json.dumps(out, indent=2))
     return 0 if rep.ok else 1
+
+
+# ----------------------------------------------------------------- tier config
+# DTC tier-abstraction: `charon tier` subcommands wire the CLI to the TIER-1
+# config API (config.load_tiers / set_tiers / resolve_tier / tier_members /
+# tier_rank). Two commands are fleet-critical machine-parseable entrypoints:
+#   `ranks`   — consumed by claim.sh (TIER-5) ONCE before flock; one line per
+#               canonical+alias name: "<name> <rank>" (canonical AND aliases).
+#   `resolve` — consumed by fleet-droid.sh (TIER-6) to turn a tier arg into the
+#               cheapest Anthropic-API-runnable concrete model id for `claude -p`.
+# All commands degrade gracefully: absent tiers.json → legacy behavior.
+
+
+def _tier_init() -> int:
+    from . import config
+    try:
+        config.set_tiers(
+            order=["low", "med", "high"],
+            members={"low": ["haiku"], "med": ["sonnet"], "high": ["opus"]},
+            aliases={"opus": "high", "sonnet": "med", "haiku": "low",
+                     "frontier": "high", "strong": "med", "economy": "low"},
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print("tiers initialized (low/med/high → haiku/sonnet/opus + legacy aliases)")
+    return 0
+
+
+def _tier_ranks() -> int:
+    from . import config
+    tiers = config.load_tiers()
+    order = tiers.get("order", list(config.CANONICAL_TIERS))
+    aliases = tiers.get("aliases", {})
+    for i, t in enumerate(order, 1):
+        print(f"{t} {i}")
+    for alias, canon in sorted(aliases.items()):
+        rank = order.index(canon) + 1 if canon in order else 0
+        if rank > 0:
+            print(f"{alias} {rank}")
+    return 0
+
+
+def _tier_list() -> int:
+    from . import config
+    tiers = config.load_tiers()
+    order = tiers.get("order", [])
+    members = tiers.get("members", {})
+    aliases = tiers.get("aliases", {})
+    for i, t in enumerate(order, 1):
+        ms = ", ".join(members.get(t, []))
+        print(f"[{i}] {t}: {ms or '(none)'}")
+    if aliases:
+        print("aliases:", " ".join(f"{a}→{v}" for a, v in sorted(aliases.items())))
+    return 0
+
+
+def _tier_resolve(tier_name: str, executor: str | None) -> int:
+    from . import config
+    try:
+        tiers = config.load_tiers()
+        members = config.tier_members(tier_name, tiers)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if not members:
+        print(f"error: tier {tier_name!r} has no members", file=sys.stderr)
+        return 1
+    models = config.load_models()
+
+    def _is_anthropic(mid: str) -> bool:
+        if mid in models:
+            return models[mid].get("provider") == "anthropic"
+        # not in registry → assumed native Anthropic model name (haiku/sonnet/opus)
+        return True
+
+    def _cost_key(mid: str) -> int:
+        m = models.get(mid, {})
+        if m.get("free"):
+            return 0
+        return int(m.get("cost_rank", 1000))
+
+    candidates = list(members)
+    if executor and executor.lower() == "anthropic":
+        candidates = [m for m in candidates if _is_anthropic(m)]
+
+    if not candidates:
+        print(f"error: no {executor!r}-runnable member in tier {tier_name!r}",
+              file=sys.stderr)
+        return 1
+
+    print(sorted(candidates, key=_cost_key)[0])
+    return 0
+
+
+def _tier_set(tier_name: str, members_str: str | None) -> int:
+    from . import config
+    try:
+        tiers = config.load_tiers()
+        canon = config.resolve_tier(tier_name, tiers)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    order = tiers["order"]
+    cur_members = dict(tiers["members"])
+    cur_aliases = tiers["aliases"]
+    if members_str is not None:
+        cur_members[canon] = [m.strip() for m in members_str.split(",") if m.strip()]
+    try:
+        config.set_tiers(order=order, members=cur_members, aliases=cur_aliases)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(f"tier {canon!r} updated")
+    return 0
+
+
+def _cmd_tier(args: argparse.Namespace) -> int:
+    action = args.tier_action
+    if action == "init":
+        return _tier_init()
+    if action == "ranks":
+        return _tier_ranks()
+    if action == "list":
+        return _tier_list()
+    if action == "resolve":
+        return _tier_resolve(args.tier_name, getattr(args, "executor", None))
+    if action == "set":
+        return _tier_set(args.tier_name, getattr(args, "members", None))
+    return 2
 
 
 # ----------------------------------------------------------------- work engine
@@ -919,6 +1050,28 @@ def build_parser() -> argparse.ArgumentParser:
     d = sub.add_parser("doctor", help="probe a real ACP backend (Tier-0)")
     d.add_argument("--backend-cmd", default=None, help='e.g. "claude-code acp"')
     d.set_defaults(func=_cmd_doctor)
+
+    t = sub.add_parser("tier", help="manage model-tier config (low/med/high + aliases)")
+    tsub = t.add_subparsers(dest="tier_action", required=True)
+    tsub.add_parser("init",
+                    help="seed tiers.json with backward-compat defaults "
+                         "(order=low/med/high, legacy aliases, Anthropic day-one members)")
+    ts = tsub.add_parser("set", help="update a tier's members")
+    ts.add_argument("tier_name", help="canonical tier (low|med|high) or alias")
+    ts.add_argument("--members", default=None,
+                    help="comma-separated model ids (replaces current list)")
+    tsub.add_parser("list", help="show tier config (human-readable)")
+    tsub.add_parser("ranks",
+                    help="print canonical+alias rank rows for fleet parsing, "
+                         'e.g. "low 1\\nmed 2\\nhigh 3\\nopus 3\\n..." (TIER-5 contract)')
+    trv = tsub.add_parser("resolve",
+                          help="resolve a tier to its cheapest runnable model id "
+                               "(for fleet-droid.sh TIER-6; machine-parseable stdout)")
+    trv.add_argument("tier_name", help="canonical tier (low|med|high) or alias")
+    trv.add_argument("--executor", default=None,
+                     help="filter by executor (anthropic); exit non-zero if none found "
+                          "so shell || fallbacks fire")
+    t.set_defaults(func=_cmd_tier)
 
     v = sub.add_parser("version", help="print version")
     v.set_defaults(func=lambda a: (print(__version__), 0)[1])
