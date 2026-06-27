@@ -22,6 +22,7 @@ from .coordinator import CostGate, RunResult
 from .coordinator import run as _run
 from .fence import Fence
 from .ledger import Ledger
+from .ports.agent_launch import _acp_passthrough_env, render
 from .ports.backend import AgentBackend
 from .ports.reviewer import Reviewer
 from .router import StaticRouter
@@ -146,36 +147,44 @@ def run_task(
 
     proxy_server = None
     failover_note = ""
+    tier_vid = ""
     acp_names = [n.strip() for n in backend_name.split(",")]
     # Outer guard: whatever happens during setup or the run, the per-unit
     # worktree is torn down on teardown (D2 — no leaked working trees).
     try:
         if role is not None and backend is None and backends is None:
-            # Pool mode: cost-first failover across the role's pool, live.
+            # Tier routing (ADR-0014 D1/D2): resolve a TIER VID and build the
+            # per-run gateway with a tier-vid pool, then let the gateway's own
+            # vid→pool→provider failover do the selection. The engine does NO
+            # provider selection of its own — it consumes the live gateway path.
             if not acp_cmd:
                 raise ValueError("--role needs --acp-cmd")
-            from .failover import select_live_entry
+            from . import config as _config
+            from . import gateway as _gateway
             from .proxy import GatewayProxy
             from .proxy_server import GatewayProxyServer
-            prouter = StaticRouter.from_charon_dir(sdir)
-            pool = prouter.pools.get(role)
-            if not pool:
-                raise ValueError(f"no pool for role {role!r} in {sdir}/pools.json")
-            proxy_server = GatewayProxyServer(routes=_pool_routes(pool), observer=GatewayProxy())
+            try:
+                tier_vid = _config.resolve_tier(role)
+            except ValueError as exc:
+                raise ValueError(f"unknown tier/role {role!r}: {exc}") from exc
+            # ONE ordering authority (D2): load_config compiles the registry +
+            # tiers via gateway._build_routes_and_pools (free-first→cost_rank),
+            # exactly as the live gateway does — never api._pool_routes.
+            gw_cfg = _gateway.load_config(state_dir=sdir)
+            chain = gw_cfg.pools.get(tier_vid, [])
+            proxy_server = GatewayProxyServer(
+                pools={tier_vid: chain}, model_ids=[tier_vid], observer=GatewayProxy())
             proxy_server.serve_in_thread()
-            chosen = select_live_entry(prouter, role, proxy_server.observer,
-                                       _http_probe(proxy_server))
-            if chosen is None:
+            if not chain:
+                # Dry pool — re-home the retired select_live_entry early-return
+                # (ADR-0014 B4): the same {status:"exhausted", note:…} shape.
                 proxy_server.shutdown()
-                skipped = sorted(proxy_server.observer.exhausted_models())
                 return {"status": "exhausted", "task_id": task_id, "checkpoints": 0,
                         "verified": [], "remaining": sorted(ledger.remaining()),
-                        "note": f"pool for {role!r} dry; all probed models unavailable: {skipped}",
+                        "note": f"tier {tier_vid!r} dry; no providers configured for this tier",
                         "target_repo": target, "state_dir": str(sdir)}
-            failover_note = (f"role {role!r} → {chosen.model} ({chosen.cost_tier})"
-                             + (f"; skipped {sorted(proxy_server.observer.exhausted_models())}"
-                                if proxy_server.observer.exhausted_models() else ""))
-            run_backends: dict = {"acp": _acp_for_proxy(acp_cmd, proxy_server, chosen.model)}
+            # The agent requests the tier vid; the gateway resolves + fails over.
+            run_backends: dict = {"acp": _acp_via_renderer(acp_cmd, proxy_server, tier_vid)}
         elif proxy_upstream and backend is None and backends is None and "acp" in acp_names:
             if not acp_cmd:
                 raise ValueError("--proxy with an acp backend needs --acp-cmd")
@@ -207,6 +216,12 @@ def run_task(
                     max_checkpoints=max_checkpoints, budget=budget,
                     cost_gate=cost_gate,
                 )
+            # Re-home the retired select_live_entry ``failover`` contract from the
+            # gateway's own observability (ADR-0014 B4): served provider +
+            # skipped-provider list, read BEFORE the proxy is torn down below.
+            if proxy_server is not None and tier_vid:
+                failover_note = _tier_failover_note(
+                    proxy_server.status_snapshot(), tier_vid)
         finally:
             # Always reap the agent subprocess(es) and the proxy (review #8 — no
             # orphaned opencode processes left holding file handles).
@@ -230,96 +245,44 @@ def run_task(
         prepared.cleanup()
 
 
-# Env the live ACP agent needs to find its own config — merged back over the
-# fence's scrubbed env (only honest inside the Mode-B container/VM, the real
-# boundary). Provider KEYS are separate: with the proxy in front (R1) the agent
-# must NOT get the real key (review #3) — the proxy injects it. Only the
-# no-proxy path passes keys, as a documented interim.
-_ACP_BASE_PASSTHROUGH = ("HOME", "PATH", "XDG_CONFIG_HOME", "XDG_DATA_HOME")
-_ACP_KEY_PASSTHROUGH = ("OPENCODE_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY")
+def _acp_via_renderer(acp_cmd: str, server, requested_model: str) -> AcpBackend:
+    """Build an ACP backend whose agent routes ``requested_model`` (a tier vid)
+    through the running per-run proxy ``server`` — via the product-neutral
+    ``AgentLaunch`` seam (ADR-0014 D3). The engine never names the agent product;
+    the renderer forces ``include_keys=False`` (D4), so the agent never sees the
+    real provider key (the proxy injects it)."""
+    launch = render(acp_cmd, server.url, requested_model)
+    return AcpBackend(launch.argv, name="acp",
+                      passthrough_env=launch.passthrough_env, observer=server.observer)
 
 
-def _acp_passthrough_env(include_keys: bool = True) -> dict[str, str]:
-    names = _ACP_BASE_PASSTHROUGH + (_ACP_KEY_PASSTHROUGH if include_keys else ())
-    return {k: os.environ[k] for k in names if k in os.environ}
-
-
-def _split_model(pool_model: str) -> tuple[str, str]:
-    """A pool id ``<provider>/<model>`` → (opencode provider, the model id the
-    agent sends, which the upstream natively understands). Using the REAL provider
-    name (opencode-go/openrouter/…) matters: opencode's ACP mode hangs on an
-    unrecognized provider. A bare id (no '/') falls back to a generic provider."""
-    if "/" in pool_model:
-        provider, short = pool_model.split("/", 1)
-        return provider, short
-    return "charon", pool_model
-
-
-def _acp_for_proxy(acp_cmd: str, server, pool_model: str) -> AcpBackend:
-    """Build an ACP backend whose agent routes ``pool_model`` through a running
-    proxy ``server``. The agent is configured under the model's real provider and
-    sends the native model id; the proxy forwards it to the right upstream."""
-    provider, short = _split_model(pool_model)
-    cfg = {
-        "model": f"{provider}/{short}",
-        "provider": {
-            provider: {
-                "npm": "@ai-sdk/openai-compatible",
-                "name": provider,
-                "options": {"baseURL": server.url + "/v1", "apiKey": "charon-proxy"},
-                "models": {short: {}},
-            }
-        },
-    }
-    env = {**_acp_passthrough_env(include_keys=False),
-           "OPENCODE_CONFIG_CONTENT": json.dumps(cfg)}
-    return AcpBackend(shlex.split(acp_cmd), name="acp",
-                      passthrough_env=env, observer=server.observer)
-
-
-def _pool_routes(entries) -> dict:
-    """Build the proxy's routing table from a role's pool — keyed by the model id
-    the agent sends (the native id), observed back under the pool id."""
-    from .proxy_server import UpstreamRoute
-    routes: dict = {}
-    for e in entries:
-        if not e.upstream_base:
-            continue
-        _, short = _split_model(e.model)
-        key = os.environ.get(e.key_env, "") if e.key_env else None
-        routes[short] = UpstreamRoute(e.upstream_base, key, e.upstream_model, pool_id=e.model)
-    return routes
-
-
-def _http_probe(server):
-    """A cheap pre-flight: send a 1-token completion for an entry through the proxy
-    so the observer sees the live status (200/429/404) — the failover trigger."""
-    import urllib.request
-
-    def probe(entry) -> bool:
-        _, short = _split_model(entry.model)
-        payload = json.dumps({"model": short,
-                              "messages": [{"role": "user", "content": "ping"}],
-                              "max_tokens": 1}).encode()
-        req = urllib.request.Request(server.url + "/v1/chat/completions", data=payload,
-                                     headers={"Content-Type": "application/json"},
-                                     method="POST")
-        try:
-            resp = urllib.request.urlopen(req, timeout=25)
-            resp.read()
-            return resp.status == 200  # available ONLY on a positive 200
-        except Exception:
-            return False  # 429/404/timeout/error — unavailable (proxy logged status)
-    return probe
+def _tier_failover_note(snapshot: dict, tier_vid: str) -> str:
+    """Re-home the retired ``select_live_entry`` ``failover`` contract (ADR-0014
+    B4) from the gateway's OWN observability: the served provider plus the
+    skipped (failed-over) provider list, translated from
+    ``GatewayProxyServer.status_snapshot()``. Empty string when nothing was
+    served and nothing was skipped (no note to attach)."""
+    providers = snapshot.get("providers") or {}
+    served = next((label for label, s in providers.items() if s.get("served")), None)
+    events = snapshot.get("recent_failovers") or []
+    skipped = sorted({f.get("provider") for ev in events
+                      for f in ev.get("failovers", []) if f.get("provider")})
+    if not served and not skipped:
+        return ""
+    note = f"tier {tier_vid!r}"
+    if served:
+        note += f" → {served}"
+    if skipped:
+        note += f"; skipped {skipped}"
+    return note
 
 
 def _start_proxy_acp(acp_cmd: str, upstream: str, key: str, model: str):
-    """Start the observing proxy in front of ``upstream`` and build an ACP backend
-    whose agent routes all model calls through it. Done by OVERRIDING the agent's
-    provider ``baseURL`` to the proxy via inline ``OPENCODE_CONFIG_CONTENT`` (the
-    mechanism proven live; a config *file* path is not honored, and streaming SSE
-    must be relayed — both handled). The proxy holds the real key.
-    ``model`` is ``provider/model`` (e.g. ``opencode-go/kimi-k2.7-code``).
+    """Start the observing proxy in front of a single ``upstream`` and build an
+    ACP backend whose agent routes all model calls through it (the ``--proxy``
+    interim path). The opencode launch shape lives behind the ``AgentLaunch``
+    seam now (ADR-0014 D3); this only stands up the single-upstream proxy and
+    renders the launch. The proxy holds the real key (review #3 / D4).
     Returns (backend, server); the caller owns shutdown."""
     from .proxy import GatewayProxy
     from .proxy_server import GatewayProxyServer
@@ -327,26 +290,7 @@ def _start_proxy_acp(acp_cmd: str, upstream: str, key: str, model: str):
     observer = GatewayProxy()
     server = GatewayProxyServer(upstream_base=upstream, api_key=key, observer=observer)
     server.serve_in_thread()
-
-    provider, _, short = model.partition("/")
-    if not short:  # bare model id → synthesize a provider
-        provider, short, model = "charon-proxy", provider, f"charon-proxy/{provider}"
-    cfg = {
-        "model": model,
-        "provider": {
-            provider: {
-                "npm": "@ai-sdk/openai-compatible",
-                "name": "Charon Proxy",
-                "options": {"baseURL": server.url + "/v1", "apiKey": "charon-proxy"},
-                "models": {short: {}},
-            }
-        },
-    }
-    # No real provider key in the agent env — the proxy holds it (review #3).
-    env = {**_acp_passthrough_env(include_keys=False),
-           "OPENCODE_CONFIG_CONTENT": json.dumps(cfg)}
-    backend = AcpBackend(shlex.split(acp_cmd), name="acp",
-                         passthrough_env=env, observer=observer)
+    backend = _acp_via_renderer(acp_cmd, server, model)
     return backend, server
 
 
