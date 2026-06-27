@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -197,10 +198,42 @@ def claim(
             f"{worktree!r} — a stale claim is reclaimable only onto a FRESH worktree"
         )
 
-    # Reclaim: drop the stale file, then re-create exclusively. If another worker
-    # wins the race, we lose loudly (never two holders).
+    # Reclaim: CAPTURE the stale file by atomically renaming it to a private temp
+    # path. The rename is the test-and-set — exactly one racing reclaimer can move
+    # ``path`` away; every other reclaimer of the same stale record sees it already
+    # gone and loses LOUD (never two holders, the docstring guarantee). The old
+    # ``unlink``-then-``create`` left a window where a second reclaimer's unlink
+    # clobbered the first reclaimer's freshly-created claim, yielding two holders.
+    captured = path.with_name(
+        f"{unit_id}.claim.reclaim.{os.getpid()}.{threading.get_ident()}"
+    )
     try:
-        os.unlink(path)
+        os.replace(path, captured)
+    except FileNotFoundError:
+        raise ClaimContended(
+            f"unit {unit_id!r}: lost the reclaim race to another worker"
+        ) from None
+    # Re-validate immediately: confirm we captured the SAME stale record we read
+    # (a fresh holder may have replaced it between our read and our rename) and that
+    # it is still stale. Otherwise give it back without clobbering a newer holder
+    # (``os.link`` is atomic and fails if ``path`` was retaken) and lose.
+    recheck = _read_claim(captured)
+    if recheck != existing or _is_live(recheck, now):
+        try:
+            os.link(captured, path)
+        except OSError:
+            pass
+        try:
+            os.unlink(captured)
+        except FileNotFoundError:
+            pass
+        raise ClaimContended(
+            f"unit {unit_id!r}: the claim changed under the reclaim; not stealing"
+        ) from None
+    # We hold the captured stale record. Drop it and create our fresh claim; if a
+    # new claimant grabbed the freed ``path`` first, our exclusive create loses LOUD.
+    try:
+        os.unlink(captured)
     except FileNotFoundError:
         pass
     try:

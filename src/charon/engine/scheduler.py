@@ -43,13 +43,13 @@ from .. import coordinator, gitutil
 from ..acceptance import AcceptanceCheck
 from ..coordinator import CostGate, RunResult
 from ..fence import Fence
-from ..ledger import Ledger
+from ..ledger import Ledger, LedgerCorruption
 from ..ports.backend import AgentBackend
 from ..router import StaticRouter
 from ..types import Autonomy, Budget, WorkUnit
 from .board import CLAIMED, Board, Unit
 from .capacity import CapacityLimiter, select_limiter
-from .claim import Claim, ClaimContended
+from .claim import Claim, ClaimContended, StaleReclaim
 from .claim import claim as claim_unit
 from .claim import release as release_claim
 
@@ -62,6 +62,7 @@ class Disposition(enum.Enum):
     DONE = "done"  # concluded + applied → advance the board
     RETRY = "retry"  # transient failure → release, back to ready for a future drain
     BLOCKED = "blocked"  # concluded but needs a human (propose-default / rejected)
+    SUPERSEDED = "superseded"  # a reclaim fenced this run out — log-and-skip, never advance
 
 
 # Transient statuses worth a retry; everything not here and not "complete" is a
@@ -125,9 +126,15 @@ class CoordinatorRunner:
         ]
         sdir = Path(self.state_dir).resolve()
         base_ref = gitutil.head(Path(worktree))
-        ledger = Ledger.create(
-            sdir, unit.id, unit.goal, checks, str(worktree), base_ref
-        )
+        try:
+            ledger = Ledger.create(
+                sdir, unit.id, unit.goal, checks, str(worktree), base_ref
+            )
+        except LedgerCorruption:
+            # The ledger already exists — this is a RETRY of the unit. Resume the
+            # durable ledger (D2) instead of re-failing at creation, which made
+            # Disposition.RETRY dead (every retry looped to the attempt cap).
+            ledger = Ledger.load(sdir, unit.id)
         backends = self.backend_factory(unit, checks)
         router = StaticRouter(backends=list(backends))
         fence = Fence(autonomy=Autonomy[self.autonomy])
@@ -238,7 +245,15 @@ class Scheduler:
                 "the default worktree factory needs state_dir; pass state_dir= "
                 "or a worktree_factory="
             )
-        repo = (Path(self._state_dir).resolve() / "sandbox" / unit.id / "repo")
+        # Unique per ATTEMPT (not just per unit): a retry / stale-reclaim must land
+        # on a FRESH worktree (claim.py refuses reclaim onto the in-flight one), so
+        # the path must differ each attempt. ``_attempts[id]`` is the 0-based index
+        # of the attempt about to start (incremented only after a successful claim).
+        attempt = self._attempts.get(unit.id, 0)
+        repo = (
+            Path(self._state_dir).resolve()
+            / "sandbox" / unit.id / f"a{attempt}" / "repo"
+        )
         repo.mkdir(parents=True, exist_ok=True)
         gitutil.init_repo(repo)
         return str(repo)
@@ -250,6 +265,10 @@ class Scheduler:
         is claimable and nothing is in flight."""
         from ..parallel import SharedBudget  # local: avoid import cycle at top
 
+        # Scope the attempt counter to THIS drain: the cap bounds re-launch within
+        # one drain, but a fresh drain must be able to relaunch a unit left READY by
+        # a prior drain (otherwise a once-failed unit can never be retried again).
+        self._attempts = {}
         gate = SharedBudget(max_cost_usd=self.max_cost_usd, max_tokens=self.max_tokens)
         results: list[UnitResult] = []
         budget_capped = False
@@ -291,16 +310,30 @@ class Scheduler:
                 continue
             if not self.limiter.try_acquire(unit.tier):
                 continue
+            # The capacity slot is acquired; it MUST be released on every path that
+            # does not hand a unit to a worker, or the slot leaks and the drain
+            # eventually starves (the limiter is the only admission control).
+            launched_unit = False
             try:
                 claim = self._claim(unit)
             except ClaimContended:
-                # Another holder beat us to it; give the slot back and move on.
-                self.limiter.release(unit.tier)
+                # A live holder beat us to it — not an attempt; retry next round.
                 continue
-            self._attempts[unit.id] = self._attempts.get(unit.id, 0) + 1
-            fut = pool.submit(self._execute, unit, claim, gate)
-            in_flight[fut] = _InFlight(unit=unit, claim=claim)
-            launched += 1
+            except Exception:
+                # Any other failure to launch (worktree factory mkdir/init, a stale
+                # reclaim, a board error) is counted as an attempt so a persistent
+                # error cannot spin the drain, then isolated so the drain continues.
+                self._attempts[unit.id] = self._attempts.get(unit.id, 0) + 1
+                continue
+            else:
+                self._attempts[unit.id] = self._attempts.get(unit.id, 0) + 1
+                fut = pool.submit(self._execute, unit, claim, gate)
+                in_flight[fut] = _InFlight(unit=unit, claim=claim)
+                launched_unit = True
+                launched += 1
+            finally:
+                if not launched_unit:
+                    self.limiter.release(unit.tier)
         return launched
 
     def _claim(self, unit: Unit) -> Claim:
@@ -332,11 +365,21 @@ class Scheduler:
         disposition = self._classify(status)
         # Release the claim under THIS run's epoch. Epoch-fencing guarantees a
         # stale double-runner cannot drop the fresh holder's claim (DTC Lens-4).
+        superseded = False
         try:
             release_claim(self.claims_dir, info.unit.id, epoch=info.claim.epoch)
+        except StaleReclaim as exc:
+            # A reclaim bumped the epoch while this run was in flight: the fence has
+            # detected the exact double-execution case it exists for. Log-and-skip —
+            # do NOT advance the board (the fresh holder owns the unit now) and do
+            # NOT let it abort settlement of the in-flight siblings in this batch.
+            superseded = True
+            disposition = Disposition.SUPERSEDED
+            note = f"superseded (epoch {info.claim.epoch} fenced out): {exc}"
         finally:
             self.limiter.release(info.unit.tier)
-        self._advance(info.unit.id, disposition)
+        if not superseded:
+            self._advance(info.unit.id, disposition)
         return UnitResult(
             unit_id=info.unit.id,
             status=status,
