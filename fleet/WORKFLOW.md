@@ -157,3 +157,12 @@ It claims ONE ticket and runs `claude -p` with `JOIN-PROMPT.md` + the ticket. Th
 - Gate green every commit; conventional commits; per-ticket review-log fragment.
 - A review/DTC that overturns an `OP`-owned decision must be **re-confirmed**, not
   auto-reconciled.
+- **STANDING BLAST-RADIUS LENS (always on):** on any change to infra/gate/security/push/settings,
+  any new dependency (esp. one that could leak the home build-rig/SLOP/runner into the standalone
+  product), any rule-**tightening**, any settled decision, or anything non-trivial/irreversible —
+  auto-apply a blast-radius + outside-the-box pass (spawn a read-only review): *what else depends
+  on this? second-order effect? what relied on what we just changed? what are we NOT seeing?*
+  Surface findings BEFORE proceeding; don't wait to be asked. (memory `standing-blast-radius-lens`.)
+- **PRODUCT vs BUILD-RIG:** Charon-the-product ships standalone (stdlib core, `pipx install`, no
+  fleet/SLOP/runner); the home build-infra does NOT ship. Never let a local dependency leak into
+  the product. (memory `product-vs-build-rig-boundary`.)

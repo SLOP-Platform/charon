@@ -38,10 +38,11 @@ Resume doc for a fresh MANAGER session. Read this + `MEMORY.md` + `WORKFLOW.md` 
 - Manager **never pushes by hand** — only via `land-push.sh` + the AUTONOMOUS lever.
 
 ## OPEN WORK (tracked task list)
-- **TIER-1..7** (created, UNLAUNCHED) — model-tier abstraction, per `DTC-tier-abstraction.md`
-  (consensus design: canonical `low/med/high`, `opus/sonnet/haiku` as aliases, `tiers.json`,
-  web-UI wiring, gateway pools). **Operator reviews the design before launching.** Waves:
-  A={TIER-1} · B={TIER-2,TIER-3} · C={TIER-4,5,6,7}.
+- **TIER-1..7** (created) — model-tier abstraction, per `DTC-tier-abstraction.md` (canonical
+  `low/med/high`, `opus/sonnet/haiku` as aliases, `tiers.json`, **operator wires models→tiers on
+  the web page**, gateway pools). **DTC APPROVED by the operator 2026-06-27 — cleared to build;
+  launch TIER-1 (wave A) when ready.** Waves: A={TIER-1} · B={TIER-2,TIER-3} · C={TIER-4,5,6,7}.
+  NOTE the product/rig split: TIER-1/2/3/4/7 ship (product); TIER-5/6 are local fleet only.
 - **#3** polish review: `rules.json`+`check_rules.py` and `done.sh` recording PR#+SHA (check
   still-relevant/no-conflict, then build) — SLOP→Charon adoptions.
 - **#4** preflight: `pipx install .` / `charon --help` / setup smoke before the dogfood.
@@ -70,5 +71,11 @@ adapter (#5).
 2. `status.sh` · `board.sh` · `validate_board.sh` (expect GREEN, board all DONE).
 3. Confirm the push-path fix is live (a test droid commits → launcher publishes a PR). The fleet is
    autonomous-ready; `autonomous.sh on` for full hands-off.
-4. Pick the thread: review `DTC-tier-abstraction.md` + launch TIER-1, **or** dogfood prep (#4
-   preflight → #5 adapter), **or** the SLOP consolidation. Operator-driven.
+4. **Run a blast-radius dependency audit of Charon-the-PRODUCT** (task #12): does anything in
+   `src/charon/` assume the home build-rig / SLOP / `tracking.db` / `ms-*` / the self-hosted
+   runner? Charon must `pipx install` + run on a stranger's box with none of it. Flag the
+   fork-runner gap (workflows pinned to `[self-hosted, 4-lom]`) and any local leak. See memory
+   `product-vs-build-rig-boundary` + apply the `standing-blast-radius-lens`.
+5. Pick the thread: launch **TIER-1** (DTC approved), **or** dogfood prep (#4 preflight → #5
+   adapter, kept as a GENERAL intake not tracking.db-hardcoded), **or** the SLOP consolidation.
+   Operator-driven.
