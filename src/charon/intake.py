@@ -30,6 +30,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import decompose
 from .land import in_scope
 from .ledger import validate_task_id
 
@@ -371,6 +372,103 @@ def intake(text: str, *, fmt: str = "markdown") -> Plan:
 def intake_file(path: str | Path, *, fmt: str | None = None) -> Plan:
     """Induct a file. ``fmt`` defaults to ``markdown`` (the only v1 adapter)."""
     return intake(Path(path).read_text(encoding="utf-8"), fmt=fmt or "markdown")
+
+
+# ------------------------------------------------------- Phase 2: autonomous mode
+# ADR-0008 Phase 2 / ADR-0013. Take input → auto-decompose → run WITHOUT a
+# per-plan human gate. HIGH-STAKES, so: defaults OFF (D1); a confidence gate stands
+# between decompose and run (D2); runaway/cost bounded by a unit cap + shared
+# budget (D5); and if the contract cannot be satisfied we FALL BACK to the Phase-1
+# proposal rather than running blind. Decomposition is the SAME mechanical
+# ``analyze`` as Phase 1 — input is data, never instructions (D3).
+@dataclass
+class AutonomousOutcome:
+    """Result of an autonomous-intake call. ``mode`` is ``"ran"`` only when the
+    plan cleared the confidence gate AND autonomous mode was enabled; otherwise
+    ``"proposed"`` — the Phase-1 human-reviewed plan, with ``reason`` explaining
+    the fallback in plain language."""
+
+    mode: str  # "ran" | "proposed"
+    plan: Plan
+    confidence: decompose.Confidence
+    run: decompose.AutonomousRunResult | None = None
+    reason: str = ""
+
+    @property
+    def ran(self) -> bool:
+        return self.mode == "ran"
+
+    def to_dict(self) -> dict:
+        return {
+            "mode": self.mode,
+            "reason": self.reason,
+            "confidence": {
+                "runnable": self.confidence.runnable,
+                "score": self.confidence.score,
+                "reasons": list(self.confidence.reasons),
+            },
+            "plan": self.plan.to_dict(),
+            "run": None if self.run is None else {
+                "ran": self.run.ran,
+                "waves_run": self.run.waves_run,
+                "units": list(self.run.units),
+                "total_cost_usd": self.run.total_cost_usd,
+                "total_tokens": self.run.total_tokens,
+                "budget_capped": self.run.budget_capped,
+                "note": self.run.note,
+            },
+        }
+
+
+def autonomous_intake(
+    text: str,
+    *,
+    fmt: str = "markdown",
+    enabled: bool = False,
+    max_units: int = decompose.DEFAULT_MAX_UNITS,
+    max_cost_usd: float | None = None,
+    max_tokens: int | None = None,
+    repo: str | None = None,
+    autonomy: str = "L0",
+    max_parallel: int = 4,
+    state_dir: str | None = None,
+    runner: decompose.WaveRunner | None = None,
+    decompose_units: bool = False,
+) -> AutonomousOutcome:
+    """Phase-2 front door: induct ``text`` → analyse → (maybe) run, all without a
+    per-plan human gate. SAFETY: ``enabled`` defaults False (D1) — the default
+    behaviour is identical to Phase 1 (return the plan as a proposal). Even when
+    enabled, the plan must clear ``assess_plan`` (D2); on any failure — low
+    confidence, propose-only items, scope explosion — we fall back to the proposal
+    instead of running blind. The run is wave-by-wave under a shared budget +
+    unit cap (D4/D5). Input is treated as DATA throughout (D3)."""
+    plan = intake(text, fmt=fmt)
+    confidence = decompose.assess_plan(plan, max_units=max_units)
+
+    if not enabled:
+        return AutonomousOutcome(
+            "proposed", plan, confidence,
+            reason="autonomous mode is OFF (default) — plan proposed for human review",
+        )
+    if not confidence.runnable:
+        return AutonomousOutcome(
+            "proposed", plan, confidence,
+            reason="; ".join(confidence.reasons) or "low confidence — human gate",
+        )
+
+    run_kwargs: dict = dict(
+        runner=runner,
+        max_parallel=max_parallel,
+        max_cost_usd=max_cost_usd,
+        max_tokens=max_tokens,
+        repo=repo,
+        autonomy=autonomy,
+        decompose_units=decompose_units,
+    )
+    if state_dir is not None:
+        run_kwargs["state_dir"] = state_dir
+    result = decompose.run_plan(plan, **run_kwargs)
+    return AutonomousOutcome("ran", plan, confidence, run=result)
 
 
 # ----------------------------------------------------------------- the analysis
