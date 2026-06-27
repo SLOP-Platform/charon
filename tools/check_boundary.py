@@ -10,8 +10,8 @@ token. Exit non-zero on violation.
 
 Also enforces the ADR-0010 D2 / ADR-0005 R3 engine stdlib-only rule: any file
 under src/charon/engine/ (or src/charon/ports/worker.py) may only import stdlib
-or charon.* packages — no third-party dependencies. This pass is a no-op while
-the engine directory does not exist.
+or charon.* packages — no third-party dependencies. The engine/ modules now
+exist; this pass enforces the constraint actively.
 """
 from __future__ import annotations
 
@@ -82,10 +82,7 @@ def scan_engine_file(path: Path) -> list[str]:
 
 
 def scan_engine(src_root: Path) -> list[str]:
-    """Scan engine/ + ports/worker.py for non-stdlib/non-charon imports.
-
-    No-op while engine/ does not exist (ADR-0010 build-sequence step 0).
-    """
+    """Scan engine/ + ports/worker.py for non-stdlib/non-charon imports."""
     engine_dir = src_root / "charon" / "engine"
     worker_file = src_root / "charon" / "ports" / "worker.py"
 
@@ -106,7 +103,7 @@ def main(root: str = "src") -> int:
     all_violations: list[str] = []
     for py in base.rglob("*.py"):
         all_violations.extend(scan_file(py))
-    # Engine stdlib-only guard (ADR-0010 D2 / ADR-0005 R3) — no-op while engine/ absent.
+    # Engine stdlib-only guard (ADR-0010 D2 / ADR-0005 R3).
     all_violations.extend(scan_engine(base))
     if all_violations:
         print("SLOP-boundary VIOLATION (ADR-0002 INV-B1/B5):", file=sys.stderr)

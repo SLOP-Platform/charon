@@ -1,6 +1,6 @@
 # ADR-0008 — Work intake → ticket-plan pipeline (the decomposition front door)
 
-Status: **Proposed / DEFERRED skeleton** (2026-06-26). Tripwire to build: ADR-0007
+Status: **Accepted** (2026-06-26; Phase 1 shipped). Phase 2 tripwire: ADR-0007
 **D10-C** (auto-decompose). Builds on ADR-0007 (work engine; consumer-supplied units),
 ADR-0006 (decompose role-DAG). This is a queued skeleton — the failure contract + shape
 are fixed now; the build waits for the tripwire.

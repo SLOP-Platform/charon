@@ -1,6 +1,6 @@
 # ADR-0010 — Native work-engine substrate (promote the engine in-tree)
 
-Status: **Proposed** (2026-06-26; revised after a 4-lens DTC). **Amends ADR-0007 D10** for
+Status: **Accepted** (2026-06-26; revised after a 4-lens DTC; engine substrate shipped). **Amends ADR-0007 D10** for
 the coordination substrate. Builds on ADR-0006 (PERF-4: `run_parallel`/ledger/SharedBudget),
 ADR-0007 (safe-landing-first; `land.py`), ADR-0008 (intake→ticket-plan). Honors ADR-0005 R3 /
 ADR-0007 D11 (anti-dilution: never touch the gateway request path or install footprint).
