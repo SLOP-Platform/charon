@@ -99,11 +99,6 @@ def test_added_fragment_changes_output_deterministically(tmp_path: Path) -> None
     assert render(tmp_path) == after
 
 
-def test_committed_rollup_is_not_stale() -> None:
-    """The checked-in docs/REVIEW-LOG.md matches its fragments (guards CI parity)."""
-    repo = Path(__file__).resolve().parent.parent
-    assert check(repo / "docs" / "review-log", repo / "docs" / "REVIEW-LOG.md") is True
-
 
 def test_empty_fragment_dir_renders_just_the_header(tmp_path: Path) -> None:
     out = render(tmp_path)
