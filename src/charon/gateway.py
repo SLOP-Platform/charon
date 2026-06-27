@@ -104,6 +104,22 @@ def _build_routes_and_pools(
     return routes, pools, sorted(set(routes) | set(pools))
 
 
+def _tier_pools(registry: dict, providers_cfg: dict) -> dict[str, list[UpstreamRoute]]:
+    """Compile ``tiers.json`` members into failover chains via the SAME
+    ``_build_routes_and_pools`` the gateway uses for ``pools.json`` (DTC HARD REQ #2).
+
+    Tiers are read from the separate ``tiers.json`` store (TIER-1 ``config.load_tiers``),
+    NOT ``pools.json`` — the strict ``pools.load_pools`` / ACP-router loader must never see
+    web-authored tier data (no ``agent`` field → it would crash that path). Members are model
+    ids already in ``registry``; each tier vid is ordered free-first→``cost_rank`` by the shared
+    compiler. Absent/empty ``tiers.json`` → no member matches → no tier vids (behavior
+    unchanged)."""
+    from . import config as _config
+    members = _config.load_tiers().get("members") or {}
+    _, pools, _ = _build_routes_and_pools(registry, members, providers_cfg)
+    return pools
+
+
 def load_config(
     *,
     toml_path: str | Path | None = None,
@@ -142,14 +158,16 @@ def load_config(
         if providers_path.exists():
             providers_cfg = json.loads(providers_path.read_text())
 
-    routes, pools, model_ids = _build_routes_and_pools(registry, pool_map, providers_cfg)
+    routes, pools, _ = _build_routes_and_pools(registry, pool_map, providers_cfg)
+    for vid, chain in _tier_pools(registry, providers_cfg).items():
+        pools.setdefault(vid, chain)  # explicit pools.json vid WINS on name collision
     return GatewayConfig(
         host=host or cfg_host,
         port=port if port is not None else cfg_port,
         token=token or cfg_token or os.environ.get(_TOKEN_ENV) or None,
         routes=routes,
         pools=pools,
-        model_ids=model_ids,
+        model_ids=sorted(set(routes) | set(pools)),
     )
 
 
@@ -240,6 +258,14 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
             config.set_pool(str(payload.get("id") or ""),
                             [str(m) for m in (payload.get("members") or [])])
             _reload()
+            return 200, {"ok": True}
+        if action == "tiers":
+            config.set_tiers(
+                payload.get("order") or [],
+                payload.get("members") or {},
+                payload.get("aliases") or {},
+            )
+            _reload()  # recompile tier pools into the live server via apply_routes
             return 200, {"ok": True}
         if action == "remove":
             ok = config.remove(str(payload.get("kind")), str(payload.get("name")))
