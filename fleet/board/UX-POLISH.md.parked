@@ -1,0 +1,80 @@
+tier: sonnet
+branch: feat/first-run-ux-polish
+depends_on:
+owns: src/charon/cli.py   # PROVISIONAL — the `charon setup` wizard / `_cmd_setup` lives here; finalize at activation
+prompt: (authored on activation)
+scope: PRODUCTION-READINESS. COLLECTOR ticket — a batch of small first-run / `charon setup`
+  UX-polish nits surfaced during dogfooding, batched here so we DON'T spawn one ticket per nit.
+  Each item is a self-contained, low-risk cosmetic improvement to the first-run experience.
+  Items (growable list):
+  1. **Colorize the provider presets in `charon setup`.** During the interactive setup wizard,
+     the list of preset/known providers the user picks from does not visually stand out, so users
+     scroll past it (operator dogfood observation, charon-vm 2026-06-27). Apply terminal
+     color/emphasis (ANSI) so the provider presets clearly stand out, with a no-color fallback
+     (honour `NO_COLOR`, and degrade gracefully on a non-TTY / dumb terminal). Keep it
+     product-clean and agnostic.
+
+  2. **[correctness, HIGH] *** HIGHEST-VALUE ITEM *** Validate the API key at setup.**
+     (operator dogfood, charon-vm 2026-06-27.) `charon setup` stores the key via getpass but
+     never checks it works. A provider's `/models` endpoint is often PUBLIC (e.g. opencode-zen),
+     so a bad/doubled key still imports the catalog fine and setup reports success — the failure
+     only surfaces much later as a cryptic upstream `AuthError: Invalid API key` on the first
+     chat request. Setup (and/or `providers add`) should do a quick auth probe right after
+     storing the key (a minimal authenticated call / reuse `providers test`) and clearly flag a
+     bad key immediately. This would have caught the operator's doubled-paste key at setup
+     instead of at first request. NOTE: this is the highest-value item in this collector — it is a
+     CORRECTNESS gap (turns a setup mistake into a confusing runtime error), not a cosmetic nit.
+     On activation, consider whether it belongs in its own correctness ticket rather than batched
+     with cosmetic polish.
+
+  3. **[UX] getpass key prompt gives zero paste feedback.** (charon-vm 2026-06-27.) The masked
+     field shows nothing on paste, which led the operator to paste twice (corrupting the key).
+     After storing, echo a masked confirmation like `✓ key stored (…<last4>)` so the user knows
+     it landed (and roughly that it's the right length).
+
+  4. **[UX] "Start the gateway" hint hardcodes `charon`.** (charon-vm 2026-06-27.) The
+     end-of-setup message prints `Start the gateway: charon gateway`, but on installs where
+     `charon` isn't on PATH (venv installs, fresh pipx before shell reload) that fails with
+     `command not found`. Print the ACTUAL invocation path (`sys.argv[0]`) instead of a bare
+     `charon`, everywhere the code suggests a `charon …` command.
+
+  5. **[UX] Gateway startup console URL is misleading when remote/loopback.** (charon-vm
+     2026-06-27.) On a loopback bind the startup line prints `console: http://127.0.0.1:8080/`,
+     which only works ON that host — confusing when the user is remote. When bound to loopback,
+     hint it's local-only; when bound to `0.0.0.0`, show the LAN-reachable form (host IP) so users
+     know what to point a browser at.
+
+  6. **[minor] Editing `~/.charon/secrets.json` requires a gateway restart** to take effect
+     (charon-vm 2026-06-27) — config is loaded at startup, not per-request. Low priority — note
+     for docs, or consider hot-reload later.
+
+  CROSS-REF: "show the live model list at the model-selection prompt" is NOT tracked here — it is
+  tracked as **Phase A of TIER-RECS** (`board/TIER-RECS.md.parked`), so it isn't double-tracked.
+  Keep UX-POLISH for purely cosmetic nits (e.g. the colorize-presets item above).
+
+  CROSS-REF: the colorize-presets item (1) moved into ACTIVE ticket SETUP-UX-A
+  (`board/SETUP-UX-A.md`, opus, `feat/setup-ux-a`) — it bundles there with the two
+  TIER-RECS Phase A setup-UX fixes since all three live in `_cmd_setup` (one file). Keep
+  UX-POLISH for any FUTURE purely-cosmetic first-run nits.
+
+  Additional first-run UX nits get appended here as dogfooding surfaces them.
+  CONSTRAINTS: product-clean (no SLOP/fleet/rig leak), agent/provider-agnostic, stdlib-only.
+note: PARKED. First-run UX polish batch (production-readiness). Low-risk, cosmetic; activate
+  opportunistically. Append new dogfood-surfaced UX nits as items rather than spawning per-nit
+  tickets.
+
+## NOTE — PARKED, NOT CLAIMABLE
+
+**This is a COLLECTOR ticket staged `.parked`.** It batches small first-run / `charon setup`
+UX-polish nits surfaced during dogfooding so we don't spawn one ticket per nit. `owns:` is
+PROVISIONAL — finalize the exact file set at activation (confirm it does not collide with any
+concurrent ticket touching `src/charon/cli.py`).
+
+TYPE: **build** (small UI/output changes), low-risk / cosmetic.
+
+Un-park / activation checklist:
+1. Author the work-spec prompt at `../prompts/ux-polish.md` (ends with the CONSTRAINTS block:
+   own ONLY the files in `owns:`).
+2. Finalize `owns:` (confirm disjoint within its wave vs any concurrent `cli.py` ticket) and drop
+   this to an active `board/UX-POLISH.md`.
+3. `bash validate_board.sh` GREEN before launching.

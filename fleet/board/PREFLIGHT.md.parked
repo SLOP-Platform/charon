@@ -1,0 +1,25 @@
+tier: n/a
+branch: n/a
+depends_on:
+owns:
+prompt: n/a
+scope: OPERATOR MANUAL STEP (not a droid build, not code). Run `charon setup` interactively
+  ONCE — the only non-auto first-run step — to surface any first-run gap (config scaffold, key
+  prompts, gateway/doctor) BEFORE the dogfood. De-risks DOGFOOD; quick.
+note: TYPE operator/out-of-tree (manual operator action). depends_on EMPTY — runnable NOW. GATE:
+  none upstream; it is itself the PREFLIGHT gate for DOGFOOD (run it before the first dogfood so
+  first-run gaps surface early, not mid-dogfood). No product code, no PR, no merge. This `.parked`
+  file exists only to track the step on the manager's plan — there is nothing for a droid to
+  claim. Literal command for the operator:
+    *****
+    charon setup
+    *****
+
+## NOTE — PARKED, NOT CLAIMABLE
+
+**Operator-run, manual.** No `owns:`, no `prompt:`, no branch — there is no droid build here.
+Staged `.parked` purely so the manager's plan tracks it as Lane B's first step.
+
+TYPE: **operator/out-of-tree** (a manual first-run check, run by the operator, not the fleet).
+
+Activation: operator runs `charon setup` once and reports any gap. Feeds DOGFOOD.

@@ -1,0 +1,48 @@
+tier: opus
+branch: feat/wci-semantic-slice
+depends_on: WCI
+owns:
+prompt: /home/stack/charon-private/prompts/wci-followon.md
+scope: The PARKED WCI follow-ons, held as ONE group until §5.1 is approved:
+  - WCI-4 — `merge_after` edge label + its concurrency payoff (gate-relaxation). HELD per
+    operator 2026-06-27: the label AND payoff ship TOGETHER with §5.1, not before (the
+    `merge_after` schema field is NOT introduced in the WCI-1+WCI-2 MVP).
+  - §5.1 — the SEMANTIC-INDEPENDENCE PROOF contract (import-graph reachability + shared-symbol +
+    shared-config + test co-failure) — strictly STRONGER than owns-disjointness. The keystone:
+    nothing slices concurrently without it (the F1 invariant: a label flip is never a downgrade;
+    the split is invented by the proof, never by the label).
+  - WCI-6 — auto-slice / decomposer execution, gated behind §5.1 AND the ADR-0008 Phase-2
+    conflict-rate tripwire.
+  (WCI-5, the semantic ADVISORY pass, is a SEPARATELY-gated new-value spike — NOT in this group.)
+note: PRODUCT-LEVEL WCI — DEFERRED (operator 2026-06-27): not now; revisit only after Charon is
+  production-ready. When built, MUST be opt-in-orchestrator-only + advisory/override for users
+  (never imposed on gateway-only/single-task fresh installs).
+  TYPE droid-build, PARKED. depends_on WCI (the WCI-MVP ticket, file board/WCI.md.parked) —
+  this is a REAL build-dep: it extends the MVP's reconcile/ordering layer. ACTIVATION GATE:
+  §5.1 (the semantic-independence proof contract) must be SPECIFIED and itself ADVERSARIALLY
+  REVIEWED/approved first; HELD per operator decision 2026-06-27 (DSGN-WCI-reshape.md §7.3 / §5.4).
+  Until §5.1 is approved, Pillar 3 stays edge-relabel + serialize-only and NOTHING here ships.
+  The F1 safety proof (B1-symmetric: disjoint owns ≠ semantic independence, in reverse) already
+  exists in DSGN-WCI-reshape.md §7.1, so the eventual build inherits a reviewed safety result.
+  `owns:` is intentionally TBD — defined only once §5.1 is specced (it determines which engine
+  modules the slice touches). PARKED, not claimable.
+
+## NOTE — PARKED, NOT CLAIMABLE
+
+**HELD until §5.1 (the semantic-independence proof) is approved** — operator decision
+2026-06-27. This bundles the three parked WCI follow-ons (WCI-4 label+payoff, §5.1 proof
+contract, WCI-6 auto-slice) that the MVP explicitly EXCLUDES.
+
+TYPE: **droid-build** (gated). It is a true successor of the WCI-MVP ticket (`depends_on: WCI`).
+
+Why grouped / held: per `DSGN-WCI-reshape.md` §5.1, §7.1 (F1), §7.3 — concurrency from a
+`merge_after` label is only safe behind a positive semantic-independence certificate. The
+operator chose to land the label AND its concurrency payoff together with §5.1, so none of them
+ship in the WCI-1+WCI-2 MVP. The F1 invariant is already proven; what is missing is the §5.1
+proof contract itself, which must be designed + adversarially reviewed before this builds.
+
+Un-park / activation checklist:
+1. WCI-MVP (WCI-1 + WCI-2) landed on master.
+2. §5.1 semantic-independence proof contract specified AND adversarially reviewed/approved.
+3. Operator sign-off to lift the hold; `owns:` + build prompt defined.
+4. ADR-0008 Phase-2 conflict-rate tripwire honored for the WCI-6 auto-slice half.

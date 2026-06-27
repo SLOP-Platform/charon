@@ -1,0 +1,40 @@
+tier: n/a
+branch: n/a
+depends_on:
+owns:
+prompt: n/a
+scope: NORTH-STAR end-to-end dogfood — an OPERATOR-DRIVEN sequence, NOT a single droid build:
+  (1) write an OUT-OF-TREE SLOP exporter (reads /home/stack/code/mediastack/tracking/tracking.db
+  via query.py -> emits markdown OR plan JSON; httpx-free); (2) `charon intake import` the
+  emitted file; (3) enrich the imported tickets with `accept:` + `owns:` so they are runnable;
+  (4) run a few via `charon work --backend acp`. The intake adapter is the gate; routing/TIER-7
+  is NOT required (mock + acp run today). ~31 open SLOP tickets in tracking.db.
+note: TYPE operator/out-of-tree. depends_on EMPTY on the board. GATE = INTAKE1 landed (the
+  `charon intake import` command + external-id preservation) — INTAKE1 is the ONLY real prereq;
+  NOT gated on TIER7B or WCI (mock+acp run today per HANDOFF). Runs as its OWN independent lane:
+  PREFLIGHT -> DOGFOOD, starting as soon as INTAKE1 is on master. >> CRITICAL BOUNDARY
+  (product-vs-build-rig): the SLOP exporter is OUT-OF-TREE — it MUST NOT live in `src/charon` and
+  MUST NOT leak any SLOP / tracking.db / query.py coupling into the product. The product touches
+  the SLOP world ONLY through the GENERAL `charon intake import` adapter consuming a neutral
+  markdown/JSON file. A stranger's fresh `pipx install` never sees tracking.db. << This is largely
+  an operator MANUAL sequence (write exporter, import, enrich, run), not a claimable droid build.
+
+## NOTE — PARKED, NOT CLAIMABLE
+
+**Operator-driven north-star sequence, not a droid build.** Staged `.parked` to track it on the
+manager's plan (Lane B). The exporter is written/run by the operator OUT OF TREE.
+
+TYPE: **operator/out-of-tree.**
+
+BOUNDARY CONSTRAINT (loud, non-negotiable):
+- Exporter lives OUTSIDE `/home/stack/code/charon` (e.g. under `charon-private/` or `/home/stack/`).
+- ZERO `tracking.db` / `query.py` / SLOP coupling inside `src/charon`.
+- Product ingress is ONLY the neutral `charon intake import <file>` adapter (ADR-0011 D5 general
+  seam) — never a hardcoded tracker. See memory `product-vs-build-rig-boundary`.
+
+Activation checklist (Lane B):
+1. INTAKE1 landed on master (external-id `id:` preserved).
+2. PREFLIGHT done (`charon setup` run; first-run gaps surfaced).
+3. Operator writes the OUT-OF-TREE exporter (tracking.db -> markdown/plan JSON, httpx-free).
+4. `charon intake import` -> enrich with `accept:`+`owns:` -> `charon work --backend acp`.
+5. The first dogfood run's findings then inform DSGN-WRITEBACK's design (close-the-loop).

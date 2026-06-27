@@ -1,85 +1,86 @@
-# Charon — Session Handoff (2026-06-27)
+# Charon — Session Handoff (2026-06-27, late)
 
-Resume doc for a fresh MANAGER session. Read this + `MEMORY.md` + `WORKFLOW.md` +
+Resume doc for a fresh MANAGER session. Read `MEMORY.md` + this + `/home/stack/charon-private/fleet/WORKFLOW.md` +
 `docs/DECISIONS.md` first, then run `status.sh` / `board.sh` / `validate_board.sh`.
 
-## BUILD STATE — native work-engine COMPLETE
-- **Board is 100%** (22/22 tickets DONE): E0–E10, N1/N2/N4/N5, S1, T7/T8, FB1/FB3/FB4/FB5/FB6.
-- The ADR-0010 native work-engine is built end-to-end: board+claim+scheduler+capacity, intake
-  phases 1&2, scanner matrix, auto-land, engine integration, docs.
-- Master is green; CI gate + the new `wheel-smoke` job pass.
-
-## NEW THIS SESSION — doctrine + tooling (all in `charon-private/fleet/`)
-- **Self-feeding launcher:** `fleet-droid.sh <tier> --wait <min> --retries <n> --patience <cycles>`.
-  Open the pool once; idle tabs sleep and grab the next ticket on each merge; `--patience` makes a
-  higher tier hold off poaching lower-tier work for N wait-cycles; drains to a clean exit.
-- **Push-path FIX (critical):** the LAUNCHER now pushes + opens the PR + submits (plain shell,
-  after the droid exits). The droid just commits + STOPs. (Root cause: closing the `git -C push`
-  deny gap removed the droids' only push route — `--dangerously-skip-permissions` does NOT bypass
-  `deny`. Deny-list stays closed; launcher push isn't a Claude tool call so it's exempt.)
-- **Phantom-PR guard:** `submit.sh` verifies a real open PR before marking submitted; else flags
-  `state/needs-push/<id>` (shown as `NEEDS-PUSH`). Recovery: `land-needs-push.sh <id>`.
-- **AUTONOMOUS push lever:** `autonomous.sh on|off|status` toggles whether the manager may push
-  (via the gated `land-push.sh`). OFF (default) = manager asks the operator to push. Closes the
-  `git -C * push*` bypass too. (Allow-rule loads at session start — first push of a session may
-  prompt once.)
-- **Rig hardening (from the fragility audit, `AUDIT-2026-06-27.md`):** `validate_board.sh` now
-  fails RED on real collisions (transitive-dep + done-aware) + orphan-marker check; `_lib.sh` has
-  shared `canon`/`deps_done` (case-safe ids, multi-dep); `reject.sh` (un-submit inverse);
-  `done.sh` refuses unless a MERGED PR exists; per-ticket review-log **fragments**
-  (`docs/review-log/<id>.md`); the rollup `docs/REVIEW-LOG.md` is generated + git-ignored.
-
-## DOCTRINE (in `WORKFLOW.md` + memory)
-- Manager **gate-only**: gates+merges autonomously on green; never launches fleet build-droids.
-- Manager **MAY spawn read-only reviewers**; on red/contested PRs auto-runs an adversarial review
-  → presents verdict + raw facts → operator accepts / rejects / DTCs.
-- Manager **delegates its own substantive work to sub-sessions** (keep the primary thread for
-  comms + decisions); owns/reviews the result.
-- Manager **never pushes by hand** — only via `land-push.sh` + the AUTONOMOUS lever.
-
-## OPEN WORK (tracked task list)
-- **TIER-1..7** (created) — model-tier abstraction, per `DTC-tier-abstraction.md` (canonical
-  `low/med/high`, `opus/sonnet/haiku` as aliases, `tiers.json`, **operator wires models→tiers on
-  the web page**, gateway pools). **DTC APPROVED by the operator 2026-06-27 — cleared to build;
-  launch TIER-1 (wave A) when ready.** Waves: A={TIER-1} · B={TIER-2,TIER-3} · C={TIER-4,5,6,7}.
-  NOTE the product/rig split: TIER-1/2/3/4/7 ship (product); TIER-5/6 are local fleet only.
-- **#3** polish review: `rules.json`+`check_rules.py` and `done.sh` recording PR#+SHA (check
-  still-relevant/no-conflict, then build) — SLOP→Charon adoptions.
-- **#4** preflight: `pipx install .` / `charon --help` / setup smoke before the dogfood.
-- **#5** scope the **tracking.db ↔ Charon intake adapter** (design note → ticket) — the dogfood
-  needs it (SLOP tickets live in `mediastack/tracking/tracking.db`, 31 open, via `query.py`).
-- **#6** revisit D005 (WorkerBackend port) + D015 (verified isolation) relevance.
-- **#8** secret-scan helper: match CONTENT signatures, not filenames (the `test-keys.md` false
-  alarm).
-- **#11** minor: make the launcher enforce `diff⊆owns` pre-push (droid self-check went advisory;
-  manager gate is the backstop).
-- **Security (tracked as SLOP #1323):** move `.claude` `defaultMode` off `bypassPermissions` —
-  the deny-list is porous (an interpreter rewrites even `settings.local.json` itself). Applies to
-  **Charon's** `.claude/settings.local.json` too. HARD REQs: regression-test the fleet FIRST;
-  add an operator full-auto bypass (like the `AUTONOMOUS` lever). See memory `charon-push-guard-gap`.
-
-## KEY DOCS
-- `WORKFLOW.md` (the gate/lifecycle), `CONSOLIDATION-PLAN.md` (SLOP robot-mode upgrade +
-  Charon↔SLOP cross-pollination), `AUDIT-2026-06-27.md` (fragility audit), `DTC-tier-abstraction.md`
-  (tier design + tickets), `DTC-backchannel.md`.
-
-## THE BIG GOAL — the dogfood
-Fresh-install Charon → `charon setup` (operator, interactive) → verify the gateway → **point it at
-the SLOP outstanding tickets** (`/home/stack/code/mediastack/tracking/tracking.db`) → test the
-process → tweak. SLOP = the mediastack repo; its code/gates are GREEN, its robot-mode harness is
-wedged (see `CONSOLIDATION-PLAN.md` Phase 0/1). Expect the first gap = the tracking.db→intake
-adapter (#5).
-
 ## FIRST ACTS (fresh session)
-1. Read `MEMORY.md` + this + `WORKFLOW.md` + `docs/DECISIONS.md`.
-2. `status.sh` · `board.sh` · `validate_board.sh` (expect GREEN, board all DONE).
-3. Confirm the push-path fix is live (a test droid commits → launcher publishes a PR). The fleet is
-   autonomous-ready; `autonomous.sh on` for full hands-off.
-4. **Run a blast-radius dependency audit of Charon-the-PRODUCT** (task #12): does anything in
-   `src/charon/` assume the home build-rig / SLOP / `tracking.db` / `ms-*` / the self-hosted
-   runner? Charon must `pipx install` + run on a stranger's box with none of it. Flag the
-   fork-runner gap (workflows pinned to `[self-hosted, 4-lom]`) and any local leak. See memory
-   `product-vs-build-rig-boundary` + apply the `standing-blast-radius-lens`.
-5. Pick the thread: launch **TIER-1** (DTC approved), **or** dogfood prep (#4 preflight → #5
-   adapter, kept as a GENERAL intake not tracking.db-hardcoded), **or** the SLOP consolidation.
-   Operator-driven.
+1. Read `MEMORY.md` + this + `/home/stack/charon-private/fleet/WORKFLOW.md`.
+2. `status.sh` — **check the live droid tabs** (see ACTIVE SESSIONS). `board.sh` · `validate_board.sh`.
+3. Gate any PRs that have landed (see GATING). Merge on green per the bar below.
+4. Surface the next decision to the operator; do not launch droids yourself (operator opens tabs).
+
+## ACTIVE SESSIONS TO MONITOR  ← the main job right now
+Two droid builds were in flight at handoff; **watch for their PRs and gate them:**
+- **INTAKE1** (#13) — `opus-2682803` building `feat/intake-import`. The `charon intake import`
+  command + enrichment + external-id preservation. owns `cli.py`, `intake.py`, their tests.
+  **Gate at the ESCALATED bar** (2 independent adversarial reviewers — it's a substantial
+  product feature). Boundary MUST stay clean (no SLOP in `src/`).
+- **HARD1** — `sonnet-2651915` building `feat/run-task-routing-test`. A test-only ticket: the
+  `run_task(role=…)` end-to-end routing guard test. owns ONLY `tests/test_run_task_routing.py`.
+  Single adversarial reviewer is fine.
+- `sonnet-2677744` — idle/polling; will stand down (no more sonnet-eligible work) or grab the
+  next ready sonnet ticket. Idle = no model burn.
+- When both land + merge, the active board is empty (TIER7B is parked — see below).
+
+Recovery note: the launcher now **auto-commits** any work a droid leaves uncommitted before
+publishing (fixes the FR1 data-loss path) — so a NEEDS-PUSH from "no commits" should be rare. If a
+PR's first commit is `chore(<id>): launcher auto-commit…`, review it harder for half-done work.
+
+## GATING (the bar)
+- Droid PRs are **adversarial-by-default** (see memory `adversarial-review-default-for-droid-prs`).
+  Downgrade to a light CI-green/diff-clean confirm ONLY for trivial one-liners / doc-only, and SAY
+  so. HIGH-blast-radius (core gateway/engine) → 2-voter / multi-lens.
+- Merge autonomously on green CI + clean review (AUTONOMOUS lever is ON). Fleet PRs open as DRAFTS:
+  `gh pr ready <n>` then `gh pr merge <n> --merge`, then `bash done.sh <ID>`.
+- Push is via `land-push.sh <branch> <worktree>` / `land-needs-push.sh <id>` (raw `git push` is
+  deny-listed for the manager).
+
+## BUILD STATE — what landed THIS session
+- **TIER-7 Ticket A** (ADR-0014) — agent/provider-agnostic tier routing via the gateway. Merged
+  (#50, 2-voter passed). The engine consumes the gateway's vid→pool→failover behind the
+  `ports/agent_launch.py` opencode renderer seam. Register rows D017–D019.
+- **FR1** — first-run UX polish (mock banner [honest exit kept], gateway 502 hint, doctor exit-0,
+  README units example). Merged (#51).
+- **DEP1** — declared `httpx` as a dev test-dep (it was ambient-only on the 4-lom box → clean
+  installs / forks failed 3 service tests). Merged (#53).
+- **CI1** — CI workflows now pick the runner via the `CI_RUNNER` repo variable (A-Clean); forks
+  fall back to hosted. Merged (#52). Register row D020. **Operator set `CI_RUNNER` this session.**
+- **Launcher hardening** — `fleet-droid.sh`: `--wait` is now the DEFAULT (bare droid self-feeds);
+  auto-commit-leftover guard (above); both in the rig.
+- Earlier this session: TIER-1..6 (model-tier abstraction), the pytest-pythonpath worktree fix.
+
+## PARKED / DEFERRED (will NOT auto-build)
+- **TIER7B** = `board/TIER7B.md.parked` (renamed off the active board so no idle opus tab claims
+  it). It's TIER-7 **Phase B**: per-stage multi-tier routing (router selects backend by tier;
+  warm-agent-per-tier) + delete the orphaned `failover.select_live_entry`. Operator-DEFERRED.
+  **To activate:** `mv board/TIER7B.md.parked board/TIER7B.md`. NOTE (WCI lens): its
+  `depends_on: HARD1` is really a MERGE-order, not a true build-dep (disjoint owns) — when you
+  activate it, drop the dep and just merge HARD1 first at the gate so they can build concurrently.
+  The prompt (`prompts/tier-phase-b.md`) already says "HARD1 green on master first."
+
+## DESIGN QUEUE (manager design passes — NOT droid builds) → `DESIGN-QUEUE.md`
+- **DSGN-WRITEBACK** — close-the-loop: report completed work back to the source tracker (gated
+  general `TicketSink`; mark in-review + work trail; other agent/human closes). Sequence AFTER
+  INTAKE1 (needs its external-id preservation).
+- **DSGN-WCI** — work-composition intelligence (CORE feature; 3 pillars). A design + adversarial
+  review were done; verdict **REWORK** — reshape per the captured findings before ticketing.
+Run each as design→adversarial-review→ADR→build-tickets→operator sign-off.
+
+## PENDING OPERATOR ACTIONS
+- **Preflight:** run `charon setup` interactively once (the only non-auto first-run step) — surfaces
+  any first-run gap before the dogfood.
+- **Dogfood** (the big goal): after INTAKE1 lands → write the OUT-OF-TREE SLOP exporter
+  (`tracking.db`/`query.py` → markdown or plan JSON; httpx-free) → `charon intake import` → enrich
+  the imported tickets with `accept:`+`owns:` so they're runnable → run a few via `charon work
+  --backend acp`. The intake adapter is the gate; routing/TIER-7 is NOT required (mock + acp run
+  today). SLOP tickets live in `/home/stack/code/mediastack/tracking/tracking.db` (~31 open).
+
+## KEY DOCTRINE (memories — all in `MEMORY.md`)
+- Discuss-before-acting on operator questions; keep it SHORT and WAIT (don't bury asks in walls).
+- Delegate substantive work to BACKGROUND sub-sessions; primary stays responsive (gate/merge/talk).
+- Adversarial-by-default reviews; always give MY recommendation; peer-review very-impactful ones.
+- Charon is modular: engine NOT hardcoded to any agent (opencode) or provider — gateway is neutral.
+- Product ships standalone: never leak the rig/SLOP/runner into `src/`.
+- Production-readiness north-star: a stranger's fresh `pipx install` must work.
+- Always give the literal command; droid launches = `fleet-droid.sh <tier>` once + a one-line of
+  what it picks up; wrap operator-run commands in `*****` lines.

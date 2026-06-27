@@ -1,0 +1,103 @@
+tier: opus
+branch: feat/prod-install-bootstrap
+depends_on:
+owns: install.sh, README.md, src/charon/doctor.py, docs/   # PROVISIONAL — finalize at activation
+prompt: (authored on activation — trust model + hosting URL RESOLVED 2026-06-27, see DESIGN NOTE)
+scope: PRODUCTION-READINESS. A one-liner bootstrap installer + friendly prereq handling so a
+  fresh user gets Charon running without hitting cryptic failures. MOTIVATION: on Ubuntu 22.04
+  LTS (Python 3.10, no pip) a fresh user CANNOT follow the README `pipx install` line — they hit
+  a cryptic `No module named pip` and a too-old Python (Charon requires-python >=3.11). Real
+  production-readiness barrier surfaced on charon-vm 2026-06-27. REQUIREMENTS:
+  1. ONE-LINER BOOTSTRAP — `curl -fsSL https://<stable-url>/install.sh | bash` (+ a `wget -qO-`
+     variant), hosted over HTTPS from a stable GitHub **release asset** (NOT raw master — see
+     RESOLVED decision below), repo is public. HARDEN the EXISTING `install.sh`, do not greenfield.
+  2. PREREQ CHECK + INSTALL — detect OS/distro + package manager (apt/dnf/brew); check Python
+     >=3.11, git, and pip/pipx; install what's missing (escalate to sudo ONLY for the
+     package-manager step, with a clear prompt) OR, if it can't, print the EXACT manual commands.
+     Replace cryptic failures (e.g. `No module named pip`) with clear "you need X; run Y".
+  3. INSTALL CHARON — using the detected/installed Python 3.11 (pipx, or a venv fallback).
+  4. FINISH WITH NEXT STEPS / HELP — how to run the gateway, and after setup: (a) how to point an
+     app at Charon — the OpenAI-compatible base URL `http://<host>:8080/v1` + the token as the
+     API key (token REQUIRED for non-loopback `--host 0.0.0.0`); (b) the webui/console URL
+     (`/` or `/charon` on `127.0.0.1:8080`). Link to the relevant help/docs.
+  5. SCRIPT HYGIENE — idempotent, re-runnable, short + inspectable, minimal privilege; offer a
+     "download -> inspect -> run" path too.
+  6. LOW-EFFORT pretty output (approved 2026-06-27) — the installer should look better than raw
+     terminal text using PURE BASH only (zero extra dependencies, universal compatibility):
+     colored section headers + bold key values, green ✓ / red ✗ status lines per prereq
+     checked/installed, step counters like `[2/5] Installing Python 3.11…`, and an optional
+     ASCII-safe banner. MUST auto-degrade to plain text when output is not a TTY or `NO_COLOR` is
+     set (never garble logs/CI/old terminals). An optional simple pure-bash spinner during long
+     downloads is acceptable. The same minimal-ANSI style can optionally extend to `charon setup`
+     and gateway startup for a consistent look.
+     PARKED / out-of-scope (with rationale): heavier "pretty" approaches are explicitly NOT in
+     scope — ncurses TUI installers (`whiptail`/`dialog`) add packages that may not be installed
+     (the very compatibility friction we're avoiding), and Python `rich`/`textual` need Python
+     already present (chicken-and-egg for a bootstrapper) and add a dependency (Charon core is
+     deliberately stdlib-only). Revisit only if there's a strong reason.
+  7. LAYER-2 FOLLOW-ON (post-install, sub-item) — extend `charon doctor` toward a fuller
+     preflight/environment check (config present, gateway reachable on `127.0.0.1:8080` via
+     `GET /v1/models`, models configured). DISTINCT from the pre-install bootstrap. Note: `charon
+     doctor` currently probes an ACP agent, not the gateway — this redirects/augments it toward
+     the gateway-first product surface.
+  8. UPDATE / REINSTALL path (approved 2026-06-27) — Charon currently has NO built-in
+     update/upgrade/reinstall command; updating means remembering pip/pipx incantations (e.g.
+     `pipx reinstall charon` or `pip install --upgrade --force-reinstall "git+…"`). New users
+     conflate this with `reset`/`setup`, which only touch *config*, not the *program*.
+     - The one-liner installer must be **RE-RUNNABLE to update**: running it again detects an
+       existing install, pulls the newest version, and reinstalls cleanly (idempotent). This is
+       the primary update mechanism.
+     - It MUST **preserve user config** (`~/.charon` — providers/keys/models/pools) across an
+       update/reinstall; never silently wipe settings. Offer an explicit `--reinstall` /
+       clean-slate flag for users who DO want a fresh config.
+     - Add a thin **`charon update`** (and/or `charon reinstall`) subcommand that shells out to
+       the right pip/pipx command so users don't have to remember it. DESIGN NOTE: an in-app
+       self-update that replaces the running interpreter/binary is fiddly (self-replacement) — so
+       the safe MVP is the re-runnable installer + a `charon update` that just prints/runs the
+       correct `pipx reinstall` / `pip install --upgrade` command for how it was installed;
+       capture the self-replacement caveat.
+     - Clarify the **program-vs-settings distinction** in help/docs: `update`/`reinstall` = the
+       program; `setup`/`reset` = your settings. (This confusion is itself why the command + clear
+       docs are needed.)
+  CONSTRAINTS: product-clean (no SLOP/fleet/rig leak), agent/provider-agnostic.
+  DESIGN NOTE (RESOLVED — operator decided 2026-06-27):
+  - **Decision 1 (trust model): offer BOTH.** Ship the one-liner `curl -fsSL …/install.sh | bash`
+    (+ the `wget -qO-` variant) for convenience, AND document a "download → inspect → run" path
+    for cautious users. The bootstrap stays inspectable, idempotent, and minimal-privilege.
+  - **Decision 2 (hosting): Option 2 — GitHub release asset.** Host `install.sh` from a stable
+    GitHub **release asset** over HTTPS, NOT raw master, so users get a vetted/pinned installer
+    rather than whatever is on the default branch. Keep the script short + inspectable +
+    idempotent.
+  - **Cost note:** hosting via GitHub public-repo release assets + source clone is **free at
+    scale** (prereqs come from the user's OS mirrors, not us); PyPI publishing is the natural
+    future scale upgrade, not required now.
+note: PARKED. PRODUCTION-READINESS PRIORITY (strong candidate to build soon — directly serves the
+  fresh-install-just-works north-star). Surfaced on charon-vm 2026-06-27 (Ubuntu 22.04 / Python
+  3.10 / no pip). Trust model + hosting URL RESOLVED 2026-06-27 (offer BOTH; GitHub release
+  asset) — ready to author the prompt and activate.
+
+## NOTE — PARKED, NOT CLAIMABLE
+
+**This is a production-readiness BUILD ticket staged `.parked`.** The `curl|bash` trust/security
+model + hosting URL — formerly the blocking OPEN DECISION — are now RESOLVED (operator,
+2026-06-27; see DESIGN NOTE). It stays `.parked` (not yet claimable) pending the remaining
+activation steps: author the work-spec prompt and finalize `owns:`. (It ships a privileged
+bootstrap that runs as the user and may escalate to sudo.) `owns:` is PROVISIONAL — finalize the exact file set at
+activation (and confirm `docs/` scope is partitioned vs any concurrent docs ticket before
+launch, so it does not collide).
+
+TYPE: **build** (installer + docs + a CLI preflight), gated on an operator decision.
+
+Un-park / activation checklist:
+1. ~~Operator signs off the `curl|bash` trust model AND the stable hosting URL.~~ **RESOLVED
+   2026-06-27** (see DESIGN NOTE above): trust model = offer BOTH (`curl|bash` one-liner +
+   `wget` variant AND a download→inspect→run path); hosting = GitHub **release asset** over HTTPS
+   (not raw master). This unblocks authoring the prompt.
+2. Author the work-spec prompt at `../prompts/prod-install.md` (ends with the CONSTRAINTS block:
+   own ONLY the files in `owns:`).
+3. Finalize `owns:` (confirm `docs/` partition is disjoint within its wave) and drop this to an
+   active `board/PROD-INSTALL.md`.
+4. `bash validate_board.sh` GREEN before launching.
+
+Layer-2 (`charon doctor` -> gateway preflight) MAY be split into its own follow-on ticket at
+activation if the bootstrap PR is getting large.

@@ -141,6 +141,41 @@ It claims ONE ticket and runs `claude -p` with `JOIN-PROMPT.md` + the ticket. Th
 
 ---
 
+## 4b. WCI enforcer (mechanized work-composition-intelligence)
+
+`validate_board.sh` mechanizes the WCI invariants so the manager no longer applies them by
+hand each pass. **Deterministic checks HARD-GATE (non-zero exit); semantic judgment is
+ADVISORY only** (`WCI-ADVISORY` lines, never a failure).
+
+**HARD-FAILS (RED, fix before launching):**
+- **false-blocking-dep** — a *live* (not-done) ticket has `depends_on: X` while their `owns`
+  sets are **DISJOINT** and the dep is **unjustified**. Disjoint owns ≠ a dependency: a
+  disjoint dep must be JUSTIFIED, not assumed (the TIER7B↔HARD1 lesson, both directions).
+  Fix = either justify it with a marker (below) or DROP the dep if it's merge-order only.
+- **redundancy** — two *live* tickets declaring the **identical non-empty `owns` set**
+  (likely duplicate/contradictory work).
+- (owns-collision among concurrently-claimable tickets and duplicate-branch are the
+  pre-existing checks 4 and 3 — reused, not duplicated.)
+
+**ADVISORY only (never fails):** prompt-intent contradiction / hidden coupling between
+overlapping or dep-linked tickets — not machine-checkable in bash; eyeball by hand.
+
+**Marker convention** — to justify a *genuine* disjoint-owns build/correctness prereq
+(e.g. a regression-guard test that must land before the code it guards), add ONE line to the
+ticket's `board/<ID>.md`:
+```
+real-dep: <DEP-ID> <free-text reason>     # justifies a disjoint-owns dep on that ONE dep
+```
+or, when every dep of the ticket is a true build-dep:
+```
+dep-kind: build                            # blanket: all this ticket's deps are real build-deps
+```
+Prefer the precise `real-dep:` form. An UNMARKED disjoint-owns dep is a violation to surface;
+a marked one is echoed as `WCI-ADVISORY justified-disjoint-dep (ok)` so the justification stays
+auditable. Only *live* dependents are checked — a done ticket's dep blocks nothing now.
+
+---
+
 ## 5. Hard rules (never violate)
 - Droids open DRAFT PRs and **never merge**; the manager merges (propose-default).
 - Manager **never** launches FLEET BUILD-DROIDS (the product workers) — operator's job, the

@@ -1,0 +1,50 @@
+tier: opus
+branch: feat/wci-mvp
+depends_on: ADR-0015
+owns: src/charon/engine/reconcile.py, src/charon/engine/scheduler.py, src/charon/engine/board.py, tests/test_reconcile.py
+prompt: /home/stack/charon-private/prompts/wci-mvp.md
+scope: WCI-1 static reconciler + WCI-2 depth pre-sort ONLY (the adversarial-blessed MVP).
+  WCI-1 = engine/reconcile.py::reconcile_static — consolidate/re-port the existing
+  validate_board.sh + board.claimable + intake.analyze redundancy / contradiction / overlap
+  checks into ONE deterministic function, wired as a pre-drain preflight (re-port per R8/M1;
+  no new intelligence). WCI-2 = critical-path depth pre-sort of the ready set in
+  board.claimable_units() ordering with id kept as the FINAL injective tiebreak; the
+  claimability/serialization RULE is untouched (per R5/B2). EXCLUDES WCI-4 (merge_after edge
+  type — under a separate reshape-fix) and WCI-6 (auto-slice / semantic-independence proof —
+  PARKED behind §5.1 + ADR-0008 Phase 2 tripwire). owns is PROVISIONAL: reconcile.py is the
+  design-named new module (DSGN-WCI-reshape.md §6); board.py carries the WCI-2 pre-sort.
+note: PRODUCT-LEVEL WCI — DEFERRED (operator 2026-06-27): not now; revisit only after Charon is
+  production-ready. When built, MUST be opt-in-orchestrator-only + advisory/override for users
+  (never imposed on gateway-only/single-task fresh installs).
+  TYPE droid-build (the adversarial-blessed MVP = WCI-1 + WCI-2). BLOCKED pending ADR-0015
+  sign-off — do NOT un-park (rename to WCI.md) until the WCI reshape is finalized, ADR-0015 is
+  written, AND the operator signs off. depends_on REPOINTED TIER7B -> ADR-0015 (2026-06-27): the
+  ADR-0015 sign-off is the REAL build/correctness prereq (do not build against an unsigned
+  design); TIER7B is NOT a build-dep — owns are DISJOINT (WCI = engine/{reconcile,scheduler,
+  board}.py; TIER7B = router/api/acp/failover.py), so WCI-MVP may build CONCURRENTLY with TIER7B
+  once ADR-0015 is signed off. Sign-off gate, not merge-order.
+
+## NOTE — PARKED, NOT CLAIMABLE
+
+**BLOCKED pending ADR-0015 sign-off — do NOT un-park (rename to `WCI.md`) until the WCI
+reshape is finalized, ADR-0015 is written, and the operator signs off.**
+
+This ticket is staged as `.parked` (off the active board) on purpose: its design is not yet
+signed off. `depends_on: ADR-0015` is the genuine gate — the design must be SIGNED OFF before
+WCI builds against it. **It is NOT gated on TIER7B:** the owns sets are disjoint (WCI owns
+`engine/{reconcile,scheduler,board}.py`; TIER7B owns `router/api/adapters.acp/failover.py`), so
+WCI-MVP can build **concurrently with TIER7B** once ADR-0015 is signed off. The earlier
+`depends_on: TIER7B` was a mere ordering relation (the exact disjoint-owns ≠ build-dependency
+mislabel the WCI reconciler is meant to catch) and has been dropped.
+
+Design source: `DSGN-WCI-reshape.md`. Adversarial review blessed the MVP as **WCI-1 (static
+reconciler — re-port/consolidate the existing redundancy/contradiction checks) + WCI-2 (depth
+pre-sort of the ready set)** as clean and shippable. WCI-4 (`merge_after` edge type) is under a
+separate reshape-fix; WCI-6 (auto-slice) is parked. Neither is in this ticket's scope.
+
+Un-park checklist (all required before rename to `WCI.md`):
+1. WCI reshape (`DSGN-WCI-reshape.md`) finalized.
+2. ADR-0015 (work-composition intelligence: reconcile + ordering layer) written.
+3. Operator sign-off.
+4. Build prompt created at the `prompt:` path above (validate_board will go RED until it exists —
+   intentional un-park tripwire).

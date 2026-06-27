@@ -69,6 +69,23 @@ $spec"
     # deny-list never applies. Read <branch> from the ticket via the same awk meta pattern.
     branch="$(awk -F': ' '$1=="branch"{sub(/^[^:]*: ?/,"");print;exit}' "$tfile")"
     wt="/home/stack/code/charon-fleet-$id"
+    # SAFETY NET (FR1 root cause): a droid can exit 0 with work left UNCOMMITTED — it made the
+    # edits but never ran `git commit`. Pushing then publishes an EMPTY branch (gh pr create
+    # fails → NEEDS-PUSH) and strands the work in the worktree, where a later re-claim's
+    # `git worktree remove --force` (JOIN-PROMPT) DESTROYS it. So auto-commit any leftover first:
+    # the work is always captured and still goes through the PR/CI/review gate. The commit message
+    # flags it so the manager scrutinizes for half-done work.
+    if [ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]; then
+      echo "[$DROID] WARNING: $id left UNCOMMITTED changes — launcher auto-committing (droid exited without committing)."
+      git -C "$wt" add -A
+      git -C "$wt" commit -q -m "chore($id): launcher auto-commit — droid exited without committing (review for completeness)" || true
+    fi
+    # If there are STILL no commits beyond base, the droid produced nothing — a genuine no-op.
+    # Release for retry rather than pushing an empty branch.
+    if [ -z "$(git -C "$wt" log --oneline "origin/master..$branch" 2>/dev/null)" ]; then
+      echo "[$DROID] $id produced NO commits and NO changes — releasing for retry (nothing to publish)."
+      bash "$FLEET/release.sh" "$id" || true; current=""; continue
+    fi
     # Drop any stale remote branch from a prior/closed PR so the push fast-forwards, then
     # push + open the DRAFT PR. If either fails, fall through: submit.sh grounds on a real
     # open PR and flags state/needs-push when there isn't one. `|| true` keeps set -e happy.

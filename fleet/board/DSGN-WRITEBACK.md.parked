@@ -1,0 +1,41 @@
+tier: opus
+branch: docs/dsgn-writeback
+depends_on:
+owns:
+prompt: /home/stack/charon-private/prompts/dsgn-writeback.md
+scope: DESIGN PASS (not a droid build yet). Close-the-loop: report COMPLETED work back to the
+  source tracker via a GENERAL, opt-in, gated `TicketSink` mirroring the read adapter. On
+  completing a ticket, mark the source item IN-REVIEW / pending-verify (do NOT auto-close) and
+  write a WORK TRAIL (PR link + the `accept` exit-0 proof + ledger/land record); the OTHER
+  agent (e.g. SLOP robot-mode) or a human does the final close (two-party handoff, matches
+  propose-default D006/D011). Run the manager design loop: design sub-session -> adversarial
+  peer-review -> synthesize -> operator sign-off -> ADR -> THEN create the build ticket(s).
+note: TYPE design/ADR-pass. depends_on EMPTY (board-unblocked) — but it is NOT a claimable droid
+  build: it needs a design -> review -> ADR before any code ticket exists. GATE — sequence AFTER
+  the FIRST DOGFOOD run (Lane B): the dogfood run is what reveals what "report completed work
+  back" must actually do, so its findings INFORM this design; write-back then closes that loop.
+  Hard TECHNICAL prereq underneath: INTAKE1's external-id (`id:`) preservation (write-back targets
+  the source ticket by that id) — INTAKE1 is a transitive prereq via DOGFOOD anyway. BOUNDARY
+  (product-vs-build-rig): SLOP-specific
+  write code stays OUT OF TREE; the product ships only a NEUTRAL sink the user configures — no
+  tracking.db / SLOP coupling in `src/charon`. Open design questions: how aggressive is
+  "mark in-review" vs leave-a-comment; how the sink authenticates to an arbitrary tracker;
+  idempotency on re-run; whether the work-trail format is generic or per-tracker. PARKED.
+
+## NOTE — PARKED, NOT CLAIMABLE
+
+**This is a DESIGN QUEUE item, not a droid build ticket.** It is staged `.parked` so no droid
+claims a design task. `owns:` is intentionally EMPTY — the design pass produces an ADR + a
+build-ticket breakdown FIRST; the file ownership for the actual sink module is defined only
+after sign-off.
+
+TYPE: **design/ADR-pass.** Manager runs it as: design sub-session -> adversarial peer-review ->
+synthesize -> operator sign-off -> ADR -> create build tickets.
+
+Un-park / activation checklist:
+1. INTAKE1 landed (external-id `id:` preservation on master) — the hard technical dependency.
+2. FIRST DOGFOOD run completed (Lane B) — its findings inform what write-back must do.
+3. Design sub-session + adversarial review complete (review IS needed — see PROPOSED-SEQUENCE
+   §4: design soundness of a new write-back/sink path + the out-of-tree boundary).
+4. Operator sign-off + ADR written.
+5. Build tickets created with real `owns:` (NEUTRAL in-tree sink only; SLOP writer out of tree).

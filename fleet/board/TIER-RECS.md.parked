@@ -1,0 +1,85 @@
+tier: opus
+branch: feat/tier-model-recommendations
+depends_on:
+owns: src/charon/cli.py, src/charon/recommend.py, src/charon/config.py   # recommend.py is a NEW module; PROVISIONAL — finalize at activation
+prompt: (authored on activation)
+scope: PRODUCTION-READINESS / setup-UX. A PHASED "tier model recommendations" feature for the
+  `charon setup` wizard so a non-expert isn't stuck typing a model name blind. MOTIVATION:
+  during `charon setup`, the "model served by X" prompt shows NO list and recommends nothing, so
+  a non-expert user has to type a model id from memory with zero guidance (operator dogfood
+  observation, charon-vm 2026-06-27). Operator-approved design 2026-06-27.
+
+  PHASES:
+  - **Phase A (base layer + fallback) — APPROVED.** At the model-selection prompt, query the
+    provider's LIVE `/v1/models` catalog and SHOW it, so the user PICKS from real options instead
+    of typing blind. Cheap, never goes stale (it's provider-maintained). Can ship independently
+    FIRST; also doubles as the graceful fallback for Phase B. (This is the same "show the live
+    model list at the selection prompt" item formerly noted under UX-POLISH — now tracked HERE so
+    it isn't double-tracked.)
+
+    **Dogfood evidence (charon-vm 2026-06-27).** Real `charon setup` run (operator): user added
+    provider `opencode-zen`, stored the key, imported ALL 49 models into the catalog — but at the
+    "model served by '<provider>'" prompt NOTHING was shown, the user hit a blank, and setup
+    finished "Done. 0 model(s) configured" → a silently non-functional gateway. This run motivates
+    the two requirements below.
+
+    - **Finding 1 (Phase A core).** The just-imported / live catalog must be SURFACED at the
+      "model served by X" prompt — it currently shows nothing even right after importing 49 models.
+      The import→serve connection must be obvious: after a bulk import, OFFER "serve all N imported? /
+      pick from these" rather than leaving a blank prompt. Right now importing into the catalog and
+      choosing served models are DISCONNECTED, so a user imports 49 and serves 0.
+    - **Finding 2 (correctness guard — QUICK, ship-independently).** If 0 models end up
+      configured-to-serve at the end of setup, the wizard must WARN LOUDLY (e.g.
+      "⚠ 0 models served — your gateway won't respond to requests") and OFFER to fix it (serve the
+      imported catalog / pick some), instead of printing a cheery "Done. 0 model(s) configured."
+      This is a quick STANDALONE guard that can ship BEFORE the full recommendation feature.
+  - **Phase B (smart layer) — the recommended approach.** After the first provider+key is
+    configured, query the provider's live `/models`, then ask 1–3 already-configured / "trusted"
+    models to RANK that REAL catalog into Charon's tiers (high / med / low) with fallbacks per
+    tier. Surface the recommended models + fallbacks per tier; the user ACCEPTS / adds / removes.
+    Query MULTIPLE models and take CONSENSUS for robustness.
+    - **CRITICAL anti-hallucination rule:** GROUND the LLM in the live catalog and INTERSECT every
+      recommendation with the actual `/models` list — DROP any model the LLM names that isn't
+      really in the catalog. This kills training-cutoff staleness and invented/hallucinated model
+      ids: only real, currently-served models can ever be recommended.
+    - **Sequencing (chicken-and-egg):** Phase B runs AFTER at least one provider+key exists — you
+      need a working model to ask.
+    - **Sync-first:** fast query + spinner + short timeout. If no model is reachable or the query
+      fails → fall back to Phase A (plain live list) → manual entry. TRUE async ("keep setting up
+      while it fetches, present recs when ready") = v2 / optional — noted but NOT in the first
+      build.
+  - **Heuristic fallback (option ii).** When NO model is reachable to ask, INFER tiers from catalog
+    metadata — context length / price / name patterns (`70b` / `405b` / `mini` / `flash`) — as an
+    offline best-effort.
+
+  CONSTRAINTS: provider/agent-AGNOSTIC; product-clean (no SLOP/fleet/rig leak); affects ONLY the
+  setup CONFIG step, NEVER the gateway hot request path; recommendations are ALWAYS
+  user-overridable (best-effort, not authoritative). Ties into the existing tier system
+  (`tiers.json` / `charon tier`).
+note: PARKED — design captured (operator 2026-06-27). Production-readiness-adjacent setup-UX
+  feature. Phase A is the cheap immediate win and may ship independently first; Phase B is the
+  smart layer (LLM-judge grounded on the live catalog). Activate after charon-vm bringup / when
+  setup-UX work is prioritized.
+
+## CROSS-REF — Phase A is being implemented by active ticket SETUP-UX-A
+Phase A (Findings 1 & 2 — surface the imported/live catalog at the "model served by X" prompt
++ the 0-models-served warn guard) is being implemented by the ACTIVE ticket
+`board/SETUP-UX-A.md` (opus, `feat/setup-ux-a`, dogfood-driven charon-vm 2026-06-27). Phase B
+(the LLM-judge smart layer) remains parked here.
+
+## NOTE — PARKED, NOT CLAIMABLE
+
+**This is a DESIGN / feature ticket staged `.parked`.** Operator-approved design (2026-06-27); not
+yet claimable pending activation. `owns:` is PROVISIONAL — `src/charon/recommend.py` is a NEW
+module (the recommender logic + LLM-judge integration) and the exact file set is finalized at
+activation (confirm `src/charon/cli.py` and `src/charon/config.py` are disjoint within their wave
+vs any concurrent ticket touching them — esp. UX-POLISH, which also owns `cli.py`).
+
+TYPE: **build** (setup-wizard UX + recommender module + LLM-judge integration), phased.
+
+Un-park / activation checklist:
+1. Author the work-spec prompt at `../prompts/tier-recs.md` (ends with the CONSTRAINTS block: own
+   ONLY the files in `owns:`). Decide whether Phase A ships as its own wave first.
+2. Finalize `owns:` (confirm `cli.py` / `config.py` partition is disjoint within its wave vs any
+   concurrent ticket — notably UX-POLISH which also touches `cli.py`).
+3. `bash validate_board.sh` GREEN before launching.

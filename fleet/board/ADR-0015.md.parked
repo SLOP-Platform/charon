@@ -1,0 +1,34 @@
+tier: opus
+branch: docs/adr-0015-wci-reconcile-ordering
+depends_on:
+owns: docs/adr/0015-work-composition-intelligence.md, docs/DECISIONS.md
+prompt: /home/stack/charon-private/prompts/adr-0015-wci.md
+scope: Write the THIN ADR-0015 capturing the already-reviewed WCI reshape. Transcribe R1-R9 +
+  the explicit out-of-scope list + the F1/F2/F3 reshape-fixes + the HELD WCI-4 + the PARKED
+  §5.1/WCI-6, and append the register row(s) to docs/DECISIONS.md. It is a composition /
+  ordering / advisory LAYER, not a new engine — slot it UNDER ADR-0010 (native substrate) and
+  ADR-0008/0011 (intake). Keep it small; do NOT re-decide the design, only record it.
+note: TYPE design/ADR-pass. depends_on EMPTY by design — this is a DOC that captures a settled
+  reshape; it does NOT need TIER7B's (or any) code, so it is DRAFTABLE NOW, concurrently with
+  the TIER7B build. Its only real GATE is a SIGN-OFF gate: operator sign-off on
+  DSGN-WCI-reshape.md (which is finalized as of 2026-06-27). It must LAND BEFORE the WCI-MVP
+  ticket (WCI depends_on ADR-0015) — that ADR-0015 -> WCI edge is the genuine build/correctness
+  prereq (WCI must not build against an unsigned design). Review weight: LIGHT — mostly
+  transcribes a design that already cleared two adversarial rounds (REWORK -> reshape -> focused
+  review -> F1/F2/F3 fixes). PARKED, not claimable.
+
+## NOTE — PARKED, NOT CLAIMABLE
+
+**Draftable in parallel with TIER7B — do NOT un-park (rename to `ADR-0015.md`) until the
+operator signs off on the WCI reshape (`DSGN-WCI-reshape.md`).** No code dependency: this ADR
+records the design, so it needs no in-flight build to exist. It must land BEFORE the WCI-MVP
+ticket (`board/WCI.md.parked`), which depends_on it.
+
+TYPE: **design/ADR-pass.** Source of truth = `DSGN-WCI-reshape.md` (R1-R9, the §4 prior-finding
+-> resolution table, §7 F1/F2/F3). Do not invent design here; transcribe it.
+
+Un-park checklist (all required before rename to `ADR-0015.md`):
+1. `DSGN-WCI-reshape.md` finalized (it is, as of 2026-06-27).
+2. Operator sign-off on the reshape (the sign-off gate).
+3. Build prompt created at the `prompt:` path above (validate_board goes RED until it exists —
+   intentional un-park tripwire).
