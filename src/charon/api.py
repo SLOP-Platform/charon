@@ -219,10 +219,23 @@ def run_task(
         else:
             run_backends = _resolve_backends(backend, backends, backend_name, checks, acp_cmd)
 
-        router = StaticRouter(backends=list(run_backends))
-        fence = Fence(autonomy=Autonomy[autonomy])
-        budget = Budget(max_checkpoints=max_checkpoints,
-                        max_cost_usd=max_cost_usd, max_tokens=max_tokens)
+        # Setup hardening (TIER7B-FOLLOWUP nit): the proxy thread may already be
+        # running (tier path or --proxy path), but the run's inner try/finally that
+        # reaps it is still not in scope. The router/fence/budget/autonomy build
+        # below sits in that residual gap — e.g. Autonomy[autonomy] KeyErrors on a
+        # bad autonomy string. Tear the proxy down on ANY failure here too, so the
+        # gateway thread is reaped on EVERY setup path before the inner try takes
+        # over on success (single shutdown: this except re-raises out before the
+        # inner finally can run).
+        try:
+            router = StaticRouter(backends=list(run_backends))
+            fence = Fence(autonomy=Autonomy[autonomy])
+            budget = Budget(max_checkpoints=max_checkpoints,
+                            max_cost_usd=max_cost_usd, max_tokens=max_tokens)
+        except BaseException:
+            if proxy_server is not None:
+                proxy_server.shutdown()
+            raise
         try:
             work_unit = WorkUnit(task_id=task_id, goal=goal)
             if decompose:
