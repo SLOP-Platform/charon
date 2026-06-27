@@ -23,6 +23,8 @@ from .doctor import probe
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
+    if args.sandbox:
+        os.environ["CHARON_SANDBOX"] = args.sandbox
     if args.units:
         return _run_units(args)
     if not args.goal or not args.accept:
@@ -424,9 +426,14 @@ def _cmd_reset(args: argparse.Namespace) -> int:
 
 
 def _cmd_doctor(args: argparse.Namespace) -> int:
+    from .config import load_sandbox_policy
+    from .fence import AutonomyPolicy
     cmd = args.backend_cmd.split() if args.backend_cmd else None
     rep = probe(cmd)
-    print(json.dumps(rep.to_dict(), indent=2))
+    out = rep.to_dict()
+    out["sandbox_policy"] = load_sandbox_policy().value
+    out["autonomy_ceiling"] = AutonomyPolicy.from_env().ceiling().name
+    print(json.dumps(out, indent=2))
     return 0 if rep.ok else 1
 
 
@@ -484,6 +491,11 @@ def build_parser() -> argparse.ArgumentParser:
                         "(Triage→Plan→Implement→Review→Validate→Close) instead of "
                         "the plain single-unit loop — one ledger, role-tagged "
                         "checkpoints (PERF-4/D5)")
+    r.add_argument("--sandbox", default=None,
+                   choices=["hybrid", "container", "host"],
+                   help="sandbox posture: hybrid (default) | container (require "
+                        "CHARON_CONTAINER_VERIFIED for all rungs) | host (host ok, "
+                        "loud override still required for L2+) — D013/ADR-0010")
     r.set_defaults(func=_cmd_run)
 
     ld = sub.add_parser("land",
