@@ -24,7 +24,10 @@ import textwrap
 import threading
 from pathlib import Path
 
+import pytest
+
 from charon import api, gitutil
+from charon import proxy_server as proxy_server_mod
 from charon.adapters.acp import AcpBackend
 from charon.decompose import decompose as decompose_stages
 from charon.router import StaticRouter
@@ -135,6 +138,29 @@ def _write_two_tier_registry(state_dir: Path, charon_home: Path, upstream_base: 
     (charon_home / "tiers.json").write_text(json.dumps({
         "order": ["low", "med", "high"],
         "members": {"low": [], "med": ["m-med"], "high": ["m-high"]},
+        "aliases": {},
+    }))
+
+
+def _write_single_tier_two_member_registry(
+    state_dir: Path, charon_home: Path, upstream_base: str
+) -> None:
+    """ONE tier ('high') with a 2-MEMBER pool whose members rewrite to DISTINCT
+    wire models on the SAME mock upstream, so the upstream records WHICH member the
+    gateway selected within the tier. The members are listed PAID-FIRST in
+    tiers.json (m-paid before m-free); the gateway's shared compiler must still sort
+    the FREE/cheaper member first (free-first→cost_rank), so a correct run hits
+    'free-wire'. If within-tier ordering regresses, the upstream gets 'paid-wire'."""
+    (state_dir / "models.json").write_text(json.dumps({
+        "m-paid": {"upstream_base": upstream_base, "upstream_model": "paid-wire",
+                   "free": False, "cost_rank": 10},
+        "m-free": {"upstream_base": upstream_base, "upstream_model": "free-wire",
+                   "free": True, "cost_rank": 0},
+    }))
+    (charon_home / "tiers.json").write_text(json.dumps({
+        "order": ["low", "med", "high"],
+        # listed paid-first on purpose — the gateway must re-sort free-first.
+        "members": {"low": [], "med": [], "high": ["m-paid", "m-free"]},
         "aliases": {},
     }))
 
@@ -261,3 +287,109 @@ def test_warm_agent_reused_across_dispatches(tmp_path: Path) -> None:
             med.kill()
     finally:
         high.kill()
+
+
+# ---------------------------------------------------------------------------
+# 4. Multi-member within-tier ordering guard (TIER7B-FOLLOWUP item 1).
+#    TIER7B delegates within-tier free-first/cost_rank ordering to the gateway;
+#    prior tier-lifecycle tests only used SINGLE-member tier pools. This pins a
+#    2-member pool through the per-tier warm-map path: the cheaper/free member
+#    must be the one served. Regress the ordering → the upstream gets 'paid-wire'.
+# ---------------------------------------------------------------------------
+
+
+def test_within_tier_two_member_pool_selects_free_member(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    charon_home = tmp_path / "charon_home"
+    charon_home.mkdir()
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    monkeypatch.setenv("CHARON_HOME", str(charon_home))
+
+    upstream, upstream_base = _up()
+    stub = tmp_path / "stub_agent.py"
+    stub.write_text(_STUB)
+    try:
+        _write_single_tier_two_member_registry(state_dir, charon_home, upstream_base)
+        # One dispatch (max_checkpoints=1, accept=['false']) through the per-tier
+        # warm-map path: agent requests the 'high' vid; the gateway resolves the
+        # 2-member 'high' pool and serves its FIRST live entry (free-first).
+        result = api.run_task(
+            goal="within-tier ordering guard",
+            accept=["false"],
+            role="high",
+            acp_cmd=_acp_cmd(stub),
+            state_dir=str(state_dir),
+            autonomy="L0",
+            max_checkpoints=1,
+        )
+    finally:
+        upstream.shutdown()
+
+    assert result.get("status") != "exhausted", result
+    # The cheaper/free member won within the tier — NOT the paid one, even though
+    # tiers.json lists m-paid first. A within-tier ordering regression flips this.
+    assert upstream.received == ["free-wire"], (
+        f"within-tier ordering regressed: upstream got {upstream.received!r}, "
+        f"expected ['free-wire'] (free-first/cost_rank must pick the cheaper member)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 5. Proxy-teardown-on-setup-error hardening (TIER7B-FOLLOWUP item 2).
+#    A failure in the warm-map build runs AFTER the per-run proxy starts but
+#    BEFORE the run's inner try/finally. The proxy thread must still be torn
+#    down — no leaked gateway thread on a setup failure.
+# ---------------------------------------------------------------------------
+
+
+def test_proxy_torn_down_when_warm_map_build_fails(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    charon_home = tmp_path / "charon_home"
+    charon_home.mkdir()
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    monkeypatch.setenv("CHARON_HOME", str(charon_home))
+
+    upstream, upstream_base = _up()
+    stub = tmp_path / "stub_agent.py"
+    stub.write_text(_STUB)
+
+    # Capture the serve thread of every per-run proxy started during the run.
+    started: list = []
+    real_serve = proxy_server_mod.GatewayProxyServer.serve_in_thread
+
+    def _spy_serve(self):  # type: ignore[no-untyped-def]
+        t = real_serve(self)
+        started.append((self, t))
+        return t
+
+    monkeypatch.setattr(
+        proxy_server_mod.GatewayProxyServer, "serve_in_thread", _spy_serve)
+
+    # Inject a failure into the warm-map build (api._acp_via_renderer), which runs
+    # after proxy-start but before the run's inner try/finally.
+    def _boom(*a: object, **k: object) -> None:
+        raise RuntimeError("warm-map build boom")
+
+    monkeypatch.setattr(api, "_acp_via_renderer", _boom)
+
+    try:
+        _write_two_tier_registry(state_dir, charon_home, upstream_base)
+        with pytest.raises(RuntimeError, match="warm-map build boom"):
+            api.run_task(
+                goal="proxy teardown guard",
+                accept=["false"],
+                role="high",
+                acp_cmd=_acp_cmd(stub),
+                state_dir=str(state_dir),
+                autonomy="L0",
+            )
+    finally:
+        upstream.shutdown()
+
+    assert started, "expected the per-run gateway proxy to have been started"
+    server, thread = started[0]
+    thread.join(timeout=5)
+    assert not thread.is_alive(), (
+        "per-run proxy thread leaked: it was not shut down when the warm-map "
+        "build failed during setup"
+    )
