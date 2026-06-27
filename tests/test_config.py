@@ -9,6 +9,7 @@ import os
 import pytest
 
 from charon import cli, config, gateway, secrets
+from charon.fence import SandboxPolicy, _SANDBOX_ENV
 
 
 def test_add_provider_model_pool_and_summary(monkeypatch, tmp_path):
@@ -123,3 +124,72 @@ def test_providers_add_custom_persists_provider(monkeypatch, tmp_path):
     assert config.load_providers()["deepseek"]["base_url"] == "https://api.deepseek.com/v1"
     assert secrets.load_secrets()["DEEPSEEK_KEY"] == "sk-deep"
     os.environ.pop("DEEPSEEK_KEY", None)
+
+
+# ----------------------------------------- D013: sandbox policy loading
+
+def test_load_sandbox_policy_default_is_hybrid(monkeypatch):
+    monkeypatch.delenv(_SANDBOX_ENV, raising=False)
+    assert config.load_sandbox_policy() is SandboxPolicy.hybrid
+
+
+def test_load_sandbox_policy_from_env(monkeypatch):
+    monkeypatch.setenv(_SANDBOX_ENV, "container")
+    assert config.load_sandbox_policy() is SandboxPolicy.container
+    monkeypatch.setenv(_SANDBOX_ENV, "host")
+    assert config.load_sandbox_policy() is SandboxPolicy.host
+    monkeypatch.setenv(_SANDBOX_ENV, "hybrid")
+    assert config.load_sandbox_policy() is SandboxPolicy.hybrid
+
+
+def test_load_sandbox_policy_env_case_insensitive(monkeypatch):
+    monkeypatch.setenv(_SANDBOX_ENV, "CONTAINER")
+    assert config.load_sandbox_policy() is SandboxPolicy.container
+
+
+def test_load_sandbox_policy_invalid_value_raises(monkeypatch):
+    monkeypatch.setenv(_SANDBOX_ENV, "turbo")
+    with pytest.raises(ValueError, match="invalid CHARON_SANDBOX"):
+        config.load_sandbox_policy()
+
+
+def test_load_sandbox_policy_from_toml(monkeypatch, tmp_path):
+    monkeypatch.delenv(_SANDBOX_ENV, raising=False)
+    toml = tmp_path / "charon.toml"
+    toml.write_text('[worker]\nsandbox = "container"\n')
+    assert config.load_sandbox_policy(toml_path=toml) is SandboxPolicy.container
+
+
+def test_load_sandbox_policy_env_beats_toml(monkeypatch, tmp_path):
+    monkeypatch.setenv(_SANDBOX_ENV, "host")
+    toml = tmp_path / "charon.toml"
+    toml.write_text('[worker]\nsandbox = "container"\n')
+    # env var wins
+    assert config.load_sandbox_policy(toml_path=toml) is SandboxPolicy.host
+
+
+def test_load_sandbox_policy_toml_missing_worker_section(monkeypatch, tmp_path):
+    monkeypatch.delenv(_SANDBOX_ENV, raising=False)
+    toml = tmp_path / "charon.toml"
+    toml.write_text('[gateway]\nport = 8080\n')
+    assert config.load_sandbox_policy(toml_path=toml) is SandboxPolicy.hybrid
+
+
+def test_doctor_shows_sandbox_policy(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    monkeypatch.delenv(_SANDBOX_ENV, raising=False)
+    cli.main(["doctor"])
+    out = capsys.readouterr().out
+    import json
+    data = json.loads(out)
+    assert data["sandbox_policy"] == "hybrid"  # default
+
+
+def test_doctor_sandbox_flag_overrides_env(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    monkeypatch.setenv(_SANDBOX_ENV, "hybrid")
+    cli.main(["doctor", "--sandbox", "container"])
+    out = capsys.readouterr().out
+    import json
+    data = json.loads(out)
+    assert data["sandbox_policy"] == "container"

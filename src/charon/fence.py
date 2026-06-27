@@ -11,12 +11,25 @@ them *impossible*.
 """
 from __future__ import annotations
 
+import enum
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .types import Autonomy, PrivilegedOp
+
+
+class SandboxPolicy(enum.StrEnum):
+    """User-selectable worker sandbox posture (D013).
+
+    hybrid    — default; host OK ≤L1, container/override required for L2+.
+    container — container required for ALL applying rungs; uncontained override refused.
+    host      — uncontained allowed; loud override flags still gate L2+.
+    """
+    hybrid = "hybrid"
+    container = "container"
+    host = "host"
 
 # Minimal env passed to spawned agents. Everything else is scrubbed so a backend
 # cannot inherit credentials, LD_PRELOAD, JAVA_TOOL_OPTIONS, etc.
@@ -37,6 +50,11 @@ _UNCONTAINED_OVERRIDE = "CHARON_ALLOW_UNCONTAINED_AUTONOMY"  # explicit, loud op
 # (ADR-0009 D-ESC-1). Inside the verified container L3 is already the blessed,
 # bounded behaviour (PLAN-tier4 §6); this token only gates the uncontained climb.
 _UNATTENDED_OPT_IN = "CHARON_ALLOW_UNATTENDED"  # explicit, loud, uncontained-L3-only
+
+# Env var the user sets to select the sandbox policy (D013). NOT an escalation
+# token — it is config, not a capability grant, and is scrubbed from the agent
+# env by the _ENV_ALLOW allow-list in scrubbed_env anyway.
+_SANDBOX_ENV = "CHARON_SANDBOX"
 
 # Every env token the escalation gate reads. Kept here so callers (and tests) can
 # assert the scrubbed agent env never carries them (ADR-0009 D-ESC-5): a fenced
@@ -74,23 +92,53 @@ class AutonomyPolicy:
     its own precondition and a rung is grantable only if every lower rung's
     precondition also holds (monotone, non-skipping) — so the gate can never grant
     a rung over a forbidden one. This is a *policy*, not OS isolation: the Mode-B
-    container stays the only real boundary for a live agent (INV-B4 / D-ESC-4)."""
+    container stays the only real boundary for a live agent (INV-B4 / D-ESC-4).
+
+    ``sandbox`` (D013) selects the posture; ``hybrid`` reproduces today's default
+    byte-for-byte and is the only value that existed before this field was added."""
 
     contained: bool  # Mode-B container verified
     uncontained_override: bool  # loud opt-out: run L2+ uncontained anyway
     unattended_opt_in: bool  # distinct, loud opt-in required for L3 full-auto
+    sandbox: SandboxPolicy = field(default=SandboxPolicy.hybrid)  # D013
 
     @classmethod
-    def from_env(cls, env: Mapping[str, str] | None = None) -> AutonomyPolicy:
+    def from_env(
+        cls,
+        env: Mapping[str, str] | None = None,
+        *,
+        sandbox: SandboxPolicy | None = None,
+    ) -> AutonomyPolicy:
         e = os.environ if env is None else env
+        if sandbox is None:
+            raw = e.get(_SANDBOX_ENV, "").strip().lower()
+            try:
+                sandbox = SandboxPolicy(raw) if raw else SandboxPolicy.hybrid
+            except ValueError:
+                sandbox = SandboxPolicy.hybrid
         return cls(
             contained=e.get(_CONTAINER_ENV) == "1",
             uncontained_override=e.get(_UNCONTAINED_OVERRIDE) == "1",
             unattended_opt_in=e.get(_UNATTENDED_OPT_IN) == "1",
+            sandbox=sandbox,
         )
 
     def _rung_ok(self, level: Autonomy) -> bool:
         """Precondition for a SINGLE rung (no climb implied)."""
+        if self.sandbox is SandboxPolicy.container:
+            # ALL applying rungs require the verified container; uncontained override
+            # is refused. L0 (propose-only, no apply) remains freely grantable.
+            if level <= Autonomy.L0:
+                return True
+            return self.contained
+        if self.sandbox is SandboxPolicy.host:
+            # Uncontained allowed; container is irrelevant. Loud overrides still gate L2+.
+            if level <= Autonomy.L1:
+                return True
+            if level is Autonomy.L2:
+                return self.uncontained_override
+            return self.uncontained_override and self.unattended_opt_in
+        # hybrid (default) = EXACTLY today's behavior (D013 invariant).
         if level <= Autonomy.L1:
             return True  # L0 propose / L1 apply-reversible: always grantable
         # L2 (apply-with-consensus): container or the loud uncontained override.
@@ -151,19 +199,29 @@ class AutonomyPolicy:
 class Fence:
     autonomy: Autonomy = Autonomy.L0
 
-    def assert_environment(self, env: Mapping[str, str] | None = None) -> None:
+    def assert_environment(
+        self,
+        env: Mapping[str, str] | None = None,
+        *,
+        sandbox: SandboxPolicy | None = None,
+    ) -> None:
         """Enforce the autonomy escalation gate (ADR-0009 D-ESC-3): fail LOUD when
         the requested level exceeds what the environment authorizes, rather than
         silently clamping to a lower level the operator did not ask for.
 
-        - L0/L1: always permitted.
+        - L0/L1: always permitted (unless ``sandbox=container`` — then requires the
+          verified container at every rung).
         - L2 (apply-with-consensus): needs the Mode-B container
           (``CHARON_CONTAINER_VERIFIED=1``) or the loud uncontained override
           (``CHARON_ALLOW_UNCONTAINED_AUTONOMY=1``) — ADR-0002 §2.3 / INV-B4.
         - L3 (full-auto, unattended, consensus gate REMOVED): the L2 precondition
           AND its own distinct opt-in ``CHARON_ALLOW_UNATTENDED=1``. The flag that
-          unlocks L2 testing does NOT silently grant L3 (D-ESC-1)."""
-        decision = AutonomyPolicy.from_env(env).resolve(self.autonomy)
+          unlocks L2 testing does NOT silently grant L3 (D-ESC-1).
+
+        ``sandbox`` selects the posture (D013). When ``None`` (default),
+        ``CHARON_SANDBOX`` is read from ``env``/``os.environ``. Hybrid reproduces
+        the pre-D013 behavior exactly (backward-compatible default)."""
+        decision = AutonomyPolicy.from_env(env, sandbox=sandbox).resolve(self.autonomy)
         if decision.clamped:
             raise FenceDenied(decision.reason)
 

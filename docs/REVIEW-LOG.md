@@ -7,6 +7,35 @@ physics and records it here.
 
 ---
 
+## 2026-06-26 — S1 (D013) — sandbox policy: user-selectable worker posture
+
+**Change under review:** `config.py`, `fence.py`, `cli.py` — expose `sandbox` policy
+(`hybrid`|`container`|`host`) that maps onto the existing fence env-flag mechanism.
+
+**Plan note (house rule — recorded before code):**
+
+Three mechanization choices:
+
+- **[`SandboxPolicy` lives in `fence.py`, loaded in `config.py`]** The enum belongs next to
+  `AutonomyPolicy` (same gate, same file). `config.py` adds `load_sandbox_policy()` that reads
+  `CHARON_SANDBOX` env var → default `hybrid`. No import cycle: `fence.py` does not import
+  `config.py`; `config.py` imports `fence.SandboxPolicy` only. `cli.py` wires them.
+
+- **[`hybrid` = byte-for-byte current `_rung_ok`]** The hybrid branch is a direct copy of the
+  current `_rung_ok` body. Proven by a regression test that runs both the sandboxed
+  `hybrid` path and the legacy `from_env` default side-by-side with the same env states and
+  asserts identical outcomes. This is the primary safety invariant.
+
+- **[`container` tightens ALL rungs including L0/L1; `host` ignores `contained`]**
+  `container` requires `CHARON_CONTAINER_VERIFIED=1` for *every* rung (D013: "ALL units")
+  and refuses the `CHARON_ALLOW_UNCONTAINED_AUTONOMY` path. `host` treats `contained` as
+  irrelevant — only the loud override flags gate L2/L3. This is `hybrid` but with `contained`
+  always False: the container being set doesn't silently elevate permissions when `host` is
+  chosen. ADDITIVE ONLY: `scrubbed_env`, `ESCALATION_TOKENS`, `FenceDenied`, `Fence.require`
+  are untouched.
+
+---
+
 ## 2026-06-26 — E1 (ADR-0010 wave 1) — engine board + claim substrate
 
 **Change under review:** `engine/board.py` + `engine/claim.py` (D2 board + atomic claim).

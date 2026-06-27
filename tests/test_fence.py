@@ -10,6 +10,8 @@ from charon.fence import (
     AutonomyPolicy,
     Fence,
     FenceDenied,
+    SandboxPolicy,
+    _SANDBOX_ENV,
     detect_escape,
     snapshot_outside,
 )
@@ -144,6 +146,136 @@ def test_escalation_tokens_are_not_leaked_into_scrubbed_env() -> None:
     finally:
         for tok in ESCALATION_TOKENS:
             del os.environ[tok]
+
+
+# ----------------------------------------- D013: sandbox policy gate behavior
+
+# Regression: hybrid must reproduce pre-D013 behavior byte-for-byte.
+# Each case below is run twice — once via the old code path (from_env with no
+# sandbox kw, which defaults to hybrid) and once explicitly (sandbox=hybrid).
+# Any divergence between the two means the default has changed.
+
+def _old_ceiling(env: dict) -> Autonomy:
+    """Simulate the pre-D013 ceiling: from_env with no sandbox argument."""
+    return AutonomyPolicy.from_env(env).ceiling()
+
+
+def _hybrid_ceiling(env: dict) -> Autonomy:
+    return AutonomyPolicy.from_env(env, sandbox=SandboxPolicy.hybrid).ceiling()
+
+
+def test_hybrid_regression_no_tokens() -> None:
+    assert _old_ceiling({}) == _hybrid_ceiling({}) == Autonomy.L1
+
+
+def test_hybrid_regression_contained() -> None:
+    assert _old_ceiling(_CONTAINED) == _hybrid_ceiling(_CONTAINED) == Autonomy.L3
+
+
+def test_hybrid_regression_override_only() -> None:
+    assert _old_ceiling(_OVERRIDE) == _hybrid_ceiling(_OVERRIDE) == Autonomy.L2
+
+
+def test_hybrid_regression_override_plus_unattended() -> None:
+    env = {**_OVERRIDE, **_UNATTENDED}
+    assert _old_ceiling(env) == _hybrid_ceiling(env) == Autonomy.L3
+
+
+def test_sandbox_env_var_read_by_from_env() -> None:
+    # CHARON_SANDBOX in the env dict is honoured by from_env.
+    env = {_SANDBOX_ENV: "host", **_OVERRIDE}
+    pol = AutonomyPolicy.from_env(env)
+    assert pol.sandbox is SandboxPolicy.host
+    assert pol.ceiling() is Autonomy.L2  # override present → L2 in host mode
+
+
+def test_sandbox_env_var_unknown_value_falls_back_to_hybrid() -> None:
+    env = {_SANDBOX_ENV: "bogus"}
+    pol = AutonomyPolicy.from_env(env)
+    assert pol.sandbox is SandboxPolicy.hybrid  # fail-safe
+
+
+# --- policy: container ---
+
+def test_container_policy_l1_refused_without_container() -> None:
+    # Applying rungs (L1+) require the container in container mode.
+    # L0 (propose-only, no apply) stays freely grantable even without the container.
+    pol = AutonomyPolicy.from_env({}, sandbox=SandboxPolicy.container)
+    assert pol.ceiling() is Autonomy.L0  # nothing above L0 grantable without container
+    assert pol._rung_ok(Autonomy.L0) is True   # propose-only: always allowed
+    assert pol._rung_ok(Autonomy.L1) is False  # apply-reversible: container required
+
+
+def test_container_policy_override_is_refused() -> None:
+    # container policy refuses the uncontained-override path even for L2.
+    pol = AutonomyPolicy.from_env(_OVERRIDE, sandbox=SandboxPolicy.container)
+    assert pol.ceiling() is Autonomy.L0
+    assert pol.resolve(Autonomy.L2).clamped is True
+
+
+def test_container_policy_l3_inside_container() -> None:
+    pol = AutonomyPolicy.from_env(_CONTAINED, sandbox=SandboxPolicy.container)
+    assert pol.ceiling() is Autonomy.L3
+    assert pol.resolve(Autonomy.L3).clamped is False
+
+
+def test_container_policy_assert_environment_l2_refuses_without_container() -> None:
+    with pytest.raises(FenceDenied):
+        Fence(Autonomy.L2).assert_environment(env=_OVERRIDE, sandbox=SandboxPolicy.container)
+    # passes inside the container
+    Fence(Autonomy.L2).assert_environment(env=_CONTAINED, sandbox=SandboxPolicy.container)
+
+
+# --- policy: host ---
+
+def test_host_policy_l1_always_ok() -> None:
+    pol = AutonomyPolicy.from_env({}, sandbox=SandboxPolicy.host)
+    assert pol.ceiling() is Autonomy.L1
+    assert pol._rung_ok(Autonomy.L1) is True
+
+
+def test_host_policy_l2_requires_uncontained_override() -> None:
+    # host: override grants L2 (no container needed).
+    pol_with = AutonomyPolicy.from_env(_OVERRIDE, sandbox=SandboxPolicy.host)
+    assert pol_with.ceiling() is Autonomy.L2
+    assert pol_with.resolve(Autonomy.L2).clamped is False
+    # without override: L2 is denied (loud override still required).
+    pol_no = AutonomyPolicy.from_env({}, sandbox=SandboxPolicy.host)
+    assert pol_no.resolve(Autonomy.L2).clamped is True
+
+
+def test_host_policy_container_alone_does_not_grant_l2() -> None:
+    # In host mode the container is irrelevant — the loud override is still needed.
+    pol = AutonomyPolicy.from_env(_CONTAINED, sandbox=SandboxPolicy.host)
+    assert pol.ceiling() is Autonomy.L1
+    assert pol.resolve(Autonomy.L2).clamped is True
+
+
+def test_host_policy_l3_requires_override_and_unattended() -> None:
+    # L3 in host mode: both loud override flags, no container needed.
+    pol = AutonomyPolicy.from_env({**_OVERRIDE, **_UNATTENDED}, sandbox=SandboxPolicy.host)
+    assert pol.ceiling() is Autonomy.L3
+    assert pol.resolve(Autonomy.L3).clamped is False
+    # override alone: caps at L2 (same as hybrid uncontained).
+    pol2 = AutonomyPolicy.from_env(_OVERRIDE, sandbox=SandboxPolicy.host)
+    assert pol2.resolve(Autonomy.L3).clamped is True
+
+
+def test_host_policy_assert_environment_l2_refuses_without_override() -> None:
+    with pytest.raises(FenceDenied):
+        Fence(Autonomy.L2).assert_environment(env=_CONTAINED, sandbox=SandboxPolicy.host)
+    Fence(Autonomy.L2).assert_environment(env=_OVERRIDE, sandbox=SandboxPolicy.host)
+
+
+# --- CHARON_SANDBOX env var flows through Fence.assert_environment ---
+
+def test_assert_environment_reads_sandbox_from_env_dict() -> None:
+    # container policy via env var: assert_environment with no explicit sandbox=
+    # reads CHARON_SANDBOX from the supplied env dict (no override path).
+    env = {_SANDBOX_ENV: "container"}
+    with pytest.raises(FenceDenied):
+        Fence(Autonomy.L2).assert_environment(env={**env, **_OVERRIDE})
+    Fence(Autonomy.L2).assert_environment(env={**env, **_CONTAINED})
 
 
 def test_escape_detection(tmp_path: Path) -> None:

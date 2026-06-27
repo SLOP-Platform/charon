@@ -15,6 +15,36 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from . import secrets
+from .fence import _SANDBOX_ENV, SandboxPolicy
+
+
+def load_sandbox_policy(toml_path: str | Path | None = None) -> SandboxPolicy:
+    """Return the active sandbox policy (D013).
+
+    Resolution order (first non-empty wins):
+    1. ``CHARON_SANDBOX`` env var (``hybrid``|``container``|``host``).
+    2. ``[worker] sandbox`` key in a charon.toml, when ``toml_path`` is given.
+    3. Default: ``hybrid`` (preserves pre-D013 behavior).
+
+    Raises ``ValueError`` on an unrecognised value so misconfiguration is loud.
+    """
+    raw = os.environ.get(_SANDBOX_ENV, "").strip()
+    if not raw and toml_path is not None:
+        import tomllib  # stdlib since 3.11 (same as gateway.py)
+        try:
+            data = tomllib.loads(Path(toml_path).read_text())
+            raw = str(data.get("worker", {}).get("sandbox", "")).strip()
+        except (OSError, Exception):
+            raw = ""
+    if not raw:
+        return SandboxPolicy.hybrid
+    try:
+        return SandboxPolicy(raw.lower())
+    except ValueError:
+        valid = ", ".join(p.value for p in SandboxPolicy)
+        raise ValueError(
+            f"invalid CHARON_SANDBOX value {raw!r}; expected one of: {valid}"
+        ) from None
 
 
 def _validate_base_url(base_url: str) -> None:

@@ -29,6 +29,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
         print("error: run needs --goal and at least one --accept (or --units FILE)",
               file=sys.stderr)
         return 2
+    from . import config
+    from .fence import _SANDBOX_ENV, SandboxPolicy
+    sandbox = SandboxPolicy(args.sandbox) if args.sandbox else config.load_sandbox_policy()
+    # Propagate into the env so coordinator.run → Fence.assert_environment picks it up
+    # without needing a new parameter on the internal API (fence reads CHARON_SANDBOX).
+    os.environ[_SANDBOX_ENV] = sandbox.value
     reviewer = None
     if args.review:
         from .adapters.review_mock import MockReviewer, ReviewMode
@@ -424,9 +430,16 @@ def _cmd_reset(args: argparse.Namespace) -> int:
 
 
 def _cmd_doctor(args: argparse.Namespace) -> int:
+    from . import config
+    from .fence import AutonomyPolicy, SandboxPolicy
+    sandbox = SandboxPolicy(args.sandbox) if args.sandbox else config.load_sandbox_policy()
     cmd = args.backend_cmd.split() if args.backend_cmd else None
     rep = probe(cmd)
-    print(json.dumps(rep.to_dict(), indent=2))
+    out = rep.to_dict()
+    policy = AutonomyPolicy.from_env(sandbox=sandbox)
+    out["sandbox_policy"] = sandbox.value
+    out["autonomy_ceiling"] = policy.ceiling().name
+    print(json.dumps(out, indent=2))
     return 0 if rep.ok else 1
 
 
@@ -454,6 +467,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "vendors for cross-vendor handoff (e.g. mock-a,mock-b)")
     r.add_argument("--autonomy", default="L0", choices=["L0", "L1", "L2", "L3"],
                    help="L2+ requires the Mode-B container (CHARON_CONTAINER_VERIFIED=1)")
+    r.add_argument("--sandbox", default=None, choices=["hybrid", "container", "host"],
+                   help="sandbox posture (D013): hybrid=default, container=require "
+                        "CHARON_CONTAINER_VERIFIED for ALL rungs, host=allow uncontained "
+                        "behind the loud override flags (overrides CHARON_SANDBOX env)")
     r.add_argument("--review", default=None, choices=["pass", "block", "error"],
                    help="consensus reviewer for L2 (demo mock; real reviewer is gated)")
     r.add_argument("--acp-cmd", default=None,
@@ -570,6 +587,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     d = sub.add_parser("doctor", help="probe a real ACP backend (Tier-0)")
     d.add_argument("--backend-cmd", default=None, help='e.g. "claude-code acp"')
+    d.add_argument("--sandbox", default=None, choices=["hybrid", "container", "host"],
+                   help="sandbox posture to report in diagnostics (D013); "
+                        "default reads CHARON_SANDBOX env or 'hybrid'")
     d.set_defaults(func=_cmd_doctor)
 
     v = sub.add_parser("version", help="print version")
