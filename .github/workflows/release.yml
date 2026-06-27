@@ -14,7 +14,10 @@ on:
 
 jobs:
   gate:
-    runs-on: [self-hosted, 4-lom]
+    # Runner is chosen by the CI_RUNNER repo variable (Settings → Variables).
+    # Maintainer sets CI_RUNNER=["self-hosted","4-lom"]; forks don't inherit it and
+    # fall back to GitHub-hosted ubuntu-latest, so forked PRs get working CI.
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
@@ -35,7 +38,10 @@ jobs:
         run: pytest -q
 
   image-smoke:
-    runs-on: [self-hosted, 4-lom]
+    # Runner is chosen by the CI_RUNNER repo variable (Settings → Variables).
+    # Maintainer sets CI_RUNNER=["self-hosted","4-lom"]; forks don't inherit it and
+    # fall back to GitHub-hosted ubuntu-latest, so forked PRs get working CI.
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
@@ -54,7 +60,10 @@ jobs:
 
   publish:
     needs: [gate, image-smoke]
-    runs-on: [self-hosted, 4-lom]
+    # Runner is chosen by the CI_RUNNER repo variable (Settings → Variables).
+    # Maintainer sets CI_RUNNER=["self-hosted","4-lom"]; forks don't inherit it and
+    # fall back to GitHub-hosted ubuntu-latest, so forked PRs get working CI.
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     timeout-minutes: 15
     permissions:
       contents: read
