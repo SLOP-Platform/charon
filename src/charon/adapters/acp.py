@@ -58,6 +58,10 @@ class AcpBackend:
         self._buf = b""
         # Set after each session/new so probe/resume logic can surface it.
         self.last_session_id: str | None = None
+        # The tier vid resolved on the most recent dispatch (ADR-0014 D5). The
+        # `tier` param used to be ignored here; recording the per-dispatch vid is
+        # the structural seam that Phase B (backend-selection-by-tier) builds on.
+        self.last_tier_vid: str | None = None
 
     # ----------------------------------------------------------- lifecycle
     def _start(self, worktree: Path, env: dict[str, str]) -> None:
@@ -143,6 +147,11 @@ class AcpBackend:
         worktree: Path,
         env: dict[str, str],
     ) -> Outcome:
+        # Resolve the tier vid PER-DISPATCH (ADR-0014 D5): the canonical tier
+        # name IS the vid the per-run gateway resolves to a provider chain. Phase
+        # A keys one warm backend by this vid; backend-selection-by-tier
+        # (router.route) is the named Phase B extension point — not built here.
+        self.last_tier_vid = tier.value
         self._start(worktree, env)
         self._rpc("initialize", {"protocolVersion": 1,
                                  "clientCapabilities": {}})
