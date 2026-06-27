@@ -21,19 +21,25 @@ dependencies serialize as the stages here.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from collections import defaultdict
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from . import gitutil
+from . import api, gitutil
 from .coordinator import CostGate, RunResult, _consult_reviewer
 from .fence import Fence, detect_escape, snapshot_outside
 from .ledger import Checkpoint, Ledger
+from .parallel import ParallelResult, Unit, run_parallel
 from .ports.backend import AgentBackend
 from .ports.reviewer import Reviewer
 from .router import StaticRouter
 from .types import Autonomy, PrivilegedOp, WorkUnit
 from .validate import validate as _run_validate
+
+if TYPE_CHECKING:  # type-only — no runtime import cycle (intake imports decompose)
+    from .intake import Plan, PlanUnit
 
 # The fixed Triage→…→Close pipeline (ADR-0004 D8). Order IS the dependency graph.
 ROLE_DAG = ["triage", "plan", "implement", "review", "validate", "close"]
@@ -195,6 +201,174 @@ def run_decomposed(
         # L1: apply reversibly.
         ledger.advance_lkg(head)
         return _result("complete", seq, ledger)
+
+
+# ===================================================================== Phase 2
+# ADR-0008 Phase 2 / ADR-0013 — autonomous decompose→run. The decomposition
+# itself stays mechanical (intake.analyze); what is new here is the **confidence
+# gate** that decides whether a plan may run WITHOUT a per-plan human review, and
+# the **wave runner** that drives a runnable plan through the parallel engine
+# under a shared budget. Honesty (ADR-0007 D10-C): we never claim the splitter is
+# smart — we only auto-run a plan the failure contract already proved disjoint,
+# acceptance-checked, and bounded; anything else falls back to the Phase-1 human
+# gate (ADR-0013 D2). Input is DATA, never instructions (D3); nothing in this file
+# interprets input text — it consumes the already-analysed Plan.
+
+# Bounded unit count (ADR-0008 #5 scope-explosion / ADR-0013 D5). A plan with more
+# units than this is treated as too-vague-to-trust and falls back to the human.
+DEFAULT_MAX_UNITS = 24
+
+
+@dataclass(frozen=True)
+class Confidence:
+    """Verdict of the autonomous-run gate (ADR-0013 D2). ``runnable`` is the only
+    field callers act on; ``score``/``reasons`` are for the audit + plain-language
+    surfacing to the human on fallback."""
+
+    runnable: bool
+    score: float
+    reasons: list[str] = field(default_factory=list)
+
+
+def assess_plan(plan: Plan, *, max_units: int = DEFAULT_MAX_UNITS) -> Confidence:
+    """Decide whether ``plan`` may run autonomously (ADR-0013 D2). Conservative by
+    construction: runnable ONLY if the failure contract left nothing unproven —
+    the plan is ready, carries no propose-only review item, no flagged (un-proven)
+    unit, and is within the unit cap. Any failing condition → not runnable → the
+    caller falls back to the Phase-1 human gate (never runs blind)."""
+    reasons: list[str] = []
+    if not plan.ready:
+        reasons.append(
+            "plan is not ready (missing product acceptance, no runnable unit, or a "
+            "blocking need-more-detail issue) — human gate"
+        )
+    if plan.review_items:
+        reasons.append(
+            f"{len(plan.review_items)} unit(s) have no executable acceptance "
+            "(propose-only) — cannot auto-land, human gate"
+        )
+    n = len(plan.units)
+    if n > max_units:
+        reasons.append(
+            f"too many units ({n} > cap {max_units}) — possible scope explosion, "
+            "human gate"
+        )
+    flagged = [u for u in plan.units if u.flags]
+    if flagged:
+        reasons.append(
+            f"{len(flagged)} unit(s) flagged (inferred scope / unprovable "
+            "independence) — low confidence, human gate"
+        )
+    runnable = not reasons
+    score = 1.0 if runnable else round(max(0.0, 1.0 - 0.25 * len(reasons)), 2)
+    return Confidence(runnable=runnable, score=score, reasons=reasons)
+
+
+# A wave runner has run_parallel's shape; injectable so the gate/wave logic is
+# testable without spinning real backends (the default IS run_parallel).
+WaveRunner = Callable[..., ParallelResult]
+
+
+@dataclass
+class AutonomousRunResult:
+    """Aggregate outcome of an autonomous wave-by-wave run (ADR-0013 D4/D5)."""
+
+    ran: bool
+    units: list[dict] = field(default_factory=list)  # per-unit engine outputs
+    waves_run: int = 0
+    total_cost_usd: float = 0.0
+    total_tokens: int = 0
+    budget_capped: bool = False
+    note: str = ""
+
+
+def _to_unit(
+    pu: PlanUnit, *, repo: str | None, autonomy: str, max_cost_usd: float | None,
+    decompose_units: bool,
+) -> Unit:
+    """Map one analysed ``PlanUnit`` to a parallel-engine ``Unit``. Acceptance and
+    goal are carried verbatim (input-as-data); ownership/wave already shaped the
+    plan, so the engine only needs the runnable fields."""
+    return Unit(
+        goal=pu.goal,
+        accept=list(pu.accept),
+        repo=repo,
+        autonomy=autonomy,
+        max_cost_usd=max_cost_usd,
+        decompose=decompose_units,
+    )
+
+
+def run_plan(
+    plan: Plan,
+    *,
+    runner: WaveRunner | None = None,
+    max_parallel: int = 4,
+    state_dir: str = api.DEFAULT_STATE_DIR,
+    max_cost_usd: float | None = None,
+    max_tokens: int | None = None,
+    repo: str | None = None,
+    autonomy: str = "L0",
+    per_unit_max_cost_usd: float | None = None,
+    decompose_units: bool = False,
+) -> AutonomousRunResult:
+    """Run a runnable ``plan`` through the engine **wave by wave** (ADR-0013 D4).
+    ADR-0008 #1 guarantees units sharing a path are serialized into different
+    waves, so every wave is a set of file-disjoint independent units — exactly
+    what ``run_parallel`` requires. Later waves run only after earlier ones,
+    honouring inferred dependencies (#2).
+
+    The cumulative cost/token budget threads across waves (ADR-0013 D5): each wave
+    is given the REMAINING budget and the run halts at the first wave that
+    exhausts it (``SharedBudget`` bounded-overshoot). Callers MUST gate with
+    ``assess_plan`` first — this assumes a runnable plan."""
+    run = runner or run_parallel
+
+    by_wave: dict[int, list[PlanUnit]] = defaultdict(list)
+    for u in plan.units:
+        by_wave[u.wave].append(u)
+
+    out = AutonomousRunResult(ran=True)
+    for wave in sorted(by_wave):
+        if max_cost_usd is not None:
+            remaining_cost = max_cost_usd - out.total_cost_usd
+            if remaining_cost <= 0:
+                out.budget_capped = True
+                out.note = f"shared budget exhausted before wave {wave}"
+                break
+        else:
+            remaining_cost = None
+        if max_tokens is not None:
+            remaining_tokens = max_tokens - out.total_tokens
+            if remaining_tokens <= 0:
+                out.budget_capped = True
+                out.note = f"shared token budget exhausted before wave {wave}"
+                break
+        else:
+            remaining_tokens = None
+
+        wave_units = [
+            _to_unit(u, repo=repo, autonomy=autonomy,
+                     max_cost_usd=per_unit_max_cost_usd,
+                     decompose_units=decompose_units)
+            for u in by_wave[wave]
+        ]
+        res = run(
+            wave_units,
+            max_parallel,
+            state_dir=state_dir,
+            max_cost_usd=remaining_cost,
+            max_tokens=remaining_tokens,
+        )
+        out.units.extend(res.units)
+        out.total_cost_usd += res.total_cost_usd
+        out.total_tokens += res.total_tokens
+        out.waves_run += 1
+        if res.budget_capped:
+            out.budget_capped = True
+            out.note = f"shared budget cap reached at wave {wave}"
+            break
+    return out
 
 
 def _ids(ledger: Ledger) -> list[str]:
