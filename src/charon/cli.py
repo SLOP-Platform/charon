@@ -438,6 +438,10 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     out = rep.to_dict()
     out["sandbox_policy"] = load_sandbox_policy().value
     out["autonomy_ceiling"] = AutonomyPolicy.from_env().ceiling().name
+    if cmd is None:
+        out["status"] = "no backend configured"
+        print(json.dumps(out, indent=2))
+        return 0
     print(json.dumps(out, indent=2))
     return 0 if rep.ok else 1
 
@@ -839,6 +843,13 @@ def run_work(
 def _cmd_work(args: argparse.Namespace) -> int:
     if args.sandbox:
         os.environ["CHARON_SANDBOX"] = args.sandbox
+    is_mock = args.backend == "mock"
+    if is_mock:
+        print(
+            "mock backend makes no changes — pass --backend acp "
+            "--acp-cmd '<agent> acp' for real work",
+            file=sys.stderr,
+        )
     overrides = {
         "max_parallel": args.max_parallel,
         "capacity_policy": args.capacity_policy,
