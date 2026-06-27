@@ -29,6 +29,14 @@ def _cmd_run(args: argparse.Namespace) -> int:
         print("error: run needs --goal and at least one --accept (or --units FILE)",
               file=sys.stderr)
         return 2
+    if args.sandbox is not None:
+        from .config import SandboxPolicy
+        try:
+            SandboxPolicy(args.sandbox)  # validate early; raises ValueError on bad input
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        os.environ["CHARON_SANDBOX"] = args.sandbox
     reviewer = None
     if args.review:
         from .adapters.review_mock import MockReviewer, ReviewMode
@@ -426,7 +434,11 @@ def _cmd_reset(args: argparse.Namespace) -> int:
 def _cmd_doctor(args: argparse.Namespace) -> int:
     cmd = args.backend_cmd.split() if args.backend_cmd else None
     rep = probe(cmd)
-    print(json.dumps(rep.to_dict(), indent=2))
+    out = rep.to_dict()
+    from .fence import AutonomyPolicy
+    pol = AutonomyPolicy.from_env()
+    out["sandbox"] = {"policy": pol.sandbox.value, "ceiling": pol.ceiling().name}
+    print(json.dumps(out, indent=2))
     return 0 if rep.ok else 1
 
 
@@ -484,6 +496,11 @@ def build_parser() -> argparse.ArgumentParser:
                         "(Triage→Plan→Implement→Review→Validate→Close) instead of "
                         "the plain single-unit loop — one ledger, role-tagged "
                         "checkpoints (PERF-4/D5)")
+    r.add_argument("--sandbox", default=None, choices=["hybrid", "container", "host"],
+                   help="worker sandbox posture (D013): hybrid (default, today's gate) | "
+                        "container (CHARON_CONTAINER_VERIFIED required for all rungs) | "
+                        "host (uncontained, loud override required for L2+). "
+                        "Also readable via CHARON_SANDBOX env var.")
     r.set_defaults(func=_cmd_run)
 
     ld = sub.add_parser("land",

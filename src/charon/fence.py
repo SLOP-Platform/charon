@@ -8,6 +8,12 @@ post-run escape scan. It is NOT, by itself, OS-level isolation. The structural
 boundary for a live skip-permissions agent is the Mode B container (ADR-0002
 §2.3). This module makes escapes *detectable and refusable*; the container makes
 them *impossible*.
+
+D013: the gate honours a user-selectable ``SandboxPolicy`` from
+:mod:`charon.config`.  The default (``hybrid``) is byte-for-byte the existing
+behaviour.  ``container`` tightens it (uncontained refused for *all* rungs);
+``host`` mirrors the hybrid host path unchanged (override required for L2+,
+D-ESC-1 still applies for uncontained L3).
 """
 from __future__ import annotations
 
@@ -16,6 +22,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from .config import SandboxPolicy
 from .types import Autonomy, PrivilegedOp
 
 # Minimal env passed to spawned agents. Everything else is scrubbed so a backend
@@ -74,23 +81,58 @@ class AutonomyPolicy:
     its own precondition and a rung is grantable only if every lower rung's
     precondition also holds (monotone, non-skipping) — so the gate can never grant
     a rung over a forbidden one. This is a *policy*, not OS isolation: the Mode-B
-    container stays the only real boundary for a live agent (INV-B4 / D-ESC-4)."""
+    container stays the only real boundary for a live agent (INV-B4 / D-ESC-4).
+
+    The ``sandbox`` field (D013) selects which flavour of gate applies:
+
+    - ``hybrid`` (default): EXACTLY the current behaviour — host OK ≤L1, container
+      OR loud override for L2+, container OR (override+unattended) for L3.
+    - ``container``: verified container required for ALL rungs; the uncontained
+      override is refused.
+    - ``host``: host OK ≤L1, loud override required for L2+, override+unattended
+      required for uncontained L3 (D-ESC-1 still applies; container ignored).
+    """
 
     contained: bool  # Mode-B container verified
     uncontained_override: bool  # loud opt-out: run L2+ uncontained anyway
     unattended_opt_in: bool  # distinct, loud opt-in required for L3 full-auto
+    sandbox: SandboxPolicy = SandboxPolicy.hybrid  # D013 — default preserves today's gate
 
     @classmethod
-    def from_env(cls, env: Mapping[str, str] | None = None) -> AutonomyPolicy:
+    def from_env(
+        cls,
+        env: Mapping[str, str] | None = None,
+        *,
+        sandbox: SandboxPolicy | None = None,
+    ) -> AutonomyPolicy:
         e = os.environ if env is None else env
+        if sandbox is None:
+            sandbox = SandboxPolicy.from_env(e)
         return cls(
             contained=e.get(_CONTAINER_ENV) == "1",
             uncontained_override=e.get(_UNCONTAINED_OVERRIDE) == "1",
             unattended_opt_in=e.get(_UNATTENDED_OPT_IN) == "1",
+            sandbox=sandbox,
         )
 
     def _rung_ok(self, level: Autonomy) -> bool:
         """Precondition for a SINGLE rung (no climb implied)."""
+        if self.sandbox is SandboxPolicy.container:
+            # Container mode: every rung — including L0/L1 — requires the verified
+            # container.  The uncontained override is refused; it cannot substitute.
+            return self.contained
+
+        if self.sandbox is SandboxPolicy.host:
+            # Host mode: L0/L1 always OK; L2+ require the loud uncontained override;
+            # container is irrelevant (not checked, grants nothing extra).
+            # Uncontained L3 still needs the DISTINCT unattended opt-in (D-ESC-1).
+            if level <= Autonomy.L1:
+                return True
+            if level is Autonomy.L2:
+                return self.uncontained_override
+            return self.uncontained_override and self.unattended_opt_in
+
+        # hybrid (default): EXACTLY the current gate — byte-for-byte unchanged.
         if level <= Autonomy.L1:
             return True  # L0 propose / L1 apply-reversible: always grantable
         # L2 (apply-with-consensus): container or the loud uncontained override.
@@ -124,6 +166,28 @@ class AutonomyPolicy:
         return EscalationDecision(requested, granted, cap, reason)
 
     def _deny_reason(self, requested: Autonomy) -> str:
+        if self.sandbox is SandboxPolicy.container:
+            return (
+                f"{requested.name} refused: sandbox=container requires "
+                f"{_CONTAINER_ENV}=1 for all rungs; the uncontained override "
+                f"({_UNCONTAINED_OVERRIDE}) is not accepted in this mode."
+            )
+
+        if self.sandbox is SandboxPolicy.host:
+            # Uncontained L3 with the override but no distinct opt-in (D-ESC-1).
+            if requested is Autonomy.L3 and self.uncontained_override:
+                return (
+                    f"{requested.name} (full-auto, unattended) in host sandbox "
+                    f"needs its own explicit opt-in {_UNATTENDED_OPT_IN}=1 on top "
+                    f"of {_UNCONTAINED_OVERRIDE}=1 — it removes the consensus gate "
+                    f"(D-ESC-1; dangerous, you accept the blast radius)."
+                )
+            return (
+                f"{requested.name} in host sandbox requires "
+                f"{_UNCONTAINED_OVERRIDE}=1 (dangerous; you accept the blast radius)."
+            )
+
+        # hybrid (default): current messages — UNCHANGED.
         # Uncontained L3 with the override but no distinct opt-in: the specific
         # hole this gate closes (D-ESC-1).
         if (
@@ -156,7 +220,10 @@ class Fence:
         the requested level exceeds what the environment authorizes, rather than
         silently clamping to a lower level the operator did not ask for.
 
-        - L0/L1: always permitted.
+        The active ``SandboxPolicy`` is resolved from ``CHARON_SANDBOX`` in the
+        environment (D013; default ``hybrid`` = byte-for-byte today's gate).
+
+        - L0/L1: always permitted (hybrid/host); container-required in container mode.
         - L2 (apply-with-consensus): needs the Mode-B container
           (``CHARON_CONTAINER_VERIFIED=1``) or the loud uncontained override
           (``CHARON_ALLOW_UNCONTAINED_AUTONOMY=1``) — ADR-0002 §2.3 / INV-B4.

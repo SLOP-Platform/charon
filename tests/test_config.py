@@ -123,3 +123,100 @@ def test_providers_add_custom_persists_provider(monkeypatch, tmp_path):
     assert config.load_providers()["deepseek"]["base_url"] == "https://api.deepseek.com/v1"
     assert secrets.load_secrets()["DEEPSEEK_KEY"] == "sk-deep"
     os.environ.pop("DEEPSEEK_KEY", None)
+
+
+# ------------------------------------------- D013: SandboxPolicy (S1)
+
+from charon.config import SandboxPolicy
+
+
+def test_sandbox_policy_default_is_hybrid(monkeypatch) -> None:
+    monkeypatch.delenv("CHARON_SANDBOX", raising=False)
+    assert SandboxPolicy.from_env({}) is SandboxPolicy.hybrid
+
+
+def test_sandbox_policy_from_env_all_values(monkeypatch) -> None:
+    for val in ("hybrid", "container", "host"):
+        monkeypatch.setenv("CHARON_SANDBOX", val)
+        assert SandboxPolicy.from_env() is SandboxPolicy(val)
+
+
+def test_sandbox_policy_from_env_invalid_raises(monkeypatch) -> None:
+    monkeypatch.setenv("CHARON_SANDBOX", "nope")
+    with pytest.raises(ValueError, match="CHARON_SANDBOX"):
+        SandboxPolicy.from_env()
+
+
+def test_sandbox_policy_from_toml_value() -> None:
+    assert SandboxPolicy.from_toml_value("hybrid") is SandboxPolicy.hybrid
+    assert SandboxPolicy.from_toml_value("container") is SandboxPolicy.container
+    assert SandboxPolicy.from_toml_value("host") is SandboxPolicy.host
+    with pytest.raises(ValueError, match="sandbox="):
+        SandboxPolicy.from_toml_value("bad")
+
+
+def test_sandbox_policy_enum_values() -> None:
+    assert SandboxPolicy.hybrid.value == "hybrid"
+    assert SandboxPolicy.container.value == "container"
+    assert SandboxPolicy.host.value == "host"
+
+
+def test_cli_run_sandbox_flag_sets_env(monkeypatch, tmp_path) -> None:
+    """CLI: --sandbox container sets CHARON_SANDBOX before the run call."""
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    # monkeypatch.delenv is a no-op (no cleanup registered) when the var is absent,
+    # so we guard with an explicit try/finally to clean up the direct os.environ
+    # mutation the CLI makes.
+    _prev = os.environ.pop("CHARON_SANDBOX", None)
+    try:
+        captured: list[str] = []
+        import charon.api as _api
+
+        def _spy(*a, **kw):
+            captured.append(os.environ.get("CHARON_SANDBOX", "UNSET"))
+            raise RuntimeError("short-circuit")
+
+        monkeypatch.setattr(_api, "run_task", _spy)
+        rc = cli.main(["run", "--goal", "x", "--accept", "true", "--sandbox", "container"])
+        assert rc == 2  # RuntimeError → caught as RuntimeError → exit 2
+        assert captured and captured[0] == "container"
+    finally:
+        if _prev is None:
+            os.environ.pop("CHARON_SANDBOX", None)
+        else:
+            os.environ["CHARON_SANDBOX"] = _prev
+
+
+def test_cli_run_sandbox_invalid_exits_2(monkeypatch, tmp_path) -> None:
+    # argparse validates choices and calls sys.exit(2) directly.
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    import pytest as _pytest
+    with _pytest.raises(SystemExit) as exc:
+        cli.main(["run", "--goal", "x", "--accept", "true", "--sandbox", "bad"])
+    assert exc.value.code == 2
+
+
+def test_cli_doctor_shows_sandbox(monkeypatch, tmp_path) -> None:
+    import json as _json
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    monkeypatch.delenv("CHARON_SANDBOX", raising=False)
+    from charon.doctor import DoctorReport
+    import charon.cli as _cli
+
+    def _fake_probe(cmd):
+        rep = DoctorReport()
+        rep.spawned = True
+        rep.initialized = True
+        return rep
+
+    # patch the reference that cli already bound via "from .doctor import probe"
+    monkeypatch.setattr(_cli, "probe", _fake_probe)
+    output: list[str] = []
+    monkeypatch.setattr("builtins.print", lambda *a, **kw: output.append(str(a[0])))
+    rc = cli.main(["doctor"])
+    assert rc == 0
+    combined = "\n".join(output)
+    data = _json.loads(combined)
+    assert "sandbox" in data
+    assert data["sandbox"]["policy"] == "hybrid"
+    assert "ceiling" in data["sandbox"]

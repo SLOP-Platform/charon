@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from charon.config import SandboxPolicy
 from charon.fence import (
     ESCALATION_TOKENS,
     AutonomyPolicy,
@@ -145,6 +146,162 @@ def test_escalation_tokens_are_not_leaked_into_scrubbed_env() -> None:
         for tok in ESCALATION_TOKENS:
             del os.environ[tok]
 
+
+# ----------------------------------- D013: sandbox policy gate (S1)
+
+def _pol(env: dict, sandbox: SandboxPolicy) -> AutonomyPolicy:
+    """Helper: build a policy with an explicit sandbox, bypassing env-var lookup."""
+    return AutonomyPolicy.from_env(env, sandbox=sandbox)
+
+
+# --- hybrid regression: must be byte-for-byte the existing default gate ---------
+
+def test_hybrid_regression_matches_default() -> None:
+    """hybrid == the current default at every env/rung combination (D013)."""
+    envs = [
+        {},
+        _CONTAINED,
+        _OVERRIDE,
+        _UNATTENDED,
+        {**_OVERRIDE, **_UNATTENDED},
+        {**_CONTAINED, **_OVERRIDE},
+    ]
+    for env in envs:
+        default = AutonomyPolicy.from_env(env, sandbox=SandboxPolicy.hybrid)
+        # ceiling and every resolve result must match
+        for level in Autonomy:
+            assert default.ceiling() == _pol(env, SandboxPolicy.hybrid).ceiling(), env
+            dr = default.resolve(level)
+            hr = _pol(env, SandboxPolicy.hybrid).resolve(level)
+            assert dr.granted == hr.granted, (env, level)
+            assert dr.clamped == hr.clamped, (env, level)
+
+
+def test_hybrid_default_deny_no_tokens() -> None:
+    pol = _pol({}, SandboxPolicy.hybrid)
+    assert pol.ceiling() is Autonomy.L1
+
+
+def test_hybrid_contained_grants_l3() -> None:
+    pol = _pol(_CONTAINED, SandboxPolicy.hybrid)
+    assert pol.ceiling() is Autonomy.L3
+
+
+def test_hybrid_override_alone_caps_at_l2() -> None:
+    pol = _pol(_OVERRIDE, SandboxPolicy.hybrid)
+    assert pol.ceiling() is Autonomy.L2
+    assert pol.resolve(Autonomy.L3).clamped is True
+
+
+def test_hybrid_uncontained_l3_needs_both_flags() -> None:
+    pol = _pol({**_OVERRIDE, **_UNATTENDED}, SandboxPolicy.hybrid)
+    assert pol.ceiling() is Autonomy.L3
+
+
+# --- container mode: ALL rungs require container; override refused ---------------
+
+def test_container_mode_refuses_l0_without_container() -> None:
+    # Even L0 is refused uncontained — the whole point of container mode.
+    pol = _pol({}, SandboxPolicy.container)
+    assert pol.ceiling() is Autonomy.L0
+    assert pol.resolve(Autonomy.L0).clamped is False  # L0 ceiling IS L0 — not clamped
+    # but assert_environment with L1 raises:
+    with pytest.raises(FenceDenied, match="sandbox=container"):
+        Fence(Autonomy.L1).assert_environment(env={"CHARON_SANDBOX": "container"})
+
+
+def test_container_mode_with_container_grants_l3() -> None:
+    pol = _pol(_CONTAINED, SandboxPolicy.container)
+    assert pol.ceiling() is Autonomy.L3
+    assert pol.resolve(Autonomy.L3).clamped is False
+
+
+def test_container_mode_refuses_l2_even_with_override() -> None:
+    # PROVEN-RED: override is refused in container mode — container is mandatory.
+    pol = _pol(_OVERRIDE, SandboxPolicy.container)
+    assert pol.resolve(Autonomy.L2).clamped is True
+    with pytest.raises(FenceDenied, match="sandbox=container"):
+        Fence(Autonomy.L2).assert_environment(
+            env={**_OVERRIDE, "CHARON_SANDBOX": "container"}
+        )
+
+
+def test_container_mode_refuses_l2_even_with_override_and_unattended() -> None:
+    # Even all uncontained tokens together are refused in container mode.
+    env = {**_OVERRIDE, **_UNATTENDED, "CHARON_SANDBOX": "container"}
+    with pytest.raises(FenceDenied, match="sandbox=container"):
+        Fence(Autonomy.L2).assert_environment(env=env)
+
+
+def test_container_mode_ceiling_is_l0_without_container() -> None:
+    pol = _pol({}, SandboxPolicy.container)
+    assert pol.ceiling() is Autonomy.L0
+
+
+# --- host mode: L0/L1 always OK; L2+ need override; D-ESC-1 still applies -----
+
+def test_host_mode_l0_l1_always_ok() -> None:
+    for level in (Autonomy.L0, Autonomy.L1):
+        pol = _pol({}, SandboxPolicy.host)
+        assert pol.resolve(level).clamped is False
+
+
+def test_host_mode_l2_requires_override() -> None:
+    pol = _pol({}, SandboxPolicy.host)
+    assert pol.resolve(Autonomy.L2).clamped is True
+    pol_with_override = _pol(_OVERRIDE, SandboxPolicy.host)
+    assert pol_with_override.resolve(Autonomy.L2).clamped is False
+
+
+def test_host_mode_l3_requires_override_and_unattended() -> None:
+    # D-ESC-1 still applies in host mode: override alone does NOT grant L3.
+    pol_override_only = _pol(_OVERRIDE, SandboxPolicy.host)
+    assert pol_override_only.resolve(Autonomy.L3).clamped is True
+    with pytest.raises(FenceDenied, match="CHARON_ALLOW_UNATTENDED"):
+        Fence(Autonomy.L3).assert_environment(
+            env={**_OVERRIDE, "CHARON_SANDBOX": "host"}
+        )
+
+
+def test_host_mode_l3_with_both_flags_granted() -> None:
+    pol = _pol({**_OVERRIDE, **_UNATTENDED}, SandboxPolicy.host)
+    assert pol.ceiling() is Autonomy.L3
+    assert pol.resolve(Autonomy.L3).clamped is False
+
+
+def test_host_mode_container_alone_does_not_grant_l2() -> None:
+    # In host mode the container flag is irrelevant — override is still required.
+    pol = _pol(_CONTAINED, SandboxPolicy.host)
+    assert pol.resolve(Autonomy.L2).clamped is True
+
+
+# --- env-var resolution: CHARON_SANDBOX routes to the right policy -------------
+
+def test_sandbox_env_var_default_is_hybrid(monkeypatch) -> None:
+    monkeypatch.delenv("CHARON_SANDBOX", raising=False)
+    pol = AutonomyPolicy.from_env({})
+    assert pol.sandbox is SandboxPolicy.hybrid
+
+
+def test_sandbox_env_var_container(monkeypatch) -> None:
+    monkeypatch.setenv("CHARON_SANDBOX", "container")
+    pol = AutonomyPolicy.from_env()
+    assert pol.sandbox is SandboxPolicy.container
+
+
+def test_sandbox_env_var_host(monkeypatch) -> None:
+    monkeypatch.setenv("CHARON_SANDBOX", "host")
+    pol = AutonomyPolicy.from_env()
+    assert pol.sandbox is SandboxPolicy.host
+
+
+def test_sandbox_env_var_invalid_raises(monkeypatch) -> None:
+    monkeypatch.setenv("CHARON_SANDBOX", "badvalue")
+    with pytest.raises(ValueError, match="CHARON_SANDBOX"):
+        AutonomyPolicy.from_env()
+
+
+# -----------------------------------------------------------------------
 
 def test_escape_detection(tmp_path: Path) -> None:
     worktree = tmp_path / "repo"

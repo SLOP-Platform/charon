@@ -5,16 +5,69 @@ setup page, and the config the gateway reads by default — so adding a provider
 (CLI or browser) makes it work with no hand-edited TOML. API keys are NOT stored
 here; they live in ``secrets.json`` (see :mod:`charon.secrets`). This file holds only
 non-secret config: base URLs, ``key_env`` references, model maps, pools.
+
+Also owns the ``SandboxPolicy`` enum and its env/TOML resolution (D013).
 """
 from __future__ import annotations
 
+import enum
 import json
 import os
 import re
+from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from . import secrets
+
+# ---------------------------------------------------------------------------
+# D013 — sandbox posture (worker isolation policy)
+# ---------------------------------------------------------------------------
+
+_SANDBOX_ENV = "CHARON_SANDBOX"  # env override: hybrid | container | host
+_SANDBOX_DEFAULT = "hybrid"
+_SANDBOX_VALID = {"hybrid", "container", "host"}
+
+
+class SandboxPolicy(enum.Enum):
+    """Worker sandbox posture (D013 / ADR-0010).
+
+    hybrid    — host OK for ≤L1 + loud-override; container required for L2+.
+                This is EXACTLY the current default gate — no change from today.
+    container — require CHARON_CONTAINER_VERIFIED for ALL units; the uncontained
+                path is refused even with the loud override.
+    host      — allow uncontained behind the existing loud override flags
+                (D-ESC-1 still applies: uncontained L3 needs the distinct opt-in).
+    """
+
+    hybrid = "hybrid"
+    container = "container"
+    host = "host"
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str] | None = None) -> SandboxPolicy:
+        """Resolve from env var, falling back to ``hybrid``."""
+        e = os.environ if env is None else env
+        raw = e.get(_SANDBOX_ENV, _SANDBOX_DEFAULT).strip().lower()
+        try:
+            return cls(raw)
+        except ValueError as exc:
+            raise ValueError(
+                f"invalid {_SANDBOX_ENV}={raw!r}; must be one of "
+                f"{sorted(_SANDBOX_VALID)}"
+            ) from exc
+
+    @classmethod
+    def from_toml_value(cls, value: str) -> SandboxPolicy:
+        """Parse a charon.toml ``sandbox = '...'`` value."""
+        raw = str(value).strip().lower()
+        try:
+            return cls(raw)
+        except ValueError as exc:
+            raise ValueError(
+                f"invalid sandbox={raw!r} in charon.toml; must be one of "
+                f"{sorted(_SANDBOX_VALID)}"
+            ) from exc
 
 
 def _validate_base_url(base_url: str) -> None:
