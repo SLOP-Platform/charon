@@ -180,23 +180,33 @@ def run_task(
             live = {vid: c for vid in tier_vids if (c := gw_cfg.pools.get(vid, []))}
             proxy_server = GatewayProxyServer(
                 pools=live, model_ids=sorted(live), observer=GatewayProxy())
-            proxy_server.serve_in_thread()
-            if not live:
-                # Dry pool — re-home the retired select_live_entry early-return
-                # (ADR-0014 B4): the same {status:"exhausted", note:…} shape.
+            # Setup hardening (TIER7B-FOLLOWUP): the proxy thread is started HERE,
+            # but the run's inner try/finally (which reaps it) is not yet in scope.
+            # Phase B widened the gap from one render to N — if the warm-map build
+            # throws after proxy-start, the gateway thread would leak (the outer
+            # finally only reclaims the worktree). Tear the proxy down on ANY setup
+            # failure so no orphaned gateway thread survives.
+            try:
+                proxy_server.serve_in_thread()
+                if not live:
+                    # Dry pool — re-home the retired select_live_entry early-return
+                    # (ADR-0014 B4): the same {status:"exhausted", note:…} shape.
+                    proxy_server.shutdown()
+                    return {"status": "exhausted", "task_id": task_id, "checkpoints": 0,
+                            "verified": [], "remaining": sorted(ledger.remaining()),
+                            "note": f"tier {tier_vid!r} dry; no providers configured for this tier",
+                            "target_repo": target, "state_dir": str(sdir)}
+                # Warm-agent-per-tier (D010 warm-pool default): one reused subprocess
+                # per live tier vid, keyed by the vid so router.route selects by the
+                # dispatch's tier. Each agent requests its vid; the shared per-run
+                # gateway resolves + fails over. A stage whose tier is dry has no keyed
+                # backend, so router.route falls back to the canonical (first) live tier.
+                run_backends: dict = {
+                    vid: _acp_via_renderer(acp_cmd, proxy_server, vid) for vid in live
+                }
+            except BaseException:
                 proxy_server.shutdown()
-                return {"status": "exhausted", "task_id": task_id, "checkpoints": 0,
-                        "verified": [], "remaining": sorted(ledger.remaining()),
-                        "note": f"tier {tier_vid!r} dry; no providers configured for this tier",
-                        "target_repo": target, "state_dir": str(sdir)}
-            # Warm-agent-per-tier (D010 warm-pool default): one reused subprocess per
-            # live tier vid, keyed by the vid so router.route selects by the
-            # dispatch's tier. Each agent requests its vid; the shared per-run
-            # gateway resolves + fails over. A stage whose tier is dry has no keyed
-            # backend, so router.route falls back to the canonical (first) live tier.
-            run_backends: dict = {
-                vid: _acp_via_renderer(acp_cmd, proxy_server, vid) for vid in live
-            }
+                raise
         elif proxy_upstream and backend is None and backends is None and "acp" in acp_names:
             if not acp_cmd:
                 raise ValueError("--proxy with an acp backend needs --acp-cmd")
@@ -319,7 +329,13 @@ def _start_proxy_acp(acp_cmd: str, upstream: str, key: str, model: str):
     observer = GatewayProxy()
     server = GatewayProxyServer(upstream_base=upstream, api_key=key, observer=observer)
     server.serve_in_thread()
-    backend = _acp_via_renderer(acp_cmd, server, model)
+    # Same setup-hardening as the tier path (TIER7B-FOLLOWUP): if the launch render
+    # throws after the proxy starts, shut it down rather than leak the thread.
+    try:
+        backend = _acp_via_renderer(acp_cmd, server, model)
+    except BaseException:
+        server.shutdown()
+        raise
     return backend, server
 
 
