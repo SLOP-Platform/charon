@@ -23,3 +23,6 @@ secrets.*.json
 *-keys.env
 charon.secrets.*
 .charon/secrets*
+
+# generated rollup (source of truth = docs/review-log/*.md fragments; run tools/render_review_log.py)
+docs/REVIEW-LOG.md
