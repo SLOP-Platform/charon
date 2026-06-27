@@ -67,18 +67,32 @@ class StaticRouter:
             raise RuntimeError(f"no pool configured for role {role!r}")
         return choose_from_pool(pool, exclude=exclude, code_safe_only=code_safe_only)
 
+    def tier_for(self, task_class: str) -> Tier:
+        """The capability tier ``task_class`` maps to under the static policy. Pure
+        policy lookup — no backend needed — so callers (api's warm-map builder) can
+        enumerate the tiers a decompose run will span before any backend exists."""
+        tier_name = self.policy.get(task_class, self.policy.get("_default", "med"))
+        return Tier(tier_name)
+
     def route(self, task_class: str, *, exclude: set[str] | None = None) -> Route:
         """Choose (tier, backend, budget) for a unit before generation.
 
+        Backend selection is **by tier** (ADR-0014 D6): when a backend is keyed by
+        the dispatch's tier vid — the warm-agent-per-tier map api builds for a
+        multi-tier decompose run — route to it, so each stage reaches its own tier's
+        model. A single-backend run (the Phase-A / non-decompose case) has no
+        tier-keyed backend, so it falls through to the sole candidate unchanged.
+
         H6: handoff re-runs this with the exhausted provider excluded — so
-        handoff order is a routing decision, not a static fallback list."""
+        handoff order is a routing decision, not a static fallback list. An excluded
+        tier backend drops out of ``candidates`` and the fallback takes over."""
         exclude = exclude or set()
-        tier_name = self.policy.get(task_class, self.policy.get("_default", "med"))
-        tier = Tier(tier_name)
+        tier = self.tier_for(task_class)
         candidates = [b for b in self.backends if b not in exclude]
         if not candidates:
             raise RuntimeError(
                 f"no backend available for task_class={task_class!r} "
                 f"(excluded={sorted(exclude)})"
             )
-        return Route(tier=tier, backend=candidates[0], budget=Budget())
+        backend = tier.value if tier.value in candidates else candidates[0]
+        return Route(tier=tier, backend=backend, budget=Budget())
