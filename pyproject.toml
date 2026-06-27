@@ -65,4 +65,7 @@ testpaths = ["tests"]
 filterwarnings = ["ignore::UserWarning"]
 # Repo root on sys.path so `tools.*` imports resolve under the bare `pytest`
 # console script in CI (not just `python -m pytest`, which adds CWD itself).
-pythonpath = ["."]
+# `src` is listed so tests import THIS checkout's package, not a `charon`
+# editable-installed elsewhere — without it, pytest run inside a git worktree
+# resolves `import charon` back to the main clone's src (false red/green).
+pythonpath = [".", "src"]
