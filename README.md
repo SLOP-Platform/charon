@@ -12,8 +12,57 @@ cap, the next serves automatically — same request, no waiting, no lost work.
 
 ## Install
 
+**One-liner (recommended).** The bootstrap installer checks prerequisites
+(Python >=3.11, git, pipx), installs anything missing via your OS package manager
+(apt / dnf / brew), then installs Charon — with friendly output and a NEXT STEPS
+guide at the end:
+
+```bash
+curl -fsSL https://github.com/SLOP-Platform/charon/releases/latest/download/install.sh | bash
+# wget alternative:
+wget -qO- https://github.com/SLOP-Platform/charon/releases/latest/download/install.sh | bash
+```
+
+> **NOTE:** the one-liner points at a GitHub **release asset**. Publishing
+> `install.sh` as a release asset is a release/deploy step — the URL above is
+> **forward-looking until the first release**. Until then, run the script from a
+> checkout: `bash install.sh`.
+
+**Cautious? Download → inspect → run.** The installer is short and inspectable:
+
+```bash
+curl -fsSL https://github.com/SLOP-Platform/charon/releases/latest/download/install.sh -o install.sh
+less install.sh        # read it first
+bash install.sh        # --help for flags; -y to skip prompts
+```
+
+**Already have Python 3.11+ and pipx?** Skip the bootstrap entirely:
+
 ```bash
 pipx install git+https://github.com/SLOP-Platform/charon      # or: uvx, or pip install
+```
+
+### Update
+
+Re-run the one-liner — it detects an existing install, pulls the newest version,
+reinstalls cleanly, and **preserves your settings in `~/.charon`**. The bare
+`pipx` form works too:
+
+```bash
+curl -fsSL https://github.com/SLOP-Platform/charon/releases/latest/download/install.sh | bash
+pipx reinstall charon      # equivalent if you installed via pipx
+```
+
+Want a clean slate? `bash install.sh --reinstall` resets `~/.charon` (it backs up
+the old config first). Re-running to *update the program* never touches settings —
+`charon setup` / `charon reset` are what touch your *settings*.
+
+### Uninstall
+
+```bash
+pipx uninstall charon                      # if installed via pipx
+rm -rf ~/.charon-venv ~/.local/bin/charon  # if the venv fallback was used
+rm -rf ~/.charon                           # optional: also remove your settings
 ```
 
 ## Quick start
