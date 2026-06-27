@@ -143,6 +143,16 @@ class AcpBackend:
         worktree: Path,
         env: dict[str, str],
     ) -> Outcome:
+        from .. import config as _config
+
+        # Wire the tier vid as the requested model id so the gateway resolves
+        # the tier pool and fails over transparently (DTC tier-abstraction
+        # §"Engine consumption"). Only inject when the tier has members;
+        # absent/unconfigured tiers preserves today's behavior (no regression).
+        tier_vid = tier.value
+        if _config.tier_members(tier_vid):
+            env = {**env, "ANTHROPIC_MODEL": tier_vid}
+
         self._start(worktree, env)
         self._rpc("initialize", {"protocolVersion": 1,
                                  "clientCapabilities": {}})
