@@ -1,6 +1,6 @@
 # ADR-0009 — L3 unattended autonomy: the escalation gate
 
-Status: **Proposed** (2026-06-26). Refines ADR-0001 §6 / ADR-0003 §7 (autonomy
+Status: **Accepted** (2026-06-26). Refines ADR-0001 §6 / ADR-0003 §7 (autonomy
 ladder) and ADR-0002 §2.3 / INV-B4 (Mode-B container is the real boundary). Folds
 in the Tier-4 reconciliation (PLAN-tier4 §6, REVIEW-LOG 2026-06-24) that gated L2+
 behind the container. Reconciles a 3-lens adversarial review of this ticket (T7) —
