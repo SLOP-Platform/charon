@@ -71,13 +71,15 @@ h1{font-size:1.2rem} h2{font-size:1rem;margin-top:1.4rem;color:#89b4fa}
 table{border-collapse:collapse;width:100%;margin-top:.3rem}
 th,td{text-align:left;padding:.3rem .6rem;border-bottom:1px solid #313244}
 .cool{color:#f38ba8}.ok{color:#a6e3a1}.muted{color:#6c7086}
+.tier{background:#89b4fa;color:#11111b;border-radius:3px;padding:0 .3rem;font-size:.8rem}
 code{background:#1e1e2e;padding:.1rem .3rem;border-radius:3px}
 </style></head><body>
 <h1>Charon Gateway <span class=muted id=ts></span></h1>
 <div id=usage></div>
 <h2>Providers</h2><table id=providers><thead><tr><th>provider<th>served<th>failed
 <th>errors<th>cost $<th>last<th>cooldown</tr></thead><tbody></tbody></table>
-<h2>Pools</h2><table id=pools><tbody></tbody></table>
+<h2>Pools</h2><table id=pools><thead><tr><th>pool<th>tier<th>chain</tr></thead>
+<tbody></tbody></table>
 <h2>Recent failovers</h2><div id=failovers class=muted>none yet</div>
 <script>
 const tok=new URLSearchParams(location.search).get('token');
@@ -96,8 +98,11 @@ async function tick(){
    '<td>'+s.failed+'<td>'+(s.errors||0)+'<td>'+(s.cost||0).toFixed(4)+'<td>'+esc(s.last_status)+
    '<td>'+(cd?('<span class=cool>'+cd+'s</span>'):'<span class=ok>ok</span>')+'</tr>')}
  const lb=document.querySelector('#pools tbody');lb.innerHTML='';
- for(const [m,ps] of Object.entries(d.pools)){lb.insertAdjacentHTML('beforeend',
-   '<tr><td><code>'+esc(m)+'</code><td>'+ps.map(esc).join(' &rarr; ')+'</tr>')}
+ const TIERS=['low','med','high'];
+ for(const [m,ps] of Object.entries(d.pools)){
+  const tag=TIERS.includes(m)?'<span class=tier>tier</span>':'';
+  lb.insertAdjacentHTML('beforeend',
+   '<tr><td><code>'+esc(m)+'</code><td>'+tag+'<td>'+ps.map(esc).join(' &rarr; ')+'</tr>')}
  const fb=document.getElementById('failovers');const ev=d.recent_failovers.slice(-15).reverse();
  fb.innerHTML=ev.length?ev.map(e=>esc(e.model)+': '+e.failovers.map(f=>esc(f.provider)+
    '='+esc(f.status)).join(', ')+' &rarr; '+esc(e.served_by)).join('<br>'):'none yet';
@@ -148,6 +153,13 @@ td,th{text-align:left;padding:.2rem .5rem;border-bottom:1px solid #313244}
 <div><label>pool id</label><input id=plid placeholder="auto"></div>
 <div><label>models</label><input id=plmem size=36 placeholder="comma,separated,model,ids"></div>
 <button onclick=addPool()>Create pool</button></fieldset>
+<fieldset><h2>Tiers</h2>
+<div class=muted>canonical tiers low&rarr;med&rarr;high; members are model ids from above</div>
+<div><label>low</label><input id=tlow size=36 placeholder="comma,separated,model,ids"></div>
+<div><label>med</label><input id=tmed size=36 placeholder="comma,separated,model,ids"></div>
+<div><label>high</label><input id=thigh size=36 placeholder="comma,separated,model,ids"></div>
+<div><label>aliases</label><input id=talias size=36 placeholder="opus=high, sonnet=med"></div>
+<button onclick=setTiers()>Save tiers</button></fieldset>
 <h2>Current config</h2><div id=cfg></div>
 <script>
 const tok=new URLSearchParams(location.search).get('token');
@@ -183,6 +195,15 @@ async function addPool(){
   const b={id:val('plid')||'auto',members:val('plmem').split(',').map(s=>s.trim()).filter(Boolean)};
   const {ok,d}=await post('/charon/pools',b);
   msg(ok?('created pool '+b.id):('error: '+(d.error&&d.error.message)),ok); if(ok)load();}
+function mids(id){return val(id).split(',').map(s=>s.trim()).filter(Boolean)}
+async function setTiers(){
+  const aliases={};
+  val('talias').split(',').map(s=>s.trim()).filter(Boolean).forEach(p=>{
+    const i=p.indexOf('='); if(i>0)aliases[p.slice(0,i).trim()]=p.slice(i+1).trim();});
+  const b={order:['low','med','high'],
+    members:{low:mids('tlow'),med:mids('tmed'),high:mids('thigh')},aliases};
+  const {ok,d}=await post('/charon/tiers',b);
+  msg(ok?'saved tiers':('error: '+(d.error&&d.error.message)),ok); if(ok)load();}
 async function load(){
   let r; try{r=await fetch('/charon/config',{headers:H})}catch(e){return}
   if(!r.ok){msg('not authorized — append ?token=… to the URL',false);return}
@@ -408,7 +429,7 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 return
             if self.command == "POST" and path_only in (
                     "/charon/providers", "/charon/models", "/charon/models/import",
-                    "/charon/pools", "/charon/remove"):
+                    "/charon/pools", "/charon/tiers", "/charon/remove"):
                 host = self.headers.get("Host", "")
                 origin = self.headers.get("Origin")
                 if origin and urlsplit(origin).netloc != host:  # CSRF: cross-origin write
