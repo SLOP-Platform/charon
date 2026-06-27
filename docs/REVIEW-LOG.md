@@ -7,6 +7,28 @@ physics and records it here.
 
 ---
 
+## 2026-06-26 — E1 (ADR-0010 wave 1) — engine board + claim substrate
+
+**Change under review:** `engine/board.py` + `engine/claim.py` (D2 board + atomic claim).
+Three mechanization choices beyond ADR-0010, recorded before code:
+
+- **[Collision rule → deterministic tiebreak]** ADR-0010 D2 says a unit is claimable only
+  when it "shares no owned path with another in-wave ready unit." Taken literally that
+  deadlocks any two colliding ready units (each blocks the other). Mechanized as: among a
+  colliding set of dep-satisfied *ready* units, only the lowest-`id` one is claimable; the
+  rest unblock once it leaves `ready`. Plus: never claimable while any *claimed* unit
+  overlaps. This serializes colliding units deterministically with no deadlock. Owned-path
+  overlap reuses `land.in_scope` (nested-or-equal), not a new matcher.
+- **[Atomic primitive = O_CREAT|O_EXCL]** `ledger`'s lock is `existence-check + TTL/PID
+  liveness + atomic-replace`, which has a create TOCTOU under N-way contention. The claim
+  generalizes the *liveness/TTL/PID* logic (imported from `ledger`, not reimplemented) but
+  uses an exclusive create as the test-and-set so "never two holders" holds under real
+  contention. No second lock subsystem; no heartbeat/remote-lease (per D2).
+- **[Durable epoch file]** the monotonic claim **epoch** (DTC Lens-4 fencing token) lives in
+  a per-unit `<id>.epoch` file that survives release/crash, so a reclaim's epoch is strictly
+  greater than the stale holder's. `release` is epoch-fenced (a stale token cannot release a
+  fresh claim). Stale reclaim refuses the in-flight worktree — only a FRESH worktree.
+
 ## 2026-06-26 — ADR-0010 — Native work-engine substrate (process-failure correction)
 
 **Change under review:** promoting ADR-0007's coordination substrate from "deferred
