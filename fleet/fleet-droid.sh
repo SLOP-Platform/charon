@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# THE ONE COMMAND PER TAB.  Usage:  fleet-droid.sh <opus|sonnet|haiku> [--wait <min>] [--retries <n>]
+# THE ONE COMMAND PER TAB.  Usage:  fleet-droid.sh <low|med|high|opus|sonnet|haiku> [--wait <min>] [--retries <n>]
 # Loops: claim a ticket for this tier -> run ONE ephemeral claude session on it (worktree, work,
 # DRAFT PR base=master, never merges) -> mark submitted -> claim the next. Stands down when no
 # tier-eligible work remains.
@@ -10,19 +10,28 @@
 # open the pool of tabs ONCE; each rides through dependency gaps (grabbing the next ticket the
 # instant a merge unblocks it) and drains to a clean exit when the board is done. No per-ticket
 # hand-launching; the manager stays gate-only.
+#
+# DEFAULT is --wait 3: a bare `fleet-droid.sh <tier>` self-feeds (waits through empty checks)
+# rather than quitting on the first empty claim. Pass `--wait 0` for the old one-shot behavior
+# (claim once, stand down when empty); raise `--retries` to ride out longer dependency gaps.
 set -euo pipefail
 FLEET="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-usage(){ echo "usage: fleet-droid.sh <opus|sonnet|haiku> [--wait <min>] [--retries <n>] [--patience <cycles>]"; exit 2; }
-TIER=""; WAIT_MIN=0; RETRIES=6; PATIENCE=1
+usage(){ echo "usage: fleet-droid.sh <low|med|high|opus|sonnet|haiku> [--wait <min>] [--retries <n>] [--patience <cycles>]"; exit 2; }
+TIER=""; WAIT_MIN=3; RETRIES=6; PATIENCE=1
 while [ $# -gt 0 ]; do case "$1" in
   --wait)     WAIT_MIN="${2:?--wait needs minutes}"; shift 2;;
   --retries)  RETRIES="${2:?--retries needs a count}"; shift 2;;
   --patience) PATIENCE="${2:?--patience needs a cycle count}"; shift 2;;
-  opus|sonnet|haiku) TIER="$1"; shift;;
+  opus|sonnet|haiku|low|med|high) TIER="$1"; shift;;       # arg allowlist widened: canonical + legacy
   *) usage;;
 esac; done
 [ -n "$TIER" ] || usage
-MODEL="$TIER"
+# De-hardwire the launch model: resolve tier -> concrete Anthropic model NAME via config
+# (`charon tier resolve … --executor anthropic`, TIER-3). `claude -p` speaks the Anthropic
+# Messages API while the gateway is OpenAI-only, so the fleet path does NOT route through the
+# gateway — it's a name lookup, no Anthropic↔OpenAI shim. `|| MODEL="$TIER"` keeps half-migrated
+# setups working: legacy opus/sonnet/haiku still launch unchanged when tiers.json is absent.
+MODEL="$(charon tier resolve "$TIER" --executor anthropic 2>/dev/null)" || MODEL="$TIER"
 DROID="$TIER-$$"; current=""; empties=0
 # Release the in-flight claim if the tab is Ctrl-C'd / killed (no stuck tickets).
 cleanup(){ if [ -n "${current:-}" ] && [ ! -e "$FLEET/state/submitted/$current" ]; then
