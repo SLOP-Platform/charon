@@ -82,6 +82,16 @@ PRESETS: dict[str, ProviderPreset] = {
                              note="Cohere (base verified, HTTP 401 on /models)."),
     "openai": ProviderPreset("https://api.openai.com/v1", "OPENAI_API_KEY",
                              note="OpenAI (base verified, HTTP 401 on /models)."),
+    # Routed / aggregator + energy-aware hosted providers — OpenAI-compatible,
+    # config-only (no adapter). HF is a router across many inference providers.
+    "huggingface": ProviderPreset(
+        "https://router.huggingface.co/v1", "HF_TOKEN",
+        note="HF Inference Providers router; OpenAI-compatible, chat-only; model ids "
+             "are org/model[:provider|:fastest|:cheapest]."),
+    "neuralwatt": ProviderPreset(
+        "https://api.neuralwatt.com/v1", "NEURALWATT_API_KEY",
+        note="Neuralwatt energy-aware inference; OpenAI-compatible chat. Base from "
+             "docs/plugins — live-verify with `charon providers test`."),
     # Unverified / limited endpoint bases — use caution; override base_url if endpoint 404s.
     "perplexity": ProviderPreset("https://api.perplexity.ai", "PERPLEXITY_API_KEY",
                                  strip_v1=False,

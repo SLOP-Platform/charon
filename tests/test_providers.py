@@ -23,6 +23,16 @@ def test_new_hosted_presets_present():
         assert n in providers.PRESETS and providers.PRESETS[n].key_env
 
 
+def test_huggingface_neuralwatt_presets_present():
+    # config-only OpenAI-compatible presets (no adapter): resolve, /v1 base, key_env set
+    for n, key in (("huggingface", "HF_TOKEN"), ("neuralwatt", "NEURALWATT_API_KEY")):
+        p = providers.resolve(n)
+        assert p.base_url.endswith("/v1"), n
+        assert p.key_env == key, n
+    assert providers.resolve("huggingface").base_url == "https://router.huggingface.co/v1"
+    assert providers.resolve("neuralwatt").base_url == "https://api.neuralwatt.com/v1"
+
+
 def test_preset_resolves_known_provider():
     p = providers.resolve("openrouter")
     assert p.base_url == "https://openrouter.ai/api/v1"
