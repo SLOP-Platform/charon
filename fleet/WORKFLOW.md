@@ -143,10 +143,15 @@ It claims ONE ticket and runs `claude -p` with `JOIN-PROMPT.md` + the ticket. Th
 
 ## 5. Hard rules (never violate)
 - Droids open DRAFT PRs and **never merge**; the manager merges (propose-default).
-- Manager **never** launches state-mutating **workers** (droids) — that's the SLOP-incident
-  guardrail. It **MAY** spawn **read-only** analysis (adversarial reviewers / audits) that
-  merge/push/mutate nothing. Manager **never** pushes by hand; pushes go through the gated
-  `land-push.sh` and only when the **AUTONOMOUS** lever is ON (else the operator pushes).
+- Manager **never** launches FLEET BUILD-DROIDS (the product workers) — operator's job, the
+  SLOP-incident guardrail. But it **SHOULD delegate its OWN substantive work** (investigation,
+  audits, analysis, contained implementation, drafting) to **sub-sessions** to keep the primary
+  session lean for operator communication — reviewing/owning the result in primary. Keep work
+  in the primary session only when it must be: gating decisions, merges, pushes, operator
+  dialogue, quick inline state checks, and tightly-sequenced mutations. (Read-only reviewers are
+  always fine; a delegated implementation sub-session may mutate, but the manager owns the
+  result.) Manager **never** pushes by hand; pushes go through the gated `land-push.sh` and only
+  when the **AUTONOMOUS** lever is ON (else the operator pushes).
 - Privileged core = **stdlib-only**; no `pip install -e`; **no secrets** committed.
 - One file is owned by exactly one in-flight ticket. Need another's file → STOP.
 - Gate green every commit; conventional commits; per-ticket review-log fragment.

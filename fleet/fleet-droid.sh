@@ -49,8 +49,13 @@ while true; do
 === YOUR ASSIGNED TICKET: $id ===
 $spec"
   if claude -p --model "$MODEL" --dangerously-skip-permissions "$prompt"; then
-    bash "$FLEET/submit.sh" "$id" || true; current=""
-    echo "[$DROID] $id submitted (PR open). Next…"
+    if bash "$FLEET/submit.sh" "$id"; then
+      current=""; echo "[$DROID] $id submitted (PR open). Next…"
+    else
+      # submit refused: work committed but no real PR. Keep the claim + worktree (don't let
+      # another droid redo it); submit flagged state/needs-push for the manager to land.
+      current=""; echo "[$DROID] $id: work committed but NO PR opened — flagged needs-push; manager lands it. Next…"
+    fi
   else
     bash "$FLEET/release.sh" "$id" || true; current=""
     echo "[$DROID] $id session exited non-zero — released for retry."

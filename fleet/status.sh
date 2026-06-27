@@ -37,6 +37,7 @@ for f in "$B"/*.md; do
   tier="$(meta tier "$f")"; br="$(meta branch "$f")"; dep="$(meta depends_on "$f")"
   if   [ -e "$S/done/$id" ];      then st=DONE;    note="-"; rdone=$((rdone+1))
   elif [ -e "$S/submitted/$id" ]; then st=PR-OPEN; note="$(age_of "$S/submitted/$id") ago"; propen=$((propen+1))
+  elif [ -e "$S/needs-push/$id" ]; then st=NEEDS-PUSH; note="committed, NO PR — land-needs-push.sh $id"
   elif [ -e "$S/claims/$id" ];    then st=claimed; note="$(awk 'NR==1{print $1}' "$S/claims/$id") · $(age_of "$S/claims/$id")"; claimed=$((claimed+1))
   elif ! deps_done "$dep"; then st=blocked; note="needs $dep"; blocked=$((blocked+1))
   else st=ready; note="-"; ready=$((ready+1)); fi
