@@ -13,10 +13,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import subprocess
 import sys
 import urllib.request
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 from . import __version__, api
 from .doctor import probe
@@ -437,6 +441,300 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     return 0 if rep.ok else 1
 
 
+# ----------------------------------------------------------------- work engine
+# The OPT-IN native work-engine end-to-end (ADR-0010): a unit plan → board →
+# scheduler (each unit through the SINGLE fenced ``coordinator.run``) →
+# propose-default land → top-level end-product validation. Everything engine-side
+# is imported LAZILY inside the command body so it never lands on a module-load
+# path — the gateway boundary guard (test_boundary.py) stays green and ``charon
+# work`` is one more opt-in orchestrator consumer on the shared core (D001/D011).
+
+_WORK_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _slug_id(title: str, used: set[str]) -> str:
+    """A board/ledger-safe unit id from a free-text title, deduped against
+    ``used``. Mirrors intake's id scheme for the consumer-units fallback."""
+    from .ledger import validate_task_id
+    base = _WORK_SLUG_RE.sub("-", title.lower()).strip("-")[:48]
+    if not base or not base[0].isalnum():
+        base = ("u-" + base).strip("-") or "unit"
+    candidate, n = base, 2
+    while candidate in used:
+        candidate = f"{base[:60]}-{n}"
+        n += 1
+    validate_task_id(candidate)
+    used.add(candidate)
+    return candidate
+
+
+def _load_plan(plan_path: str) -> tuple[list[dict], str]:
+    """Load a unit plan into ``(units, product_acceptance)``.
+
+    Accepts either an **intake plan JSON** (``schema: charon-intake-plan/…`` — the
+    richer artifact with ids, ``owns``, ``depends_on`` and a top-level
+    ``product_acceptance``), or a **consumer units file** (TOML/JSON of
+    ``{goal, accept, tier, owned_paths}`` via ``land.load_units``) for which ids
+    are synthesized and there is no top-level acceptance."""
+    p = Path(plan_path)
+    if not p.is_file():
+        raise ValueError(f"plan/units file not found: {plan_path}")
+    data: Any = None
+    if p.suffix.lower() == ".json":
+        data = json.loads(p.read_text(encoding="utf-8"))
+    elif p.suffix.lower() not in (".toml",):
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            data = None
+    if isinstance(data, dict) and str(data.get("schema", "")).startswith(
+        "charon-intake-plan"
+    ):
+        units: list[dict] = []
+        for u in data.get("units", []):
+            units.append({
+                "id": u["id"],
+                "tier": u.get("tier", ""),
+                "owns": list(u.get("owns") or u.get("owned_paths") or []),
+                "depends_on": list(u.get("depends_on", [])),
+                "goal": u.get("goal", ""),
+                "accept": list(u.get("accept", [])),
+            })
+        if not units:
+            raise ValueError("intake plan has no loadable units")
+        return units, str(data.get("product_acceptance", ""))
+    # Fallback: a consumer-supplied units file (no ids/deps/top-level acceptance).
+    from . import land
+    used: set[str] = set()
+    units = []
+    for d in land.load_units(plan_path):
+        units.append({
+            "id": _slug_id(d["goal"], used),
+            "tier": d.get("tier", ""),
+            "owns": list(d.get("owned_paths", [])),
+            "depends_on": [],
+            "goal": d["goal"],
+            "accept": list(d["accept"]),
+        })
+    return units, ""
+
+
+def _engine_options(state_dir: Path, overrides: dict | None) -> dict:
+    """Read engine options GENERICALLY (ADR-0010): an optional
+    ``<state-dir>/engine.json`` object overlaid by CLI ``overrides``. Forwarded to
+    the limiter + scheduler via ``.get()`` lookups, so a later ticket adds an
+    option (capacity tuning, ``auto_land``, …) by writing a key — cli.py need not
+    change."""
+    opts: dict = {}
+    p = state_dir / "engine.json"
+    if p.is_file():
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"engine.json is not readable JSON: {exc}") from exc
+        if not isinstance(data, dict):
+            raise ValueError("engine.json must be a JSON object of engine options")
+        opts.update(data)
+    if overrides:
+        opts.update({k: v for k, v in overrides.items() if v is not None})
+    return opts
+
+
+def _prepare_base_repo(repo: str | None, state_dir: Path) -> Path:
+    """The shared base repo per-unit worktrees are cut from. A real ``--repo`` is
+    used as-is; otherwise a fresh sandbox base repo (the demo path). One shared
+    object store is what lets the integrated end-product be assembled from each
+    unit's blessed commit (D-E6-3)."""
+    from . import gitutil
+    if repo:
+        base = Path(repo).resolve()
+        if not gitutil.is_repo(base):
+            raise ValueError(f"--repo {base} is not a git repository")
+        return base
+    base = (state_dir / "base" / "repo").resolve()
+    if base.exists() and gitutil.is_repo(base):
+        return base
+    base.mkdir(parents=True, exist_ok=True)
+    gitutil.init_repo(base)
+    return base
+
+
+def _default_backend_factory(
+    backend_name: str, acp_cmd: str | None
+) -> Callable[..., Any]:
+    """Build the warm worker(s) for a unit by reusing the SAME backend resolution
+    the ``charon run`` path uses (mock|acp|cross-vendor). A fresh instance per unit
+    (CONC-3); the fenced ``CoordinatorRunner`` kills them on the way out."""
+    def factory(unit: Any, checks: Any) -> Any:
+        return api._resolve_backends(None, None, backend_name, checks, acp_cmd)
+    return factory
+
+
+def _integrate(base: Path, done_tips: list[tuple[Any, str]], state_dir: Path) -> str:
+    """Assemble the integrated end-product into ONE worktree off ``base`` by
+    materializing each DONE unit's blessed owned files from its commit. Owns are
+    disjoint (the board/intake invariant) so there is never a conflict; a path
+    absent from a commit is simply skipped."""
+    from . import gitutil
+    integ = (state_dir / "integration" / "repo").resolve()
+    if integ.exists():
+        gitutil.remove_worktree(base, integ)
+    gitutil.add_worktree(base, integ, gitutil.head(base))
+    for unit, tip in done_tips:
+        for path in unit.owns:
+            subprocess.run(
+                ["git", "-C", str(integ), "checkout", tip, "--", path],
+                capture_output=True, text=True,
+            )
+    return str(integ)
+
+
+def run_work(
+    plan_path: str,
+    *,
+    repo: str | None = None,
+    state_dir: str = api.DEFAULT_STATE_DIR,
+    backend_name: str = "mock",
+    acp_cmd: str | None = None,
+    autonomy: str = "L1",
+    engine_overrides: dict | None = None,
+    backend_factory: Callable[..., Any] | None = None,
+    runner: Any | None = None,
+) -> dict:
+    """Drive the opt-in work-engine end-to-end and return a JSON-able report.
+
+    Plan → seed :class:`engine.board.Board` → :class:`engine.scheduler.Scheduler`
+    drains it, each unit driven through the SINGLE fenced ``coordinator.run`` (the
+    default :class:`CoordinatorRunner`; never a second dispatch path, D008) → each
+    DONE unit through the propose-default land gate → the D12 validator runs ONCE
+    on the integrated end-product against the top-level acceptance (D-E6-6).
+
+    ``runner``/``backend_factory`` are test seams; production uses the default
+    fenced runner + the ``charon run`` backend resolution."""
+    from . import gitutil, land
+    from .engine.board import DONE, Board, Unit
+    from .engine.capacity import select_limiter
+    from .engine.scheduler import CoordinatorRunner, Scheduler
+    from .ledger import Ledger
+    from .validate import validate_product
+
+    sdir = Path(state_dir).resolve()
+    sdir.mkdir(parents=True, exist_ok=True)
+    units, product_acceptance = _load_plan(plan_path)
+    opts = _engine_options(sdir, engine_overrides)
+
+    base = _prepare_base_repo(repo, sdir)
+    base_head = gitutil.head(base)
+
+    board_path = sdir / "work-board.json"
+    if board_path.exists():
+        board_path.unlink()
+    board = Board.create(board_path)
+    for u in units:
+        board.add(Unit(
+            id=u["id"], tier=u.get("tier", ""), owns=list(u.get("owns", [])),
+            depends_on=list(u.get("depends_on", [])), goal=u.get("goal", ""),
+            accept=list(u.get("accept", [])),
+        ))
+
+    def _wt(unit: Unit) -> str:
+        dest = sdir / "work" / unit.id / "repo"
+        if dest.exists():
+            gitutil.remove_worktree(base, dest)
+        gitutil.add_worktree(base, dest, base_head)
+        return str(dest)
+
+    if runner is None:
+        bf = backend_factory or _default_backend_factory(backend_name, acp_cmd)
+        runner = CoordinatorRunner(
+            state_dir=str(sdir), backend_factory=bf, autonomy=autonomy
+        )
+
+    limiter = select_limiter(
+        policy=str(opts.get("capacity_policy", "fixed")),
+        caps=opts.get("caps"),
+        default=int(opts.get("default_cap", 1)),
+        aimd=opts.get("aimd"),
+    )
+    claims_dir = sdir / "claims"
+    claims_dir.mkdir(parents=True, exist_ok=True)
+    sched = Scheduler(
+        board, claims_dir, runner, worktree_factory=_wt, state_dir=str(sdir),
+        limiter=limiter, max_parallel=int(opts.get("max_parallel", 4)),
+        max_cost_usd=opts.get("max_cost_usd"), max_tokens=opts.get("max_tokens"),
+        max_attempts=int(opts.get("max_attempts", 1)),
+    )
+    drain = sched.drain()
+
+    # ``auto_land`` is read generically for later tickets; the trust-extending
+    # behavior stays gated (ADR-0010 D5), so the default reports proposals only.
+    auto_land = bool(opts.get("auto_land", False))
+
+    by_id = {r.unit_id: r for r in drain.results}
+    unit_reports: list[dict] = []
+    done_tips: list[tuple[Any, str]] = []
+    for bu in board.units():
+        res = by_id.get(bu.id)
+        rep: dict = {
+            "unit_id": bu.id,
+            "status": res.status if res else "not-run",
+            "disposition": res.disposition.value if res else "n/a",
+            "board_state": bu.state,
+            "note": res.note if res else "",
+            "land": None,
+        }
+        if bu.state == DONE:
+            ledger = Ledger.load(sdir, bu.id)
+            rep["land"] = land.land_unit(ledger, list(bu.owns)).to_dict()
+            if ledger.lkg_ref:
+                done_tips.append((bu, ledger.lkg_ref))
+        unit_reports.append(rep)
+
+    integ = _integrate(base, done_tips, sdir)
+    validation = validate_product(product_acceptance, integ)
+
+    return {
+        "board_path": str(board_path),
+        "rounds": drain.rounds,
+        "budget_capped": drain.budget_capped,
+        "auto_land": auto_land,
+        "product_acceptance": product_acceptance,
+        "integration_worktree": integ,
+        "units": unit_reports,
+        "validation": asdict(validation),
+    }
+
+
+def _cmd_work(args: argparse.Namespace) -> int:
+    if args.sandbox:
+        os.environ["CHARON_SANDBOX"] = args.sandbox
+    overrides = {
+        "max_parallel": args.max_parallel,
+        "capacity_policy": args.capacity_policy,
+        "default_cap": args.default_cap,
+        "max_cost_usd": args.max_cost_usd,
+        "max_tokens": args.max_tokens,
+    }
+    try:
+        out = run_work(
+            args.units,
+            repo=args.repo,
+            state_dir=args.state_dir,
+            backend_name=args.backend,
+            acp_cmd=args.acp_cmd,
+            autonomy=args.autonomy,
+            engine_overrides=overrides,
+        )
+    except (ValueError, RuntimeError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(out, indent=2))
+    ok = out["validation"]["passed"] and all(
+        u["status"] == "complete" for u in out["units"]
+    )
+    return 0 if ok else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="charon", description="Thin cross-vendor agent orchestrator")
     p.add_argument("--version", action="version", version=f"charon {__version__}")
@@ -525,6 +823,44 @@ def build_parser() -> argparse.ArgumentParser:
     ld.add_argument("--repo-slug", default=None,
                     help="owner/name for `gh pr create --repo` (default: gh infers it)")
     ld.set_defaults(func=_cmd_land)
+
+    wk = sub.add_parser(
+        "work",
+        help="run the OPT-IN native work-engine end-to-end: a unit plan → board → "
+             "scheduler (each unit through the fenced coordinator.run) → "
+             "propose-default land → end-product validation (ADR-0010; opt-in "
+             "orchestrator, never on the gateway path)")
+    wk.add_argument("--units", required=True,
+                    help="a unit plan: an intake plan JSON (charon-intake-plan) or "
+                         "a consumer units file (TOML/JSON of {goal, accept, tier, "
+                         "owned_paths})")
+    wk.add_argument("--repo", default=None,
+                    help="git repo to cut per-unit worktrees from (default: a "
+                         "sandbox base repo under the state dir)")
+    wk.add_argument("--state-dir", default=api.DEFAULT_STATE_DIR)
+    wk.add_argument("--backend", default="mock",
+                    help="each unit's warm worker backend (mock|acp); comma-"
+                         "separated configures cross-vendor handoff")
+    wk.add_argument("--acp-cmd", default=None,
+                    help="launch argv for a real ACP agent backend, e.g. 'opencode acp'")
+    wk.add_argument("--autonomy", default="L1", choices=["L0", "L1", "L2", "L3"],
+                    help="per-unit autonomy (default L1: keep + land changes; "
+                         "L2+ requires the Mode-B container)")
+    wk.add_argument("--max-parallel", type=int, default=None,
+                    help="max concurrent units (overrides engine.json)")
+    wk.add_argument("--capacity-policy", default=None, choices=["fixed", "aimd"],
+                    help="per-tier capacity limiter policy (default fixed; aimd is "
+                         "gated/opt-in, DECISIONS D004)")
+    wk.add_argument("--default-cap", type=int, default=None,
+                    help="default per-tier concurrency cap for the fixed limiter")
+    wk.add_argument("--max-cost-usd", type=float, default=None,
+                    help="shared (set-level) cost cap in USD; bounded-overshoot")
+    wk.add_argument("--max-tokens", type=int, default=None,
+                    help="shared (set-level) token cap; bounded-overshoot")
+    wk.add_argument("--sandbox", default=None,
+                    choices=["hybrid", "container", "host"],
+                    help="sandbox posture (D013/ADR-0010)")
+    wk.set_defaults(func=_cmd_work)
 
     g = sub.add_parser("gateway",
                        help="run the standalone OpenAI-compatible failover gateway")
