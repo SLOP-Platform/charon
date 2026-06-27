@@ -47,6 +47,10 @@ _PATH_LABELS = frozenset({"files", "file", "paths", "path", "owns", "owned_paths
 _ACCEPT_LABELS = frozenset({"accept", "acceptance", "test", "tests", "check", "checks"})
 _TIER_LABELS = frozenset({"tier"})
 _DEP_LABELS = frozenset({"depends", "depends_on", "deps", "on", "after"})
+# The source ticket's OWN id. Preserved through import so completion can later be
+# reported back to the right external ticket (the write-back/sink seam). Slugified
+# to a board-safe id; absent → fall back to the title slug as before.
+_ID_LABELS = frozenset({"id", "ticket", "ticket_id"})
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
 _FIELD_RE = re.compile(r"^\s*([A-Za-z_]+)\s*:\s*(.*)$")
@@ -77,6 +81,7 @@ class RawItem:
     accept: list[str] = field(default_factory=list)
     tier: str = ""
     declared_deps: list[str] = field(default_factory=list)
+    declared_id: str = ""
 
 
 # ------------------------------------------------------------- the markdown adapter
@@ -168,6 +173,12 @@ def _apply_field(item: RawItem, label: str, value: str) -> None:
             item.tier = value.split()[0]
     elif label in _DEP_LABELS:
         item.declared_deps.extend(_split_list(value))
+    elif label in _ID_LABELS:
+        # Keep the FIRST id seen (verbatim token); _make_id slugifies it later.
+        if value and not item.declared_id:
+            tokens = _split_list(value)
+            if tokens:
+                item.declared_id = tokens[0]
 
 
 def _finalize_item_paths(item: RawItem) -> None:
@@ -498,8 +509,13 @@ def analyze(items: Iterable[RawItem], product_acceptance: str = "") -> Plan:
     title_to_id: dict[str, str] = {}
 
     for item in items:
-        uid = _make_id(item.title, used_ids)
+        # Preserve the source ticket's own id when supplied (load-bearing for the
+        # future write-back/sink), else fall back to the title slug. Either way it
+        # is slugified to a board-safe, deduped id by _make_id.
+        uid = _make_id(item.declared_id or item.title, used_ids)
         title_to_id[_normalize(item.title)] = uid
+        if item.declared_id:
+            title_to_id.setdefault(_normalize(item.declared_id), uid)
         owned = _dedupe(item.declared_paths) or list(item.inferred_paths)
 
         # contract #5: vague input — no acceptance AND no scope AND no body → never
