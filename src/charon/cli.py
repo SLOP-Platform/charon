@@ -871,8 +871,6 @@ def _cmd_work(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     print(json.dumps(out, indent=2))
-    if is_mock:
-        return 0
     ok = out["validation"]["passed"] and all(
         u["status"] == "complete" for u in out["units"]
     )

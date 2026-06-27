@@ -49,7 +49,7 @@ def test_doctor_no_backend_exit0_unconfigured(capsys) -> None:
     assert out["spawned"] is False  # detailed fields still present
 
 
-def test_work_mock_banner_and_exit0(tmp_path: Path, capsys, monkeypatch) -> None:
+def test_work_mock_banner(tmp_path: Path, capsys, monkeypatch) -> None:
     """Mock backend prints a banner to stderr and exits 0 even when units hold."""
     _fake_result = {
         "board_path": str(tmp_path / "board.json"),
@@ -78,6 +78,9 @@ def test_work_mock_banner_and_exit0(tmp_path: Path, capsys, monkeypatch) -> None
     )
     rc = main(["work", "--units", str(units_file)])
     captured = capsys.readouterr()
-    assert rc == 0  # mock backend: exit 0 despite held units
+    # Honest exit code preserved: a mock run whose validation holds still exits non-zero
+    # (never report a silent pass — see test_engine_e2e). The banner, not the exit code,
+    # is what resolves the fresh-user "looks broken" confusion.
+    assert rc == 1
     assert "mock backend" in captured.err
     assert "--backend acp" in captured.err
