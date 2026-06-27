@@ -42,9 +42,23 @@ select = ["E", "F", "I", "B", "UP"]
 
 [tool.mypy]
 python_version = "3.11"
-files = ["src/charon"]
+files = ["src/charon", "tools", "tests"]
 ignore_missing_imports = true
-follow_imports = "skip"
+explicit_package_bases = true
+
+# Suppress pre-existing errors in test files that are not in FB5's owns: list.
+# Each override is scoped to specific error codes — not a broad ignore.
+[[tool.mypy.overrides]]
+module = ["tests.test_proxy_server"]
+disable_error_code = ["str-bytes-safe"]
+
+[[tool.mypy.overrides]]
+module = ["tests.test_gateway_failover"]
+disable_error_code = ["attr-defined"]
+
+[[tool.mypy.overrides]]
+module = ["tests.test_scanners"]
+disable_error_code = ["func-returns-value", "arg-type"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
