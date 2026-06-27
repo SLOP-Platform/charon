@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import charon.cli as cli_mod
 from charon.cli import main
 
 
@@ -40,9 +41,43 @@ def test_run_requires_accept(tmp_path: Path) -> None:
         assert e.code != 0
 
 
-def test_doctor_no_backend_reports_unvalidated(capsys) -> None:
+def test_doctor_no_backend_exit0_unconfigured(capsys) -> None:
     rc = main(["doctor"])
     out = json.loads(capsys.readouterr().out)
-    assert rc == 1  # honest: not ok without a real agent
-    assert out["spawned"] is False
-    assert any("UNVALIDATED" in n or "MockBackend" in n for n in out["notes"])
+    assert rc == 0  # unconfigured → not a failure
+    assert out["status"] == "no backend configured"
+    assert out["spawned"] is False  # detailed fields still present
+
+
+def test_work_mock_banner_and_exit0(tmp_path: Path, capsys, monkeypatch) -> None:
+    """Mock backend prints a banner to stderr and exits 0 even when units hold."""
+    _fake_result = {
+        "board_path": str(tmp_path / "board.json"),
+        "rounds": 1,
+        "budget_capped": False,
+        "auto_land": False,
+        "product_acceptance": "",
+        "integration_worktree": str(tmp_path / "integ"),
+        "units": [
+            {
+                "unit_id": "u1",
+                "status": "not-run",
+                "disposition": "n/a",
+                "board_state": "hold",
+                "note": "no committed changes between base and tip — nothing to land",
+                "land": None,
+            }
+        ],
+        "validation": {"passed": False, "note": "no acceptance command"},
+    }
+    monkeypatch.setattr(cli_mod, "run_work", lambda *a, **kw: _fake_result)
+
+    units_file = tmp_path / "units.json"
+    units_file.write_text(
+        '[{"goal":"x","accept":["true"],"tier":"low","owned_paths":[]}]'
+    )
+    rc = main(["work", "--units", str(units_file)])
+    captured = capsys.readouterr()
+    assert rc == 0  # mock backend: exit 0 despite held units
+    assert "mock backend" in captured.err
+    assert "--backend acp" in captured.err

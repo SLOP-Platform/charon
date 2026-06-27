@@ -113,7 +113,22 @@ charon work --units plan.json        # run the engine end-to-end; prints a JSON 
 ```
 
 `--units` takes either an **intake plan** (`charon-intake-plan` JSON, below) or a
-consumer units file (TOML/JSON of `{goal, accept, tier, owned_paths}`). The engine
+consumer units file (TOML/JSON of `{goal, accept, tier, owned_paths}`). Example
+consumer units file (`plan.json`):
+
+```json
+[
+  {
+    "goal": "add a greeting function",
+    "accept": ["pytest -q", "python -c 'from mymod import greet; greet()'"],
+    "tier": "sonnet",
+    "owned_paths": ["src/mymod.py", "tests/test_mymod.py"]
+  }
+]
+```
+
+`accept` must be a **list** of shell commands (not a string); each must exit 0 to
+pass. The engine
 builds a durable board, assigns each unit to a warm **ACP** worker honoring
 `depends_on` waves and disjoint file-ownership, and drives every unit through the same
 fenced `coordinator.run` the single-unit path uses — there is no second, unfenced
