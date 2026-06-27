@@ -7,13 +7,16 @@ set -euo pipefail
 FLEET="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BOARD="$FLEET/board"; STATE="$FLEET/state"; LOCK="$STATE/lock"
 mkdir -p "$STATE/claims" "$STATE/submitted" "$STATE/done"; : >>"$LOCK"
-TIER="${1:?usage: claim.sh <tier> <droid>}"; DROID="${2:?usage: claim.sh <tier> <droid>}"
+TIER="${1:?usage: claim.sh <tier> <droid> [both|own-only]}"; DROID="${2:?usage: claim.sh <tier> <droid> [both|own-only]}"
+MODE="${3:-both}"
+case "$MODE" in both|own-only) ;; *) echo "usage: claim.sh <tier> <droid> [both|own-only]" >&2; exit 2;; esac
 source "$FLEET/_lib.sh"
 rank(){ case "$1" in opus) echo 3;; sonnet) echo 2;; haiku) echo 1;; *) echo 0;; esac; }
 meta(){ awk -F': ' -v k="$1" '$1==k{sub(/^[^:]*: ?/,"");print;exit}' "$2"; }
 drank=$(rank "$TIER")
 exec 9>"$LOCK"; flock 9
-for pass in own lower; do
+passes="own lower"; [ "$MODE" = own-only ] && passes="own"
+for pass in $passes; do
   for f in "$BOARD"/*.md; do
     [ -e "$f" ] || continue
     id="$(basename "$f" .md)"
