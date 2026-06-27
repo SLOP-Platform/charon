@@ -38,4 +38,5 @@ Status: `Settled` · `Open` (leaning noted) · `Superseded→Dxxx`.
 | D017 | The engine routes by **consuming the gateway's existing `vid→pool→provider` failover** — per-run `GatewayProxyServer(pools={tier_vid:[…]}, model_ids=[tier_vid])`; no engine-side provider selection. | OP+AI | Settled | ADR-0014 D1/D2 |
 | D018 | A thin **`ports/agent_launch.py` `AgentLaunch` renderer seam** keeps the engine product-neutral; **ship the opencode renderer ONLY** (extra renderers gated on a live `charon doctor` probe). | OP+AI | Settled | ADR-0014 D3/D4 |
 | D019 | The **tier vid is resolved per-dispatch** (honor the `tier` param); **backend-selection-by-tier is the named extension point** so multi-tier (warm-agent-per-tier) is additive, not a rewrite. | OP | Settled | ADR-0014 D5/D6 |
+| D020 | CI runner is chosen by the **`CI_RUNNER` repo variable** (`runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}`); maintainer sets `["self-hosted","4-lom"]`, forks fall back to hosted so forked PRs get CI. | OP | Settled | first-run audit 2026-06-27 |
 <!-- Append new rows above this line. Keep each to ONE line; cite the ADR/REVIEW-LOG for detail. -->
