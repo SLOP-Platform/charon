@@ -35,6 +35,7 @@ from pathlib import Path
 
 from .acceptance import AcceptanceCheck
 from .ledger import Ledger
+from .scanners import run_scanners
 
 
 class LandError(RuntimeError):
@@ -152,6 +153,7 @@ class GateOutcome:
     tests_passed: bool | None = None
     gitleaks: str = "skipped"  # clean | leaks | unavailable | skipped
     pr: str | None = None  # set by the CLI when a PR is actually opened
+    scanner_advisory: list[dict] = field(default_factory=list)  # Tier B/C advisory (D4)
 
     @property
     def proposed(self) -> bool:
@@ -172,6 +174,7 @@ class GateOutcome:
             "tests_passed": self.tests_passed,
             "gitleaks": self.gitleaks,
             "pr": self.pr,
+            "scanner_advisory": self.scanner_advisory,
         }
 
 
@@ -223,6 +226,13 @@ def run_gitleaks(repo: str) -> GitleaksResult:
 
 
 # --------------------------------------------------------------------- the gate
+def _default_scanner_runner(repo: str, files: list[str]) -> list[dict]:
+    try:
+        return [r.to_dict() for r in run_scanners(repo, files)]
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def land_unit(
     ledger: Ledger,
     owned_paths: Sequence[str],
@@ -233,6 +243,7 @@ def land_unit(
     run_acceptance: bool = True,
     gitleaks_expected: bool = False,
     gitleaks_runner: Callable[[str], GitleaksResult] = run_gitleaks,
+    scanner_runner: Callable[[str, list[str]], list[dict]] = _default_scanner_runner,
 ) -> GateOutcome:
     """Evaluate the tiered land gate for one completed unit and return a PROPOSE
     or HOLD verdict (D4/D6). Read-only: never advances lkg, never mutates the
@@ -289,6 +300,11 @@ def land_unit(
     elif gl.status == "unavailable" and gitleaks_expected:
         holds.append("gitleaks expected but unavailable (fail-closed)")
 
+    # 5. Advisory scanner matrix (ADR-0010 D4) — Tier B/C, change-scoped, parallel.
+    #    Findings are NEVER added to holds; required/fail-closed is reserved for
+    #    auto-land (deferred).  A scanner error produces "unavailable", never a hold.
+    advisory = scanner_runner(repo, files)
+
     decision = "propose" if not holds else "hold"
     return GateOutcome(
         task_id=ledger.task_id,
@@ -303,6 +319,7 @@ def land_unit(
         acceptance_failed=acceptance_failed,
         tests_passed=tests_passed,
         gitleaks=gl.status,
+        scanner_advisory=advisory,
     )
 
 
@@ -352,9 +369,17 @@ def _pr_body(outcome: GateOutcome) -> str:
         f"- base..tip: `{outcome.base_ref[:12]}..{outcome.tip_ref[:12]}`",
         f"- changed files: {outcome.changed_files}",
         f"- gitleaks: {outcome.gitleaks}",
+    ]
+    if outcome.scanner_advisory:
+        lines.append("")
+        lines.append("Advisory scanners (never blocking in propose-mode):")
+        for s in outcome.scanner_advisory:
+            note = f" — {s['note']}" if s.get("note") else ""
+            lines.append(f"  - {s['name']} ({s['tier']}): {s['status']}{note}")
+    lines.extend([
         "",
         "Gate is green; a human merge is the only thing that lands this.",
-    ]
+    ])
     return "\n".join(lines)
 
 
