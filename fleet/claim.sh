@@ -11,7 +11,15 @@ TIER="${1:?usage: claim.sh <tier> <droid> [both|own-only]}"; DROID="${2:?usage: 
 MODE="${3:-both}"
 case "$MODE" in both|own-only) ;; *) echo "usage: claim.sh <tier> <droid> [both|own-only]" >&2; exit 2;; esac
 source "$FLEET/_lib.sh"
-rank(){ case "$1" in opus) echo 3;; sonnet) echo 2;; haiku) echo 1;; *) echo 0;; esac; }
+# Load tier ranks ONCE, BEFORE flock, from `charon tier ranks` (canonical+aliases,
+# alias-folded). Pure data; never spawn Python under the lock. Legacy fallback when
+# `charon` is absent/old or tiers.json is unset → unchanged opus/sonnet/haiku ranks.
+declare -A RANK; nrank=0
+if out="$(charon tier ranks 2>/dev/null)"; then        # "low 1\nmed 2\nhigh 3\nopus 3 ..."
+  while read -r n r; do [ -n "$n" ] && { RANK["$n"]=$r; nrank=$((nrank+1)); }; done <<<"$out"
+fi
+[ "$nrank" -gt 0 ] || RANK=([opus]=3 [sonnet]=2 [haiku]=1)   # legacy, unchanged
+rank(){ echo "${RANK[$1]:-0}"; }
 meta(){ awk -F': ' -v k="$1" '$1==k{sub(/^[^:]*: ?/,"");print;exit}' "$2"; }
 drank=$(rank "$TIER")
 exec 9>"$LOCK"; flock 9
