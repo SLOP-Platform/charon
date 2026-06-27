@@ -58,9 +58,11 @@ class AcpBackend:
         self._buf = b""
         # Set after each session/new so probe/resume logic can surface it.
         self.last_session_id: str | None = None
-        # The tier vid resolved on the most recent dispatch (ADR-0014 D5). The
-        # `tier` param used to be ignored here; recording the per-dispatch vid is
-        # the structural seam that Phase B (backend-selection-by-tier) builds on.
+        # The tier vid resolved on the most recent dispatch (ADR-0014 D5). One
+        # warm AcpBackend serves ONE tier — its vid is baked into the rendered
+        # launch. Phase B (backend-selection-by-tier) is now built in
+        # `router.route` + api's warm-agent-per-tier map: a multi-tier decompose
+        # run holds one of these per tier and the router selects by dispatch tier.
         self.last_tier_vid: str | None = None
 
     # ----------------------------------------------------------- lifecycle
@@ -148,9 +150,10 @@ class AcpBackend:
         env: dict[str, str],
     ) -> Outcome:
         # Resolve the tier vid PER-DISPATCH (ADR-0014 D5): the canonical tier
-        # name IS the vid the per-run gateway resolves to a provider chain. Phase
-        # A keys one warm backend by this vid; backend-selection-by-tier
-        # (router.route) is the named Phase B extension point — not built here.
+        # name IS the vid the per-run gateway resolves to a provider chain. This
+        # backend is warm for one tier; backend-selection-by-tier across a
+        # multi-tier run is router.route's job (Phase B, D6) — it picks WHICH warm
+        # backend a stage's dispatch lands on; this just records the served vid.
         self.last_tier_vid = tier.value
         self._start(worktree, env)
         self._rpc("initialize", {"protocolVersion": 1,

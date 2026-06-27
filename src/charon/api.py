@@ -171,11 +171,17 @@ def run_task(
             # tiers via gateway._build_routes_and_pools (free-first→cost_rank),
             # exactly as the live gateway does — never api._pool_routes.
             gw_cfg = _gateway.load_config(state_dir=sdir)
-            chain = gw_cfg.pools.get(tier_vid, [])
+            # Phase B (ADR-0014 D6): a decompose run's role-DAG stages span
+            # task-classes → tiers, so serve EVERY tier the run will dispatch to —
+            # not the role's tier alone (Phase A's one-tier-per-run collapse). A
+            # plain run spans exactly one tier, so this is the len==1 special case
+            # and Phase A behavior is preserved by construction.
+            tier_vids = _run_tier_vids(tier_vid, goal, checks, decompose)
+            live = {vid: c for vid in tier_vids if (c := gw_cfg.pools.get(vid, []))}
             proxy_server = GatewayProxyServer(
-                pools={tier_vid: chain}, model_ids=[tier_vid], observer=GatewayProxy())
+                pools=live, model_ids=sorted(live), observer=GatewayProxy())
             proxy_server.serve_in_thread()
-            if not chain:
+            if not live:
                 # Dry pool — re-home the retired select_live_entry early-return
                 # (ADR-0014 B4): the same {status:"exhausted", note:…} shape.
                 proxy_server.shutdown()
@@ -183,8 +189,14 @@ def run_task(
                         "verified": [], "remaining": sorted(ledger.remaining()),
                         "note": f"tier {tier_vid!r} dry; no providers configured for this tier",
                         "target_repo": target, "state_dir": str(sdir)}
-            # The agent requests the tier vid; the gateway resolves + fails over.
-            run_backends: dict = {"acp": _acp_via_renderer(acp_cmd, proxy_server, tier_vid)}
+            # Warm-agent-per-tier (D010 warm-pool default): one reused subprocess per
+            # live tier vid, keyed by the vid so router.route selects by the
+            # dispatch's tier. Each agent requests its vid; the shared per-run
+            # gateway resolves + fails over. A stage whose tier is dry has no keyed
+            # backend, so router.route falls back to the canonical (first) live tier.
+            run_backends: dict = {
+                vid: _acp_via_renderer(acp_cmd, proxy_server, vid) for vid in live
+            }
         elif proxy_upstream and backend is None and backends is None and "acp" in acp_names:
             if not acp_cmd:
                 raise ValueError("--proxy with an acp backend needs --acp-cmd")
@@ -243,6 +255,23 @@ def run_task(
         return out
     finally:
         prepared.cleanup()
+
+
+def _run_tier_vids(
+    tier_vid: str, goal: str, checks: list[AcceptanceCheck], decompose: bool
+) -> list[str]:
+    """The tier vids a run will dispatch to (Phase B, ADR-0014 D6) — the keys of the
+    warm-agent-per-tier map. A plain run uses the role's resolved tier alone (Phase
+    A: one warm agent). A decompose run's role-DAG stages span task-classes → tiers,
+    so collect each stage's tier under the default policy; the role's own tier leads
+    so it is the canonical (first) live fallback. Order-preserving de-dup."""
+    if not decompose:
+        return [tier_vid]
+    from .decompose import decompose as _decompose_stages
+    router = StaticRouter()
+    stage_vids = [router.tier_for(st.task_class).value
+                  for st in _decompose_stages(goal, [c.cmd for c in checks])]
+    return list(dict.fromkeys([tier_vid, *stage_vids]))
 
 
 def _acp_via_renderer(acp_cmd: str, server, requested_model: str) -> AcpBackend:
