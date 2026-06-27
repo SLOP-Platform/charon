@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Callable
 from enum import Enum, auto
 
 from .pools import PoolEntry
@@ -53,34 +52,12 @@ def next_entry(
     return router.route_pool(role, exclude=exclude, code_safe_only=code_safe_only)
 
 
-def select_live_entry(
-    router: StaticRouter,
-    role: str,
-    proxy: GatewayProxy,
-    probe: Callable[[PoolEntry], bool],
-    *,
-    code_safe_only: bool = False,
-) -> PoolEntry | None:
-    """Pick the first *actually-available* model for ``role`` — the cost-first
-    failover (#6). Walk the pool and ``probe(entry)`` each: the probe drives a
-    cheap request through the proxy and returns True ONLY on a positive 200.
-    Return the first model that responds; skip any that 429/404/time-out/error.
-    Returns None when the pool is dry — a clean exhausted stop, never a launch
-    onto a dead model.
-
-    Requiring a positive 200 (not merely 'the proxy didn't flag it') is the
-    load-bearing bit: a slow/timed-out probe must NOT pass, or the agent gets
-    committed to a rate-limited model and hangs on its 429."""
-    dead: set[str] = set()
-    while True:
-        try:
-            entry = next_entry(router, role, proxy, also_exclude=dead,
-                               code_safe_only=code_safe_only)
-        except RuntimeError:
-            return None  # pool exhausted
-        if probe(entry):
-            return entry
-        dead.add(entry.key)  # 429/404/timeout/error — exclude and keep walking
+# NOTE (ADR-0014 D6, Phase B): ``select_live_entry`` — the engine-side pre-flight
+# pool-probe — was retired here. Tier routing now consumes the LIVE gateway path
+# (``GatewayProxyServer`` resolves the tier vid → pool → provider and fails over
+# in-request), so the engine no longer probes models itself. Its "pool exhausted"
+# and skipped-provider contracts are re-homed onto the gateway's own observability
+# in ``api._tier_failover_note`` / the dry-pool early-return (ADR-0014 B4).
 
 
 # ---------------------------------------------------------------------------
