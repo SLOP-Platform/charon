@@ -9,6 +9,7 @@ import os
 import pytest
 
 from charon import cli, config, gateway, secrets
+from charon.config import SandboxPolicy, load_sandbox_policy
 
 
 def test_add_provider_model_pool_and_summary(monkeypatch, tmp_path):
@@ -123,3 +124,26 @@ def test_providers_add_custom_persists_provider(monkeypatch, tmp_path):
     assert config.load_providers()["deepseek"]["base_url"] == "https://api.deepseek.com/v1"
     assert secrets.load_secrets()["DEEPSEEK_KEY"] == "sk-deep"
     os.environ.pop("DEEPSEEK_KEY", None)
+
+
+# ----------------------------------------------- S1: sandbox policy (D013)
+
+def test_sandbox_policy_default_is_hybrid():
+    assert load_sandbox_policy({}) is SandboxPolicy.HYBRID
+
+
+def test_sandbox_policy_reads_env_var():
+    assert load_sandbox_policy({"CHARON_SANDBOX": "container"}) is SandboxPolicy.CONTAINER
+    assert load_sandbox_policy({"CHARON_SANDBOX": "host"}) is SandboxPolicy.HOST
+    assert load_sandbox_policy({"CHARON_SANDBOX": "hybrid"}) is SandboxPolicy.HYBRID
+
+
+def test_sandbox_policy_case_insensitive():
+    assert load_sandbox_policy({"CHARON_SANDBOX": "CONTAINER"}) is SandboxPolicy.CONTAINER
+    assert load_sandbox_policy({"CHARON_SANDBOX": "HOST"}) is SandboxPolicy.HOST
+    assert load_sandbox_policy({"CHARON_SANDBOX": "Hybrid"}) is SandboxPolicy.HYBRID
+
+
+def test_sandbox_policy_invalid_value_falls_back_to_hybrid():
+    assert load_sandbox_policy({"CHARON_SANDBOX": "bogus"}) is SandboxPolicy.HYBRID
+    assert load_sandbox_policy({"CHARON_SANDBOX": ""}) is SandboxPolicy.HYBRID
