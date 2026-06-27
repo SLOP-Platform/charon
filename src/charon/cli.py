@@ -407,10 +407,20 @@ def _cmd_setup(args: argparse.Namespace) -> int:
               f"or edit the files in {secrets.config_dir()}.", file=sys.stderr)
         return 2
     if not added_models:
-        print("\n⚠ 0 models served — your gateway won't respond to requests.\n"
-              "  Import a provider's catalog with `charon models import <provider>`, "
-              "or\n  re-run `charon setup` and serve a model when prompted.",
-              file=sys.stderr)
+        # The gateway serves EVERY model in the catalog (models.json) by id, so a
+        # non-empty catalog means clients CAN still reach a model — the loud "won't
+        # respond" warning would be wrong. Only warn when there's truly nothing to
+        # serve (empty catalog); otherwise print an accurate note.
+        catalog_n = sum(1 for e in config.load_models().values()
+                        if isinstance(e, dict))
+        if not catalog_n:
+            print("\n⚠ 0 models served — your gateway won't respond to requests.\n"
+                  "  Import a provider's catalog with `charon models import <provider>`, "
+                  "or\n  re-run `charon setup` and serve a model when prompted.",
+                  file=sys.stderr)
+            return 0
+        print(f"\n{catalog_n} model(s) in your catalog are served by id; no failover "
+              "pool set — clients can request them directly.")
         return 0
     print(f"\nDone. {len(added_models)} model(s) configured. Start the gateway:\n"
           "  charon gateway")

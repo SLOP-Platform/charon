@@ -89,6 +89,25 @@ def test_zero_served_guard_offers_in_place_fix(monkeypatch, tmp_path, capsys):
     assert "Done. 2 model(s) configured" in out          # and was accepted
 
 
+def test_no_loud_warning_when_catalog_serves_by_id(monkeypatch, tmp_path, capsys):
+    """Catalog has models but the user declines BOTH the up-front 'serve all' and the
+    end-guard's in-place fix. The gateway still serves every catalog model by id, so
+    the loud '0 models served — won't respond' warning must NOT fire — only an accurate
+    note that the N catalog models are reachable by id."""
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    config.add_models_bulk(
+        [{"id": "alpha-1"}, {"id": "beta-2"}], provider="openrouter")
+    # provider, decline catalog serve-all ('n'), blank manual id, finish providers,
+    # DECLINE the end-guard 'serve all 2 now?' ('n')
+    rc = _drive(monkeypatch, ["openrouter", "n", "", "", "n"], keys=[""])
+    cap = capsys.readouterr()
+    assert rc == 0
+    assert "0 models served" not in cap.err          # the loud warning must NOT fire
+    assert "won't respond" not in cap.err
+    assert "2 model(s) in your catalog are served by id" in cap.out
+    assert "Done." not in cap.out                     # nothing was explicitly served
+
+
 # ── Deliverable 3: colorize the presets line (with the plain fallback) ───────────
 
 def test_presets_line_plain_on_non_tty(monkeypatch, tmp_path, capsys):
