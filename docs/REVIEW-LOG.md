@@ -203,42 +203,43 @@ Three mechanization choices beyond ADR-0010, recorded before code:
 
 ---
 
-## 2026-06-26 — S1 (D013) — sandbox policy (pre-code plan note)
+# E10 (ADR-0010 / D004 / D5) — AIMD adaptive capacity limiter
 
-**Change under review:** `config.py` + `fence.py` + `cli.py` — expose a user-selectable
-`sandbox` policy (`hybrid`|`container`|`host`) that maps onto the existing fence env-flag
-mechanism. This touches the autonomy/security gate so decisions are recorded here first.
+**Change under review:** `engine/capacity.py` (add `AimdCap`) + `tests/test_capacity.py`.
+Extends the E2 capacity seam — does NOT fork it. Decisions recorded before code:
 
-- **[Interpretation: `hybrid`]** Byte-for-byte current behavior. `AutonomyPolicy._rung_ok`
-  logic unchanged: L0/L1 always OK; L2 = container OR loud override; L3 = container OR
-  (override + unattended). Proven via a regression test against the exact assertions that
-  the pre-existing T7 test suite already validates.
+- **[Extend the seam, don't fork it]** `AimdCap` implements the SAME `CapacityLimiter`
+  Protocol E2 defined (`try_acquire` / `release`) and is chosen through the SAME
+  `select_limiter` selector. The scheduler is untouched: it only ever sees a
+  `CapacityLimiter`. This honors E2's framing — "AIMD plugs in later by adding an adaptive
+  limiter to this file," no scheduler change.
 
-- **[Interpretation: `container`]** Every rung ≥L1 requires `CHARON_CONTAINER_VERIFIED=1`.
-  The `CHARON_ALLOW_UNCONTAINED_AUTONOMY` override flag is REFUSED (the container check
-  is the only path). Test assertion: L2 with override-only → `FenceDenied`.
+- **[OFF by default — D004 / ADR-0010 D5]** Adaptive capacity is *trust-extending*
+  automation, gated until a real run saturates a tier. `select_limiter` keeps
+  `policy="fixed"` (→ `FixedCap`) as the default; AIMD is reached only when a consumer
+  explicitly passes `policy="aimd"` (or injects an `AimdCap`). An unknown policy raises
+  rather than silently degrading. A proven-red test asserts the default is `FixedCap` and
+  AIMD appears only when configured.
 
-- **[Interpretation: `host`]** Host is the declared environment. L0/L1 always OK. L2+
-  requires the loud override (`CHARON_ALLOW_UNCONTAINED_AUTONOMY=1`); the container flag
-  alone is NOT sufficient — the operator must explicitly acknowledge the uncontained blast
-  radius even when containerized. Test assertion: L2 with container-only → `FenceDenied`;
-  L2 with override → OK. L3 additionally needs `CHARON_ALLOW_UNATTENDED=1` (same as hybrid).
+- **[Feedback hooks are extra to the Protocol]** AIMD needs success/failure signals the
+  bare `try_acquire`/`release` contract can't carry (the scheduler calls `release` on every
+  unit regardless of outcome, so `release` cannot mean "success"). `AimdCap` therefore adds
+  `record_success` / `record_failure` *beyond* the Protocol. A consumer wires them only when
+  it opts AIMD in; until then the cap simply holds at `start` (conservative — see below).
+  Keeping them off the Protocol means `FixedCap` and the scheduler stay unchanged.
 
-- **[Additive-only / no default change]** `AutonomyPolicy` gains a `sandbox` field with
-  default `SandboxPolicy.HYBRID`. `from_env` reads `CHARON_SANDBOX` from the env dict (or
-  `os.environ`); absent → `hybrid`. All existing tests exercise `from_env({})` which
-  resolves to `hybrid` → no regression. `scrubbed_env` is untouched. `ESCALATION_TOKENS`
-  is untouched (the `CHARON_SANDBOX` var is a policy config, not an escalation token, and
-  IS passed to child processes intentionally so workers inherit the operator's posture).
+- **[Conservative AIMD law + clamps]** additive-increase by `step` (default 1) on
+  `record_success`; multiplicative-decrease by `factor` (default 0.5) on `record_failure`;
+  the cap is clamped to `[floor, ceiling]` (defaults 1..4) on every move. `start` defaults
+  to `floor`, so a freshly-selected AIMD limiter behaves exactly like a `FixedCap` at the
+  floor until evidence widens it — backpressure backs off fast, success opens up slowly.
+  The internal cap is a float (so repeated `factor` decreases compose cleanly); admission
+  uses its floor via `cap_for`. Construction validates floor/ceiling/step/factor/start and
+  raises `CapacityError` on bad config. One lock guards counting + adaptation, so the
+  limiter is race-free across the scheduler's worker threads, matching `FixedCap`.
 
-- **[Placement: `SandboxPolicy` in `config.py`]** Avoids adding a new module; `fence.py`
-  already owns the gate and imports `config.py` is one-directional (no cycle). The enum +
-  `load_sandbox_policy()` follow the existing `_load` / env-read pattern — no new dep.
-
-- **[CLI: `--sandbox` sets `CHARON_SANDBOX` in `os.environ` before the call chain]**
-  `coordinator.run` → `Fence.assert_environment(env=None)` reads `os.environ`; setting
-  the var in `_cmd_run` before `api.run_task` is the minimal-friction wire-up without
-  touching coordinator/api. `doctor` reads and shows the active policy + autonomy ceiling.
+Stdlib-only (ADR-0005 R3 / ADR-0010 D2): `threading` + typing only. Gate green
+(pytest 421, ruff, mypy, boundary, version 0.2.0).
 
 ---
 
@@ -279,6 +280,51 @@ DTC Lens-2 R1 / D008 fence choke-point). Decisions recorded before code:
 
 ---
 
+# E4 — ADR-0008 Phase 1 intake → ticket-plan front door (`intake.py`)
+
+Per-ticket review fragment (house rule: own file, never the shared REVIEW-LOG.md).
+Decisions recorded BEFORE code; full rationale in `docs/adr/0011-intake-ticket-plan-phase1.md`.
+
+**Change under review:** new `src/charon/intake.py` + `tests/test_intake.py` + ADR-0011.
+Phase 1 ONLY — human-gated proposal, NO autonomous run (Phase 2 stays behind ADR-0007 D10-C).
+
+## Reconciliation (charges anticipated → resolution)
+
+- **[security] "Intake of untrusted text is an injection vector."** Resolved by
+  construction (ADR-0011 D1): there is **no code path from input to execution**. Intake
+  emits a JSON artifact; the existing fenced `coordinator.run` + `land.py` gate run later,
+  only after a human approves. Fenced code blocks are parsed as **data**, not as
+  headings/fields — proven-red by `test_injection_*` (an injected `## ticket` / `accept:`
+  inside a fence produces no unit and runs nothing). Acceptance strings are stored verbatim.
+
+- **[correctness] "A plan could emit parallel units that share a file (the collision the
+  whole contract exists to prevent)."** Overlap is decided by `land.in_scope` (the SAME
+  matcher `engine/board.py` uses), every overlapping pair gets a serializing `depends_on`
+  edge, and a final `assert_disjoint_waves` invariant **raises** if any two concurrent
+  units share a path. Tested both ways (overlap→serialized; invariant catches a planted
+  violation).
+
+- **[correctness] "The emitted artifact must actually load downstream."** The loadable
+  `units` list contains only units with a non-empty `accept` (the `land.load_units`
+  contract); each unit carries both `owned_paths` (land) and `owns` (board) so one
+  artifact feeds both. Items missing acceptance are emitted as `review_items` (propose-only)
+  so they are captured WITHOUT breaking the loader. Proven-green: `test_plan_loads_via_land`.
+
+- **[scope] "Owned-paths inference is the hard open question — don't over-build."**
+  v1 infers from explicit file mentions + inline path-like code spans only; prose-only
+  inference and no-path units are **flagged for the human**, not guessed (ADR-0011 D4). No
+  static analysis.
+
+- **[scope] "Don't touch sibling modules."** `decompose.py`/`land.py`/`validate.py` are
+  imported/read, never edited. Owns: `intake.py`, `tests/test_intake.py`,
+  `docs/adr/0011-*.md` (+ this fragment).
+
+**Net:** a stdlib-only, injection-inert front door that turns a markdown work-item list
+into a diffable, collision-free, tier-tagged ticket plan + a top-level product acceptance,
+for a human to approve. No gateway path touched; gate green.
+
+---
+
 ## 2026-06-27 — FB3 — retire shared-append REVIEW-LOG → per-ticket fragments
 
 - **Change under review:** kill the merge-conflict class that fired whenever two
@@ -308,6 +354,45 @@ DTC Lens-2 R1 / D008 fence choke-point). Decisions recorded before code:
   owned); requested in the PR body for the manager to add.
 - **Net:** the shared-append conflict class is structurally gone — droids write only
   their own fragment; the rollup regenerates. Stdlib-only; gate green.
+
+---
+
+## 2026-06-26 — S1 (D013) — sandbox policy (pre-code plan note)
+
+**Change under review:** `config.py` + `fence.py` + `cli.py` — expose a user-selectable
+`sandbox` policy (`hybrid`|`container`|`host`) that maps onto the existing fence env-flag
+mechanism. This touches the autonomy/security gate so decisions are recorded here first.
+
+- **[Interpretation: `hybrid`]** Byte-for-byte current behavior. `AutonomyPolicy._rung_ok`
+  logic unchanged: L0/L1 always OK; L2 = container OR loud override; L3 = container OR
+  (override + unattended). Proven via a regression test against the exact assertions that
+  the pre-existing T7 test suite already validates.
+
+- **[Interpretation: `container`]** Every rung ≥L1 requires `CHARON_CONTAINER_VERIFIED=1`.
+  The `CHARON_ALLOW_UNCONTAINED_AUTONOMY` override flag is REFUSED (the container check
+  is the only path). Test assertion: L2 with override-only → `FenceDenied`.
+
+- **[Interpretation: `host`]** Host is the declared environment. L0/L1 always OK. L2+
+  requires the loud override (`CHARON_ALLOW_UNCONTAINED_AUTONOMY=1`); the container flag
+  alone is NOT sufficient — the operator must explicitly acknowledge the uncontained blast
+  radius even when containerized. Test assertion: L2 with container-only → `FenceDenied`;
+  L2 with override → OK. L3 additionally needs `CHARON_ALLOW_UNATTENDED=1` (same as hybrid).
+
+- **[Additive-only / no default change]** `AutonomyPolicy` gains a `sandbox` field with
+  default `SandboxPolicy.HYBRID`. `from_env` reads `CHARON_SANDBOX` from the env dict (or
+  `os.environ`); absent → `hybrid`. All existing tests exercise `from_env({})` which
+  resolves to `hybrid` → no regression. `scrubbed_env` is untouched. `ESCALATION_TOKENS`
+  is untouched (the `CHARON_SANDBOX` var is a policy config, not an escalation token, and
+  IS passed to child processes intentionally so workers inherit the operator's posture).
+
+- **[Placement: `SandboxPolicy` in `config.py`]** Avoids adding a new module; `fence.py`
+  already owns the gate and imports `config.py` is one-directional (no cycle). The enum +
+  `load_sandbox_policy()` follow the existing `_load` / env-read pattern — no new dep.
+
+- **[CLI: `--sandbox` sets `CHARON_SANDBOX` in `os.environ` before the call chain]**
+  `coordinator.run` → `Fence.assert_environment(env=None)` reads `os.environ`; setting
+  the var in `_cmd_run` before `api.run_task` is the minimal-friction wire-up without
+  touching coordinator/api. `doctor` reads and shows the active policy + autonomy ceiling.
 
 ---
 
