@@ -1,0 +1,14 @@
+# --- secrets: NEVER commit ---
+test-keys.env
+*.env
+!*.example.env
+
+# --- nested git/bare repos ---
+charon-rebuild-backup.git/
+
+# --- ephemeral fleet runtime state (claims/submitted/done markers) ---
+fleet/state/
+
+# --- scratch / logs ---
+*.log
+fleet/logs/
