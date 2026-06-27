@@ -636,7 +636,7 @@ def _load_plan(plan_path: str) -> tuple[list[dict], str]:
                 "accept": list(u.get("accept", [])),
             })
         if not units:
-            raise ValueError("intake plan has no loadable units")
+            raise ValueError(_no_units_reason(data))
         return units, str(data.get("product_acceptance", ""))
     # Fallback: a consumer-supplied units file (no ids/deps/top-level acceptance).
     from . import land
@@ -652,6 +652,34 @@ def _load_plan(plan_path: str) -> tuple[list[dict], str]:
             "accept": list(d["accept"]),
         })
     return units, ""
+
+
+def _no_units_reason(data: dict) -> str:
+    """Explain WHY an intake plan has no loadable units, surfacing the review-item
+    and issue reasons instead of the dead-end ``no loadable units`` (CLIFF 2). A
+    ticket with no executable ``accept:`` (and owned paths) stays propose-only by
+    design (ADR-0011) — this tells the user exactly what to add to make it run."""
+    review = data.get("review_items") or []
+    issues = data.get("issues") or []
+    parts: list[str] = []
+    if review:
+        n = len(review)
+        detail = "; ".join(
+            f"{r.get('id', '?')}: {r.get('reason') or r.get('kind', '')}"
+            for r in review[:5]
+        )
+        more = "" if n <= 5 else f" (+{n - 5} more)"
+        parts.append(
+            f"{n} item(s) need an executable `accept:` command (and owned `files:`/"
+            f"`owns:`) to become runnable — {detail}{more}"
+        )
+    if issues:
+        parts.append(
+            "; ".join(str(i.get("message", "")) for i in issues[:5])
+        )
+    if not parts:
+        return "intake plan has no loadable units"
+    return "intake plan has no runnable units: " + " | ".join(parts)
 
 
 def _engine_options(state_dir: Path, overrides: dict | None) -> dict:
@@ -877,6 +905,99 @@ def _cmd_work(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def _default_plan_path(src: str) -> Path:
+    """Default plan-JSON destination for ``intake import``: the source file with a
+    ``.plan.json`` suffix (``backlog.md`` → ``backlog.plan.json``)."""
+    p = Path(src)
+    return p.with_name(p.stem + ".plan.json")
+
+
+def _cmd_intake(args: argparse.Namespace) -> int:
+    """`charon intake import` — induct an external work-list into a reviewable
+    Charon plan (the non-coder front door, ADR-0008/0011). Default posture: write
+    the plan JSON + print the human-readable markdown, then STOP. ``--run`` is an
+    explicit opt-in that chains into the work-engine (see the trust note below)."""
+    from . import intake as intake_mod
+    try:
+        plan = intake_mod.intake_file(args.file, fmt=args.fmt)
+    except (intake_mod.IntakeError, OSError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    out_path = Path(args.out) if args.out else _default_plan_path(args.file)
+    try:
+        plan.write(out_path)
+    except OSError as exc:
+        print(f"error: cannot write plan to {out_path}: {exc}", file=sys.stderr)
+        return 2
+    print(plan.to_markdown())
+    print(f"plan written to {out_path}", file=sys.stderr)
+
+    if not args.run:
+        # Phase-1 posture: a proposal a human approves/edits before any run.
+        return 0
+
+    # --run (opt-in): chain into the existing work path. SECURITY: this EXECUTES
+    # each unit's `accept` string in a worktree — importing-then-running EXTERNAL
+    # tickets runs commands the ticket author wrote. Only --run tickets you trust.
+    if not plan.units:
+        print(
+            f"error: {_no_units_reason(plan.to_dict())}",
+            file=sys.stderr,
+        )
+        return 1
+    if args.backend == "mock":
+        print(
+            "mock backend makes no changes — pass --backend acp "
+            "--acp-cmd '<agent> acp' for real work",
+            file=sys.stderr,
+        )
+    try:
+        out = run_work(
+            str(out_path),
+            repo=args.repo,
+            state_dir=args.state_dir,
+            backend_name=args.backend,
+            acp_cmd=args.acp_cmd,
+            autonomy=args.autonomy,
+        )
+    except (ValueError, RuntimeError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(out, indent=2))
+    ok = out["validation"]["passed"] and all(
+        u["status"] == "complete" for u in out["units"]
+    )
+    return 0 if ok else 1
+
+
+# Help epilog documenting the enrichment convention + the --run trust boundary.
+_INTAKE_IMPORT_EPILOG = """\
+input: a markdown work-list — one `#`-heading per work item, plus an optional
+`## Product acceptance` section for the whole-product done-check.
+
+enrichment convention (how a ticket becomes RUNNABLE, not just propose-only):
+  add to an item's body, one field per line —
+    id:     TICKET-42            # the source ticket's own id (preserved on import,
+                                 #   so completion can be reported back to it later)
+    files:  src/x.py tests/x.py  # (or `owns:`) the paths the unit owns
+    accept: `pytest -q tests/x`  # an EXECUTABLE check; exit 0 == verified
+    tier:   high                 # optional model tier
+    depends_on: other-item       # optional ordering by id/title
+  An item WITH both `accept:` and owned paths becomes a runnable unit. WITHOUT
+  them it stays a propose-only review item (correct, ADR-0011) — that is how you
+  opt in to runnable.
+
+posture: default writes the plan + stops for human review (Phase-1, ADR-0008).
+  --run is OFF by default.
+
+SECURITY (--run): --run EXECUTES each unit's `accept` command in a worktree.
+  Importing then running an EXTERNAL work-list runs commands the ticket author
+  wrote — only --run input you trust. Without --run, intake reads input as DATA
+  and merely emits an artifact; it never runs anything.
+"""
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="charon", description="Thin cross-vendor agent orchestrator")
     p.add_argument("--version", action="version", version=f"charon {__version__}")
@@ -1003,6 +1124,38 @@ def build_parser() -> argparse.ArgumentParser:
                     choices=["hybrid", "container", "host"],
                     help="sandbox posture (D013/ADR-0010)")
     wk.set_defaults(func=_cmd_work)
+
+    ik = sub.add_parser(
+        "intake",
+        help="turn an external work-list into a reviewable Charon ticket plan "
+             "(the non-coder front door, ADR-0008/0011)")
+    iksub = ik.add_subparsers(dest="intake_action", required=True)
+    ii = iksub.add_parser(
+        "import",
+        help="induct a work-list (markdown) → write a plan JSON + print it for "
+             "human review; default writes + stops (--run to chain into the engine)",
+        epilog=_INTAKE_IMPORT_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    ii.add_argument("file", help="the work-list to induct")
+    ii.add_argument("--out", default=None,
+                    help="write the plan JSON here (default: <file>.plan.json)")
+    ii.add_argument("--format", dest="fmt", default="markdown",
+                    help="input adapter (default: markdown — the only v1 adapter)")
+    ii.add_argument("--run", action="store_true",
+                    help="DANGER: after writing the plan, EXECUTE its runnable units "
+                         "via the work-engine. This runs each unit's `accept` command "
+                         "in a worktree — only --run input you trust (OFF by default)")
+    ii.add_argument("--repo", default=None,
+                    help="[--run] git repo to cut per-unit worktrees from "
+                         "(default: a sandbox base repo)")
+    ii.add_argument("--state-dir", default=api.DEFAULT_STATE_DIR)
+    ii.add_argument("--backend", default="mock",
+                    help="[--run] each unit's warm worker backend (mock|acp)")
+    ii.add_argument("--acp-cmd", default=None,
+                    help="[--run] launch argv for a real ACP backend, e.g. 'opencode acp'")
+    ii.add_argument("--autonomy", default="L1", choices=["L0", "L1", "L2", "L3"],
+                    help="[--run] per-unit autonomy (default L1)")
+    ii.set_defaults(func=_cmd_intake)
 
     g = sub.add_parser("gateway",
                        help="run the standalone OpenAI-compatible failover gateway")

@@ -319,3 +319,82 @@ accept: `pytest -q`
     u = plan.units[0]
     assert u.owned_paths == ["src/charon/mentioned.py"]
     assert any("inferred from prose" in f for f in u.flags)
+
+
+# ------------------------------------------------- external id + enrichment (INTAKE1)
+def test_external_id_preserved_through_import() -> None:
+    # A source ticket's own id survives import (load-bearing for write-back), not
+    # the title slug.
+    md = """\
+# Acceptance
+ok
+
+## Add a flux capacitor
+id: TICKET-42
+files: `src/charon/flux.py`
+accept: `pytest -q`
+"""
+    plan = _plan(md)
+    assert plan.units[0].id == "ticket-42"  # external id, slugified board-safe
+
+
+def test_external_id_falls_back_to_title_slug_when_absent() -> None:
+    md = """\
+# Acceptance
+ok
+
+## Add a flux capacitor
+files: `src/charon/flux.py`
+accept: `pytest -q`
+"""
+    plan = _plan(md)
+    assert plan.units[0].id == "add-a-flux-capacitor"
+
+
+def test_enriched_item_with_accept_and_owns_is_runnable() -> None:
+    # accept: + owns: → a loadable unit (opt-in to runnable), NOT a review item.
+    md = """\
+# Acceptance
+ok
+
+## Build the thing
+owns: `src/charon/thing.py`
+accept: `pytest -q tests/test_thing.py`
+"""
+    plan = _plan(md)
+    assert len(plan.units) == 1
+    assert not plan.review_items
+    assert plan.units[0].accept == ["pytest -q tests/test_thing.py"]
+    assert plan.units[0].owned_paths == ["src/charon/thing.py"]
+    assert not plan.units[0].propose_only
+
+
+def test_plain_work_list_stays_propose_only_no_silent_runnable() -> None:
+    # No executable accept → a propose-only review item, never a silent runnable.
+    md = """\
+# Acceptance
+ok
+
+## Do something
+files: `src/charon/x.py`
+Some description but no acceptance command.
+"""
+    plan = _plan(md)
+    assert plan.units == []
+    assert len(plan.review_items) == 1
+    assert plan.review_items[0].kind == "missing-acceptance"
+
+
+def test_external_id_kept_verbatim_first_token() -> None:
+    # The id field is parsed as DATA: first token only, no execution.
+    md = """\
+# Acceptance
+ok
+
+## A
+id: PROJ-7 ignored-rest
+files: `src/charon/a.py`
+accept: `pytest -q`
+"""
+    plan = _plan(md)
+    assert plan.units[0].id == "proj-7"
