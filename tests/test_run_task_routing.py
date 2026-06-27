@@ -57,15 +57,17 @@ class _Prog(http.server.BaseHTTPRequestHandler):
 class _Threaded(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+    received: list
+    return_model: str
 
 
 def _up(return_model: str = "m") -> tuple[_Threaded, str]:
     """Start a mock upstream; return (server, base_url)."""
     srv = _Threaded(("127.0.0.1", 0), _Prog)
-    srv.return_model = return_model  # type: ignore[attr-defined]
-    srv.received = []  # type: ignore[attr-defined]
+    srv.return_model = return_model
+    srv.received = []
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    return srv, f"http://{srv.server_address[0]}:{srv.server_address[1]}"
+    return srv, f"http://{srv.server_address[0]}:{srv.server_address[1]}"  # type: ignore[str-bytes-safe]
 
 
 # ---------------------------------------------------------------------------
