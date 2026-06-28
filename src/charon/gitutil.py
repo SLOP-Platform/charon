@@ -54,8 +54,26 @@ def add_worktree(repo: Path, dest: Path, ref: str) -> None:
     at ``ref``. The worktree shares ``repo``'s object store but is an isolated
     working tree — the per-unit isolation primitive (ADR-0007 D2). ``dest``'s
     parent is created first so the worktree nests one level down, making that
-    parent a unit-unique ``guard_dir`` for the fence escape scan."""
+    parent a unit-unique ``guard_dir`` for the fence escape scan.
+
+    Re-run-resilient: prunes stale registrations (entries whose directories no
+    longer exist) and removes any leftover directory from a prior interrupted
+    run before adding. A git-locked worktree resists the force-remove, so the
+    subsequent add surfaces the real error rather than swallowing it."""
     dest.parent.mkdir(parents=True, exist_ok=True)
+    # Remove stale .git/worktrees entries whose directories are gone.
+    try:
+        _run(["worktree", "prune"], repo)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass
+    # If dest is already present (leftover from an interrupted run), tear it
+    # down so the add starts clean.  A git-locked worktree rejects the single
+    # --force; in that case dest still exists and the add below raises.
+    if dest.exists():
+        try:
+            _run(["worktree", "remove", "--force", str(dest)], repo)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
     _run(["worktree", "add", "--detach", str(dest), ref], repo)
 
 
