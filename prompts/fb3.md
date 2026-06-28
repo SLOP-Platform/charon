@@ -33,5 +33,5 @@ one; an added fragment changes the output deterministically.
 CONSTRAINTS: own ONLY docs/REVIEW-LOG.md, docs/review-log/* (the new fragments + README),
 tools/render_review_log.py, tests/test_render_review_log.py — nothing else. Write your own
 review note as docs/review-log/FB3.md (your fragment). Stdlib-only. Gate green every commit
-(pytest, ruff, mypy src/charon, check_boundary, check_version). No secrets. Conventional
+(pytest, ruff, mypy src tests, check_boundary, check_version). No secrets. Conventional
 commits. Open a DRAFT PR base=master; do NOT merge.

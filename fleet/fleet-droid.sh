@@ -90,8 +90,14 @@ $spec"
     # push + open the DRAFT PR. If either fails, fall through: submit.sh grounds on a real
     # open PR and flags state/needs-push when there isn't one. `|| true` keeps set -e happy.
     git -C "$wt" push origin --delete "$branch" 2>/dev/null || true
+    # Title from the commit subject, NOT `--fill`: the worktree has no local `master`
+    # ref, so `--fill` (which computes `master...branch`) fails and no PR opens. A
+    # commit-subject title needs no master ref and is robust.
+    pr_title="$(git -C "$wt" log -1 --pretty=%s 2>/dev/null || echo "$id")"
     git -C "$wt" push -u origin "$branch" \
-      && gh pr create --repo SLOP-Platform/charon --base master --head "$branch" --draft --fill \
+      && gh pr create --repo SLOP-Platform/charon --base master --head "$branch" --draft \
+           --title "$pr_title" \
+           --body "Automated draft PR for $id. See the commit and docs/review-log/$id.md." \
       || true
     if bash "$FLEET/submit.sh" "$id"; then
       current=""; echo "[$DROID] $id submitted (PR open). Next…"

@@ -35,7 +35,7 @@ CONSTRAINTS: own ONLY the files in your board ticket's `owns:` line
 (src/charon/cli.py, tests/test_cli_tier.py) — nothing else. cli.py already exists: EDIT it.
 Import `config` (TIER-1); do NOT edit config.py. Same wave as TIER-2 (disjoint files) — do
 NOT touch gateway.py. If your work needs a file outside `owns:`, STOP and run release.sh with
-a one-line reason. Stdlib-only core. Gate green every commit (pytest, ruff, mypy src/charon,
+a one-line reason. Stdlib-only core. Gate green every commit (pytest, ruff, mypy src tests,
 check_boundary, check_version). No secrets. Conventional commits. Write your review note as
 `docs/review-log/TIER-3.md` (NEVER the shared `docs/REVIEW-LOG.md`). Commit ALL work on your
 branch and STOP — do NOT push, do NOT open a PR, do NOT run submit.sh; the launcher publishes

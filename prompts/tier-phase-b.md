@@ -31,6 +31,6 @@ NOTE: the run_task routing integration test (HARD1, a dependency of this ticket)
 master first — it guards that your changes don't regress single-tier routing.
 
 CONSTRAINTS: own ONLY the listed files. Stdlib core only. Gate green every commit (pytest, ruff,
-mypy src/charon, check_boundary, check_version, check_decisions). Conventional commits. Review note
+mypy src tests, check_boundary, check_version, check_decisions). Conventional commits. Review note
 → `docs/review-log/TIER7B.md`. Commit ALL work and STOP — no push / PR / submit.sh. If a fix needs
 a file outside owns, STOP and run release.sh with a reason.

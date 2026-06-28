@@ -21,7 +21,7 @@ VERIFY: from a clean perspective, `python3 -m pytest tests/test_service_api.py -
 skips cleanly if httpx truly absent). Do NOT change product/src code or the service runtime deps.
 
 CONSTRAINTS: own ONLY `pyproject.toml` and `tests/test_service_api.py`. Gate green every commit
-(pytest, ruff, mypy src/charon, check_boundary, check_version, check_decisions). Note
+(pytest, ruff, mypy src tests, check_boundary, check_version, check_decisions). Note
 `check_version.py` may assert version consistency — do NOT bump the version. Conventional commits.
 Write your review note as `docs/review-log/DEP1.md`. Commit ALL work on your branch and STOP — do
 NOT push / open a PR / run submit.sh; the launcher publishes after you exit. If a fix needs a file

@@ -33,5 +33,5 @@ in board/FB6.md if needed, or inline doctest-style within the tool if you cannot
 file; do not write outside your owns.)
 
 CONSTRAINTS: own ONLY the files in board/FB6.md `owns:`. Stdlib-only. Gate green every commit
-(pytest, ruff, mypy src/charon, check_boundary, check_version). Write your review note as
+(pytest, ruff, mypy src tests, check_boundary, check_version). Write your review note as
 docs/review-log/FB6.md. Conventional commits. Open a DRAFT PR base=master; do NOT merge.

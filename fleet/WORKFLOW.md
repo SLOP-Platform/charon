@@ -51,7 +51,7 @@ It claims ONE ticket and runs `claude -p` with `JOIN-PROMPT.md` + the ticket. Th
 4. **Build.** Privileged core stays **stdlib-only**; no `pip install -e`; no secrets in the
    repo. Keep the gate GREEN on **every commit**:
    ```
-   PYTHONPATH=src python3 -m pytest -q ; ruff check ; mypy src/charon ; \
+   PYTHONPATH=src python3 -m pytest -q ; ruff check ; mypy src tests ; \
    python3 tools/check_boundary.py src ; python3 tools/check_version.py
    ```
    New behaviour ships with its test in the same commit. Conventional Commits only.
@@ -134,10 +134,15 @@ It claims ONE ticket and runs `claude -p` with `JOIN-PROMPT.md` + the ticket. Th
 ## 4. Adding work to the board
 1. `board/<id>.md`: `tier` · `branch` · `depends_on` (comma-sep ok) · `owns` (disjoint within
    a wave; include the ticket's OWN test files) · `prompt:` pointer.
-2. `../prompts/<id>.md`: the work spec. End with the CONSTRAINTS block restating "own ONLY
-   the files in your board `owns:`".
-3. `bash validate_board.sh` → GREEN before launching. Same-wave tickets must own disjoint
-   files; cross-wave collisions are sequenced via `depends_on`.
+2. `../prompts/<id>.md`: the work spec. It MUST OPEN with a **`## Dependencies & sequence`**
+   section (STANDING RULE, mechanized) stating: `depends_on` (which tickets must be DONE first, or
+   NONE) · its wave/sequence · concurrency safety (the files it `owns` → which tickets it must NOT
+   run concurrently with, or "disjoint — safe in parallel"). This makes the ticket self-contained
+   so a FRESH processor (incl. a non-Claude agent via `charon work`) sequences it correctly without
+   collisions. End with the CONSTRAINTS block restating "own ONLY the files in your board `owns:`".
+3. `bash validate_board.sh` → GREEN before launching. It HARD-FAILS any live ticket whose prompt
+   lacks the `## Dependencies & sequence` section. Same-wave tickets must own disjoint files;
+   cross-wave collisions are sequenced via `depends_on`.
 
 ---
 

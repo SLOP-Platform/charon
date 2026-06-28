@@ -155,6 +155,27 @@ for i, a in enumerate(live):
             red.append(f"WCI redundancy: {a} and {b} declare the IDENTICAL owns set "
                        f"({', '.join(sorted(oa))}) — likely duplicate/contradictory work")
 
+# D&S. STANDING RULE (mechanized): every LIVE ticket must self-document Dependencies
+# & Sequence so a FRESH processor (no project history) can order it + avoid collisions.
+# Its prompt must carry a "## Dependencies & sequence" section (depends_on / wave /
+# concurrency-safety). Done tickets are exempt (historical). Parked (.md.parked) are
+# not scanned, so this fires the moment a ticket is un-parked to live.
+import re as _re
+_DS = _re.compile(r"##\s*dependencies\s*&\s*sequence", _re.I)
+for t, d in tickets.items():
+    if is_done(t):
+        continue
+    p = d["prompt"]
+    if not p or not os.path.exists(p):
+        continue  # missing-prompt already RED above
+    try:
+        if not _DS.search(open(p).read()):
+            red.append(f"D&S missing: {t} prompt lacks a '## Dependencies & sequence' "
+                       f"section (standing rule — state depends_on + wave + concurrency "
+                       f"safety). Add it to {os.path.basename(p)}")
+    except OSError:
+        pass
+
 # Semantic intent (contradictory prompts, hidden coupling) is NOT machine-checkable
 # in bash — surfaced as advisory only, never a failure.
 if any(d["deps"] for d in tickets.values()):

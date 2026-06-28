@@ -1,0 +1,7 @@
+tier: sonnet
+branch: docs/ohmypi-assess
+depends_on:
+owns:
+prompt: /home/stack/charon-private/prompts/ohmypi-assess.md
+# BACKLOG (parked) — RESEARCH pass (no product src). Output = rig doc
+# /home/stack/charon-private/dogfood/OHMYPI-ASSESS.md. Partly covered by `charon connect omp` (#72).

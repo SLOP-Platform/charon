@@ -44,7 +44,7 @@ tests/test_cli.py, tests/test_proxy_server.py. Add/adjust tests in those two tes
 the new exit codes / messages (mock-banner + exit-0, doctor exit-0-when-unconfigured, the enriched
 502 body). Do NOT touch intake.py, api.py, acp.py, or any other file (other tickets own those) —
 if a fix seems to need one, STOP and run release.sh with a one-line reason. Gate green every
-commit (pytest, ruff, mypy src/charon, check_boundary, check_version, check_decisions). Stdlib
+commit (pytest, ruff, mypy src tests, check_boundary, check_version, check_decisions). Stdlib
 core only. Conventional commits. Write your review note as `docs/review-log/FR1.md`. Commit ALL
 work on your branch and STOP — do NOT push / open a PR / run submit.sh; the launcher publishes
 after you exit.

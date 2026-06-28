@@ -14,6 +14,6 @@ Add a regression test in tests/test_boundary.py: an engine-style file using
 `from ..ledger import X` PASSES; one using `import requests` FAILS.
 
 CONSTRAINTS: own ONLY tools/check_boundary.py, tests/test_boundary.py. Gate green every
-commit (pytest, ruff check, mypy src/charon, python3 tools/check_boundary.py src,
+commit (pytest, ruff check, mypy src tests, python3 tools/check_boundary.py src,
 python3 tools/check_version.py). Stdlib-only. No secrets. Conventional commits. Open a
 DRAFT PR base=master; do NOT merge. (This unblocks E1, whose code is correct.)

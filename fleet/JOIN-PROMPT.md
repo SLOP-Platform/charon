@@ -17,7 +17,7 @@ Do these IN ORDER, TERSELY (no preamble, no narration, one-line results):
    NEVER work in the main checkout. NEVER touch files another ticket owns.
 2. If the ticket says "plan/ADR note before code", land that note first, then implement.
 3. Do the change. Keep the gate GREEN on every commit:
-     PYTHONPATH=src python3 -m pytest -q ; ruff check ; mypy src/charon ; \
+     PYTHONPATH=src python3 -m pytest -q ; ruff check ; mypy src tests ; \
      python3 tools/check_boundary.py src ; python3 tools/check_version.py
 4. Rules: privileged core stays stdlib-only; NO `pip install -e` anything; no keys/secrets
    in the repo; conventional commits.

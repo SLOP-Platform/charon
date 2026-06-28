@@ -32,7 +32,7 @@ CONSTRAINTS: own ONLY the files in your board ticket's `owns:` line
 already exists: EDIT it. The backend `"tiers"` handler + `set_tiers` belong to TIER-2/TIER-1
 — do NOT edit gateway.py or config.py. Same wave as TIER-5/6/7 (disjoint files). If your work
 needs a file outside `owns:`, STOP and run release.sh with a one-line reason. Stdlib-only
-core. Gate green every commit (pytest, ruff, mypy src/charon, check_boundary, check_version).
+core. Gate green every commit (pytest, ruff, mypy src tests, check_boundary, check_version).
 No secrets. Conventional commits. Write your review note as `docs/review-log/TIER-4.md`
 (NEVER the shared `docs/REVIEW-LOG.md`). Commit ALL work on your branch and STOP — do NOT
 push, do NOT open a PR, do NOT run submit.sh; the launcher publishes after you exit.

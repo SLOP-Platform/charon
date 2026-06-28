@@ -40,7 +40,7 @@ exists: EDIT it. Import `config` (TIER-1) and reuse `_build_routes_and_pools`; d
 config.py or proxy_server.py. The POST allowlist + web fieldset belong to TIER-4 — do NOT
 touch proxy_server.py. If your work needs a file outside `owns:`, STOP and run release.sh
 with a one-line reason. Stdlib-only core. Gate green every commit (pytest, ruff,
-mypy src/charon, check_boundary, check_version). No secrets. Conventional commits. Write your
+mypy src tests, check_boundary, check_version). No secrets. Conventional commits. Write your
 review note as `docs/review-log/TIER-2.md` (NEVER the shared `docs/REVIEW-LOG.md`). Commit
 ALL work on your branch and STOP — do NOT push, do NOT open a PR, do NOT run submit.sh; the
 launcher publishes after you exit.

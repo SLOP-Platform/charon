@@ -33,7 +33,7 @@ CONSTRAINTS: own ONLY the files in your board ticket's `owns:` line
 (src/charon/adapters/acp.py, tests/test_acp_tier_route.py) — nothing else. acp.py already
 exists: EDIT it. Import gateway/config/capacity; do NOT edit them. Same wave as TIER-4/5/6
 (disjoint files). If your work needs a file outside `owns:`, STOP and run release.sh with a
-one-line reason. Stdlib-only core. Gate green every commit (pytest, ruff, mypy src/charon,
+one-line reason. Stdlib-only core. Gate green every commit (pytest, ruff, mypy src tests,
 check_boundary, check_version). No secrets. Conventional commits. Write your review note as
 `docs/review-log/TIER-7.md` (NEVER the shared `docs/REVIEW-LOG.md`). Commit ALL work on your
 branch and STOP — do NOT push, do NOT open a PR, do NOT run submit.sh; the launcher publishes

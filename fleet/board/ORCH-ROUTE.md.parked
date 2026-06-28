@@ -1,0 +1,9 @@
+tier: opus
+branch: feat/orch-route
+depends_on:
+owns: src/charon/api.py, src/charon/ports/agent_launch.py, tests/test_agent_launch_routing.py
+accept: PYTHONPATH=src python3 -m pytest -q tests/test_agent_launch_routing.py
+prompt: /home/stack/charon-private/prompts/orch-route.md
+# BACKLOG (parked) — orchestrator-mode: route charon work through a per-run in-process proxy.
+# STEP 0 = verify opencode acp honors OPENCODE_CONFIG_CONTENT (open question). Plumbing parked on
+# origin/feat/work-gateway-wire. Behind an explicit --proxy flag; default stays gateway-first (WGW).

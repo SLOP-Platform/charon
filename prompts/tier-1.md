@@ -39,7 +39,7 @@ CONSTRAINTS: own ONLY the files in your board ticket's `owns:` line
 (src/charon/config.py, tests/test_tier_config.py) — nothing else. config.py already exists:
 EDIT it, do not recreate. If your work needs a file outside `owns:`, STOP and run release.sh
 with a one-line reason — do NOT create/edit it. Stdlib-only core. Gate green every commit
-(pytest, ruff, mypy src/charon, check_boundary, check_version). No secrets. Conventional
+(pytest, ruff, mypy src tests, check_boundary, check_version). No secrets. Conventional
 commits. Write your review note as `docs/review-log/TIER-1.md` (your own fragment — NEVER
 append to the shared `docs/REVIEW-LOG.md`). Commit ALL work on your branch and STOP — do NOT
 push, do NOT open a PR, do NOT run submit.sh; the launcher publishes after you exit.

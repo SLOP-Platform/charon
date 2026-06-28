@@ -41,5 +41,5 @@ CONSTRAINTS: own ONLY engine/claim.py, engine/scheduler.py, tests/test_claim.py,
 tests/test_scheduler.py — nothing else. Preserve all existing passing tests and public
 behavior; these are surgical correctness fixes, not redesigns. Do NOT introduce a second
 lock subsystem or a heartbeat/remote-lease (D009). Stdlib-only core. Gate green every commit
-(pytest, ruff, mypy src/charon, check_boundary, check_version). Write your review note as
+(pytest, ruff, mypy src tests, check_boundary, check_version). Write your review note as
 docs/review-log/FB4.md. Conventional commits. Open a DRAFT PR base=master; do NOT merge.

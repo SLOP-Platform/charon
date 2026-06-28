@@ -1,0 +1,9 @@
+tier: opus
+branch: docs/atc-audit
+depends_on: ADR-0015, OBS-CAPTURE, OBS-UI, CLIENT-CONNECT-GUI, ORCH-ROUTE, WCI, WCI-FOLLOWON
+dep-kind: build
+real-dep: audits the MERGED result of all listed tickets — it must run AFTER they land (it reviews committed code), so every dep is a true ordering prereq even though owns is empty (a review owns no source). Not merge-order-only.
+owns:
+prompt: /home/stack/charon-private/prompts/atc.md
+# BACKLOG (parked) — Wave 4, runs LAST. Adversarial audit of all committed work → findings doc +
+# fix tickets. Owns no source (read-only review). Unpark after the build waves merge.

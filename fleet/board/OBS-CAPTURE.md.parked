@@ -1,0 +1,8 @@
+tier: sonnet
+branch: feat/obs-capture
+depends_on:
+owns: src/charon/adapters/acp.py, tests/test_acp_capture.py
+accept: PYTHONPATH=src python3 -m pytest -q tests/test_acp_capture.py
+prompt: /home/stack/charon-private/prompts/obs-capture.md
+# BACKLOG (parked) — WORK-OBSERVABILITY follow-on: persist per-unit agent transcript.
+# SCOPED to acp.py ONLY (derive log path from the worktree) — NO scheduler.py/cli.py (avoids WCI collision).

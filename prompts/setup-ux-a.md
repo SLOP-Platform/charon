@@ -91,7 +91,7 @@ CONSTRAINTS:
 - Backward-compatible: the existing "Done. N model(s) configured" success path (N>=1) and the
   manual model-entry fallback must be preserved.
 - Gate GREEN on EVERY commit: `PYTHONPATH=src python3 -m pytest -q` · `ruff check` ·
-  `mypy src/charon` · `python3 tools/check_boundary.py src` · `python3 tools/check_version.py`.
+  `mypy src tests` · `python3 tools/check_boundary.py src` · `python3 tools/check_version.py`.
   Conventional Commits. Write your review note as `docs/review-log/SETUP-UX-A.md` (your own
   fragment — NEVER append to the shared `docs/REVIEW-LOG.md`).
 - Open a DRAFT PR (base master) and STOP — do not mark ready, do not merge; the manager lands it.
