@@ -863,7 +863,15 @@ class _ReviewingRunner:
         router = StaticRouter(backends=list(backends))
         fence = Fence(autonomy=Autonomy[self.autonomy])
         budget = Budget(max_checkpoints=self.max_checkpoints)
-        work_unit = WorkUnit(task_id=unit.id, goal=unit.goal)
+        # Same bearings the default CoordinatorRunner carries: goal + body + the
+        # gate's own accept checks (joined), so the work path's reviewed runner
+        # hands the agent full context too — one source of truth with the gate.
+        work_unit = WorkUnit(
+            task_id=unit.id,
+            goal=unit.goal,
+            body=unit.body,
+            accept_text="\n".join(unit.accept),
+        )
         try:
             return coordinator.run(
                 work_unit, backends, ledger, fence, router,
