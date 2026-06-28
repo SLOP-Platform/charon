@@ -1,0 +1,17 @@
+title = "Charon Gitleaks Config"
+
+[extend]
+useDefault = true
+
+# gitleaks auto-loads this file from the scanned repo root when land.run_gitleaks
+# runs `gitleaks detect --source <repo>` (config precedence #3: target path).
+# No --config flag needed in land.py.
+[allowlist]
+description = "CI placeholder tokens and env-var bearer references are not secrets"
+regexTarget = "line"
+regexes = [
+    # env-var references ($VAR or ${VAR}) in Authorization headers are not literals
+    '''Authorization:\s*Bearer\s*\$\{?[A-Z_][A-Z0-9_]*\}?''',
+    # ci-smoke-token is the integration smoke-test placeholder used in release.yml
+    '''Authorization:\s*Bearer\s*ci-smoke-token''',
+]
