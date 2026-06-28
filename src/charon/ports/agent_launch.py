@@ -17,6 +17,15 @@ Behind the per-run proxy the gateway holds the key and injects it upstream; the
 agent must not see it. ``_acp_passthrough_env(include_keys=False)`` is forced by
 every renderer so a future renderer cannot regress that.
 
+Gateway credential (WORK-GATEWAY-WIRE): the per-run proxy the agent is pointed at
+is token-gated, so the agent must present that ONE gateway token (NOT a provider
+key) to authenticate — else every LLM call 401s and the autonomous run dies at
+dispatch. The renderer threads the proxy's own ``proxy_token`` straight into the
+SAME injected launch config that overrides the baseURL, so baseURL + credential
+travel together and the secret stays out of the broad process env (no fence hole:
+the strict ``scrubbed_env`` whitelist is untouched). This is distinct from the D4
+provider key — it is the local proxy's bearer, which the proxy itself minted.
+
 Privileged-core / stdlib-only (ADR-0005 R3, ADR-0007 D11): this seam adds no
 dependency — it only reshapes how the existing launch env is produced.
 """
@@ -62,11 +71,16 @@ class AgentRenderer:
     product's launch-config shape behind the seam so the engine never names it.
 
     ``render`` MUST build its env with ``_acp_passthrough_env(include_keys=False)``
-    so the D4 key-exclusion invariant holds for every renderer, present or future."""
+    so the D4 key-exclusion invariant holds for every renderer, present or future.
+
+    ``proxy_token`` is the per-run proxy's OWN bearer (None when the proxy is
+    ungated): a renderer wires it as the agent's credential to the proxy so LLM
+    calls authenticate, NOT a provider key (those stay behind the proxy, D4)."""
 
     name = "agent"
 
-    def render(self, acp_cmd: str, proxy_url: str, requested_model: str) -> AgentLaunch:
+    def render(self, acp_cmd: str, proxy_url: str, requested_model: str,
+               proxy_token: str | None = None) -> AgentLaunch:
         raise NotImplementedError
 
 
@@ -89,11 +103,19 @@ class OpencodeRenderer(AgentRenderer):
     it overrides the agent's provider ``baseURL`` to the per-run proxy (the
     mechanism proven live; a config *file* path is not honored) and pins the wire
     model id to ``requested_model`` (the tier vid). Forces ``include_keys=False``
-    (D4) — the proxy holds the real key."""
+    (D4) — the proxy holds the real key.
+
+    The proxy is token-gated, so the override carries baseURL *and* the proxy's own
+    bearer (``proxy_token``) together as ``options.apiKey`` (WORK-GATEWAY-WIRE) —
+    the openai-compatible client sends it as ``Authorization: Bearer`` so the agent
+    authenticates to the per-run gateway. The secret rides this injected config, NOT
+    the broad process env, so the fence whitelist stays closed. An ungated proxy
+    (``proxy_token is None``) keeps the non-empty placeholder the client requires."""
 
     name = "opencode"
 
-    def render(self, acp_cmd: str, proxy_url: str, requested_model: str) -> AgentLaunch:
+    def render(self, acp_cmd: str, proxy_url: str, requested_model: str,
+               proxy_token: str | None = None) -> AgentLaunch:
         provider, short = _split_model(requested_model)
         cfg = {
             "model": f"{provider}/{short}",
@@ -101,7 +123,8 @@ class OpencodeRenderer(AgentRenderer):
                 provider: {
                     "npm": "@ai-sdk/openai-compatible",
                     "name": provider,
-                    "options": {"baseURL": proxy_url + "/v1", "apiKey": "charon-proxy"},
+                    "options": {"baseURL": proxy_url + "/v1",
+                                "apiKey": proxy_token or "charon-proxy"},
                     "models": {short: {}},
                 }
             },
@@ -117,9 +140,12 @@ _DEFAULT_RENDERER: AgentRenderer = OpencodeRenderer()
 
 
 def render(acp_cmd: str, proxy_url: str, requested_model: str,
-           renderer: AgentRenderer | None = None) -> AgentLaunch:
+           renderer: AgentRenderer | None = None,
+           proxy_token: str | None = None) -> AgentLaunch:
     """Render an ACP agent launch through the seam. The engine calls this with
-    ``requested_model=tier_vid`` and the per-run gateway's URL; it never names a
-    concrete agent. ``renderer`` defaults to the one shipped renderer (opencode);
+    ``requested_model=tier_vid``, the per-run gateway's URL, and that gateway's own
+    ``proxy_token`` (the bearer the agent presents to authenticate); it never names
+    a concrete agent. ``renderer`` defaults to the one shipped renderer (opencode);
     a future probed renderer is injected here, not branched in the engine."""
-    return (renderer or _DEFAULT_RENDERER).render(acp_cmd, proxy_url, requested_model)
+    return (renderer or _DEFAULT_RENDERER).render(
+        acp_cmd, proxy_url, requested_model, proxy_token=proxy_token)

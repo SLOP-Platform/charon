@@ -302,8 +302,13 @@ def _acp_via_renderer(acp_cmd: str, server, requested_model: str) -> AcpBackend:
     through the running per-run proxy ``server`` — via the product-neutral
     ``AgentLaunch`` seam (ADR-0014 D3). The engine never names the agent product;
     the renderer forces ``include_keys=False`` (D4), so the agent never sees the
-    real provider key (the proxy injects it)."""
-    launch = render(acp_cmd, server.url, requested_model)
+    real provider key (the proxy injects it).
+
+    The token-gated ``server``'s OWN bearer (``server.token``) is threaded into the
+    rendered launch config (WORK-GATEWAY-WIRE) so the agent authenticates to the
+    per-run gateway — its LLM calls then route through this same ``server`` (whose
+    ``observer`` records them), instead of 401-ing at dispatch."""
+    launch = render(acp_cmd, server.url, requested_model, proxy_token=server.token)
     return AcpBackend(launch.argv, name="acp",
                       passthrough_env=launch.passthrough_env, observer=server.observer)
 

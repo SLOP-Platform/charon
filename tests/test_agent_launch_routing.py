@@ -121,6 +121,61 @@ def test_agent_launch_pins_vid_at_the_seam_and_excludes_keys(monkeypatch):
     assert any("http://127.0.0.1:9999" in v for v in launch.passthrough_env.values())
 
 
+def test_gateway_credential_reaches_the_spawned_agent(monkeypatch):
+    # WORK-GATEWAY-WIRE: the per-run proxy is token-gated, so the rendered launch
+    # MUST carry the proxy's OWN bearer paired with its url — else an ACP child
+    # 401s. Provider keys present in the env must still NOT cross (D4 intact).
+    for k in _ACP_KEY_PASSTHROUGH:
+        monkeypatch.setenv(k, "PROVIDER-KEY-must-not-leak")
+    proxy_url, gw_token = "http://127.0.0.1:9999", "gw-bearer-XYZ"
+    launch = render("opencode acp", proxy_url, TIER_VID, proxy_token=gw_token)
+
+    # Wire seam: the credential reaches the child paired with the proxy url (the
+    # injected launch config the child reads is a passthrough_env value) — asserted
+    # agnostically on the rendered env, not an opencode config shape.
+    assert any(gw_token in v for v in launch.passthrough_env.values())
+    assert any(proxy_url in v for v in launch.passthrough_env.values())
+    blob = launch.passthrough_env["OPENCODE_CONFIG_CONTENT"]
+    opts = json.loads(blob)["provider"][_split_provider(TIER_VID)]["options"]
+    assert opts["apiKey"] == gw_token              # the proxy bearer, on the wire
+    assert opts["baseURL"].startswith(proxy_url)   # paired with the proxy it gates
+    # The fix opened NO general hole: provider keys are still scrubbed (D4).
+    for k in _ACP_KEY_PASSTHROUGH:
+        assert k not in launch.passthrough_env
+
+
+def test_gateway_wire_opens_no_general_secret_hole(monkeypatch):
+    # Security regression guard: forwarding the ONE gateway bearer must not drag any
+    # unrelated secret into the child. An arbitrary SECRET_* (and provider keys) must
+    # be absent from EVERY rendered env/config value; only the gateway token crosses.
+    monkeypatch.setenv("SECRET_DEPLOY_KEY", "leak-me-not")
+    for k in _ACP_KEY_PASSTHROUGH:
+        monkeypatch.setenv(k, "PROVIDER-KEY-must-not-leak")
+    launch = render("opencode acp", "http://127.0.0.1:9999", TIER_VID,
+                    proxy_token="gw-bearer-XYZ")
+
+    blob = json.dumps(launch.passthrough_env)      # env keys AND injected config values
+    assert "leak-me-not" not in blob
+    assert "PROVIDER-KEY-must-not-leak" not in blob
+    assert "SECRET_DEPLOY_KEY" not in launch.passthrough_env
+    assert "gw-bearer-XYZ" in blob                 # the one credential that DOES cross
+
+
+def test_ungated_proxy_keeps_nonempty_placeholder():
+    # No proxy token (loopback ungated) → the client still needs a non-empty apiKey,
+    # and crucially no stray credential is invented.
+    launch = render("opencode acp", "http://127.0.0.1:9999", TIER_VID)
+    opts = json.loads(launch.passthrough_env["OPENCODE_CONFIG_CONTENT"])[
+        "provider"][_split_provider(TIER_VID)]["options"]
+    assert opts["apiKey"]                           # non-empty (client requirement)
+
+
+def _split_provider(vid: str) -> str:
+    """The opencode provider key the renderer emits for a (bare tier) vid — mirrors
+    ``_split_model``'s generic-provider fallback so the assertion stays agnostic."""
+    return vid.split("/", 1)[0] if "/" in vid else "charon"
+
+
 def test_tier_routes_through_gateway_failover_no_engine_selection():
     # The free provider 429s; the paid provider serves. The engine does NO
     # selection — it inherits the gateway's free-first failover.
