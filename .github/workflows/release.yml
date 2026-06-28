@@ -47,11 +47,23 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
       - name: build image
         run: docker build -t charon:ci .
-      - name: run service + healthz
+      - name: run gateway + /v1/models
+        # Image default is the token-gated gateway on :8080 (CMD in Dockerfile).
+        # A tokenless 0.0.0.0 bind is refused (NonLoopbackBindWithoutToken), so we
+        # supply CHARON_GATEWAY_TOKEN. The gateway returns HTTP 200 with an empty
+        # model list before any provider is configured — that is sufficient for smoke.
+        # Mode-B service surface (:8473/healthz) is exercised by the test suite in
+        # the gate job and does not need a separate container here.
         run: |
-          docker run -d --name charon-rel -p 127.0.0.1:8473:8473 charon:ci
+          docker run -d --name charon-rel \
+            -e CHARON_GATEWAY_TOKEN=ci-smoke-token \
+            -p 127.0.0.1:8080:8080 charon:ci
+          ok=0
           for _ in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8473/healthz; then ok=1; break; fi
+            code=$(curl -s -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer ci-smoke-token" \
+              http://127.0.0.1:8080/v1/models) || true
+            if [ "$code" = "200" ]; then ok=1; break; fi
             sleep 1
           done
           docker logs charon-rel
