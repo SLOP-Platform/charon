@@ -32,7 +32,15 @@ from dataclasses import dataclass
 # forbidden set behind a proxy — the proxy injects the real key, so a renderer
 # must never pass these.
 _ACP_BASE_PASSTHROUGH = ("HOME", "PATH", "XDG_CONFIG_HOME", "XDG_DATA_HOME")
-_ACP_KEY_PASSTHROUGH = ("OPENCODE_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY")
+# Provider keys PLUS the standing-gateway bearer. All ride the ``include_keys``
+# group: forwarded on the bare ``charon work`` acp path (where the agent talks to
+# the standing Charon gateway it is configured for and needs that bearer), and
+# excluded on the renderer / per-run-proxy path (``include_keys=False``) — there
+# the proxy supplies its own credential, so the standing token must not bleed in.
+# ``CHARON_GATEWAY_TOKEN`` is forwarded ONLY when set (the dict-comp below skips
+# absent vars), so no empty/placeholder value is ever injected.
+_ACP_KEY_PASSTHROUGH = ("OPENCODE_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY",
+                        "CHARON_GATEWAY_TOKEN")
 
 
 def _acp_passthrough_env(include_keys: bool = True) -> dict[str, str]:

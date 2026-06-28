@@ -21,7 +21,11 @@ import urllib.request
 
 from charon import api
 from charon.gateway import _build_routes_and_pools
-from charon.ports.agent_launch import _ACP_KEY_PASSTHROUGH, render
+from charon.ports.agent_launch import (
+    _ACP_KEY_PASSTHROUGH,
+    _acp_passthrough_env,
+    render,
+)
 from charon.proxy_server import GatewayProxyServer
 
 TIER_VID = "high"  # the canonical tier vid (fleet `opus`) — bare, so it IS the wire id
@@ -119,6 +123,44 @@ def test_agent_launch_pins_vid_at_the_seam_and_excludes_keys(monkeypatch):
     # Agnostic check: the per-run proxy URL must reach the agent SOMEHOW (any
     # renderer must wire it) — asserted on the env, not an opencode config shape.
     assert any("http://127.0.0.1:9999" in v for v in launch.passthrough_env.values())
+
+
+def test_bare_path_forwards_gateway_token_when_set(monkeypatch):
+    # WORK-GATEWAY-WIRE: the bare ``charon work`` acp path (include_keys=True) must
+    # carry CHARON_GATEWAY_TOKEN so the spawned agent authenticates to the standing
+    # Charon gateway it is configured for (else every LLM call 401s).
+    monkeypatch.setenv("CHARON_GATEWAY_TOKEN", "gw-bearer-xyz")
+    env = _acp_passthrough_env()  # default include_keys=True == the bare path
+    assert env.get("CHARON_GATEWAY_TOKEN") == "gw-bearer-xyz"
+
+
+def test_bare_path_omits_gateway_token_when_unset(monkeypatch):
+    # Never inject an empty/placeholder value — absent in the env means absent in
+    # the forwarded set.
+    monkeypatch.delenv("CHARON_GATEWAY_TOKEN", raising=False)
+    assert "CHARON_GATEWAY_TOKEN" not in _acp_passthrough_env()
+
+
+def test_bare_path_forwards_only_the_gateway_token_no_general_hole(monkeypatch):
+    # Security regression guard: forwarding the one gateway bearer opens no general
+    # hole. An arbitrary SECRET_* (and any non-whitelisted var) stays absent; only
+    # the gateway token plus the pre-existing whitelisted vars/provider keys cross.
+    monkeypatch.setenv("CHARON_GATEWAY_TOKEN", "gw-bearer-xyz")
+    monkeypatch.setenv("SECRET_AWS", "must-not-leak")
+    monkeypatch.setenv("RANDOM_TOKEN", "must-not-leak")
+    env = _acp_passthrough_env()
+    assert env.get("CHARON_GATEWAY_TOKEN") == "gw-bearer-xyz"
+    assert "SECRET_AWS" not in env
+    assert "RANDOM_TOKEN" not in env
+
+
+def test_renderer_path_does_not_force_forward_gateway_token(monkeypatch):
+    # Mirrors test_agent_launch_pins_vid_at_the_seam_and_excludes_keys: the
+    # renderer / per-run-proxy path (include_keys=False) owns its own credential,
+    # so the standing gateway token must NOT bleed into it even when set.
+    monkeypatch.setenv("CHARON_GATEWAY_TOKEN", "gw-bearer-xyz")
+    launch = render("opencode acp", "http://127.0.0.1:9999", TIER_VID)
+    assert "CHARON_GATEWAY_TOKEN" not in launch.passthrough_env
 
 
 def test_tier_routes_through_gateway_failover_no_engine_selection():
