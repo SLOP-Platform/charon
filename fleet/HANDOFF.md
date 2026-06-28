@@ -1,86 +1,134 @@
 # Charon — Session Handoff (2026-06-27, late)
 
-Resume doc for a fresh MANAGER session. Read `MEMORY.md` + this + `/home/stack/charon-private/fleet/WORKFLOW.md` +
-`docs/DECISIONS.md` first, then run `status.sh` / `board.sh` / `validate_board.sh`.
+Resume doc for a fresh MANAGER session. Read `/home/stack/.claude/projects/-home-stack-code-charon/memory/MEMORY.md`
++ this + `/home/stack/charon-private/fleet/WORKFLOW.md` first, then run
+`bash /home/stack/charon-private/fleet/board.sh` · `validate_board.sh`.
 
 ## FIRST ACTS (fresh session)
 1. Read `MEMORY.md` + this + `/home/stack/charon-private/fleet/WORKFLOW.md`.
-2. `status.sh` — **check the live droid tabs** (see ACTIVE SESSIONS). `board.sh` · `validate_board.sh`.
-3. Gate any PRs that have landed (see GATING). Merge on green per the bar below.
-4. Surface the next decision to the operator; do not launch droids yourself (operator opens tabs).
+2. `bash /home/stack/charon-private/fleet/board.sh` · `validate_board.sh` — confirm the board state.
+3. **There are NO in-flight droid PRs to gate** — #65 + #66 merged; the board is CLEAR of active
+   claimable tickets except the one new ticket below. Verify with `bash board.sh`.
+4. Pick up the real work (no gating queue): **(a)** TEST-PORT-FLAKE (new ACTIVE ticket, below);
+   **(b)** the OUT-OF-TREE SLOP exporter (north-star dogfood, below); **(c)** assess oh-my-pi
+   (another OpenAI-compatible agent that points at Charon via `~/.omp/agent/models.yml`);
+   **(d)** the parked production-readiness tickets. Surface the next decision; do NOT launch droids
+   yourself (operator opens tabs). Build PRODUCTS in fresh droid sessions, never in the manager.
 
-## ACTIVE SESSIONS TO MONITOR  ← the main job right now
-Two droid builds were in flight at handoff; **watch for their PRs and gate them:**
-- **INTAKE1** (#13) — `opus-2682803` building `feat/intake-import`. The `charon intake import`
-  command + enrichment + external-id preservation. owns `cli.py`, `intake.py`, their tests.
-  **Gate at the ESCALATED bar** (2 independent adversarial reviewers — it's a substantial
-  product feature). Boundary MUST stay clean (no SLOP in `src/`).
-- **HARD1** — `sonnet-2651915` building `feat/run-task-routing-test`. A test-only ticket: the
-  `run_task(role=…)` end-to-end routing guard test. owns ONLY `tests/test_run_task_routing.py`.
-  Single adversarial reviewer is fine.
-- `sonnet-2677744` — idle/polling; will stand down (no more sonnet-eligible work) or grab the
-  next ready sonnet ticket. Idle = no model burn.
-- When both land + merge, the active board is empty (TIER7B is parked — see below).
+## ACTIVE BOARD — what's claimable now
+The board is CLEAR of in-flight droid PRs — #65 and #66 both MERGED this session. The only ACTIVE /
+claimable ticket is:
+- **TEST-PORT-FLAKE** — `feat/test-ephemeral-ports`, tier `sonnet`, no deps. Real CI-robustness bug:
+  the gateway tests bind a FIXED port (8080), so on the shared 4-lom self-hosted runner they fail
+  `OSError: [Errno 98] Address already in use` whenever anything else holds 8080 (a leftover
+  `charon gateway`, a Docker container, or a concurrent CI job — it bit #65 and #66; freeing 8080
+  by `docker compose down` on 4-lom unblocked them). Fix = bind an EPHEMERAL port (port 0) and read
+  the actually-bound port back (`server.server_address[1]`). TEST-ONLY (no src/ change). Tab:
+  *****
+  bash /home/stack/charon-private/fleet/fleet-droid.sh sonnet
+  *****
+  Then gate adversarially + merge on green per the bar. Everything else is PARKED (see below).
 
-Recovery note: the launcher now **auto-commits** any work a droid leaves uncommitted before
-publishing (fixes the FR1 data-loss path) — so a NEEDS-PUSH from "no commits" should be rare. If a
-PR's first commit is `chore(<id>): launcher auto-commit…`, review it harder for half-done work.
+## WHAT MERGED to master THIS session (master now has #54–#66)
+- **#54 INTAKE1** — `charon intake import` front door (markdown/plan → tickets, external-id preserved).
+- **#55 HARD1** — `run_task(role=…)` end-to-end routing guard test.
+- **#56 TIER7B** — ADR-0014 Phase B: per-stage multi-tier routing (router selects backend by tier).
+- **#57 PRESETS** — Hugging Face + Neuralwatt provider presets.
+- **#59 TIER7B-FOLLOWUP** — multi-member within-tier ordering guard + proxy-teardown hardening.
+- **#60 REAPWIN** — router/fence/budget proxy reap-window.
+- **#61 CLI-HELP** — plain-language top-level `--help`, gateway-first command order.
+- **#62 INSTALL** — one-liner bootstrap `install.sh` + README (prereq check, pretty, re-runnable).
+- **#63 SETUP-UX-A** — imported catalog surfaced at the "model served by" prompt + serve-all +
+  0-models warn guard + colorized presets. (Delivers most of TIER-RECS Phase A.)
+- **#64 DOCKER-INSTALL** — token-gated gateway container, `CHARON_HOME=/data` volume, entrypoint
+  token-guard, `/v1/models` healthcheck, `docs/docker.md`.
+- **#65 RELEASE-SMOKE-FIX** — `.github/workflows/release.yml` image-smoke retargeted from the stale
+  Mode-B `:8473/healthz` to the token-gated gateway default (`:8080 /v1/models` with a
+  `CHARON_GATEWAY_TOKEN` bearer) — the next release's smoke would otherwise have FAILED.
+- **#66 DOCS-TWO-MODE** — operator-APPROVED two-mode onboarding now on master: README top +
+  `docs/getting-started.md` (gateway mode vs. orchestrator mode), per the approved draft.
 
-## GATING (the bar)
-- Droid PRs are **adversarial-by-default** (see memory `adversarial-review-default-for-droid-prs`).
-  Downgrade to a light CI-green/diff-clean confirm ONLY for trivial one-liners / doc-only, and SAY
-  so. HIGH-blast-radius (core gateway/engine) → 2-voter / multi-lens.
-- Merge autonomously on green CI + clean review (AUTONOMOUS lever is ON). Fleet PRs open as DRAFTS:
-  `gh pr ready <n>` then `gh pr merge <n> --merge`, then `bash done.sh <ID>`.
-- Push is via `land-push.sh <branch> <worktree>` / `land-needs-push.sh <id>` (raw `git push` is
-  deny-listed for the manager).
+## RIG CHANGES this session
+- **WCI enforcer** added to `validate_board.sh`: hard-gates unjustified disjoint-owns deps +
+  redundant tickets; `real-dep:` marker convention to justify a true build-dep; semantic checks
+  stay advisory.
+- `charon-private` now has a PRIVATE git remote `Nnyan/charon-private` (committed + pushed).
+  **Build-rig only — NEVER public; never leak into `src/`.**
+- Local `/home/stack/code/charon` synced to master; 32 fleet worktrees pruned;
+  `docs/adr-0014` local branch deleted.
 
-## BUILD STATE — what landed THIS session
-- **TIER-7 Ticket A** (ADR-0014) — agent/provider-agnostic tier routing via the gateway. Merged
-  (#50, 2-voter passed). The engine consumes the gateway's vid→pool→failover behind the
-  `ports/agent_launch.py` opencode renderer seam. Register rows D017–D019.
-- **FR1** — first-run UX polish (mock banner [honest exit kept], gateway 502 hint, doctor exit-0,
-  README units example). Merged (#51).
-- **DEP1** — declared `httpx` as a dev test-dep (it was ambient-only on the 4-lom box → clean
-  installs / forks failed 3 service tests). Merged (#53).
-- **CI1** — CI workflows now pick the runner via the `CI_RUNNER` repo variable (A-Clean); forks
-  fall back to hosted. Merged (#52). Register row D020. **Operator set `CI_RUNNER` this session.**
-- **Launcher hardening** — `fleet-droid.sh`: `--wait` is now the DEFAULT (bare droid self-feeds);
-  auto-commit-leftover guard (above); both in the rig.
-- Earlier this session: TIER-1..6 (model-tier abstraction), the pytest-pythonpath worktree fix.
+## DOGFOOD / PREFLIGHT — VALIDATED end-to-end this session
+- Fresh Charon install on **charon-vm (10.0.3.91)** — needed Python 3.11 via deadsnakes+venv
+  (the Ubuntu-22.04/3.10 barrier). `charon setup` (opencode-zen, 49 models imported, gpt-5.4
+  served). `charon gateway` loopback **and** LAN (`--host 0.0.0.0`, token
+  `f77ffd3b920f65b642238333a3d88f0e`). Real `/v1/chat/completions` round-trip
+  (client→Charon→opencode-zen→reply), live web-console telemetry, LAN browser console from the
+  operator PC (10.0.1.69; net 10.0.0.0/22).
+- **Docker** install verified on **4-lom (10.0.1.60)**: `docker compose up --build` → healthy
+  gateway serving `/v1/models`.
+- **Agentic clients (Mode A / gateway):** Windows opencode GUI (did create+edit+run) **and** WSL
+  opencode CLI (listed the board, picked + implemented RELEASE-SMOKE-FIX) both validated as
+  Charon-backed.
 
-## PARKED / DEFERRED (will NOT auto-build)
-- **TIER7B** = `board/TIER7B.md.parked` (renamed off the active board so no idle opus tab claims
-  it). It's TIER-7 **Phase B**: per-stage multi-tier routing (router selects backend by tier;
-  warm-agent-per-tier) + delete the orphaned `failover.select_live_entry`. Operator-DEFERRED.
-  **To activate:** `mv board/TIER7B.md.parked board/TIER7B.md`. NOTE (WCI lens): its
-  `depends_on: HARD1` is really a MERGE-order, not a true build-dep (disjoint owns) — when you
-  activate it, drop the dep and just merge HARD1 first at the gate so they can build concurrently.
-  The prompt (`prompts/tier-phase-b.md`) already says "HARD1 green on master first."
-
-## DESIGN QUEUE (manager design passes — NOT droid builds) → `DESIGN-QUEUE.md`
-- **DSGN-WRITEBACK** — close-the-loop: report completed work back to the source tracker (gated
-  general `TicketSink`; mark in-review + work trail; other agent/human closes). Sequence AFTER
-  INTAKE1 (needs its external-id preservation).
-- **DSGN-WCI** — work-composition intelligence (CORE feature; 3 pillars). A design + adversarial
-  review were done; verdict **REWORK** — reshape per the captured findings before ticketing.
-Run each as design→adversarial-review→ADR→build-tickets→operator sign-off.
+## DOGFOOD — NEXT STEP (north-star)
+The OUT-OF-TREE SLOP exporter spec is READY at
+`/home/stack/charon-private/dogfood/SLOP-EXPORT-SPEC.md` (stdlib sqlite3, httpx-free; reads
+mediastack `tracking.db` open tickets; emits `charon intake import`-compatible markdown with
+`id: slop-<id>` preserved). **Not yet built.** Route the build to a FRESH DROID session (not the
+manager). Build command (out-of-tree; writes only `/home/stack/charon-private/dogfood/slop_export.py`):
+```
+cd /home/stack/code/charon && claude "Build the SLOP→Charon exporter EXACTLY per the spec at /home/stack/charon-private/dogfood/SLOP-EXPORT-SPEC.md ..."
+```
+Then: export → `charon intake import` → enrich with `accept:`/`owns:` → `charon work --backend acp`.
+SLOP tickets live in `/home/stack/code/mediastack/tracking/tracking.db` (~31 open).
 
 ## PENDING OPERATOR ACTIONS
-- **Preflight:** run `charon setup` interactively once (the only non-auto first-run step) — surfaces
-  any first-run gap before the dogfood.
-- **Dogfood** (the big goal): after INTAKE1 lands → write the OUT-OF-TREE SLOP exporter
-  (`tracking.db`/`query.py` → markdown or plan JSON; httpx-free) → `charon intake import` → enrich
-  the imported tickets with `accept:`+`owns:` so they're runnable → run a few via `charon work
-  --backend acp`. The intake adapter is the gate; routing/TIER-7 is NOT required (mock + acp run
-  today). SLOP tickets live in `/home/stack/code/mediastack/tracking/tracking.db` (~31 open).
+- **CLEANUP — delete the throwaway scratch branches** in `/home/stack/code/charon` (their real work
+  is already captured on master / in PRs): `test/gateway-agent` (left by the WSL-CLI dogfood;
+  RELEASE-SMOKE-FIX work landed in #65) and any `charon-work-*` / `slop-work-*` branches left by
+  `charon work` dogfood runs. List first, then delete:
+  *****
+  git -C /home/stack/code/charon branch | grep -E 'test/gateway-agent|charon-work-|slop-work-'
+  git -C /home/stack/code/charon branch -D test/gateway-agent
+  git -C /home/stack/code/charon for-each-ref --format='%(refname:short)' 'refs/heads/charon-work-*' 'refs/heads/slop-work-*' | xargs -r git -C /home/stack/code/charon branch -D
+  *****
+- **oh-my-pi** (https://github.com/can1357/oh-my-pi) — operator wants it working next. Assess what
+  it is + whether it's another OpenAI-compatible client to point at Charon (Mode A, via
+  `~/.omp/agent/models.yml`). Research + report; don't build in the manager.
+
+## PARKED / DEFERRED (will NOT auto-build)
+- **CLIENT-CONNECT** (TOP production-readiness priority, operator 2026-06-27): `charon connect <client>` — one command to install + wire up a CLIENT (opencode|aider|omp|cline|continue) pointed at the Charon gateway (the gateway-first "last mile"). Design first, then build. PARKED `.parked`.
+- **PROD-INSTALL** (part 2): `charon update`/`reinstall` subcommand + `charon doctor`
+  gateway-preflight + the pipx-ensurepath PATH nit.
+- **TIER-RECS**: Phase A mostly delivered by #63; Phase B = LLM-judge tier recommendations grounded
+  on the live `/models` catalog — held until §5.1.
+- **UX-POLISH** (8 items): [HIGH] validate-API-key-at-setup; getpass paste feedback; hardcoded
+  `charon` in messages → use `argv[0]`; console-URL-local-only hint; docker-group prereq doc;
+  gateway-vs-orchestrator → now DOCS-TWO-MODE.
+- **WORK-OBSERVABILITY**: `charon work` is a black box (no live progress, agent output discarded,
+  no aggregate/work UI; ADR-0004 D7 deferred the watcher).
+- **DSGN-WRITEBACK**: report completed work back to the source tracker (needs INTAKE1's external-id
+  preservation, now merged).
+- **WCI / WCI-FOLLOWON / ADR-0015 / PRODUCT-WCI**: DEFERRED until production-ready — product WCI
+  must be opt-in-orchestrator-only + advisory-override.
 
 ## KEY DOCTRINE (memories — all in `MEMORY.md`)
-- Discuss-before-acting on operator questions; keep it SHORT and WAIT (don't bury asks in walls).
-- Delegate substantive work to BACKGROUND sub-sessions; primary stays responsive (gate/merge/talk).
-- Adversarial-by-default reviews; always give MY recommendation; peer-review very-impactful ones.
+- **Pause after a question or a handed-action** — move slowly; STOP and WAIT, keep it SHORT, don't
+  bury the ask in a wall of text.
+- **Don't build PRODUCTS in the manager session** — route product builds to FRESH DROID sessions
+  via activated tickets + tab commands. Manager sub-agents do ONLY manager work (investigate /
+  design / board / review / gate).
+- **All substantive work in sub-sessions**; primary stays responsive (gate / merge / talk).
+- **disjoint-owns ≠ no-dependency** — a merge-order is not a build-dep; the WCI enforcer is now in
+  `validate_board.sh`.
+- Adversarial-by-default reviews; always give MY recommendation; multi-lens the high-blast-radius.
 - Charon is modular: engine NOT hardcoded to any agent (opencode) or provider — gateway is neutral.
-- Product ships standalone: never leak the rig/SLOP/runner into `src/`.
-- Production-readiness north-star: a stranger's fresh `pipx install` must work.
-- Always give the literal command; droid launches = `fleet-droid.sh <tier>` once + a one-line of
+- Product ships standalone: never leak the rig / SLOP / runner / `charon-private` into `src/`.
+- WCI is rig-enforced; product WCI deferred. Always use the fleet rig by ABSOLUTE path.
+- Always give the literal command; droid launches = `fleet-droid.sh <tier>` once + a one-liner of
   what it picks up; wrap operator-run commands in `*****` lines.
+
+## NEW-SESSION BOOTSTRAP ONE-LINER (paste to start the next manager session)
+```
+You are the Charon fleet MANAGER. Read /home/stack/.claude/projects/-home-stack-code-charon/memory/MEMORY.md, then /home/stack/charon-private/fleet/HANDOFF.md, then /home/stack/charon-private/fleet/WORKFLOW.md. Run `bash /home/stack/charon-private/fleet/board.sh` and `bash /home/stack/charon-private/fleet/validate_board.sh`. There are NO in-flight droid PRs to gate (#65 + #66 merged). Pick up the real work: the new TEST-PORT-FLAKE ticket (test-only ephemeral-port CI fix), then the OUT-OF-TREE SLOP exporter dogfood (build per /home/stack/charon-private/dogfood/SLOP-EXPORT-SPEC.md in a FRESH droid session), then assess oh-my-pi, then the parked production-readiness tickets. Operator opens droid tabs (`fleet-droid.sh <tier>`) — never launch droids or build products in the manager session. Work only under /home/stack/charon-private; pause after any question or handed-action.
+```

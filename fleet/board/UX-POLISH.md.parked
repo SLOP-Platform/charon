@@ -48,6 +48,21 @@ scope: PRODUCTION-READINESS. COLLECTOR ticket — a batch of small first-run / `
      (charon-vm 2026-06-27) — config is loaded at startup, not per-request. Low priority — note
      for docs, or consider hot-reload later.
 
+  7. **[docs] Docker prerequisite — user not in the `docker` group.** First-run on 4-lom hit
+     `permission denied … /var/run/docker.sock` because the user wasn't in the `docker` group.
+     `docs/docker.md` should note: add the user to the `docker` group
+     (`sudo usermod -aG docker $USER` + re-login) or use `sudo`. (charon-vm/4-lom dogfood
+     2026-06-27.)
+
+  8. **[docs, IMPORTANT] gateway-vs-orchestrator clarity in onboarding.** New users conflate
+     Charon's two modes. Onboarding/README must clearly state: (A) GATEWAY mode — Charon is *only
+     the LLM backend*; the user points their own AGENT (opencode/Cline/aider) at their OWN repo,
+     and Charon never touches the repo or tickets. (B) ORCHESTRATOR mode (`charon work` /
+     `charon intake`) — the user points Charon ITSELF at a `--repo` and feeds it work via
+     `charon intake import`. A brand-new user has neither our repos nor "tickets" — they bring
+     their own. Flag as a docs/onboarding priority (bigger than a cosmetic nit). (charon-vm/4-lom
+     dogfood 2026-06-27.)
+
   CROSS-REF: "show the live model list at the model-selection prompt" is NOT tracked here — it is
   tracked as **Phase A of TIER-RECS** (`board/TIER-RECS.md.parked`), so it isn't double-tracked.
   Keep UX-POLISH for purely cosmetic nits (e.g. the colorize-presets item above).
