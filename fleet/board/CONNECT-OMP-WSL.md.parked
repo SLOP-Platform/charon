@@ -1,0 +1,9 @@
+tier: sonnet
+branch: feat/connect-omp-wsl
+depends_on: OHMYPI-ASSESS
+real-dep: OHMYPI-ASSESS must determine omp 16.2.2's real custom-provider config schema before the omp writer can be fixed — a true research/correctness prereq, not merge-order.
+owns: src/charon/connect.py, tests/test_connect_omp.py
+accept: PYTHONPATH=src python3 -m pytest -q tests/test_connect_omp.py
+prompt: /home/stack/charon-private/prompts/connect-omp-wsl.md
+# BACKLOG (parked) — 2026-06-28 dogfood: omp ignores connect's config + --install used Windows bun on WSL.
+# SERIALIZE with CLIENT-CONNECT-GUI (both own connect.py) — cannot run concurrently.
