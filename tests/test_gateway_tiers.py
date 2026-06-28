@@ -8,6 +8,7 @@ branch persists + hot-reloads.
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 
 import pytest
@@ -81,6 +82,7 @@ def test_setup_tiers_branch_persists_and_reloads(home):
 
     _write_models(home, m={"upstream_base": "http://m/v1"})
     cfg = gateway.load_config(state_dir=home)
+    cfg = dataclasses.replace(cfg, port=0)
     server = gateway.build_server(cfg, setup_dir=home)
     try:
         status, body = server.setup_handler("tiers", {
