@@ -1,14 +1,47 @@
 # Charon
 
-**A local, OpenAI-compatible gateway with visible, cost-ranked failover.** Point any
-OpenAI client at `http://localhost:8080/v1`; when one provider hits a rate or credit
-cap, the next serves automatically — same request, no waiting, no lost work.
+**Charon is two things in one tool:**
 
-- Works with any OpenAI-compatible client (Cursor, Cline, Aider, Codex, Jan,
-  LM Studio, Msty, …) — "if it takes an OpenAI base URL, it's supported."
-- Holds your provider keys server-side (never sent to the client); ranks providers
-  free-first / cheapest-first.
-- Failover is **visible**: `X-Charon-*` response headers + a live local console.
+1. **A smart LLM endpoint** — a local, OpenAI-compatible API gateway that automatically fails over across your providers. Point any OpenAI client at it and stop babysitting rate limits.
+2. **An autonomous coding worker** — point Charon at a repo and a to-do list, and it does the work itself: drives a coding agent through the tasks and opens a pull request for each one.
+
+Most people only need #1.
+
+New here? Start with [getting started](docs/getting-started.md).
+
+---
+
+## Which mode do I want?
+
+| You want… | Use | What Charon is here |
+|---|---|---|
+| A reliable LLM endpoint for your tools (Cursor, Cline, Aider, opencode, your own app) | **Gateway** | Just the smart model backend. It answers model calls; **your** agent does the work. |
+| Charon to autonomously do coding work from a list of tickets | **Orchestrator** | The worker itself. It drives a coding agent through your tasks and opens PRs. |
+
+> In **Gateway** mode, Charon never touches your code or your tickets — it only answers API calls.
+> In **Orchestrator** mode, Charon *is* the one doing the coding work.
+
+### Mode A — Gateway (the default, ~80% of users)
+
+```bash
+charon setup          # guided: add providers, keys, and models
+charon gateway        # serves http://127.0.0.1:8080/v1
+```
+
+Point your client's base URL at `http://127.0.0.1:8080/v1`. Full install and setup in [Install](#install) and [Quick start](#quick-start) below.
+
+### Mode B — Orchestrator (opt-in)
+
+```bash
+charon intake import my-tasks.md          # turn your to-do list into a plan
+charon work --units my-tasks.md.plan.json \
+            --repo /path/to/your/repo \
+            --backend acp --acp-cmd 'opencode acp'
+```
+
+Charon drives a coding agent through each task and opens a PR per task — a human merges. Full details in [Work engine (opt-in)](#work-engine-opt-in) below.
+
+---
 
 ## Install
 
