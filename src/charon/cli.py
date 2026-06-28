@@ -19,7 +19,7 @@ import subprocess
 import sys
 import urllib.request
 from collections.abc import Callable
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -819,6 +819,88 @@ def _integrate(base: Path, done_tips: list[tuple[Any, str]], state_dir: Path) ->
     return str(integ)
 
 
+@dataclass
+class _ReviewingRunner:
+    """A work-path :class:`engine.scheduler.FencedRunner` that drives each unit
+    through the SAME single fenced ``coordinator.run`` the default
+    ``CoordinatorRunner`` uses, but ALSO threads a ``reviewer`` into it — so the
+    work path gets the real cross-model review gate (consulted at L2+, recorded for
+    the audit trail at every level), not just the acceptance checks.
+
+    It lives here rather than in the scheduler so the wiring stays in the
+    orchestrator layer (the scheduler is unchanged; the fence choke-point — D008,
+    every unit through ``coordinator.run`` — is preserved). All engine/core
+    imports are LAZY (inside ``__call__``) so engine never lands on cli.py's
+    module-load path (the gateway boundary guard stays green)."""
+
+    state_dir: str
+    backend_factory: Callable[..., Any]
+    reviewer: Any
+    autonomy: str = "L1"
+    max_checkpoints: int = 8
+
+    def __call__(self, unit: Any, worktree: str, *, cost_gate: Any) -> Any:
+        from . import coordinator, gitutil
+        from .acceptance import AcceptanceCheck
+        from .fence import Fence
+        from .ledger import Ledger, LedgerCorruption
+        from .router import StaticRouter
+        from .types import Autonomy, Budget, WorkUnit
+        checks = [
+            AcceptanceCheck(id=f"a{i}", cmd=c) for i, c in enumerate(unit.accept)
+        ]
+        sdir = Path(self.state_dir).resolve()
+        base_ref = gitutil.head(Path(worktree))
+        try:
+            ledger = Ledger.create(
+                sdir, unit.id, unit.goal, checks, str(worktree), base_ref
+            )
+        except LedgerCorruption:
+            # already exists → a RETRY: resume the durable ledger (mirrors the
+            # default CoordinatorRunner, so retries are not dead).
+            ledger = Ledger.load(sdir, unit.id)
+        backends = self.backend_factory(unit, checks)
+        router = StaticRouter(backends=list(backends))
+        fence = Fence(autonomy=Autonomy[self.autonomy])
+        budget = Budget(max_checkpoints=self.max_checkpoints)
+        work_unit = WorkUnit(task_id=unit.id, goal=unit.goal)
+        try:
+            return coordinator.run(
+                work_unit, backends, ledger, fence, router,
+                reviewer=self.reviewer,
+                max_checkpoints=self.max_checkpoints, budget=budget,
+                cost_gate=cost_gate,
+            )
+        finally:
+            for b in backends.values():
+                try:
+                    b.kill()
+                except Exception:
+                    pass
+
+
+def build_work_runner(
+    state_dir: str,
+    backend_factory: Callable[..., Any],
+    autonomy: str,
+    *,
+    reviewer: Any | None = None,
+    max_checkpoints: int = 8,
+) -> Any:
+    """Construct the work path's fenced runner with the REAL gateway reviewer
+    threaded in (ADR-0010 Tier-4). Mirrors how ``charon run`` wires a reviewer,
+    but uses the loopback-gateway :class:`adapters.review.GatewayReviewer` (NOT the
+    demo ``MockReviewer``): it routes via the local gateway, composing with the
+    forwarded provider credentials (WORK-GATEWAY-WIRE)."""
+    from .adapters.review import GatewayReviewer
+    if reviewer is None:
+        reviewer = GatewayReviewer()
+    return _ReviewingRunner(
+        state_dir=state_dir, backend_factory=backend_factory,
+        reviewer=reviewer, autonomy=autonomy, max_checkpoints=max_checkpoints,
+    )
+
+
 def run_work(
     plan_path: str,
     *,
@@ -830,6 +912,11 @@ def run_work(
     engine_overrides: dict | None = None,
     backend_factory: Callable[..., Any] | None = None,
     runner: Any | None = None,
+    reviewer: Any | None = None,
+    open_pr: bool = False,
+    pr_opener: Callable[..., str] | None = None,
+    pr_base: str = "master",
+    pr_repo_slug: str | None = None,
 ) -> dict:
     """Drive the opt-in work-engine end-to-end and return a JSON-able report.
 
@@ -839,12 +926,18 @@ def run_work(
     DONE unit through the propose-default land gate → the D12 validator runs ONCE
     on the integrated end-product against the top-level acceptance (D-E6-6).
 
-    ``runner``/``backend_factory`` are test seams; production uses the default
-    fenced runner + the ``charon run`` backend resolution."""
+    ``runner``/``backend_factory``/``reviewer``/``pr_opener`` are test seams;
+    production uses the default fenced runner (with the real ``GatewayReviewer``
+    threaded in — ADR-0010 Tier-4) + the ``charon run`` backend resolution.
+
+    ``open_pr`` (OFF by default, fail-closed) closes the loop: a unit the gate
+    PROPOSES is published as a DRAFT PR (branch+push+PR via ``land.propose_pr``).
+    When off, the work path stays read-only — no push, no PR — exactly as before.
+    It NEVER auto-merges (ADR-0010 D5 propose-default)."""
     from . import gitutil, land
     from .engine.board import DONE, Board, Unit
     from .engine.capacity import select_limiter
-    from .engine.scheduler import CoordinatorRunner, Scheduler
+    from .engine.scheduler import Scheduler
     from .ledger import Ledger
     from .validate import validate_product
 
@@ -876,9 +969,11 @@ def run_work(
 
     if runner is None:
         bf = backend_factory or _default_backend_factory(backend_name, acp_cmd)
-        runner = CoordinatorRunner(
-            state_dir=str(sdir), backend_factory=bf, autonomy=autonomy
-        )
+        # Thread the REAL gateway reviewer into the fenced runner (ADR-0010
+        # Tier-4) instead of the default reviewer-less CoordinatorRunner — the
+        # work path now carries the cross-model review gate, additive to the
+        # acceptance checks.
+        runner = build_work_runner(str(sdir), bf, autonomy, reviewer=reviewer)
 
     limiter = select_limiter(
         policy=str(opts.get("capacity_policy", "fixed")),
@@ -912,10 +1007,24 @@ def run_work(
             "board_state": bu.state,
             "note": res.note if res else "",
             "land": None,
+            "pr": None,
         }
         if bu.state == DONE:
             ledger = Ledger.load(sdir, bu.id)
-            rep["land"] = land.land_unit(ledger, list(bu.owns)).to_dict()
+            outcome = land.land_unit(ledger, list(bu.owns))
+            rep["land"] = outcome.to_dict()
+            # Close the loop (ADR-0010): when --open-pr is armed, a unit the gate
+            # PROPOSES becomes a DRAFT PR (branch+push+PR). OFF by default →
+            # read-only, exactly as before. NEVER auto-merges (D5).
+            if open_pr and outcome.decision == "propose":
+                opener = pr_opener or land.propose_pr
+                try:
+                    rep["pr"] = opener(
+                        ledger, outcome, base=pr_base, repo_slug=pr_repo_slug
+                    )
+                except land.LandError as exc:
+                    rep["note"] = (rep["note"] + "; " if rep["note"] else "") \
+                        + f"pr not opened: {exc}"
             if ledger.lkg_ref:
                 done_tips.append((bu, ledger.lkg_ref))
         unit_reports.append(rep)
@@ -928,6 +1037,7 @@ def run_work(
         "rounds": drain.rounds,
         "budget_capped": drain.budget_capped,
         "auto_land": auto_land,
+        "open_pr": open_pr,
         "product_acceptance": product_acceptance,
         "integration_worktree": integ,
         "units": unit_reports,
@@ -961,6 +1071,9 @@ def _cmd_work(args: argparse.Namespace) -> int:
             acp_cmd=args.acp_cmd,
             autonomy=args.autonomy,
             engine_overrides=overrides,
+            open_pr=args.open_pr,
+            pr_base=args.base,
+            pr_repo_slug=args.repo_slug,
         )
     except (ValueError, RuntimeError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -1227,6 +1340,15 @@ def build_parser() -> argparse.ArgumentParser:
     wk.add_argument("--sandbox", default=None,
                     choices=["hybrid", "container", "host"],
                     help="sandbox posture (D013/ADR-0010)")
+    wk.add_argument("--open-pr", action="store_true",
+                    help="for each unit the gate PROPOSES, open a DRAFT PR "
+                         "(branch+push+PR); OFF by default (read-only, no push). "
+                         "NEVER merges — a human/other-agent merges (ADR-0010 D5)")
+    wk.add_argument("--base", default="master",
+                    help="[--open-pr] PR base branch (default: master)")
+    wk.add_argument("--repo-slug", default=None,
+                    help="[--open-pr] owner/name for `gh pr create --repo` "
+                         "(default: gh infers it)")
     wk.set_defaults(func=_cmd_work)
 
     ld = sub.add_parser("land",
