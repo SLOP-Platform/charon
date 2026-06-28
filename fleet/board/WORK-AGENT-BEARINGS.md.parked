@@ -1,0 +1,57 @@
+tier: sonnet
+branch: feat/work-agent-bearings
+depends_on:
+owns: src/charon/intake.py, src/charon/adapters/acp.py   # + src/charon/api.py PROVISIONAL if the engine Unit/WorkUnit goal field must carry the body
+prompt: (authored on activation)
+priority: HIGH — part of the AUTONOMOUS-TICKET-RUNNER cluster (operator goal 2026-06-27).
+scope: AUTONOMOUS-TICKET-RUNNER (cluster 2/3). The dispatched agent gets FAR too little context to
+  autonomously COMPLETE a ticket — it receives only the ticket TITLE as its prompt. VERIFIED ON
+  origin/master 2026-06-27:
+    - `intake.py` builds each `PlanUnit` with `goal=item.title` (intake.py:536 and :550) and
+      DISCARDS the ticket body/description. The body is parsed only to scavenge inline-code
+      `owns` paths (`_INLINE_CODE_RE` over `item.body`, intake.py:188) and to gate "too thin"
+      items (intake.py:523-527) — its prose is never carried onto the unit.
+    - The ACP dispatch sends ONLY the goal: `acp.py:170` frames the prompt as
+      `"prompt": [{"type": "text", "text": unit.goal}]` — a single line, the title.
+    - Acceptance criteria (`accept`) are run as the post-hoc GATE but are NEVER shown to the agent,
+      so the agent cannot aim at the criteria it will be judged against.
+  Result: the agent is dispatched essentially blind ("Add X feature") with no description and no
+  acceptance criteria — too thin for autonomous completion.
+  FIX: carry the ticket BODY/description onto `PlanUnit` (a new field, propagated through the
+  engine Unit so it reaches the backend) and have the ACP dispatch prompt include the body PLUS
+  the acceptance criteria (the exact checks the unit must satisfy), so the agent has real bearings:
+  what to change, why, and how it will be verified. Keep it agent-agnostic (generic prompt text,
+  no opencode-specific framing).
+  CONSTRAINTS: agent/provider-agnostic; product-clean (no SLOP/fleet/rig leak); stdlib-only
+  privileged core; do not leak secrets into the prompt; the acceptance criteria shown to the agent
+  must stay the SAME checks the gate runs (no divergence between what the agent is told and what it
+  is judged on).
+note: PARKED. Part of the AUTONOMOUS-TICKET-RUNNER cluster (operator goal 2026-06-27: run real
+  tickets via a non-Claude agent through `charon work`). Closing all three (WORK-GATEWAY-WIRE +
+  WORK-AGENT-BEARINGS + WORK-LAND-PR), plus WORK-OBSERVABILITY for watching it, makes it
+  trustworthy end-to-end. Without this, even a correctly-routed agent (WORK-GATEWAY-WIRE) is fed a
+  one-line title and cannot reliably finish a real ticket. Activate when the autonomous-runner goal
+  is prioritized.
+
+## NOTE — PARKED, NOT CLAIMABLE
+
+**Production-readiness BUILD ticket staged `.parked`.** It captures the agent-context ("bearings")
+gap verified in code on origin/master 2026-06-27 (see scope). It stays `.parked` (not yet
+claimable) pending activation.
+
+TYPE: **build** (intake + ACP adapter). `depends_on` EMPTY (board-unblocked). `owns:` is
+`src/charon/intake.py` + `src/charon/adapters/acp.py`; `src/charon/api.py` is PROVISIONAL and only
+needed IF the engine `Unit`/`WorkUnit` goal/context plumbing must grow a body field that crosses
+api.py. Finalize at activation and confirm DISJOINT within its wave vs WORK-GATEWAY-WIRE (which
+provisionally lists `api.py`) BEFORE launch — sequence via `depends_on` if both genuinely touch
+api.py.
+
+CLUSTER: AUTONOMOUS-TICKET-RUNNER (2/3) — siblings WORK-GATEWAY-WIRE, WORK-LAND-PR;
+cross-ref WORK-OBSERVABILITY (capturing the agent's work is its sub-goal 2).
+
+Un-park / activation checklist:
+1. Author the work-spec prompt at `../prompts/work-agent-bearings.md` (ends with the CONSTRAINTS
+   block: own ONLY the files in `owns:`).
+2. Finalize `owns:` (confirm disjoint vs WORK-GATEWAY-WIRE on `api.py`) and drop this to an active
+   `board/WORK-AGENT-BEARINGS.md`.
+3. `bash validate_board.sh` GREEN before launching.
