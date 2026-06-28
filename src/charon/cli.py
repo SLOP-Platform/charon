@@ -497,6 +497,22 @@ def _cmd_reset(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_connect(args: argparse.Namespace) -> int:
+    """`charon connect <client>` — verify the gateway, discover a model, optionally
+    install the client, and write its provider config pointing at the gateway."""
+    from . import connect, secrets
+    secrets.apply_to_env()  # let a stored CHARON_GATEWAY_TOKEN resolve like elsewhere
+    return connect.run_connect(
+        client=args.client,
+        host=args.host,
+        port=args.port,
+        model=args.model,
+        token=args.token,
+        install=args.install,
+        yes=args.yes,
+    )
+
+
 def _cmd_doctor(args: argparse.Namespace) -> int:
     from .config import load_sandbox_policy
     from .fence import AutonomyPolicy
@@ -1421,6 +1437,28 @@ def build_parser() -> argparse.ArgumentParser:
     lg.add_argument("task_id")
     lg.add_argument("--state-dir", default=api.DEFAULT_STATE_DIR)
     lg.set_defaults(func=_cmd_ledger)
+
+    from . import connect
+    cn = sub.add_parser(
+        "connect",
+        help="Wire a client (opencode/omp/aider) to your local Charon gateway")
+    cn.add_argument("client", choices=connect.supported_clients(),
+                    help="the client to wire (the writer registry is the source of "
+                         "this list)")
+    cn.add_argument("--host", default=None, help="gateway host (default 127.0.0.1)")
+    cn.add_argument("--port", type=int, default=None, help="gateway port (default 8080)")
+    cn.add_argument("--model", default=None,
+                    help="served model id to pin (default: the first one the "
+                         "gateway advertises)")
+    cn.add_argument("--token", default=None,
+                    help="gateway bearer token (or set CHARON_GATEWAY_TOKEN); written "
+                         "ONLY into the client's config, never printed")
+    cn.add_argument("--install", action="store_true",
+                    help="attempt to install the client if it's missing (best-effort, "
+                         "per-OS); without this we only print the install command")
+    cn.add_argument("--yes", action="store_true",
+                    help="skip the install confirmation prompt")
+    cn.set_defaults(func=_cmd_connect)
 
     d = sub.add_parser("doctor", help="Check that your coding-agent setup works")
     d.add_argument("--backend-cmd", default=None, help='e.g. "claude-code acp"')
