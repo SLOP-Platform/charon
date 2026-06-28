@@ -1,6 +1,7 @@
 tier: opus
 branch: feat/wci-semantic-slice
 depends_on: WCI
+real-dep: DSGN-WCI-PROOF §5.1 proof must be APPROVED before the auto-slice/merge_after build — it is a SIGN-OFF prerequisite in ADDITION to WCI-MVP landing; WCI-FOLLOWON needs BOTH (WCI-MVP on master AND DSGN-WCI-PROOF approved). The F1 invariant (DSGN-WCI-reshape §7.1): the concurrent split is invented by the §5.1 proof, never by the merge_after label.
 owns:
 prompt: /home/stack/charon-private/prompts/wci-followon.md
 scope: The PARKED WCI follow-ons, held as ONE group until §5.1 is approved:
@@ -39,10 +40,20 @@ Why grouped / held: per `DSGN-WCI-reshape.md` §5.1, §7.1 (F1), §7.3 — concu
 `merge_after` label is only safe behind a positive semantic-independence certificate. The
 operator chose to land the label AND its concurrency payoff together with §5.1, so none of them
 ship in the WCI-1+WCI-2 MVP. The F1 invariant is already proven; what is missing is the §5.1
-proof contract itself, which must be designed + adversarially reviewed before this builds.
+proof contract itself, which is produced + adversarially reviewed by the **`DSGN-WCI-PROOF`**
+ticket (a design/proof pass, ACTIVE now, parallel to WCI-MVP) before this builds.
+
+**This ticket needs BOTH prerequisites** (see the `real-dep:` marker above): the board
+`depends_on: WCI` carries the **build-dep** (WCI-MVP must land on master — it extends the MVP's
+reconcile/ordering layer), and `DSGN-WCI-PROOF` carries the **sign-off gate** (the §5.1
+semantic-independence proof must be operator-approved). `depends_on:` lists only `WCI` because
+`DSGN-WCI-PROOF` is a design/approval gate, not a board build done-marker; the `real-dep:`
+marker + this paragraph make the second prerequisite visible to the WCI-enforcer and to a human.
+NOTHING here un-parks until WCI-MVP is landed AND DSGN-WCI-PROOF is approved.
 
 Un-park / activation checklist:
-1. WCI-MVP (WCI-1 + WCI-2) landed on master.
-2. §5.1 semantic-independence proof contract specified AND adversarially reviewed/approved.
+1. WCI-MVP (WCI-1 + WCI-2) landed on master.  [BUILD-DEP — board `depends_on: WCI`]
+2. `DSGN-WCI-PROOF` approved: §5.1 semantic-independence proof contract specified AND
+   adversarially reviewed/operator-approved.  [SIGN-OFF — `real-dep:` marker above]
 3. Operator sign-off to lift the hold; `owns:` + build prompt defined.
 4. ADR-0008 Phase-2 conflict-rate tripwire honored for the WCI-6 auto-slice half.

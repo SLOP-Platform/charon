@@ -1,0 +1,55 @@
+# DSGN-WCI-PROOF — §5.1 semantic-independence proof contract (DESIGN/PROOF pass)
+
+You are running a **DESIGN / PROOF pass**, NOT a droid code build. The output is an
+**approved proof *contract*** — a specification, reviewed and operator-signed — exactly the
+way `DSGN-WCI-reshape.md` was produced (manager design sub-session → adversarial review →
+synthesize → operator sign-off). No `src/charon` code, no engine module, no PR-to-master
+build. The artifact is a rig design doc.
+
+Source of truth (read first):
+- `/home/stack/charon-private/fleet/DSGN-WCI-reshape.md` §5 (open question 1 — "Semantic-
+  independence proof contract is undefined (highest risk)"), §7.1 (the F1 invariant that
+  *consumes* this proof), and the WCI-6 / §5.1 park decisions.
+- This is the **keystone** the whole Pillar-3 / `merge_after` concurrency story hangs on:
+  per F1, "the split is invented by the proof, never by the label." Until this contract is
+  specified AND itself adversarially reviewed/approved, Pillar 3 stays edge-relabel +
+  serialize-only and WCI-FOLLOWON cannot build.
+
+## What to SPECIFY (the contract)
+
+Define **when two work units are PROVABLY independent** — the precise predicate that lets a
+`merge_after`-labeled pair be `CLAIMED` concurrently (F1 condition (i)). It MUST be **strictly
+STRONGER than disjoint `owns`** (B1: path-disjointness is necessary-not-sufficient; it proves
+nothing about imports, calls, shared runtime state, or config).
+
+Per the reshape, the candidate signals to formalize into a single decidable contract:
+1. **Import-graph reachability** between the two sliced sub-units (neither reachable from the
+   other through the module import graph).
+2. **Shared-symbol analysis** (no write/read of a common mutable symbol / module-global).
+3. **Shared-config touch** (no common config key/file both depend on).
+4. **Test co-failure signals** (the units do not co-fail / are not coupled through a shared
+   test surface).
+
+For each signal specify: what is computed, on what input, what counts as PASS vs FAIL, how
+signals COMBINE into the single independence certificate (all-must-hold vs weighted), the
+conservative default on ANY uncertainty (serialize — never concurrent), and how the
+certificate is recorded so `claimable` can consume it deterministically (no LLM on the gate
+path; the certificate is a pure board-state artifact). State explicitly that the certificate
+is the ONLY thing that may open F1 condition (i); the `merge_after` *label* is never itself a
+certificate.
+
+## Process (manager design loop — like the reshape)
+1. Manager design sub-session drafts the proof contract into the design artifact.
+2. **Adversarial review** (read-only reviewer instructed to REFUTE the contract — find the
+   pair it would wrongly certify as independent), then synthesize.
+3. **Operator sign-off.** Output = an APPROVED proof contract.
+
+## Output / ownership
+- Write the contract to a rig design doc: `/home/stack/charon-private/fleet/DSGN-WCI-5-1-PROOF.md`
+  (or expand `DSGN-WCI-reshape.md` §5.1 in place). **Design artifact ONLY — never product src.**
+- The approved contract is a **prerequisite for WCI-FOLLOWON** (the auto-slice / `merge_after`
+  concurrency-payoff build). It unblocks nothing until it is reviewed AND operator-approved.
+
+## CONSTRAINTS
+- DESIGN/PROOF pass: produce a *contract*, not code. Do not touch `src/charon`, do not open a
+  build PR to master. Per DSGN-WCI-reshape §5.1 / §7.1.
