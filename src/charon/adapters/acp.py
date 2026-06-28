@@ -28,6 +28,25 @@ class AcpError(RuntimeError):
     pass
 
 
+def _build_prompt(unit: WorkUnit) -> str:
+    """Build the full agent dispatch prompt from a WorkUnit.
+
+    Plain WorkUnit → goal only (backward-compatible).
+    RichWorkUnit (api.RichWorkUnit) → goal + body + acceptance criteria,
+    using getattr so this module need not import api (avoids a circular import).
+    The body and accept_text fields carry ticket context set by the caller;
+    they never include env-var values or credentials.
+    """
+    parts = [unit.goal]
+    body: str = getattr(unit, "body", "")
+    if body:
+        parts.append(body)
+    accept_text: str = getattr(unit, "accept_text", "")
+    if accept_text:
+        parts.append("Acceptance — your work must satisfy:\n" + accept_text)
+    return "\n\n".join(parts)
+
+
 class AcpBackend:
     """Drives one ACP agent subprocess.
 
@@ -167,7 +186,7 @@ class AcpBackend:
                 "session/prompt",
                 {
                     "sessionId": session_id,
-                    "prompt": [{"type": "text", "text": unit.goal}],
+                    "prompt": [{"type": "text", "text": _build_prompt(unit)}],
                 },
             )
         except AcpError as exc:

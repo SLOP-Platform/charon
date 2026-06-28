@@ -31,6 +31,16 @@ from .types import Autonomy, Budget, WorkUnit
 DEFAULT_STATE_DIR = ".charon"
 
 
+@dataclass(frozen=True)
+class RichWorkUnit(WorkUnit):
+    """WorkUnit extended with the ticket body and acceptance text so the
+    ACP backend can give the dispatched agent full bearings (WORK-AGENT-BEARINGS).
+    Optional fields default to empty so plain WorkUnit callers are unaffected."""
+
+    body: str = ""
+    accept_text: str = ""
+
+
 def make_task_id(goal: str) -> str:
     slug = "".join(c if c.isalnum() else "-" for c in goal.lower())[:24].strip("-")
     return f"{slug or 'task'}-{uuid.uuid4().hex[:8]}"
@@ -102,6 +112,7 @@ def run_task(
     goal: str,
     accept: list[str],
     *,
+    body: str = "",
     repo: str | None = None,
     state_dir: str = DEFAULT_STATE_DIR,
     backend: AgentBackend | None = None,
@@ -237,7 +248,10 @@ def run_task(
                 proxy_server.shutdown()
             raise
         try:
-            work_unit = WorkUnit(task_id=task_id, goal=goal)
+            work_unit = RichWorkUnit(
+                task_id=task_id, goal=goal,
+                body=body, accept_text="\n".join(accept),
+            )
             if decompose:
                 from .decompose import run_decomposed
                 result: RunResult = run_decomposed(

@@ -239,11 +239,14 @@ def available_adapters() -> list[str]:
 class PlanUnit:
     """A loadable ticket: has a non-empty ``accept`` (the engine/land contract).
     ``owned_paths`` (land) and ``owns`` (board) mirror each other so one artifact
-    feeds both consumers."""
+    feeds both consumers. ``body`` preserves the ticket description for agent
+    context — it is NOT used for gating or path-inference (those use ``accept``
+    and ``owned_paths`` respectively)."""
 
     id: str
     goal: str
     accept: list[str]
+    body: str = ""
     tier: str = DEFAULT_TIER
     owned_paths: list[str] = field(default_factory=list)
     depends_on: list[str] = field(default_factory=list)
@@ -258,6 +261,7 @@ class PlanUnit:
         return {
             "id": self.id,
             "goal": self.goal,
+            "body": self.body,
             "accept": list(self.accept),
             "tier": self.tier,
             "owned_paths": list(self.owned_paths),
@@ -549,6 +553,7 @@ def analyze(items: Iterable[RawItem], product_acceptance: str = "") -> Plan:
             id=uid,
             goal=item.title,
             accept=list(item.accept),
+            body=item.body,
             tier=item.tier or DEFAULT_TIER,
             owned_paths=owned,
             flags=flags,
