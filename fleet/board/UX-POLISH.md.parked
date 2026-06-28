@@ -63,6 +63,23 @@ scope: PRODUCTION-READINESS. COLLECTOR ticket — a batch of small first-run / `
      their own. Flag as a docs/onboarding priority (bigger than a cosmetic nit). (charon-vm/4-lom
      dogfood 2026-06-27.)
 
+  9. **[discoverability + UX] Web setup page is hidden / not linked.** The gateway serves an
+     editable web SETUP page at `/charon/setup` (read-write: add providers/keys/models/pools/tiers,
+     hot-reloads), but the read-only dashboard at `/` does NOT link to it — the operator ran the
+     gateway for a whole session without realizing the setup page existed (only saw `/`). Fix:
+     (1) add a visible **⚙ Setup** button/link on the `/` (and `/charon`) dashboard that goes to
+     `/charon/setup`, and a "← Dashboard" link back from setup; (2) propagate the `?token=…`
+     through these links (the page already has the token) so the user doesn't have to re-paste it.
+     This makes the web-config surface discoverable. (operator dogfood 2026-06-27)
+
+  10. **[UX] Token-in-URL is clunky.** When the gateway is network-exposed, every `/charon*` GET
+     needs `?token=…` in the URL (the operator asked "why is the token required? never seen this
+     elsewhere" — the answer is sound: the setup page holds API keys + the gateway spends money,
+     so it must auth when LAN-reachable). Smooth the UX: let the user enter the token ONCE (a small
+     login field or the first `?token=`) and set a short-lived **cookie/session**, so subsequent
+     navigation doesn't carry `?token=` in the URL. Keep the existing CSRF/Origin/Sec-Fetch guards.
+     (Security rationale stays; this is purely the auth-UX ergonomics.)
+
   CROSS-REF: "show the live model list at the model-selection prompt" is NOT tracked here — it is
   tracked as **Phase A of TIER-RECS** (`board/TIER-RECS.md.parked`), so it isn't double-tracked.
   Keep UX-POLISH for purely cosmetic nits (e.g. the colorize-presets item above).
