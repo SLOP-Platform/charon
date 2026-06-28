@@ -89,8 +89,10 @@ def _run(monkeypatch: pytest.MonkeyPatch, client: str, ids: list[str],
     """Run ``charon connect <client>`` with discovery + install stubbed."""
     monkeypatch.setattr(connect, "discover_models", lambda *a, **k: list(ids))
     installs: list = []
-    monkeypatch.setattr(connect, "_shell_install",
-                        lambda argv: installs.append(argv) or 0)
+    def _rec_install(argv: object) -> int:
+        installs.append(argv)
+        return 0
+    monkeypatch.setattr(connect, "_shell_install", _rec_install)
     monkeypatch.setattr(connect.shutil, "which", lambda b: None)  # client "missing"
     rc = connect.run_connect(client=client, token="TOPSECRET",  # type: ignore[arg-type]
                              runner=connect._shell_install, **kw)
