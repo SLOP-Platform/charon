@@ -925,6 +925,78 @@ def build_work_runner(
     )
 
 
+def _progress_enabled(flag: bool | None, *, stdout_isatty: bool) -> bool:
+    """Decide whether `charon work` emits live progress (WORK-OBSERVABILITY).
+
+    ``--progress`` → ``True``; ``--quiet`` → ``False`` (the ``flag`` is the
+    explicit choice). With neither (``flag is None``) progress is ON only for an
+    interactive TTY and OFF when stdout is redirected/piped — so a piped final
+    JSON is never polluted and a human at a terminal gets the running view."""
+    if flag is not None:
+        return flag
+    return stdout_isatty
+
+
+def _progress_sink() -> Callable[[str], None]:
+    """A progress sink that writes one `[work] <line>` per event to STDERR (never
+    stdout — stdout stays the final machine-readable JSON), flushed so the view is
+    live as the run drains."""
+    def emit(line: str) -> None:
+        print(f"[work] {line}", file=sys.stderr, flush=True)
+    return emit
+
+
+def run_status(state_dir: str = api.DEFAULT_STATE_DIR) -> dict:
+    """Roll up a WHOLE work run from the durable ``.charon`` state (the aggregate
+    view behind ``charon runs``, WORK-OBSERVABILITY). Reads ``work-board.json`` for
+    every unit's coordination state + dependencies and joins each unit's per-unit
+    ledger (checkpoints / verified / remaining / lkg_ref) — the run-level summary
+    the per-unit ``charon ledger <id>`` cannot give.
+
+    PURELY read-only: verified/remaining come from the LAST recorded checkpoint
+    (durable state), NOT from ``Ledger.verified()`` — which would re-EXECUTE every
+    unit's acceptance commands. An observability view must never run the work it
+    observes. A unit with no readable ledger (never claimed, or corrupt) still
+    appears with its board state + empty ledger fields, so the rollup never
+    crashes on a partial run."""
+    from .engine.board import Board
+    from .ledger import Ledger
+
+    sdir = Path(state_dir).resolve()
+    board_path = sdir / "work-board.json"
+    if not board_path.exists():
+        raise FileNotFoundError(
+            f"no work run found at {board_path} (run `charon work --units …` first)"
+        )
+    board = Board.load(board_path)
+    units: list[dict] = []
+    totals: dict[str, int] = {}
+    for u in board.units():
+        entry: dict = {
+            "unit_id": u.id,
+            "tier": u.tier,
+            "state": u.state,
+            "depends_on": list(u.depends_on),
+            "checkpoints": 0,
+            "verified": [],
+            "remaining": [],
+            "lkg_ref": "",
+        }
+        try:
+            led = Ledger.load(sdir, u.id)
+            cps = led.checkpoints()
+            entry["checkpoints"] = len(cps)
+            if cps:  # last recorded verdict — durable, no command re-execution
+                entry["verified"] = sorted(cps[-1].verified)
+                entry["remaining"] = sorted(cps[-1].remaining)
+            entry["lkg_ref"] = led.lkg_ref
+        except Exception:
+            pass  # never claimed / not a readable ledger — board state still stands
+        totals[u.state] = totals.get(u.state, 0) + 1
+        units.append(entry)
+    return {"board_path": str(board_path), "totals": totals, "units": units}
+
+
 def run_work(
     plan_path: str,
     *,
@@ -941,6 +1013,7 @@ def run_work(
     pr_opener: Callable[..., str] | None = None,
     pr_base: str = "master",
     pr_repo_slug: str | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> dict:
     """Drive the opt-in work-engine end-to-end and return a JSON-able report.
 
@@ -953,6 +1026,11 @@ def run_work(
     ``runner``/``backend_factory``/``reviewer``/``pr_opener`` are test seams;
     production uses the default fenced runner (with the real ``GatewayReviewer``
     threaded in — ADR-0010 Tier-4) + the ``charon run`` backend resolution.
+
+    ``progress`` (WORK-OBSERVABILITY) is an opt-in sink for human-readable
+    lifecycle lines (claimed/started/checkpoint/land/done) the scheduler + land
+    loop emit AS the run drains; the caller routes it to stderr so stdout stays
+    the final JSON. ``None`` (default) keeps the run silent until the end.
 
     ``open_pr`` (OFF by default, fail-closed) closes the loop: a unit the gate
     PROPOSES is published as a DRAFT PR (branch+push+PR via ``land.propose_pr``).
@@ -1012,6 +1090,7 @@ def run_work(
         limiter=limiter, max_parallel=int(opts.get("max_parallel", 4)),
         max_cost_usd=opts.get("max_cost_usd"), max_tokens=opts.get("max_tokens"),
         max_attempts=int(opts.get("max_attempts", 1)),
+        progress=progress,
     )
     drain = sched.drain()
 
@@ -1037,6 +1116,8 @@ def run_work(
             ledger = Ledger.load(sdir, bu.id)
             outcome = land.land_unit(ledger, list(bu.owns))
             rep["land"] = outcome.to_dict()
+            if progress is not None:
+                progress(f"{bu.id}: land:{outcome.decision}")
             # Close the loop (ADR-0010): when --open-pr is armed, a unit the gate
             # PROPOSES becomes a DRAFT PR (branch+push+PR). OFF by default →
             # read-only, exactly as before. NEVER auto-merges (D5).
@@ -1086,6 +1167,11 @@ def _cmd_work(args: argparse.Namespace) -> int:
         "max_cost_usd": args.max_cost_usd,
         "max_tokens": args.max_tokens,
     }
+    progress = (
+        _progress_sink()
+        if _progress_enabled(args.progress, stdout_isatty=sys.stdout.isatty())
+        else None
+    )
     try:
         out = run_work(
             args.units,
@@ -1098,6 +1184,7 @@ def _cmd_work(args: argparse.Namespace) -> int:
             open_pr=args.open_pr,
             pr_base=args.base,
             pr_repo_slug=args.repo_slug,
+            progress=progress,
         )
     except (ValueError, RuntimeError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -1107,6 +1194,22 @@ def _cmd_work(args: argparse.Namespace) -> int:
         u["status"] == "complete" for u in out["units"]
     )
     return 0 if ok else 1
+
+
+def _cmd_runs(args: argparse.Namespace) -> int:
+    """`charon runs` — the aggregate run view (WORK-OBSERVABILITY): roll up the
+    WHOLE last work run from durable ``.charon`` state, where ``charon ledger
+    <id>`` only shows ONE unit."""
+    try:
+        out = run_status(state_dir=args.state_dir)
+    except FileNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except Exception as exc:  # corrupt board etc. — surface loudly
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(out, indent=2))
+    return 0
 
 
 def _default_plan_path(src: str) -> Path:
@@ -1373,7 +1476,21 @@ def build_parser() -> argparse.ArgumentParser:
     wk.add_argument("--repo-slug", default=None,
                     help="[--open-pr] owner/name for `gh pr create --repo` "
                          "(default: gh infers it)")
+    wkpg = wk.add_mutually_exclusive_group()
+    wkpg.add_argument("--progress", dest="progress", action="store_true",
+                      default=None,
+                      help="stream per-unit lifecycle lines (claimed/started/"
+                           "checkpoint/land/done) to STDERR as the run drains "
+                           "(default: ON for a TTY, OFF when stdout is piped)")
+    wkpg.add_argument("--quiet", dest="progress", action="store_false",
+                      help="suppress live progress; stdout still gets the final JSON")
     wk.set_defaults(func=_cmd_work)
+
+    rn = sub.add_parser(
+        "runs",
+        help="Roll up the whole last work run (every unit's status) from state")
+    rn.add_argument("--state-dir", default=api.DEFAULT_STATE_DIR)
+    rn.set_defaults(func=_cmd_runs)
 
     ld = sub.add_parser("land",
                         help="Open a pull request for finished work (never auto-merges)")

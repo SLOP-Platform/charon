@@ -103,6 +103,13 @@ class FencedRunner(Protocol):
 
 BackendFactory = Callable[[Unit, "list[AcceptanceCheck]"], Mapping[str, AgentBackend]]
 
+# A sink for human-readable lifecycle lines (WORK-OBSERVABILITY). The scheduler
+# emits one short line per unit transition (claimed / started / checkpoint N /
+# done|blocked|retry|superseded); the caller routes it to stderr so stdout stays
+# the machine-readable final JSON. Lines carry ONLY unit ids + acceptance-check
+# ids + status words — never the note, env, or any credential.
+ProgressFn = Callable[[str], None]
+
 
 @dataclass
 class CoordinatorRunner:
@@ -198,6 +205,10 @@ class _InFlight:
     claim: Claim
 
 
+# Worker-thread return payload: (status, note, checkpoints, verified-check-ids).
+_Outcome = tuple[str, str, int, tuple[str, ...]]
+
+
 # --------------------------------------------------------------------- scheduler
 
 
@@ -226,11 +237,13 @@ class Scheduler:
         max_tokens: int | None = None,
         max_attempts: int = 1,
         classify: Callable[[str], Disposition] = default_classify,
+        progress: ProgressFn | None = None,
     ) -> None:
         if max_parallel < 1:
             raise ValueError("max_parallel must be >= 1")
         if max_attempts < 1:
             raise ValueError("max_attempts must be >= 1")
+        self._progress = progress
         self.board = board
         self.claims_dir = Path(claims_dir)
         self._runner = runner
@@ -243,6 +256,14 @@ class Scheduler:
         self.max_attempts = max_attempts
         self._classify = classify
         self._attempts: dict[str, int] = {}
+
+    # ----------------------------------------------------------------- progress
+    def _emit(self, line: str) -> None:
+        """Send one lifecycle line to the optional progress sink (no-op when the
+        caller wired none — e.g. ``--quiet`` or redirected stdout). Emission is
+        only ever from the scheduler's main thread, so lines never interleave."""
+        if self._progress is not None:
+            self._progress(line)
 
     # ------------------------------------------------------------- worktree seam
     def _default_worktree_factory(self, unit: Unit) -> str:
@@ -285,7 +306,7 @@ class Scheduler:
         rounds = 0
 
         with ThreadPoolExecutor(max_workers=self.max_parallel) as pool:
-            in_flight: dict[Future[tuple[str, str]], _InFlight] = {}
+            in_flight: dict[Future[_Outcome], _InFlight] = {}
             while True:
                 launched = self._launch_round(pool, gate, in_flight)
                 if launched:
@@ -308,7 +329,7 @@ class Scheduler:
         self,
         pool: ThreadPoolExecutor,
         gate: CostGate,
-        in_flight: dict[Future[tuple[str, str]], _InFlight],
+        in_flight: dict[Future[_Outcome], _InFlight],
     ) -> int:
         """Claim + submit every unit that is claimable, under its attempt cap, and
         admitted by the capacity limiter. Skipped units are simply retried on the
@@ -339,6 +360,7 @@ class Scheduler:
                 self._attempts[unit.id] = self._attempts.get(unit.id, 0) + 1
                 fut = pool.submit(self._execute, unit, claim, gate)
                 in_flight[fut] = _InFlight(unit=unit, claim=claim)
+                self._emit(f"{unit.id}: started")
                 launched_unit = True
                 launched += 1
             finally:
@@ -352,26 +374,29 @@ class Scheduler:
         worktree = self._worktree_factory(unit)
         claim = claim_unit(self.claims_dir, unit.id, worktree)
         self.board.mark_claimed(unit.id)
+        self._emit(f"{unit.id}: claimed")
         return claim
 
     def _execute(
         self, unit: Unit, claim: Claim, gate: CostGate
-    ) -> tuple[str, str]:
+    ) -> _Outcome:
         """Worker-thread body: drive the unit through the fenced runner. Returns
-        ``(status, note)``; an exception becomes ``("error", …)`` so one unit can
-        never tear the pool down."""
+        ``(status, note, checkpoints, verified)``; an exception becomes
+        ``("error", …, 0, ())`` so one unit can never tear the pool down. The
+        checkpoint/verified fields feed the progress line emitted on the (serial)
+        main thread in :meth:`_settle` — never from here."""
         try:
             res = self._runner(unit, claim.worktree, cost_gate=gate)
-            return res.status, res.note
+            return res.status, res.note, res.checkpoints, tuple(res.verified)
         except Exception as exc:  # isolation: a unit's crash is its own result
-            return "error", f"{type(exc).__name__}: {exc}"
+            return "error", f"{type(exc).__name__}: {exc}", 0, ()
 
     def _settle(
-        self, fut: Future[tuple[str, str]], info: _InFlight
+        self, fut: Future[_Outcome], info: _InFlight
     ) -> UnitResult:
         """Main-thread completion: release the claim (epoch-fenced so a stale run
         can never land), free the capacity slot, and advance the board."""
-        status, note = fut.result()
+        status, note, checkpoints, verified = fut.result()
         disposition = self._classify(status)
         # Release the claim under THIS run's epoch. Epoch-fencing guarantees a
         # stale double-runner cannot drop the fresh holder's claim (DTC Lens-4).
@@ -390,6 +415,14 @@ class Scheduler:
             self.limiter.release(info.unit.tier)
         if not superseded:
             self._advance(info.unit.id, disposition)
+        # Lifecycle lines (main thread, serial): the checkpoint summary then the
+        # terminal disposition. Only ids + check ids + status words — no note.
+        if checkpoints:
+            self._emit(
+                f"{info.unit.id}: checkpoint {checkpoints} "
+                f"(verified {', '.join(verified) or 'none'})"
+            )
+        self._emit(f"{info.unit.id}: {disposition.value}")
         return UnitResult(
             unit_id=info.unit.id,
             status=status,
@@ -418,4 +451,5 @@ __all__ = [
     "UnitResult",
     "DrainResult",
     "default_classify",
+    "ProgressFn",
 ]
