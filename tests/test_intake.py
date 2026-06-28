@@ -398,3 +398,74 @@ accept: `pytest -q`
 """
     plan = _plan(md)
     assert plan.units[0].id == "proj-7"
+
+
+# ------------------------------------------------ body / agent-bearings (WORK-AGENT-BEARINGS)
+def test_body_retained_on_plan_unit() -> None:
+    """A ticket with a body produces a PlanUnit that retains the body prose."""
+    md = """\
+# Acceptance
+ok
+
+## Implement retries
+files: `src/charon/retry.py`
+accept: `pytest tests/test_retry.py`
+
+The retry logic should use exponential back-off with jitter.
+Cap at 5 attempts and log each failure.
+"""
+    plan = _plan(md)
+    assert len(plan.units) == 1
+    u = plan.units[0]
+    assert u.goal == "Implement retries"
+    assert "exponential back-off" in u.body
+    assert "Cap at 5 attempts" in u.body
+    # body is also emitted in the artifact
+    d = u.to_dict()
+    assert "exponential back-off" in d["body"]
+
+
+def test_body_retained_does_not_affect_too_thin_gate() -> None:
+    """The 'too thin' gate (no files, no accept, no body) still fires correctly
+    regardless of body retention."""
+    # Case 1: body present → NOT too thin (body counts as detail)
+    md_with_body = """\
+# Acceptance
+ok
+
+## Vague but described
+files: `src/charon/x.py`
+accept: `pytest -q`
+
+Some body text here explaining the work.
+"""
+    plan = _plan(md_with_body)
+    assert len(plan.units) == 1  # body + accept + files → loadable unit
+
+    # Case 2: no body, no accept, no files → too thin
+    md_thin = """\
+# Acceptance
+ok
+
+## Empty
+"""
+    plan_thin = _plan(md_thin)
+    assert plan_thin.units == []
+    assert any(i.kind == "need-more-detail" for i in plan_thin.issues)
+
+
+def test_owns_scavenging_unaffected_by_body() -> None:
+    """Inline-code `owns` scavenging from the body still works correctly."""
+    md = """\
+# Acceptance
+ok
+
+## Infer from prose
+accept: `pytest -q`
+Edit `src/charon/inferred.py` to add the feature.
+"""
+    plan = _plan(md)
+    u = plan.units[0]
+    assert u.owned_paths == ["src/charon/inferred.py"]
+    # body still preserved alongside the scavenged path
+    assert "inferred.py" in u.body

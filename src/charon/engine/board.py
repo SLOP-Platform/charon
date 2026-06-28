@@ -63,8 +63,11 @@ def _overlap(a: list[str], b: list[str]) -> bool:
 @dataclass
 class Unit:
     """One assignable atom of work. ``owns``/``depends_on``/``state`` are the
-    coordination fields; ``goal``/``accept`` are carried for the downstream run +
-    land gate (reusing land.py's unit shape) but are not consumed here."""
+    coordination fields; ``goal``/``body``/``accept`` are carried for the
+    downstream run + land gate (reusing land.py's unit shape) but are not consumed
+    here. ``body`` is the ticket prose intake writes into plan.json (via
+    ``PlanUnit.to_dict``); the board reads it back so the work path can hand the
+    agent full bearings, not just the title."""
 
     id: str
     tier: str = ""
@@ -72,6 +75,7 @@ class Unit:
     depends_on: list[str] = field(default_factory=list)
     state: str = READY
     goal: str = ""
+    body: str = ""
     accept: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -87,6 +91,7 @@ class Unit:
             "depends_on": list(self.depends_on),
             "state": self.state,
             "goal": self.goal,
+            "body": self.body,
             "accept": list(self.accept),
         }
 
@@ -100,6 +105,7 @@ class Unit:
                 depends_on=list(d.get("depends_on", [])),
                 state=d.get("state", READY),
                 goal=d.get("goal", ""),
+                body=d.get("body", ""),
                 accept=list(d.get("accept", [])),
             )
         except (KeyError, TypeError) as exc:

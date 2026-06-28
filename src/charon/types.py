@@ -117,12 +117,21 @@ class CapSet:
 
 @dataclass(frozen=True)
 class WorkUnit:
-    """One dispatchable unit of work."""
+    """One dispatchable unit of work.
+
+    ``body`` and ``accept_text`` carry the ticket's full bearings (the prose
+    description and the acceptance criteria) so a backend can give the dispatched
+    agent more than the one-line ``goal``. They live on the base type — not on an
+    orchestrator-layer subclass — so the engine work path can populate them
+    without importing ``api`` (which would trip the engine→orchestrator boundary
+    guard). Both default to empty, so plain ``goal``-only callers are unaffected."""
 
     task_id: str
     goal: str
     task_class: str = "codegen"
     role: str = "coder"  # selects the model-pool for cross-model failover (ADR-0004)
+    body: str = ""  # ticket prose; full bearings beyond the one-line goal
+    accept_text: str = ""  # acceptance criteria text (the gate's checks, joined)
 
 
 class OutcomeStatus(enum.Enum):

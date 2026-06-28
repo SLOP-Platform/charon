@@ -466,6 +466,54 @@ def _default_pr_runner(argv: list[str]) -> str:
     return proc.stdout.strip()
 
 
+def _default_git_runner(repo: str, *args: str) -> str:
+    return _git_ok(repo, *args)
+
+
+def branch_for(task_id: str) -> str:
+    """The conventional branch a unit is proposed on (``charon/land/<id>``)."""
+    return f"charon/land/{task_id}"
+
+
+def propose_pr(
+    ledger: Ledger,
+    outcome: GateOutcome,
+    *,
+    branch: str | None = None,
+    base: str = "master",
+    repo_slug: str | None = None,
+    remote: str = "origin",
+    git_runner: Callable[..., str] = _default_git_runner,
+    pr_runner: Callable[[list[str]], str] = _default_pr_runner,
+) -> str:
+    """PROPOSE a green unit as a DRAFT PR — close the loop the read-only
+    ``land_unit`` leaves open. Point ``branch`` at the unit's blessed tip, push it
+    to ``remote``, then open a DRAFT PR (``base`` ← ``branch``). NEVER merges
+    (ADR-0010 D5 propose-default: a human/other-agent merges, which is the only
+    thing that lands anything downstream).
+
+    The ONLY writes are the branch ref, the push, and the PR request; both git and
+    the PR tool are injected seams so a caller (and tests) can observe or stub the
+    push/PR. Raises ``LandError`` for a held unit or a missing tip — a gate that
+    did not say PROPOSE must never reach a PR (fail-closed)."""
+    if outcome.decision != "propose":
+        raise LandError(
+            f"refusing to propose a held unit (decision={outcome.decision})"
+        )
+    branch = branch or branch_for(ledger.task_id)
+    repo = ledger.target_repo
+    tip = outcome.tip_ref or ledger.lkg_ref
+    if not tip:
+        raise LandError("no blessed tip to propose (ledger has no lkg_ref)")
+    # point the branch at the blessed commit, then publish it — never a merge.
+    git_runner(repo, "branch", "-f", branch, tip)
+    git_runner(repo, "push", "-u", remote, branch)
+    return open_pr(
+        ledger, outcome, branch, base=base, repo_slug=repo_slug,
+        draft=True, runner=pr_runner,
+    )
+
+
 # ------------------------------------------------------- consumer-supplied units
 # D3: a unit is {goal, accept, tier, owned_paths}. Until auto-decomposition ships
 # (its own ADR) the unit list is consumer-supplied — a TOML/JSON file fed to the
