@@ -15,6 +15,8 @@ import pytest
 from charon import gitutil
 from charon.adapters.acp import AcpBackend, _build_prompt
 from charon.api import RichWorkUnit
+from charon.engine.board import Unit
+from charon.engine.scheduler import CoordinatorRunner
 from charon.types import Budget, Tier, WorkUnit
 
 # ---------------------------------------------------------------------------
@@ -200,3 +202,113 @@ def test_build_prompt_accept_empty_omits_section() -> None:
     assert "G" in prompt
     assert "Some body." in prompt
     assert "Acceptance" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# END-TO-END `charon work` dispatch: a board Unit driven through the WORK-PATH
+# runner (CoordinatorRunner) must reach the ACP agent with goal + body + accept.
+# This is the coverage WORK-AGENT-BEARINGS' groundwork lacked: it proved the
+# prompt builder and `charon run`, but the `charon work` path dispatched a PLAIN
+# WorkUnit, so the agent there got the title alone. We drive a real Unit through
+# the runner (NOT a hand-built RichWorkUnit) so the carry is proven end to end.
+# ---------------------------------------------------------------------------
+
+
+def _run_unit_through_runner(
+    tmp_path: Path, unit: Unit, stub: Path, capture: Path
+) -> None:
+    """Drive ``unit`` through the work-path CoordinatorRunner with the capture
+    stub as the warm ACP backend. The runner builds the dispatched WorkUnit from
+    the board Unit, so a successful capture proves body + accept survive the
+    carry. Nested worktree (``…/sandbox/repo``) keeps the fence's guard_dir — the
+    worktree's parent — clean, and the stub/capture/state live OUTSIDE it so the
+    escape scan sees no stray writes."""
+    worktree = tmp_path / "sandbox" / "repo"
+    worktree.mkdir(parents=True)
+    gitutil.init_repo(worktree)
+    runner = CoordinatorRunner(
+        state_dir=str(tmp_path / "state"),
+        backend_factory=lambda u, checks: {
+            "acp": AcpBackend(
+                command=[sys.executable, str(stub)],
+                name="acp",
+                passthrough_env={"STUB_CAPTURE_FILE": str(capture)},
+            )
+        },
+        max_checkpoints=1,  # one dispatch is enough to capture the prompt
+    )
+    runner(unit, str(worktree), cost_gate=None)
+
+
+def test_work_path_dispatch_carries_goal_body_and_accept(tmp_path: Path) -> None:
+    """End-to-end: a board Unit driven through the work-path runner sends a
+    `session/prompt` whose text contains the goal, the body, AND the acceptance
+    criteria — the bearings the `charon work` path previously dropped."""
+    stub = tmp_path / "stub.py"
+    stub.write_text(_CAPTURE_STUB)
+    capture = tmp_path / "prompt.txt"
+
+    accept = ["test -f sentinel.txt", "test -x check.sh"]
+    unit = Unit(
+        id="work-bearings-e2e",
+        tier="opus",
+        owns=["src/x.py"],
+        goal="Carry full bearings to the work agent",
+        body="The work path dispatched a plain unit.\nThread body + accept through.",
+        accept=accept,
+    )
+    _run_unit_through_runner(tmp_path, unit, stub, capture)
+
+    assert capture.exists(), "the work-path dispatch never sent a session/prompt"
+    prompt = capture.read_text()
+    assert "Carry full bearings to the work agent" in prompt  # goal
+    assert "Thread body + accept through." in prompt  # body
+    # the accept text shown is the SAME checks the gate executes (one source of
+    # truth) — each, joined by newlines, present verbatim.
+    for check in accept:
+        assert check in prompt, f"accept check {check!r} missing from work prompt"
+    assert "Acceptance" in prompt  # the bearings template header
+
+
+def test_work_path_dispatch_no_secrets(tmp_path: Path) -> None:
+    """The work-path prompt is built solely from Unit fields — no creds leak in."""
+    stub = tmp_path / "stub.py"
+    stub.write_text(_CAPTURE_STUB)
+    capture = tmp_path / "prompt.txt"
+
+    unit = Unit(
+        id="work-bearings-noleak",
+        tier="opus",
+        owns=["src/x.py"],
+        goal="Patch the gateway",
+        body="Adjust the timeout.",
+        accept=["test -f ok"],
+    )
+    _run_unit_through_runner(tmp_path, unit, stub, capture)
+
+    prompt = capture.read_text()
+    assert "sk-" not in prompt
+    assert "ANTHROPIC_API_KEY" not in prompt
+    assert "OPENAI_API_KEY" not in prompt
+    assert "Bearer " not in prompt
+
+
+def test_work_path_unit_without_body_still_dispatches_goal(tmp_path: Path) -> None:
+    """A board Unit with no body still dispatches — the goal (and accept) reach
+    the agent; the empty body section is simply omitted (backward-compatible)."""
+    stub = tmp_path / "stub.py"
+    stub.write_text(_CAPTURE_STUB)
+    capture = tmp_path / "prompt.txt"
+
+    unit = Unit(
+        id="work-bearings-nobody",
+        tier="opus",
+        owns=["src/x.py"],
+        goal="Just the goal here",
+        accept=["test -f ok"],
+    )
+    _run_unit_through_runner(tmp_path, unit, stub, capture)
+
+    prompt = capture.read_text()
+    assert prompt.startswith("Just the goal here")
+    assert "test -f ok" in prompt

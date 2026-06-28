@@ -139,7 +139,17 @@ class CoordinatorRunner:
         router = StaticRouter(backends=list(backends))
         fence = Fence(autonomy=Autonomy[self.autonomy])
         budget = Budget(max_checkpoints=self.max_checkpoints)
-        work_unit = WorkUnit(task_id=unit.id, goal=unit.goal)
+        # Carry the ticket's full bearings (body + the SAME accept checks the gate
+        # runs, joined) into the dispatched unit so `acp._build_prompt` emits goal +
+        # body + acceptance — not the title alone. One source of truth: `accept_text`
+        # is the gate's `checks`, so what the agent is shown can never diverge from
+        # what is judged.
+        work_unit = WorkUnit(
+            task_id=unit.id,
+            goal=unit.goal,
+            body=unit.body,
+            accept_text="\n".join(unit.accept),
+        )
         try:
             return coordinator.run(
                 work_unit,
