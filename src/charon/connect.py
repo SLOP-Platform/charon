@@ -204,6 +204,14 @@ def _aider_path() -> Path:
     return _home() / ".aider.conf.yml"
 
 
+def _continue_path() -> Path:
+    return _home() / ".continue" / "config.json"
+
+
+def _cline_path() -> Path:
+    return _home() / ".cline" / "config.json"
+
+
 # --- per-client config writers (the ONLY client-specific knowledge) -----------
 def _write_opencode(w: Wiring) -> None:
     """``~/.config/opencode/opencode.json`` — opencode's OpenAI-compatible provider
@@ -267,13 +275,15 @@ class ClientSpec:
     """One supported client. ``binary`` is what we look for on ``PATH``;
     ``install`` returns the per-OS install command (``None`` if we can't advise);
     ``config_path`` / ``write`` know the on-disk format; ``launch`` is the verify
-    command. Adding a client is exactly one entry in :data:`REGISTRY`."""
+    command. ``guided`` clients emit manual instructions instead of auto-writing
+    config (for GUI-only clients with no file-writable config)."""
     name: str
     binary: str
     config_path: Callable[[], Path]
     write: Callable[[Wiring], None]
     launch: Callable[[Wiring], str]
     install: Callable[[InstallEnv], str | None]
+    guided: bool = False
 
 
 @dataclass(frozen=True)
@@ -300,6 +310,42 @@ def detect_env() -> InstallEnv:
     )
 
 
+def _write_continue(w: Wiring) -> None:
+    """``~/.continue/config.json`` — Continue's config with a ``models`` array.
+    Adds Charon as an OpenAI provider entry, preserving other models."""
+    charon_model = {
+        "title": f"Charon — {w.model}",
+        "provider": "openai",
+        "model": w.model,
+        "apiBase": w.base_url,
+    }
+    if w.token is not None:
+        charon_model["apiKey"] = w.token
+
+    def mutate(data: dict) -> None:
+        models = data.get("models")
+        if not isinstance(models, list):
+            models = []
+            data["models"] = models
+        replaced = False
+        for i, m in enumerate(models):
+            if isinstance(m, dict) and m.get("title") == charon_model["title"]:
+                models[i] = charon_model
+                replaced = True
+                break
+        if not replaced:
+            models.append(charon_model)
+
+    _write_json_merge(w.config_path, mutate)
+
+
+def _write_cline(w: Wiring) -> None:
+    """Cline (VS Code extension) stores settings in VS Code's settings.json,
+    which is not a standalone config file we can safely auto-write. Cline's
+    CLI mode uses env vars. Emit manual setup instructions instead."""
+    pass  # guided mode — handled in run_connect
+
+
 def _install_opencode(env: InstallEnv) -> str | None:
     if env.has_brew:
         return "brew install sst/tap/opencode"
@@ -320,6 +366,18 @@ def _install_aider(env: InstallEnv) -> str | None:
     return "python -m pip install aider-install && aider-install"
 
 
+def _install_continue(env: InstallEnv) -> str | None:
+    if env.has_npm:
+        return "npm install -g @continuedev/continue"
+    return "npm install -g @continuedev/continue  # (requires npm)"
+
+
+def _install_cline(env: InstallEnv) -> str | None:
+    if env.has_npm:
+        return "npm install -g cline"
+    return "npm install -g cline  # (requires npm)"
+
+
 # THE registry — the single source of truth for the supported-client list.
 REGISTRY: dict[str, ClientSpec] = {
     "opencode": ClientSpec(
@@ -336,6 +394,24 @@ REGISTRY: dict[str, ClientSpec] = {
         name="aider", binary="aider", config_path=_aider_path,
         write=_write_aider, install=_install_aider,
         launch=lambda w: f"aider --model openai/{w.model}",
+    ),
+    "continue": ClientSpec(
+        name="continue", binary="continue", config_path=_continue_path,
+        write=_write_continue, install=_install_continue,
+        launch=lambda w: "continue  # Charon model titled 'Charon - <model>'",
+    ),
+    "cline": ClientSpec(
+        name="cline", binary="cline", config_path=_cline_path,
+        write=_write_cline, install=_install_cline,
+        launch=lambda w: (
+            "# Cline stores settings in VS Code's settings.json.\n"
+            "# To point Cline at Charon, add these to your VS Code settings:\n"
+            f'#   "cline.apiProvider": "openai",\n'
+            f'#   "cline.openaiBaseUrl": "{w.base_url}",\n'
+            f'#   "cline.openaiApiKey": "{w.token or "?token=... if gateway-gated"}",\n'
+            f'#   "cline.openaiModel": "{w.model}"'
+        ),
+        guided=True,
     ),
 }
 
@@ -437,18 +513,22 @@ def run_connect(
             _path_gap_note(spec, env)
             _eprint("  (re-run with --install to attempt this automatically)")
 
-    # 4. Write the client's provider config (token goes ONLY into this file).
+    # 4. Write the client's provider config (token goes ONLY into this file),
+    #    or print manual instructions for guided (GUI-only) clients.
     base_url = f"http://{host}:{port}/v1"
     wiring = Wiring(base_url=base_url, token=tok, model=chosen,
                     config_path=spec.config_path())
-    spec.write(wiring)
-    print(f"wired {spec.name} → {wiring.config_path}")
-    print(f"  gateway: {base_url}")
-    print(f"  model:   {chosen}")
-    print(f"  token:   {'set (written to config)' if tok else 'none'}")
-
-    # 5. Print the exact verify command.
-    print(f"\nnow run:  {spec.launch(wiring)}")
+    if spec.guided:
+        print(f"  {spec.name} has no file-writable config (GUI-only settings).")
+        print("  Manual setup:")
+        print(f"  {spec.launch(wiring)}")
+    else:
+        spec.write(wiring)
+        print(f"wired {spec.name} → {wiring.config_path}")
+        print(f"  gateway: {base_url}")
+        print(f"  model:   {chosen}")
+        print(f"  token:   {'set (written to config)' if tok else 'none'}")
+        print(f"\nnow run:  {spec.launch(wiring)}")
     return 0
 
 
