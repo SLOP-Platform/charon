@@ -488,6 +488,25 @@ def set_model_enabled(model_id: str, enabled: bool) -> bool:
     return True
 
 
+_FALLBACK_FILE = "fallback.json"
+
+
+def load_fallback_providers() -> list[str]:
+    """Read the ordered fallback provider list from ``fallback.json``.
+    Returns an empty list when the file is absent or malformed."""
+    data = _load(_FALLBACK_FILE)
+    fallback = data.get("providers")
+    if isinstance(fallback, list):
+        return [str(p).strip() for p in fallback if isinstance(p, str) and str(p).strip()]
+    return []
+
+
+def set_fallback_providers(providers: list[str]) -> Path:
+    """Persist the ordered fallback provider list to ``fallback.json``."""
+    cleaned = [str(p).strip() for p in providers if isinstance(p, str) and str(p).strip()]
+    return _save(_FALLBACK_FILE, {"providers": cleaned})
+
+
 def summary() -> dict:
     """A non-secret view for the CLI/console: providers (with key-set state, NOT the
     key), models, pools."""

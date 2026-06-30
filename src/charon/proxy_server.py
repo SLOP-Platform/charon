@@ -160,6 +160,10 @@ td,th{text-align:left;padding:.2rem .5rem;border-bottom:1px solid #313244}
 <div><label>high</label><input id=thigh size=36 placeholder="comma,separated,model,ids"></div>
 <div><label>aliases</label><input id=talias size=36 placeholder="opus=high, sonnet=med"></div>
 <button onclick=setTiers()>Save tiers</button></fieldset>
+<fieldset><h2>Global fallback</h2>
+<div class=muted>try these when ANY model's primary fails (comma-separated, ordered)</div>
+<div><label>providers</label><input id=fbprov size=36 placeholder="e.g. opencode-go"></div>
+<button onclick=saveFallback()>Save fallback</button></fieldset>
 <h2>Current config</h2><div id=cfg></div>
 <script>
 const tok=new URLSearchParams(location.search).get('token');
@@ -207,6 +211,11 @@ async function setTiers(){
     members:{low:mids('tlow'),med:mids('tmed'),high:mids('thigh')},aliases};
   const {ok,d}=await post('/charon/tiers',b);
   msg(ok?'saved tiers':('error: '+(d.error&&d.error.message)),ok); if(ok)load();}
+async function saveFallback(){
+  const provs=val('fbprov').split(',').map(s=>s.trim()).filter(Boolean);
+  const {ok,d}=await post('/charon/fallback',{providers:provs});
+  msg(ok?('saved fallback: '+provs.join(', ')):('error: '+(d.error&&d.error.message)),ok);
+  if(ok)load();}
 async function removeProvider(n){
   const {ok,d}=await post('/charon/remove',{kind:'provider',name:n});
   msg(ok?('removed provider '+n):('error: '+(d.error&&d.error.message)),ok);if(ok)load();}
@@ -242,6 +251,7 @@ async function load(){
   }
   h+='</table><b>pools:</b> '+
      Object.entries(d.pools||{}).map(([k,v])=>esc(k)+'=['+v.map(esc).join(', ')+']').join('  ');
+  if(d.fallback&&d.fallback.length)h+='<br><b>global fallback:</b> '+d.fallback.map(esc).join(', ');
   document.getElementById('cfg').innerHTML=h;}
 load();
 </script></body></html>"""
@@ -468,8 +478,8 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 return
             if self.command == "POST" and path_only in (
                     "/charon/providers", "/charon/models", "/charon/models/import",
-                    "/charon/pools", "/charon/tiers", "/charon/enable",
-                    "/charon/disable", "/charon/remove"):
+                    "/charon/pools", "/charon/tiers", "/charon/fallback",
+                    "/charon/enable", "/charon/disable", "/charon/remove"):
                 host = self.headers.get("Host", "")
                 origin = self.headers.get("Origin")
                 if origin and urlsplit(origin).netloc != host:  # CSRF: cross-origin write
