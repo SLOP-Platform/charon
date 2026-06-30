@@ -469,7 +469,7 @@ def validate_provider_key(name: str, base_url: str | None, api_key: str) -> dict
         if exc.code in (401, 403):
             return {"valid": False, "message": f"key rejected (HTTP {exc.code})"}
         return {"valid": False, "message": f"probe failed (HTTP {exc.code})"}
-    except Exception:
+    except Exception:  # noqa: BLE001
         if models_count > 0:
             # /models worked but /completions didn't — common for some APIs
             return {"valid": True, "message": "key validated via /models",

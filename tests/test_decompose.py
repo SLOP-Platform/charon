@@ -53,32 +53,18 @@ def test_run_decomposed_completes_with_one_ledger_and_role_tagged_checkpoints(
     state_dir: Path, git_repo: Path
 ) -> None:
     checks = [AcceptanceCheck("a0", "test -f out.txt")]
-    backend = MockBackend(creates=["out.txt"])  # implements on the first dispatch
+    backend = MockBackend(creates=["out.txt"])
     led = _led(state_dir, git_repo, checks)
     res = decompose.run_decomposed(
         _unit(), {backend.name: backend}, led, Fence(Autonomy.L1),
         StaticRouter(backends=[backend.name]),
     )
     assert res.status == "complete"
-    # ONE ledger; stages are checkpoint metadata appended to it (INV-1) …
     assert (state_dir / "t1" / "ledger.json").exists()
-    assert not (state_dir / "t1" / "stages").exists()  # no per-stage ledgers
-    # … and the checkpoints are tagged with their role, in DAG order (sequential).
+    assert not (state_dir / "t1" / "stages").exists()
     roles = [cp.role for cp in led.checkpoints()]
     assert roles == decompose.ROLE_DAG
-    assert led.lkg_ref != led.base_ref  # applied at L1 after the pipeline passed
-
-
-def test_run_decomposed_runs_stages_strictly_sequentially(
-    state_dir: Path, git_repo: Path
-) -> None:
-    """The role recorded on each checkpoint is in pipeline order — proof the
-    stages did not interleave (sequential within the ticket)."""
-    checks = [AcceptanceCheck("a0", "test -f out.txt")]
-    backend = MockBackend(creates=["out.txt"])
-    led = _led(state_dir, git_repo, checks)
-    decompose.run_decomposed(_unit(), {backend.name: backend}, led,
-                             Fence(Autonomy.L1), StaticRouter(backends=[backend.name]))
+    assert led.lkg_ref != led.base_ref
     seqs = [(cp.seq, cp.role) for cp in led.checkpoints()]
     assert seqs == list(enumerate(decompose.ROLE_DAG, start=1))
 

@@ -106,55 +106,50 @@ def test_breaker_passes_through_when_closed() -> None:
     assert breaker.state == "closed"
 
 
-def test_breaker_opens_after_threshold_errors() -> None:
+@pytest.mark.parametrize(
+    "num_errors,threshold,expected_state",
+    [(3, 3, "open"), (2, 3, "closed")],
+)
+def test_breaker_opens_at_threshold(
+    num_errors: int, threshold: int, expected_state: str
+) -> None:
     inner = MockReviewer(ReviewMode.ERROR)
-    breaker = ReviewerCircuitBreaker(inner, threshold=3, cooldown_s=60.0)
-    for _ in range(3):
+    breaker = ReviewerCircuitBreaker(inner, threshold=threshold, cooldown_s=60.0)
+    for _ in range(num_errors):
+        with pytest.raises(ReviewerError):
+            breaker.review(_unit(), _outcome())
+    assert breaker.state == expected_state
+    if expected_state == "open":
+        calls_before = inner.calls
+        with pytest.raises(ReviewerError, match="circuit open"):
+            breaker.review(_unit(), _outcome())
+        assert inner.calls == calls_before
+
+
+@pytest.mark.parametrize(
+    "mode,threshold,probe_passes",
+    [(ReviewMode.FLAKY, 3, True), (ReviewMode.ERROR, 2, False)],
+)
+def test_breaker_half_open_probe(
+    mode: ReviewMode, threshold: int, probe_passes: bool
+) -> None:
+    if mode == ReviewMode.FLAKY:
+        inner = MockReviewer(mode, flaky_k=threshold)
+    else:
+        inner = MockReviewer(mode)
+    breaker = ReviewerCircuitBreaker(inner, threshold=threshold, cooldown_s=0.0)
+    for _ in range(threshold):
         with pytest.raises(ReviewerError):
             breaker.review(_unit(), _outcome())
     assert breaker.state == "open"
-    # subsequent calls fail immediately without hitting the inner reviewer
-    calls_before = inner.calls
-    with pytest.raises(ReviewerError, match="circuit open"):
-        breaker.review(_unit(), _outcome())
-    assert inner.calls == calls_before  # inner was NOT called
-
-
-def test_breaker_does_not_open_before_threshold() -> None:
-    inner = MockReviewer(ReviewMode.ERROR)
-    breaker = ReviewerCircuitBreaker(inner, threshold=3, cooldown_s=60.0)
-    for _ in range(2):
+    if probe_passes:
+        result = breaker.review(_unit(), _outcome())
+        assert result.passes
+        assert breaker.state == "closed"
+    else:
         with pytest.raises(ReviewerError):
             breaker.review(_unit(), _outcome())
-    assert breaker.state == "closed"  # still closed — threshold not reached
-
-
-def test_breaker_half_open_probe_closes_on_success() -> None:
-    inner = MockReviewer(ReviewMode.FLAKY, flaky_k=3)
-    breaker = ReviewerCircuitBreaker(inner, threshold=3, cooldown_s=0.0)  # instant cooldown
-    # trip the breaker
-    for _ in range(3):
-        with pytest.raises(ReviewerError):
-            breaker.review(_unit(), _outcome())
-    assert breaker.state == "open"
-    # with cooldown_s=0 the next call transitions to half-open and runs the probe
-    # (4th call to inner; inner.flaky_k=3 so it now passes)
-    result = breaker.review(_unit(), _outcome())
-    assert result.passes
-    assert breaker.state == "closed"
-
-
-def test_breaker_half_open_re_opens_on_failure() -> None:
-    inner = MockReviewer(ReviewMode.ERROR)
-    breaker = ReviewerCircuitBreaker(inner, threshold=2, cooldown_s=0.0)
-    for _ in range(2):
-        with pytest.raises(ReviewerError):
-            breaker.review(_unit(), _outcome())
-    assert breaker.state == "open"
-    # cooldown expired → half-open probe fails → re-opens
-    with pytest.raises(ReviewerError):
-        breaker.review(_unit(), _outcome())
-    assert breaker.state == "open"
+        assert breaker.state == "open"
 
 
 def test_breaker_resets_failure_count_on_success() -> None:
