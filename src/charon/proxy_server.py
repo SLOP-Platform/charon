@@ -110,6 +110,54 @@ async function tick(){
 tick();setInterval(tick,2000);
 </script></body></html>"""
 
+# Self-contained work/board panel (P5, WORK-OBSERVABILITY follow-on). Reads
+# /charon/work?json=0 for the HTML table and /charon/work?json=1 for raw JSON.
+# Purely read-only; no mutation; no secrets rendered.
+_WORK_HTML = """<!doctype html><html><head><meta charset="utf-8">
+<title>Charon Work</title><style>
+body{font:14px system-ui,sans-serif;margin:1.5rem;background:#0b0e14;color:#cdd6f4}
+h1{font-size:1.2rem}h2{font-size:1rem;margin-top:1.4rem;color:#89b4fa}
+table{border-collapse:collapse;width:100%;margin-top:.3rem}
+th,td{text-align:left;padding:.3rem .6rem;border-bottom:1px solid #313244}
+.comp{color:#a6e3a1}.prog{color:#f9e2af}.blkd{color:#f38ba8}.esc{color:#fab387}
+code{background:#1e1e2e;padding:.1rem .3rem;border-radius:3px}
+.muted{color:#6c7086}
+</style></head><body>
+<h1>Charon Work <span class=muted id=ts></span></h1>
+<div id=panel></div>
+<script>
+const tok=new URLSearchParams(location.search).get('token');
+const q=tok?('?token='+encodeURIComponent(tok)):'';
+function esc(s){return String(s).replace(/[&<>"']/g,
+  c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function cls(s){return{'complete':'comp','in-progress':'prog',
+ 'blocked':'blkd','ready':'prog','escaped':'esc','budget':'esc'}[s]||''}
+async function load(){
+ let r; try{r=await fetch('/charon/work?json=1'+q)}catch(e){return}
+ if(!r.ok)return; const d=await r.json();
+ document.getElementById('ts').textContent=new Date().toLocaleTimeString();
+ if(!d.runs||!d.runs.length){
+  document.getElementById('panel').innerHTML=
+   '<p class=muted>no runs found — run &#96;charon work --units …&#96; first</p>';return}
+ const heads='<th>run id<th>status<th>task / goal'
+ +'<th>checks<th>tokens in/out<th>cost $<th>lkg';
+ let h='<table><tr>'+heads;
+ for(const u of d.runs){
+  const goal=u.goal?u.goal.substring(0,60):'';
+  h+='<tr><td><code>'+esc(u.run_id)+'</code><td class='+cls(u.status)+'>'+esc(u.status)+
+   '<td><span title="'+esc(u.goal||'')+'">'+esc(u.task_id)+'</span> '+
+   (goal?'<span class=muted>'+esc(goal)+'</span>':'')+
+   '<td>'+u.verified_count+' / '+u.remaining_count+
+   '<td>'+esc(u.usage.tokens_in)+' / '+esc(u.usage.tokens_out)+
+   '<td>'+esc(u.usage.cost_usd)+
+   '<td><code>'+esc(u.lkg_ref||'—')+'</code>';
+ }
+ h+='</table>';
+ document.getElementById('panel').innerHTML=h;
+}
+load();setInterval(load,5000);
+</script></body></html>"""
+
 # Self-contained web SETUP page (read-write). Posts to /charon/{providers,models,
 # pools}; the key field is a password input and is never rendered back.
 _SETUP_HTML = """<!doctype html><html><head><meta charset="utf-8">
@@ -512,6 +560,21 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                     return
                 self._json(status, obj)
                 return
+
+        # Work/board panel (P5, WORK-OBSERVABILITY follow-on) — read-only,
+        # token-gated above. /charon/work returns HTML; add ?json=1 for raw JSON.
+        if self.command == "GET" and path_only == "/charon/work":
+            from . import console_work
+            try:
+                runs = console_work.gather_runs()
+            except Exception:  # noqa: BLE001
+                runs = []
+            qs = parse_qs(urlsplit(self.path).query)
+            if qs.get("json") == ["1"]:
+                self._json(200, {"runs": runs})
+            else:
+                self._html(_WORK_HTML)
+            return
 
         # Read the client request (size-capped — memory-DoS guard on an exposed bind).
         length = int(self.headers.get("Content-Length") or 0)
