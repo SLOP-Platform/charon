@@ -40,12 +40,15 @@ def test_web_setup_writes_config_and_hot_reloads(monkeypatch, tmp_path):
         assert st == 200 and "Charon Setup" in html
         assert "http://" not in html and "https://" not in html
 
-        # write a provider (preset) + its key
+        # write a provider (preset) — no key sent, so no probe needed
         st, _, _ = _req(base + "/charon/providers", "POST", token="t",
-                        body={"name": "openrouter", "key": "sk-or"})
+                        body={"name": "openrouter"})
         assert st == 200
         assert config.load_providers()["openrouter"]["key_env"] == "OPENROUTER_API_KEY"
-        assert secrets.load_secrets()["OPENROUTER_API_KEY"] == "sk-or"
+
+        # store the key manually (CONSOLE-PROVIDER-MGMT: when a real key is sent
+        # through the web, the endpoint probes it first — tested separately)
+        secrets.set_secret("OPENROUTER_API_KEY", "sk-or")
 
         # write a model referencing it
         st, _, _ = _req(base + "/charon/models", "POST", token="t",

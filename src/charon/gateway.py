@@ -81,11 +81,14 @@ def _build_routes_and_pools(
     """Compile a model registry + ``pool_map`` (virtual id → [model id]) into
     single routes (concrete models) and failover chains (virtual ids). Each chain
     is ordered **free-first then cheapest-first** from the registry's cost metadata
-    (stable → the listed order breaks ties), matching `pools.load_pools` (D4)."""
+    (stable → the listed order breaks ties), matching `pools.load_pools` (D4).
+    Models with ``"enabled": false`` are excluded from routes and pools."""
     providers_cfg = providers_cfg or {}
     routes: dict[str, UpstreamRoute] = {}
     for mid, spec in registry.items():
         if isinstance(spec, dict):
+            if spec.get("enabled") is False:
+                continue
             r = _route_from_spec(spec, providers_cfg)
             if r is not None:
                 routes[mid] = r
@@ -227,13 +230,20 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
             base_url = payload.get("base_url") or None
             preset = P.resolve(name, {"base_url": base_url} if base_url else None)  # validates
             key_env = (payload.get("key_env") or preset.key_env) or None
+            key = (payload.get("key") or None)
+            # Validate the key BEFORE persisting (probe a real completion)
+            probe = None
+            if key_env and key:
+                effective_base = base_url or preset.base_url
+                probe = config.validate_provider_key(name, effective_base, str(key))
+                if not probe["valid"]:
+                    return 400, {"error": {"message": probe["message"]}, "probe": probe}
             config.add_provider(name, base_url=base_url, key_env=key_env,
                                 strip_v1=(preset.strip_v1 if base_url else None))
-            key = payload.get("key")
             if key_env and key:
                 secrets.set_secret(str(key_env), str(key))
             _reload()
-            return 200, {"ok": True, "provider": name}
+            return 200, {"ok": True, "provider": name, "probe": probe}
         if action == "models":
             mid = str(payload.get("id") or "")
             # Preserve existing metadata (context_window, etc.) across re-adds
@@ -293,6 +303,11 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
             )
             _reload()  # recompile tier pools into the live server via apply_routes
             return 200, {"ok": True}
+        if action in ("enable", "disable"):
+            mid = str(payload.get("id") or "")
+            ok = config.set_model_enabled(mid, action == "enable")
+            _reload()
+            return 200, {"ok": ok}
         if action == "remove":
             ok = config.remove(str(payload.get("kind")), str(payload.get("name")))
             _reload()

@@ -175,8 +175,11 @@ async function addProvider(){
   const b={name:val('pname'),base_url:val('pbase')||null,
     key_env:val('pkenv')||null,key:val('pkey')||null};
   const {ok,d}=await post('/charon/providers',b);
-  msg(ok?('added provider '+b.name):('error: '+(d.error&&d.error.message)),ok);
-  if(ok){document.getElementById('pkey').value='';load();}}
+  if(ok){document.getElementById('pkey').value='';
+    msg(('added provider '+b.name)+'  '+(d.probe?('('+d.probe.message+
+      (d.probe.models_count?', '+d.probe.models_count+' models':'')+')'):''),true);
+    load();
+  }else{msg('error: '+(d.error&&d.error.message),false);}}
 async function addModel(){
   const free=document.getElementById('mfree').checked;
   const b={id:val('mid'),provider:val('mprov')||null,
@@ -204,17 +207,40 @@ async function setTiers(){
     members:{low:mids('tlow'),med:mids('tmed'),high:mids('thigh')},aliases};
   const {ok,d}=await post('/charon/tiers',b);
   msg(ok?'saved tiers':('error: '+(d.error&&d.error.message)),ok); if(ok)load();}
+async function removeProvider(n){
+  const {ok,d}=await post('/charon/remove',{kind:'provider',name:n});
+  msg(ok?('removed provider '+n):('error: '+(d.error&&d.error.message)),ok);if(ok)load();}
+async function removeModel(n){
+  const {ok,d}=await post('/charon/remove',{kind:'model',name:n});
+  msg(ok?('removed model '+n):('error: '+(d.error&&d.error.message)),ok);if(ok)load();}
+async function toggleModel(id,en){
+  const {ok,d}=await post('/charon/'+(en?'enable':'disable'),{id:id});
+  msg(ok?(id+' '+(en?'enabled':'disabled')):('error: '+(d.error&&d.error.message)),ok);
+  if(ok)load();}
 async function load(){
   let r; try{r=await fetch('/charon/config',{headers:H})}catch(e){return}
   if(!r.ok){msg('not authorized — append ?token=… to the URL',false);return}
   const d=await r.json();
   document.getElementById('presets').innerHTML=
     (d.presets||[]).map(p=>'<option value="'+esc(p)+'">').join('');
-  let h='<table><tr><th>provider<th>base<th>key</tr>';
+  let h='<table><tr><th>provider<th>base<th>key<th></tr>';
   for(const[n,p]of Object.entries(d.providers||{}))h+='<tr><td><code>'+esc(n)+
     '</code><td>'+esc(p.base_url||'(preset)')+'<td>'+
-    (p.key_set?'<span class=ok>set</span>':'<span class=bad>missing</span>')+'</tr>';
-  h+='</table><b>models:</b> '+Object.keys(d.models||{}).map(esc).join(', ')+'<br><b>pools:</b> '+
+    (p.key_set?'<span class=ok>set</span>':'<span class=bad>missing</span>')+
+    '<td><button onclick=removeProvider("'+esc(n)
++    '") style="background:#f38ba8;font-size:.8rem">remove</button></tr>';
+  h+='</table><b>models:</b><br><table><tr><th>id<th>enabled<th></tr>';
+  for(const[n,m]of Object.entries(d.models||{})){
+    const en=m.enabled!==false;
+    const label=en?'disable':'enable';
+    h+='<tr><td><code>'+esc(n)+'</code><td>'+
+      (en?'<span class=ok>yes</span>':'<span class=bad>no</span>')+
+      '<td><button onclick=toggleModel("'+esc(n)+'",'+(!en)+')'
+      +' style="font-size:.8rem">'+label+'</button>'
+      +'<button onclick=removeModel("'+esc(n)+'")'
+      +' style="background:#f38ba8;font-size:.8rem;margin-left:.3rem">remove</button></tr>';
+  }
+  h+='</table><b>pools:</b> '+
      Object.entries(d.pools||{}).map(([k,v])=>esc(k)+'=['+v.map(esc).join(', ')+']').join('  ');
   document.getElementById('cfg').innerHTML=h;}
 load();
@@ -442,7 +468,8 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 return
             if self.command == "POST" and path_only in (
                     "/charon/providers", "/charon/models", "/charon/models/import",
-                    "/charon/pools", "/charon/tiers", "/charon/remove"):
+                    "/charon/pools", "/charon/tiers", "/charon/enable",
+                    "/charon/disable", "/charon/remove"):
                 host = self.headers.get("Host", "")
                 origin = self.headers.get("Origin")
                 if origin and urlsplit(origin).netloc != host:  # CSRF: cross-origin write
