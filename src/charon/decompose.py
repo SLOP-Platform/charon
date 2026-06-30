@@ -131,7 +131,8 @@ def run_decomposed(
 
             before = snapshot_outside(worktree, guard_dir)
             env = Fence.scrubbed_env(worktree)
-            outcome = backend.dispatch(su, route.tier, route.budget, worktree, env)
+            outcome = backend.dispatch(su, route.tier, route.budget, worktree, env,
+                                       state_dir=ledger.root.parent)
             seq += 1
 
             escaped = detect_escape(worktree, guard_dir, before)
