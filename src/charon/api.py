@@ -355,7 +355,8 @@ def _start_proxy_acp(acp_cmd: str, upstream: str, key: str, model: str):
     from .proxy_server import GatewayProxyServer
 
     observer = GatewayProxy()
-    server = GatewayProxyServer(upstream_base=upstream, api_key=key, observer=observer, model_meta={})
+    server = GatewayProxyServer(upstream_base=upstream, api_key=key,
+                                 observer=observer, model_meta={})
     server.serve_in_thread()
     # Same setup-hardening as the tier path (TIER7B-FOLLOWUP): if the launch render
     # throws after the proxy starts, shut it down rather than leak the thread.
