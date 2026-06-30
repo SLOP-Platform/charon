@@ -401,11 +401,24 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
 
         # Aggregated model list (gateway mode). Served locally — never forwarded —
         # and field-allowlisted to ids only (no key_env/upstream_base leak, ADR R4).
+        # Pool virtual IDs (e.g. auto, tier names) are EXCLUDED — they are internal
+        # routing concepts, not real models (MODEL-DISCOVERY).
         path_only = urlsplit(self.path).path.rstrip("/")
         if (self.command == "GET" and srv.model_ids is not None
                 and path_only in ("/v1/models", "/models")):
-            self._json(200, {"object": "list", "data": [
-                {"id": m, "object": "model", "owned_by": "charon"} for m in srv.model_ids]})
+            # Exclude pool virtual IDs that are NOT also concrete models
+            # (a model named "auto" or "low" is a real model, not a pool).
+            pool_only = set(srv.pools.keys()) - set(srv.routes.keys())
+            exposed = [m for m in srv.model_ids if m not in pool_only]
+            entries: list[dict] = []
+            for m in exposed:
+                entry: dict = {"id": m, "object": "model", "owned_by": "charon"}
+                meta = srv.model_meta.get(m, {})
+                for k in ("context_window", "max_tokens", "reasoning", "vision", "audio"):
+                    if k in meta:
+                        entry[k] = meta[k]
+                entries.append(entry)
+            self._json(200, {"object": "list", "data": entries})
             return
 
         # Gateway console + status (P4) — gateway mode only, token-gated above.
@@ -643,6 +656,7 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         token: str | None = None,
         model_ids: list[str] | None = None,
         pools: dict[str, list[UpstreamRoute]] | None = None,
+        model_meta: dict[str, dict] | None = None,
         max_body_bytes: int = 10 * 1024 * 1024,
         default_cooldown: float = 60.0,
         failover_log_path: str | None = None,
@@ -663,6 +677,9 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         # agent-facing model ids to serve at /v1/models (None = don't intercept).
         self.token = token
         self.model_ids = model_ids
+        # Per-model metadata surfaced in /v1/models (context_window, max_tokens,
+        # reasoning, vision, audio) — optional, never carries secrets.
+        self.model_meta = model_meta or {}
         # P2 failover: model id → ordered (cost-ranked) candidate chain; a
         # provider-keyed cooldown with Retry-After expiry (R7/R10c); and a bounded
         # in-memory failover event log (+ optional JSONL file) for visibility (D3).
@@ -689,7 +706,8 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
             return UpstreamRoute(self.upstream_base, self.api_key)
         return None
 
-    def apply_routes(self, routes: dict, pools: dict, model_ids: list[str]) -> None:
+    def apply_routes(self, routes: dict, pools: dict, model_ids: list[str],
+                     model_meta: dict[str, dict] | None = None) -> None:
         """Atomically swap the live routing config (web-setup hot-reload) under the
         same lock ``chain_for`` reads — so an in-flight request never sees a torn
         (mixed old/new) routes-vs-pools view (security review LOW)."""
@@ -697,6 +715,7 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
             self.routes = routes
             self.pools = pools
             self.model_ids = model_ids
+            self.model_meta = model_meta or {}
 
     def chain_for(self, model: str) -> list[UpstreamRoute]:
         """The ordered failover chain for ``model``: a configured pool (multiple

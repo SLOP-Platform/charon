@@ -190,7 +190,8 @@ def run_task(
             tier_vids = _run_tier_vids(tier_vid, goal, checks, decompose)
             live = {vid: c for vid in tier_vids if (c := gw_cfg.pools.get(vid, []))}
             proxy_server = GatewayProxyServer(
-                pools=live, model_ids=sorted(live), observer=GatewayProxy())
+                pools=live, model_ids=sorted(live), observer=GatewayProxy(),
+                model_meta={})
             # Setup hardening (TIER7B-FOLLOWUP): the proxy thread is started HERE,
             # but the run's inner try/finally (which reaps it) is not yet in scope.
             # Phase B widened the gap from one render to N — if the warm-map build
@@ -354,7 +355,8 @@ def _start_proxy_acp(acp_cmd: str, upstream: str, key: str, model: str):
     from .proxy_server import GatewayProxyServer
 
     observer = GatewayProxy()
-    server = GatewayProxyServer(upstream_base=upstream, api_key=key, observer=observer)
+    server = GatewayProxyServer(upstream_base=upstream, api_key=key,
+                                 observer=observer, model_meta={})
     server.serve_in_thread()
     # Same setup-hardening as the tier path (TIER7B-FOLLOWUP): if the launch render
     # throws after the proxy starts, shut it down rather than leak the thread.
@@ -447,7 +449,8 @@ def list_ledgers(state_dir: str = DEFAULT_STATE_DIR) -> list[dict]:
 # operator fat-fingers an inline secret into models.json, it can never reach the
 # read-only web surface (provider keys live in env/proxy, referenced by key_env).
 _MODEL_FIELDS = ("agent", "cost_tier", "cost_rank", "code_safe", "free",
-                 "upstream_base", "key_env", "upstream_model")
+                 "upstream_base", "key_env", "upstream_model",
+                 "context_window", "max_tokens", "reasoning", "vision", "audio")
 
 
 def show_config(state_dir: str = DEFAULT_STATE_DIR) -> dict:
