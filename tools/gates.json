@@ -100,6 +100,16 @@
     "red_proof": null
   },
   {
+    "id": "security-scan",
+    "name": "Security anti-pattern scanner",
+    "domain": "security",
+    "enforcer": "tools/check_security.py",
+    "covers": "bare excepts, secrets in source, hardcoded IPs, dangerous eval/exec/shell=True",
+    "ci_step": true,
+    "invariant": "No source file silently swallows exceptions, embeds secrets, hardcodes IPs, or uses eval/exec/subprocess-shell",
+    "red_proof": "tests/test_check_security.py"
+  },
+  {
     "id": "charon-gate",
     "name": "Unified CHARON GATE runner",
     "domain": "gate",

@@ -106,7 +106,7 @@ class _RoutingHandler(http.server.BaseHTTPRequestHandler):
             srv.note_request()
             self._relay_error(exc)
             return
-        except Exception:
+        except Exception:  # noqa: BLE001
             srv.note_request()
             self._json(502, {"error": {"message": "upstream unreachable"}})
             return
@@ -155,7 +155,7 @@ class _RoutingHandler(http.server.BaseHTTPRequestHandler):
                 if not c:
                     break
                 out.append(c)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return b"".join(out)
 
@@ -172,7 +172,7 @@ class _RoutingHandler(http.server.BaseHTTPRequestHandler):
     def _relay_error(self, exc: urllib.error.HTTPError) -> None:
         try:
             body = exc.read()
-        except Exception:
+        except Exception:  # noqa: BLE001
             body = b""
         self.send_response(exc.code)
         for hk, hv in exc.headers.items():

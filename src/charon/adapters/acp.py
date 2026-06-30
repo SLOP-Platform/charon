@@ -238,6 +238,6 @@ class AcpBackend:
         if self._log_fh is not None:
             try:
                 self._log_fh.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._log_fh = None

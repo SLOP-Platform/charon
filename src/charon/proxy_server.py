@@ -274,7 +274,7 @@ def _extract(raw: bytes, content_type: str) -> dict:
                 continue
             try:
                 obj = json.loads(payload)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 continue
             model = model or obj.get("model", "")
             if obj.get("usage"):
@@ -287,7 +287,7 @@ def _extract(raw: bytes, content_type: str) -> dict:
         return out
     try:
         return json.loads(text)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return {}
 
 
@@ -356,7 +356,7 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 if not c:
                     break
                 out.append(c)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return b"".join(out)
 
@@ -496,7 +496,7 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 raw = self.rfile.read(length) if length else b""
                 try:
                     payload = json.loads(raw) if raw else {}
-                except Exception:
+                except Exception:  # noqa: BLE001
                     self._json(400, {"error": {"message": "invalid JSON"}})
                     return
                 if not isinstance(payload, dict):
@@ -525,7 +525,7 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
         try:
             orig_bj = json.loads(raw_body) if raw_body else {}
             requested = orig_bj.get("model", "")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         chain = srv.chain_for(requested)

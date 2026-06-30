@@ -51,7 +51,7 @@ class AcceptanceCheck:
         try:
             proc = subprocess.run(
                 self.cmd,
-                shell=True,
+                shell=True,  # noqa: S602
                 cwd=cwd,
                 timeout=timeout,
                 capture_output=True,
