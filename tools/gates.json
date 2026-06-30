@@ -98,5 +98,15 @@
     "ci_step": true,
     "invariant": "Every gate has a living enforcer and no two gates overlap",
     "red_proof": null
+  },
+  {
+    "id": "charon-gate",
+    "name": "Unified CHARON GATE runner",
+    "domain": "gate",
+    "enforcer": "python3 -m charon.cli gate",
+    "covers": "all validation checks in one command (ruff check, mypy, boundary, version, gate-registry)",
+    "ci_step": true,
+    "invariant": "Gate passes iff all sub-checks pass",
+    "red_proof": null
   }
 ]

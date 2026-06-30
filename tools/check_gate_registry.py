@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # @covers: registry
+# @covers: gate
 """Gate registry validator — single source of truth for all validation rules.
 
 Reads tools/gates.json, validates every gate has a living enforcer,
@@ -24,7 +25,7 @@ GATES_PATH = TOOLS_DIR / "gates.json"
 
 ALL_DOMAINS: frozenset[str] = frozenset({
     "boundary", "security", "arch", "test", "test-hygiene",
-    "lint", "type", "version", "registry", "fleet", "docs",
+    "lint", "type", "version", "registry", "gate", "fleet", "docs",
 })
 
 
