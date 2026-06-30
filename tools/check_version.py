@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# @covers: version
 """Version-consistency check (ADR-0002 §4: one true home for version).
 
 The single source of truth is ``pyproject.toml::project.version``. This asserts

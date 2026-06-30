@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# @covers: boundary
 """SLOP-boundary check (ADR-0002 INV-B1/B5; reconciliation BR-4).
 
 GROUND: parses every .py file under src/ with the ast module and fails if any

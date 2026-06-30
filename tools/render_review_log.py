@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# @covers: docs
 """Render docs/REVIEW-LOG.md from the per-ticket fragments in docs/review-log/.
 
 The shared review log used to be hand-appended by every ticket, which produced a

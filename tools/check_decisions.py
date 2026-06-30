@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# @covers: arch
 """Lint docs/DECISIONS.md and the ADRs it cross-references.
 
 Exit codes:
