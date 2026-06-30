@@ -243,8 +243,15 @@ def _import_models(name: str, *, free_only: bool = False, into_pool: str | None 
         return None
     if free_only:
         found = [m for m in found if m["free"]]
-    entries = [{"id": m["id"], "free": m["free"], "cost_rank": 0 if m["free"] else 1000}
-               for m in found]
+    _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio")
+    entries = []
+    for m in found:
+        entry = {"id": m["id"], "free": m["free"],
+                 "cost_rank": 0 if m["free"] else 1000}
+        for k in _META_KEYS:
+            if k in m:
+                entry[k] = m[k]
+        entries.append(entry)
     added, skipped = config.add_models_bulk(entries, provider=name)
     if not quiet:
         tail = f", skipped {len(skipped)} invalid id(s)" if skipped else ""

@@ -139,16 +139,33 @@ def _is_free(item: dict) -> bool:
     return False
 
 
+_UPSTREAM_METADATA_MAP: tuple[tuple[str, str, type], ...] = (
+    ("context_window", "context_window", int),
+    ("context_length", "context_window", int),
+    ("max_tokens", "max_tokens", int),
+    ("reasoning", "reasoning", bool),
+    ("vision", "vision", bool),
+    ("audio", "audio", bool),
+)
+
+
 def _parse_models(data: object) -> list[dict]:
     """Pull ``[{id, free}]`` out of a provider's /models payload — the OpenAI
-    ``{"data": [...]}`` shape, a bare list, or a list of strings. Pure (testable)."""
+    ``{"data": [...]}`` shape, a bare list, or a list of strings. Optionally
+    carries through upstream metadata (context_window, max_tokens, reasoning,
+    vision, audio) if present."""
     items = data.get("data") if isinstance(data, dict) else data
     out: list[dict] = []
     if not isinstance(items, list):
         return out
     for it in items:
         if isinstance(it, dict) and isinstance(it.get("id"), str):
-            out.append({"id": it["id"], "free": _is_free(it)})
+            entry: dict[str, object] = {"id": it["id"], "free": _is_free(it)}
+            for src_key, dst_key, want_type in _UPSTREAM_METADATA_MAP:
+                v = it.get(src_key)
+                if v is not None and isinstance(v, want_type):
+                    entry[dst_key] = v
+            out.append(entry)
         elif isinstance(it, str):
             out.append({"id": it, "free": False})
     return out

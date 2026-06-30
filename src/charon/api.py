@@ -447,7 +447,8 @@ def list_ledgers(state_dir: str = DEFAULT_STATE_DIR) -> list[dict]:
 # operator fat-fingers an inline secret into models.json, it can never reach the
 # read-only web surface (provider keys live in env/proxy, referenced by key_env).
 _MODEL_FIELDS = ("agent", "cost_tier", "cost_rank", "code_safe", "free",
-                 "upstream_base", "key_env", "upstream_model")
+                 "upstream_base", "key_env", "upstream_model",
+                 "context_window", "max_tokens", "reasoning", "vision", "audio")
 
 
 def show_config(state_dir: str = DEFAULT_STATE_DIR) -> dict:

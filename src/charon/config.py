@@ -214,9 +214,13 @@ def add_provider(name: str, *, base_url: str | None = None, key_env: str | None 
 
 def add_model(model_id: str, *, provider: str | None = None, upstream_base: str | None = None,
               upstream_model: str | None = None, key_env: str | None = None,
-              free: bool = False, cost_rank: int = 1000) -> Path:
+              free: bool = False, cost_rank: int = 1000,
+              context_window: int | None = None, max_tokens: int | None = None,
+              reasoning: bool | None = None, vision: bool | None = None,
+              audio: bool | None = None) -> Path:
     """Persist a model to ``models.json`` (references a provider, or a direct
-    upstream_base)."""
+    upstream_base). Optional metadata fields (context_window, max_tokens,
+    reasoning, vision, audio) are persisted only when non-None."""
     _check_id("model", model_id)
     if provider is None and upstream_base is None:
         raise ValueError("a model needs either provider= or upstream_base=")
@@ -226,6 +230,10 @@ def add_model(model_id: str, *, provider: str | None = None, upstream_base: str 
                  ("upstream_model", upstream_model), ("key_env", key_env)):
         if v is not None:
             entry[k] = v
+    for k, mv in (("context_window", context_window), ("max_tokens", max_tokens),
+                   ("reasoning", reasoning), ("vision", vision), ("audio", audio)):
+        if mv is not None:
+            entry[k] = mv
     models[model_id] = entry
     return _save("models.json", models)
 
@@ -234,9 +242,11 @@ def add_models_bulk(entries: list[dict], *, provider: str) -> tuple[list[str], l
     """Add many catalog models for one provider in a SINGLE atomic write (the
     `charon models import` path). Each entry is ``{id, free?, cost_rank?}``; the
     catalog id doubles as the upstream id (no ``upstream_model``). Ids failing
-    ``_ID_RE`` are SKIPPED (not raised — an upstream list is untrusted). Returns
-    ``(added, skipped)``."""
+    ``_ID_RE`` are SKIPPED (not raised — an upstream list is untrusted). Optional
+    metadata fields (context_window, max_tokens, reasoning, vision, audio) are
+    carried through if present. Returns ``(added, skipped)``."""
     _check_id("provider", provider)
+    _METADATA_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio")
     models = load_models()
     added: list[str] = []
     skipped: list[str] = []
@@ -251,6 +261,10 @@ def add_models_bulk(entries: list[dict], *, provider: str) -> tuple[list[str], l
             "cost_rank": int(e.get("cost_rank", 0 if free else 1000)),
             "provider": provider,
         }
+        for k in _METADATA_KEYS:
+            v = e.get(k)
+            if v is not None:
+                models[mid][k] = v
         added.append(mid)
     if added:
         _save("models.json", models)

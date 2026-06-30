@@ -186,6 +186,78 @@ def test_gateway_forwards_chat_completions_end_to_end():
         up.shutdown()
 
 
+# ---- /v1/models metadata + pool filtering ---------------------------------
+
+def test_models_endpoint_surfaces_metadata():
+    cfg = GatewayConfig(
+        port=0,
+        token="t",
+        routes={"m1": UpstreamRoute("http://127.0.0.1:1/v1", api_key="k")},
+        model_ids=["m1"],
+        model_meta={"m1": {"context_window": 200000, "max_tokens": 32768,
+                            "reasoning": True, "vision": False}},
+    )
+    srv = gateway.build_server(cfg)
+    srv.serve_in_thread()
+    try:
+        _, body = _req(srv.url + "/v1/models", token="t")
+        assert body["data"][0]["id"] == "m1"
+        assert body["data"][0]["context_window"] == 200000
+        assert body["data"][0]["max_tokens"] == 32768
+        assert body["data"][0]["reasoning"] is True
+        assert body["data"][0]["vision"] is False
+        assert "audio" not in body["data"][0]    # not present → not emitted
+        assert "upstream_base" not in json.dumps(body)  # never leak secrets
+    finally:
+        srv.shutdown()
+
+
+def test_models_endpoint_excludes_pool_ids():
+    cfg = GatewayConfig(
+        port=0,
+        token="t",
+        routes={
+            "m1": UpstreamRoute("http://127.0.0.1:1/v1", api_key="k"),
+            "m2": UpstreamRoute("http://127.0.0.1:1/v1", api_key="k"),
+        },
+        pools={"auto": [
+            UpstreamRoute("http://127.0.0.1:1/v1", api_key="k"),
+        ]},
+        model_ids=["auto", "m1", "m2"],  # pool id IS in the internal list
+    )
+    srv = gateway.build_server(cfg)
+    srv.serve_in_thread()
+    try:
+        _, body = _req(srv.url + "/v1/models", token="t")
+        ids = [m["id"] for m in body["data"]]
+        assert ids == ["m1", "m2"]       # "auto" excluded
+        assert "auto" not in ids
+    finally:
+        srv.shutdown()
+
+
+def test_models_endpoint_does_not_exclude_model_in_both_routes_and_pools():
+    """A concrete model whose id happens to match a pool name is still a real model."""
+    cfg = GatewayConfig(
+        port=0,
+        token="t",
+        routes={"low": UpstreamRoute("http://127.0.0.1:1/v1", api_key="k")},
+        pools={"low": [
+            UpstreamRoute("http://127.0.0.1:1/v1", api_key="k"),
+            UpstreamRoute("http://127.0.0.1:1/v1", api_key="k2"),
+        ]},
+        model_ids=["low"],
+    )
+    srv = gateway.build_server(cfg)
+    srv.serve_in_thread()
+    try:
+        _, body = _req(srv.url + "/v1/models", token="t")
+        ids = [m["id"] for m in body["data"]]
+        assert ids == ["low"]   # not excluded — it IS a concrete model
+    finally:
+        srv.shutdown()
+
+
 # ---- loopback guard -------------------------------------------------------
 
 def test_run_refuses_nonloopback_without_token(capsys):

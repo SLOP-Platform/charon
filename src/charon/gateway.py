@@ -46,6 +46,7 @@ class GatewayConfig:
     routes: dict[str, UpstreamRoute] = field(default_factory=dict)
     pools: dict[str, list[UpstreamRoute]] = field(default_factory=dict)
     model_ids: list[str] = field(default_factory=list)
+    model_meta: dict[str, dict] = field(default_factory=dict)
 
 
 def _route_from_spec(spec: dict, providers_cfg: dict) -> UpstreamRoute | None:
@@ -161,6 +162,16 @@ def load_config(
     routes, pools, _ = _build_routes_and_pools(registry, pool_map, providers_cfg)
     for vid, chain in _tier_pools(registry, providers_cfg).items():
         pools.setdefault(vid, chain)  # explicit pools.json vid WINS on name collision
+
+    _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio")
+    model_meta: dict[str, dict] = {}
+    for mid, spec in registry.items():
+        if not isinstance(spec, dict) or mid not in routes:
+            continue
+        meta = {k: spec[k] for k in _META_KEYS if k in spec}
+        if meta:
+            model_meta[mid] = meta
+
     return GatewayConfig(
         host=host or cfg_host,
         port=port if port is not None else cfg_port,
@@ -168,6 +179,7 @@ def load_config(
         routes=routes,
         pools=pools,
         model_ids=sorted(set(routes) | set(pools)),
+        model_meta=model_meta,
     )
 
 
@@ -186,7 +198,7 @@ def build_server(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> 
         )
     server = GatewayProxyServer(
         routes=cfg.routes, pools=cfg.pools, host=cfg.host, port=cfg.port,
-        token=cfg.token, model_ids=cfg.model_ids,
+        token=cfg.token, model_ids=cfg.model_ids, model_meta=cfg.model_meta,
     )
     if setup_dir is not None:
         server.setup_handler = make_setup_handler(server, setup_dir)
@@ -203,7 +215,7 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
     def _reload() -> None:
         secrets.apply_to_env()  # newly-stored keys → env so routes resolve
         new = load_config(state_dir=setup_dir)
-        server.apply_routes(new.routes, new.pools, new.model_ids)  # atomic (LOW fix)
+        server.apply_routes(new.routes, new.pools, new.model_ids, new.model_meta)
 
     def handler(action: str, payload: dict):
         if action == "summary":
@@ -223,13 +235,20 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
             _reload()
             return 200, {"ok": True, "provider": name}
         if action == "models":
+            mid = str(payload.get("id") or "")
+            # Preserve existing metadata (context_window, etc.) across re-adds
+            # so a web-edit never silently strips model capabilities (MODEL-DISCOVERY).
+            existing = config.load_models().get(mid) or {}
+            _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio")
+            meta = {k: existing[k] for k in _META_KEYS if k in existing}
             config.add_model(
-                str(payload.get("id") or ""),
+                mid,
                 provider=(payload.get("provider") or None),
                 upstream_base=(payload.get("upstream_base") or None),
                 upstream_model=(payload.get("upstream_model") or None),
                 free=bool(payload.get("free")),
                 cost_rank=int(payload.get("cost_rank", 1000)),
+                **meta,
             )
             _reload()
             return 200, {"ok": True}
@@ -249,8 +268,15 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
                     f"could not reach provider {name!r} ({type(exc).__name__})") from exc
             if payload.get("free_only"):
                 found = [m for m in found if m["free"]]
-            entries = [{"id": m["id"], "free": m["free"],
-                        "cost_rank": 0 if m["free"] else 1000} for m in found]
+            _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio")
+            entries = []
+            for m in found:
+                entry = {"id": m["id"], "free": m["free"],
+                         "cost_rank": 0 if m["free"] else 1000}
+                for k in _META_KEYS:
+                    if k in m:
+                        entry[k] = m[k]
+                entries.append(entry)
             added, skipped = config.add_models_bulk(entries, provider=name)
             _reload()
             return 200, {"ok": True, "added": len(added), "skipped": len(skipped)}
