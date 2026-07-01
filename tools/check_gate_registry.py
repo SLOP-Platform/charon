@@ -24,8 +24,8 @@ REPO_ROOT = TOOLS_DIR.parent
 GATES_PATH = TOOLS_DIR / "gates.json"
 
 ALL_DOMAINS: frozenset[str] = frozenset({
-    "boundary", "security", "arch", "test", "test-hygiene",
-    "lint", "type", "version", "registry", "gate", "fleet", "docs",
+    "boundary", "security", "arch", "test", "test-patterns",
+    "lint", "type", "version", "registry", "gate", "fleet", "docs", "decisions",
 })
 
 
