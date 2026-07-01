@@ -1,13 +1,13 @@
 name: ci
 
 # Fast gate: lint + typecheck + unit tests on every push/PR.
-# Runs on the shared self-hosted 4-LOM runner pool (zero GitHub minutes); if the
+# Runs on the shared self-hosted <self-hosted-runner> runner pool (zero GitHub minutes); if the
 # org runners aren't online yet the run just QUEUES until they are. Heavy/slow
 # suites (wheel-isolation smoke, image build-smoke, supply-chain audit) live in
 # heavy.yml on a schedule/dispatch; the GHCR publish lives in release.yml.
-# ADR-0002 §4: the gate carries the SLOP-import boundary check, version
-# consistency, lint, type, and the full test suite ([service] extra so the
-# web/dashboard tests run too).
+# ADR-0002 §4: the gate carries the SLOP-import boundary check, public-clean
+# leak-prevention, version consistency, lint, type, and the full test suite
+# ([service] extra so the web/dashboard tests run too).
 on:
   push:
     branches: [master, main]
@@ -21,21 +21,33 @@ concurrency:
 jobs:
   gate:
     # Runner is chosen by the CI_RUNNER repo variable (Settings → Variables).
-    # Maintainer sets CI_RUNNER=["self-hosted","4-lom"]; forks don't inherit it and
+    # Maintainer sets CI_RUNNER=["self-hosted","<self-hosted-runner>"]; forks don't inherit it and
     # fall back to GitHub-hosted ubuntu-latest, so forked PRs get working CI.
     runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4  # public-clean: allow — pinned action commit SHA
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5  # public-clean: allow — pinned action commit SHA
         with:
           python-version: "3.12"
 
       - name: install (dev + service)
         run: pip install -e '.[dev,service]'
 
-      - name: charon gate (lint, type, boundary, version, gate-registry)
-        run: python3 -m charon.cli gate
+      - name: SLOP-boundary check (INV-B1/B5)
+        run: python3 tools/check_boundary.py src
+
+      - name: public-clean check (no personal/internal info)
+        run: python3 tools/check_public_clean.py
+
+      - name: version consistency
+        run: python3 tools/check_version.py
+
+      - name: lint
+        run: ruff check src tests tools
+
+      - name: type
+        run: mypy src/charon tools tests
 
       - name: tests
         run: pytest -q
@@ -52,13 +64,13 @@ jobs:
     # Fast wheel/import smoke: catches packaging breakage before it merges.
     # Parallel to gate so it doesn't slow the critical path.
     # Runner is chosen by the CI_RUNNER repo variable (Settings → Variables).
-    # Maintainer sets CI_RUNNER=["self-hosted","4-lom"]; forks don't inherit it and
+    # Maintainer sets CI_RUNNER=["self-hosted","<self-hosted-runner>"]; forks don't inherit it and
     # fall back to GitHub-hosted ubuntu-latest, so forked PRs get working CI.
     runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4  # public-clean: allow — pinned action commit SHA
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5  # public-clean: allow — pinned action commit SHA
         with:
           python-version: "3.12"
 

@@ -1,7 +1,7 @@
 # TIER-5 — Fleet claim path: data-backed tier ranks (preserve `flock` atomicity)
 
 _Wave C · branch `feat/fleet-tier-claim` · depends_on TIER-3 (merged, `charon tier ranks`)._
-_owns: `/home/stack/charon-private/fleet/claim.sh` (single file)._
+_owns: `<workspace>/<private-rig-repo>/fleet/claim.sh` (single file)._
 
 ## Goal
 
@@ -65,7 +65,7 @@ De-hardwire `claim.sh`'s tier ranking: source ranks from `charon tier ranks`
 
 ## Commit / ownership note
 
-`claim.sh` lives in the **`charon-private` build-rig repo** (a single shared working tree,
+`claim.sh` lives in the **`<private-rig-repo>` build-rig repo** (a single shared working tree,
 not per-droid worktrees; same wave, TIER-6 edits `fleet-droid.sh` in that same tree). To
 avoid an index-lock race with wave-mates I did **not** commit into that shared tree — the
 verified edit is left as a working-tree change for the launcher/manager to snapshot, per the

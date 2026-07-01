@@ -12,7 +12,7 @@ The optimized backlog plan is mostly sound, but one baked-in assumption does not
 - `WCI` owns `src/charon/engine/{reconcile,scheduler,board}.py`.
 - `ADR-0015`, `DSGN-WCI-PROOF`, `OHMYPI-ASSESS`, and `ATC` own no product `src/` files.
 
-Evidence checked: the parked boards under `/home/stack/charon-private/fleet/board/*.md.parked` match the collision matrix in `/home/stack/charon-private/fleet/OPTIMIZATION-PASS.md`.
+Evidence checked: the parked boards under `<workspace>/<private-rig-repo>/fleet/board/*.md.parked` match the collision matrix in `<workspace>/<private-rig-repo>/fleet/OPTIMIZATION-PASS.md`.
 
 Deferred backlog overlaps still exist, but they are outside the optimized concurrent wave set and are already intentionally unscheduled:
 

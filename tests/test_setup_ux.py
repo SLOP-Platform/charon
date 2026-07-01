@@ -6,7 +6,7 @@
    non-serving gateway, and offers to fix it in place;
 3. the "Presets:" line is colorized with a NO_COLOR / non-TTY plain fallback.
 
-Dogfood-driven (charon-vm 2026-06-27: imported 49 models, served 0, blank serve prompt).
+Dogfood-driven (<self-hosted-dev> 2026-06-27: imported 49 models, served 0, blank serve prompt).
 The wizard is driven through ``cli.main(["setup"])`` with ``input``/``getpass`` monkey-
 patched and an isolated ``$CHARON_HOME`` (mirrors ``tests/test_config.py``).
 """

@@ -26,9 +26,9 @@ CI runs automatically on every pull request via GitHub Actions.
 **For forks:** CI uses GitHub-hosted `ubuntu-latest` runners automatically — no
 configuration needed. Open a PR and CI will run.
 
-**For maintainers:** The upstream repo uses a self-hosted runner pool (`4-lom`) by setting
+**For maintainers:** The upstream repo uses a self-hosted runner pool (`<self-hosted-runner>`) by setting
 the `CI_RUNNER` repo variable (Settings → Variables → Actions variables) to
-`["self-hosted","4-lom"]`. Forks do not inherit repo variables, so they fall back to
+`["self-hosted","<self-hosted-runner>"]`. Forks do not inherit repo variables, so they fall back to
 GitHub-hosted runners transparently.
 
 If `CI_RUNNER` is unset — even in the upstream repo — CI falls back to `ubuntu-latest`

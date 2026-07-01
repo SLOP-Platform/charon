@@ -5,7 +5,7 @@
 
 ## What was done
 
-Replaced `runs-on: [self-hosted, 4-lom]` on every pinned job across three workflow files
+Replaced `runs-on: [self-hosted, <self-hosted-runner>]` on every pinned job across three workflow files
 with the A-Clean repo-variable pattern:
 
 ```yaml
@@ -23,11 +23,11 @@ Added decision register row D020, created `CONTRIBUTING.md` with a CI section.
 
 ## Operator action required
 
-**Set repo variable `CI_RUNNER=["self-hosted","4-lom"]` in Settings → Variables → Actions
+**Set repo variable `CI_RUNNER=["self-hosted","<self-hosted-runner>"]` in Settings → Variables → Actions
 variables on the upstream `SLOP-Platform/charon` repo.**
 
 Until this variable is set, upstream CI runs on GitHub-hosted `ubuntu-latest` (no error,
-no queue stall). Once set, upstream uses the 4-LOM self-hosted pool as before.
+no queue stall). Once set, upstream uses the <self-hosted-runner> self-hosted pool as before.
 
 Forks never inherit repo variables, so fork PRs always fall back to `ubuntu-latest`
 automatically — no action needed for contributors.

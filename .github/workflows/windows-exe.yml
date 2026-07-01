@@ -2,7 +2,7 @@ name: Windows EXE
 
 # ADR-0005 D7 / P5 — builds charon.exe via PyInstaller on the free windows-latest
 # runner.  Intentionally separate from ci.yml/heavy.yml which run on the
-# self-hosted Linux [4-lom] runner; this workflow MUST NOT run on that runner.
+# self-hosted Linux [<self-hosted-runner>] runner; this workflow MUST NOT run on that runner.
 #
 # Triggers: manual dispatch OR a version tag push (v*).
 # NOT triggered on every push — keeps the self-hosted runner untouched.
@@ -21,10 +21,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4  # public-clean: allow — pinned action commit SHA
 
       - name: Set up Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5  # public-clean: allow — pinned action commit SHA
         with:
           python-version: "3.11"
 
@@ -45,7 +45,7 @@ jobs:
         shell: pwsh
 
       - name: Upload charon.exe artifact
-        uses: actions/upload-artifact@6f51ac03d0de2832b07d1c8169dc3f4f7e7e2b0c  # v4.3.1
+        uses: actions/upload-artifact@6f51ac03d0de2832b07d1c8169dc3f4f7e7e2b0c  # v4.3.1  # public-clean: allow — pinned action commit SHA
         with:
           name: charon-windows-exe
           path: dist/charon.exe

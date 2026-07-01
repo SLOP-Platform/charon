@@ -1,6 +1,6 @@
 # Teach actionlint about the self-hosted runner label so
-# `runs-on: [self-hosted, 4-lom]` doesn't error "unknown label". This repo only
+# `runs-on: [self-hosted, <self-hosted-runner>]` doesn't error "unknown label". This repo only
 # references the shared runner pool; it does not own or register it.
 self-hosted-runner:
   labels:
-    - 4-lom
+    - <self-hosted-runner>

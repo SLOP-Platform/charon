@@ -252,7 +252,7 @@ For a single goal without a plan, `charon run --goal … --accept …` drives on
 `Triage→Plan→Implement→Review→Validate→Close` role-DAG with `--decompose`); it defaults to
 **L0 (proposes changes, applies nothing)**.
 
-This native engine **supersedes the external `charon-private/fleet/` dev harness** for real
+This native engine **supersedes the external `<private-rig-repo>/fleet/` dev harness** for real
 use — that bash rig is dev-box *build* tooling only (its workers are `claude -p`, not the
 product's ACP workers, D003). **Still gated / future:** positive-isolation verification
 (D015) that probes host-sensitive paths/egress are unreachable, rather than trusting the

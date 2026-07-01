@@ -111,7 +111,7 @@ ergonomic sugar (P5) that compiles to the same structures. (See Review R5.)
 ### D7 — Packaging: single Windows `.exe` (PyInstaller), isolated workflow
 PyInstaller single-file `.exe` that starts the gateway and opens the local console;
 `charon.toml` + a first-run helper. Built on the **free `windows-latest`** runner in a
-**separate** GitHub workflow that **does NOT touch** the Linux `[self-hosted, 4-lom]`
+**separate** GitHub workflow that **does NOT touch** the Linux `[self-hosted, <self-hosted-runner>]`
 CI. Tray app is a stretch goal.
 
 ### D8 — Orchestrator reframed as opt-in

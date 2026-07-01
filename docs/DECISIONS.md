@@ -21,7 +21,7 @@ Status: `Settled` · `Open` (leaning noted) · `Superseded→Dxxx`.
 |----|---------------------|-------|--------|--------|
 | D001 | Charon is **gateway-first**; the orchestrator/work-engine is an opt-in consumer on the shared core. | OP | Settled | ADR-0005 |
 | D002 | Charon **owns the work-engine in-tree, sooner** — not external operator-tooling forever. | OP | Settled | ADR-0010, REVIEW-LOG 2026-06-26 |
-| D003 | Engine workers are **ACP agents** (warm-poolable), **never `claude -p`**. The `charon-private/fleet/` rig is dev-box *build* tooling only; we port its coordination design, not its worker model. | OP | Settled | ADR-0010 (DTC 2026-06-26) |
+| D003 | Engine workers are **ACP agents** (warm-poolable), **never `claude -p`**. The `<private-rig-repo>/fleet/` rig is dev-box *build* tooling only; we port its coordination design, not its worker model. | OP | Settled | ADR-0010 (DTC 2026-06-26) |
 | D004 | Split: **coordination substrate** (board/claim/scheduler) = build native; **trust-extending automation** (auto-land, scanner-as-required, intake Phase-2, AIMD) = stays gated. | OP+AI | Settled | ADR-0010, ADR-0007 |
 | D005 | `WorkerBackend` port + headless-CLI/remote adapters = **deferred** until a real non-ACP worker exists (premature for an all-ACP product). | AI | Settled | ADR-0010 D2 |
 | D006 | Landing is **propose-default** (PR, human merges); **auto-land (D5)** is deferred behind tripwires. | OP+AI | Settled | ADR-0007 D4/D5 |
@@ -38,8 +38,5 @@ Status: `Settled` · `Open` (leaning noted) · `Superseded→Dxxx`.
 | D017 | The engine routes by **consuming the gateway's existing `vid→pool→provider` failover** — per-run `GatewayProxyServer(pools={tier_vid:[…]}, model_ids=[tier_vid])`; no engine-side provider selection. | OP+AI | Settled | ADR-0014 D1/D2 |
 | D018 | A thin **`ports/agent_launch.py` `AgentLaunch` renderer seam** keeps the engine product-neutral; **ship the opencode renderer ONLY** (extra renderers gated on a live `charon doctor` probe). | OP+AI | Settled | ADR-0014 D3/D4 |
 | D019 | The **tier vid is resolved per-dispatch** (honor the `tier` param); **backend-selection-by-tier is the named extension point** so multi-tier (warm-agent-per-tier) is additive, not a rewrite. | OP | Settled | ADR-0014 D5/D6 |
-| D020 | CI runner is chosen by the **`CI_RUNNER` repo variable** (`runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}`); maintainer sets `["self-hosted","4-lom"]`, forks fall back to hosted so forked PRs get CI. | OP | Settled | first-run audit 2026-06-27 |
-| D021 | WCI is a **composition/advisory/ordering LAYER** above the engine, not a new engine; three pillars: static reconcile (re-port), depth pre-sort (ordering), chunking (gated). MVP = WCI-1 (reconcile_static) + WCI-2 (depth pre-sort). | OP | Proposed | ADR-0015 |
-| D022 | WCI is **opt-in-orchestrator-only** and **advisory/override for users** — NEVER imposed on gateway-only / single-task fresh installs. | OP | Proposed | ADR-0015 |
-| D023 | WCI-4 (`merge_after` label + concurrency payoff) is **HELD** until §5.1 semantic-independence proof is approved; WCI-6 (auto-slice) is **PARKED** behind §5.1 + ADR-0008 Phase-2 tripwire. | OP | Proposed | ADR-0015 |
+| D020 | CI runner is chosen by the **`CI_RUNNER` repo variable** (`runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}`); maintainer sets `["self-hosted","<self-hosted-runner>"]`, forks fall back to hosted so forked PRs get CI. | OP | Settled | first-run audit 2026-06-27 |
 <!-- Append new rows above this line. Keep each to ONE line; cite the ADR/REVIEW-LOG for detail. -->

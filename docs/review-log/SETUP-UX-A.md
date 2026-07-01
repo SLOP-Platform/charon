@@ -1,6 +1,6 @@
 # SETUP-UX-A — first-run setup-UX (3 fixes in `_cmd_setup`)
 
-Dogfood-driven (charon-vm 2026-06-27): `charon setup` added provider `opencode-zen`,
+Dogfood-driven (<self-hosted-dev> 2026-06-27): `charon setup` added provider `opencode-zen`,
 stored the key, imported **49** models into the catalog — but the "model served by
 '<provider>'" prompt showed nothing, the user hit a blank Enter, and the wizard finished
 "Done. 0 model(s) configured" → a silently non-serving gateway. Three fixes, all inside

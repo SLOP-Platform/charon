@@ -6,10 +6,10 @@
 
 ## Problem fixed
 
-CI was flaking on the 4-lom self-hosted runner with `OSError: [Errno 98] Address already in use`
+CI was flaking on the <self-hosted-runner> self-hosted runner with `OSError: [Errno 98] Address already in use`
 because the three offending tests bound the gateway server to the fixed port 8080 (the `GatewayConfig`
 default `_DEFAULT_PORT`). This directly blocked PR #65 (RELEASE-SMOKE-FIX) and PR #66
-(DOCS-TWO-MODE) CI runs; `docker compose down` on 4-lom was a manual band-aid. This ticket removes
+(DOCS-TWO-MODE) CI runs; `docker compose down` on <self-hosted-runner> was a manual band-aid. This ticket removes
 that band-aid permanently.
 
 ## Root cause

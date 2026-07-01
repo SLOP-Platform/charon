@@ -7,7 +7,7 @@ name: release
 # (attest-build-provenance) — no key management, no cosign. The base is
 # digest-PINNED (resolved fresh, recorded in provenance); only the immutable
 # :vX.Y.Z is pushed, never :latest. No publish token surface exists off the
-# release path. Runs on the shared self-hosted 4-LOM runner (zero GitHub minutes).
+# release path. Runs on the shared self-hosted <self-hosted-runner> runner (zero GitHub minutes).
 on:
   release:
     types: [published]
@@ -15,19 +15,21 @@ on:
 jobs:
   gate:
     # Runner is chosen by the CI_RUNNER repo variable (Settings → Variables).
-    # Maintainer sets CI_RUNNER=["self-hosted","4-lom"]; forks don't inherit it and
+    # Maintainer sets CI_RUNNER=["self-hosted","<self-hosted-runner>"]; forks don't inherit it and
     # fall back to GitHub-hosted ubuntu-latest, so forked PRs get working CI.
     runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4  # public-clean: allow — pinned action commit SHA
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5  # public-clean: allow — pinned action commit SHA
         with:
           python-version: "3.12"
       - name: install (dev + service)
         run: pip install -e '.[dev,service]'
       - name: SLOP-boundary check (INV-B1/B5)
         run: python3 tools/check_boundary.py src
+      - name: public-clean check (no personal/internal info)
+        run: python3 tools/check_public_clean.py
       - name: version consistency
         run: python3 tools/check_version.py
       - name: lint
@@ -39,12 +41,12 @@ jobs:
 
   image-smoke:
     # Runner is chosen by the CI_RUNNER repo variable (Settings → Variables).
-    # Maintainer sets CI_RUNNER=["self-hosted","4-lom"]; forks don't inherit it and
+    # Maintainer sets CI_RUNNER=["self-hosted","<self-hosted-runner>"]; forks don't inherit it and
     # fall back to GitHub-hosted ubuntu-latest, so forked PRs get working CI.
     runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4  # public-clean: allow — pinned action commit SHA
       - name: build image
         run: docker build -t charon:ci .
       - name: run gateway + /v1/models
@@ -73,7 +75,7 @@ jobs:
   publish:
     needs: [gate, image-smoke]
     # Runner is chosen by the CI_RUNNER repo variable (Settings → Variables).
-    # Maintainer sets CI_RUNNER=["self-hosted","4-lom"]; forks don't inherit it and
+    # Maintainer sets CI_RUNNER=["self-hosted","<self-hosted-runner>"]; forks don't inherit it and
     # fall back to GitHub-hosted ubuntu-latest, so forked PRs get working CI.
     runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     timeout-minutes: 15
@@ -83,7 +85,7 @@ jobs:
       id-token: write       # OIDC for build provenance attestation
       attestations: write
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4  # public-clean: allow — pinned action commit SHA
 
       - name: derive version (single source of truth = pyproject)
         id: ver
@@ -111,7 +113,7 @@ jobs:
           echo "Pinned base: python:3.12-slim@${DIGEST}"
 
       - name: log in to GHCR
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3  # public-clean: allow — pinned action commit SHA
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -119,7 +121,7 @@ jobs:
 
       - name: build + push (digest-pinned base, immutable version tag)
         id: push
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6  # public-clean: allow — pinned action commit SHA
         with:
           context: .
           push: true
@@ -128,7 +130,7 @@ jobs:
           tags: ghcr.io/slop-platform/charon:v${{ steps.ver.outputs.version }}
 
       - name: attest build provenance (SLSA via GitHub OIDC)
-        uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018  # v1
+        uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018  # v1  # public-clean: allow — pinned action commit SHA
         with:
           subject-name: ghcr.io/slop-platform/charon
           subject-digest: ${{ steps.push.outputs.digest }}

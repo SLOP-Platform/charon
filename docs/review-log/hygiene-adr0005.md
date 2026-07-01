@@ -16,7 +16,7 @@ Two operator-requested jobs. No application code changed; **114 tests still gree
   phrase, and a personal repo namespace) to neutral placeholders. The replace map
   itself is kept **out of the repo** (in the private copy) so it does not re-leak the
   originals. Verified **0** concrete-infra hits across all rewritten commits;
-  functional tokens (`slop`/`mediastack` import-guard, `4-lom` label, `Nnyan` LICENSE
+  functional tokens (`slop`/`mediastack` import-guard, `<self-hosted-runner>` label, `Nnyan` LICENSE
   identity) **preserved** intentionally.
 - **Force-pushed:** `master`, `mvp-routing`, `tier2` + tag `v0.1.0`; local repo
   re-synced and old objects gc'd. A forward-only prose-polish commit (`08bfdd8`,

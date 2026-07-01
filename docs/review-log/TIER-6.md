@@ -1,6 +1,6 @@
 # TIER-6 — De-hardwire the fleet launcher (tier → concrete Anthropic model)
 
-**Owns:** `/home/stack/charon-private/fleet/fleet-droid.sh` (fleet build-rig; ships nowhere
+**Owns:** `<workspace>/<private-rig-repo>/fleet/fleet-droid.sh` (fleet build-rig; ships nowhere
 near the Charon product). **Depends on:** TIER-3 (`charon tier resolve … --executor anthropic`,
 merged).
 

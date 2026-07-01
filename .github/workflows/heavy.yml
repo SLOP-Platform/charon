@@ -5,7 +5,7 @@ name: heavy
 # still proving, regularly, that (a) the standalone wheel never bit-rots behind
 # the SLOP embed, (b) the Mode-B image still builds and the fenced service
 # answers, and (c) no unvetted/advisory-flagged deps crept in. Runs on the shared
-# self-hosted 4-LOM runner (Docker + buildx present); zero GitHub minutes.
+# self-hosted <self-hosted-runner> runner (Docker + buildx present); zero GitHub minutes.
 on:
   schedule:
     - cron: "0 6 * * 1"   # Mondays 06:00 UTC
@@ -17,13 +17,13 @@ jobs:
     # path, and prove the CLI works standalone (the standalone app never bit-rots
     # behind the SLOP embed).
     # Runner is chosen by the CI_RUNNER repo variable (Settings → Variables).
-    # Maintainer sets CI_RUNNER=["self-hosted","4-lom"]; forks don't inherit it and
+    # Maintainer sets CI_RUNNER=["self-hosted","<self-hosted-runner>"]; forks don't inherit it and
     # fall back to GitHub-hosted ubuntu-latest, so forked PRs get working CI.
     runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4  # public-clean: allow — pinned action commit SHA
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5  # public-clean: allow — pinned action commit SHA
         with:
           python-version: "3.12"
       - name: build wheel + install in a clean venv
@@ -50,12 +50,12 @@ jobs:
     # the fenced service answers — without publishing (no token surface; GHCR
     # publish-on-tag is release.yml).
     # Runner is chosen by the CI_RUNNER repo variable (Settings → Variables).
-    # Maintainer sets CI_RUNNER=["self-hosted","4-lom"]; forks don't inherit it and
+    # Maintainer sets CI_RUNNER=["self-hosted","<self-hosted-runner>"]; forks don't inherit it and
     # fall back to GitHub-hosted ubuntu-latest, so forked PRs get working CI.
     runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4  # public-clean: allow — pinned action commit SHA
       - name: build image
         run: docker build -t charon:ci .
       - name: run service + healthz
@@ -73,13 +73,13 @@ jobs:
     # Advisory: the privileged loop carries no unvetted deps. Non-blocking by
     # design (pip-audit DB flaps); surfaced here rather than gating every push.
     # Runner is chosen by the CI_RUNNER repo variable (Settings → Variables).
-    # Maintainer sets CI_RUNNER=["self-hosted","4-lom"]; forks don't inherit it and
+    # Maintainer sets CI_RUNNER=["self-hosted","<self-hosted-runner>"]; forks don't inherit it and
     # fall back to GitHub-hosted ubuntu-latest, so forked PRs get working CI.
     runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4  # public-clean: allow — pinned action commit SHA
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5  # public-clean: allow — pinned action commit SHA
         with:
           python-version: "3.12"
       - name: install (dev + service)

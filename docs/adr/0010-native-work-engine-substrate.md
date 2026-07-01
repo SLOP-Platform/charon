@@ -6,7 +6,7 @@ ADR-0007 (safe-landing-first; `land.py`), ADR-0008 (intake→ticket-plan). Honor
 ADR-0007 D11 (anti-dilution: never touch the gateway request path or install footprint).
 
 > **DTC correction (2026-06-26).** An earlier draft conflated the **dev-box build harness**
-> (the `charon-private/fleet/` rig running `claude -p` droids — how we BUILD Charon here)
+> (the `<private-rig-repo>/fleet/` rig running `claude -p` droids — how we BUILD Charon here)
 > with **Charon's product worker model**. They are different: **Charon's engine workers are
 > ACP agents, never `claude -p`.** ACP agents are warm-poolable and blocking-drivable by the
 > existing `AgentBackend`, so the engine is a **coordination layer over the existing
@@ -35,7 +35,7 @@ The split this ADR draws:
 ## Decisions
 
 ### D1 — Promote the substrate from the fleet rig to `src/charon`
-The `charon-private/fleet/` bash rig (board/claim/done/fleet-droid) is the **proven
+The `<private-rig-repo>/fleet/` bash rig (board/claim/done/fleet-droid) is the **proven
 reference implementation**, not the product. Port its design native over PERF-4's
 existing ledger/PID-lock/SharedBudget primitives. The rig stays as a sibling/operator tool
 ([[droid-robot-mode-harness]]); it is not the engine of record.
