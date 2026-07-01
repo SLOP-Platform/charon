@@ -20,16 +20,6 @@
     "red_proof": null
   },
   {
-    "id": "test-hygiene",
-    "name": "Test hygiene checks (A: duplicate names, B: near-duplicate modules, C: import path alignment)",
-    "domain": "test-hygiene",
-    "enforcer": "tools/check_test_hygiene.py",
-    "covers": "duplicate test names, near-duplicate modules, production-vs-test import alignment",
-    "ci_step": true,
-    "invariant": "Test suite structure is free of systemic anti-patterns",
-    "red_proof": "tests/test_check_test_hygiene.py"
-  },
-  {
     "id": "ruff-lint",
     "name": "Ruff lint",
     "domain": "lint",
@@ -70,9 +60,19 @@
     "red_proof": null
   },
   {
+    "id": "check-arch",
+    "name": "Architecture boundary checker",
+    "domain": "arch",
+    "enforcer": "tools/check_arch.py",
+    "covers": "architecture layer isolation, circular imports, stdlib-only, product-clean",
+    "ci_step": true,
+    "invariant": "Engine never imports gateway, no circular imports, stdlib-only core, product-clean",
+    "red_proof": "tests/test_check_arch.py"
+  },
+  {
     "id": "check-decisions",
     "name": "Decision register linter",
-    "domain": "arch",
+    "domain": "decisions",
     "enforcer": "tools/check_decisions.py",
     "covers": "DECISIONS.md register integrity and cross-references",
     "ci_step": true,
