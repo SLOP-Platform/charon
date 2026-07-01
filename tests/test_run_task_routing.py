@@ -73,8 +73,9 @@ def _up(return_model: str = "m") -> tuple[_Threaded, str]:
 # ---------------------------------------------------------------------------
 # Stub ACP agent (written to a temp file at test time).
 # Speaks ACP JSON-RPC and fires one POST to the per-run gateway proxy.
-# The proxy URL and wire model id are extracted from OPENCODE_CONFIG_CONTENT,
-# which OpencodeRenderer injects when rendering the AgentLaunch (ADR-0014 D3).
+# The proxy URL and wire model id are extracted from cwd opencode.json,
+# which OpencodeRenderer writes when rendering the AgentLaunch (ADR-0014 D3).
+# opencode 1.17.11 acp honors cwd opencode.json; OPENCODE_CONFIG_CONTENT is not.
 # The wire model is the short key (the tier vid itself), not "provider/vid".
 # ---------------------------------------------------------------------------
 
@@ -82,10 +83,11 @@ _STUB = textwrap.dedent("""\
     import json, os, sys, urllib.request
 
     def _proxy_post():
-        raw = os.environ.get("OPENCODE_CONFIG_CONTENT", "")
-        if not raw:
+        cfg_path = os.path.join(os.getcwd(), "opencode.json")
+        try:
+            cfg = json.loads(open(cfg_path).read())
+        except (FileNotFoundError, json.JSONDecodeError):
             return
-        cfg = json.loads(raw)
         prov = next(iter(cfg.get("provider", {})), None)
         if prov is None:
             return

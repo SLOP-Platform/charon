@@ -120,9 +120,13 @@ def test_agent_launch_pins_vid_at_the_seam_and_excludes_keys(monkeypatch):
     assert launch.argv == ["opencode", "acp"]
     for k in _ACP_KEY_PASSTHROUGH:                        # include_keys=False invariant
         assert k not in launch.passthrough_env
-    # Agnostic check: the per-run proxy URL must reach the agent SOMEHOW (any
-    # renderer must wire it) — asserted on the env, not an opencode config shape.
-    assert any("http://127.0.0.1:9999" in v for v in launch.passthrough_env.values())
+    # OPENCODE_CONFIG_CONTENT is no longer injected — cwd opencode.json is the
+    # sole config mechanism (opencode 1.17.11 acp honors cwd opencode.json).
+    assert "OPENCODE_CONFIG_CONTENT" not in launch.passthrough_env
+    # The per-run proxy URL must reach the agent via config_json (written to cwd
+    # opencode.json by the ACP launcher).
+    assert launch.config_json is not None
+    assert "http://127.0.0.1:9999" in launch.config_json
 
 
 def test_bare_path_forwards_gateway_token_when_set(monkeypatch):
@@ -228,3 +232,18 @@ def test_dry_tier_note_is_empty():
         assert api._tier_failover_note(gw.status_snapshot(), TIER_VID) == ""
     finally:
         gw.shutdown()
+
+
+def test_renderer_writes_cwd_opencode_json(tmp_path):
+    cwd = str(tmp_path / "worktree")
+    launch = render("opencode acp", "http://127.0.0.1:9999", TIER_VID, cwd=cwd)
+
+    cfg_path = tmp_path / "worktree" / "opencode.json"
+    assert cfg_path.is_file()
+    written = json.loads(cfg_path.read_text())
+    assert written["model"] == "charon/high"
+    assert "charon" in written["provider"]
+    assert written["provider"]["charon"]["options"]["baseURL"] == "http://127.0.0.1:9999/v1"
+    assert written["provider"]["charon"]["options"]["apiKey"] == "charon-proxy"
+    assert "OPENCODE_CONFIG_CONTENT" not in launch.passthrough_env
+    assert launch.config_json is not None

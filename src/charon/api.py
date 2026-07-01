@@ -320,7 +320,8 @@ def _acp_via_renderer(acp_cmd: str, server, requested_model: str) -> AcpBackend:
     real provider key (the proxy injects it)."""
     launch = render(acp_cmd, server.url, requested_model)
     return AcpBackend(launch.argv, name="acp",
-                      passthrough_env=launch.passthrough_env, observer=server.observer)
+                      passthrough_env=launch.passthrough_env, observer=server.observer,
+                      config_json=launch.config_json)
 
 
 def _tier_failover_note(snapshot: dict, tier_vid: str) -> str:

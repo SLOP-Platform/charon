@@ -58,11 +58,15 @@ class AgentLaunch:
     ``argv`` — the agent's launch command. ``passthrough_env`` — env merged over
     the fence's scrubbed env (NEVER a real provider key: D4). ``requested_model``
     — the model id the agent sends on the wire; for tier routing this IS the tier
-    vid, which the per-run gateway resolves to a cost-ranked provider chain."""
+    vid, which the per-run gateway resolves to a cost-ranked provider chain.
+    ``config_json`` — the serialised per-run provider config (written to cwd
+    ``opencode.json`` by the ACP launcher so the agent resolves providers/models
+    from its working directory)."""
 
     argv: list[str]
     passthrough_env: dict[str, str]
     requested_model: str
+    config_json: str | None = None
 
 
 class AgentRenderer:
@@ -74,7 +78,8 @@ class AgentRenderer:
 
     name = "agent"
 
-    def render(self, acp_cmd: str, proxy_url: str, requested_model: str) -> AgentLaunch:
+    def render(self, acp_cmd: str, proxy_url: str, requested_model: str,
+               cwd: str | None = None) -> AgentLaunch:
         raise NotImplementedError
 
 
@@ -93,15 +98,17 @@ def _split_model(requested_model: str) -> tuple[str, str]:
 class OpencodeRenderer(AgentRenderer):
     """The one shipped renderer (ADR-0014 D3/B1).
 
-    Moves the opencode ``OPENCODE_CONFIG_CONTENT`` blob behind the seam verbatim:
-    it overrides the agent's provider ``baseURL`` to the per-run proxy (the
-    mechanism proven live; a config *file* path is not honored) and pins the wire
-    model id to ``requested_model`` (the tier vid). Forces ``include_keys=False``
-    (D4) — the proxy holds the real key."""
+    Builds the per-run provider config and, when ``cwd`` is provided, writes it as
+    ``opencode.json`` so the agent resolves providers/models from its working
+    directory — the mechanism proven live (opencode 1.17.11 acp honors cwd
+    ``opencode.json``; ``OPENCODE_CONFIG_CONTENT`` is NOT honored in acp mode and
+    is no longer injected). Pins the wire model id to ``requested_model`` (the
+    tier vid). Forces ``include_keys=False`` (D4) — the proxy holds the real key."""
 
     name = "opencode"
 
-    def render(self, acp_cmd: str, proxy_url: str, requested_model: str) -> AgentLaunch:
+    def render(self, acp_cmd: str, proxy_url: str, requested_model: str,
+               cwd: str | None = None) -> AgentLaunch:
         provider, short = _split_model(requested_model)
         cfg = {
             "model": f"{provider}/{short}",
@@ -114,10 +121,15 @@ class OpencodeRenderer(AgentRenderer):
                 }
             },
         }
-        env = {**_acp_passthrough_env(include_keys=False),
-               "OPENCODE_CONFIG_CONTENT": json.dumps(cfg)}
+        config_json = json.dumps(cfg)
+        if cwd is not None:
+            import pathlib
+            cwd_path = pathlib.Path(cwd)
+            cwd_path.mkdir(parents=True, exist_ok=True)
+            (cwd_path / "opencode.json").write_text(config_json)
+        env = _acp_passthrough_env(include_keys=False)
         return AgentLaunch(argv=shlex.split(acp_cmd), passthrough_env=env,
-                           requested_model=short)
+                           requested_model=short, config_json=config_json)
 
 
 # The single shipped renderer instance (ADR-0014 D3/B1).
@@ -125,9 +137,10 @@ _DEFAULT_RENDERER: AgentRenderer = OpencodeRenderer()
 
 
 def render(acp_cmd: str, proxy_url: str, requested_model: str,
-           renderer: AgentRenderer | None = None) -> AgentLaunch:
+           renderer: AgentRenderer | None = None,
+           cwd: str | None = None) -> AgentLaunch:
     """Render an ACP agent launch through the seam. The engine calls this with
     ``requested_model=tier_vid`` and the per-run gateway's URL; it never names a
     concrete agent. ``renderer`` defaults to the one shipped renderer (opencode);
     a future probed renderer is injected here, not branched in the engine."""
-    return (renderer or _DEFAULT_RENDERER).render(acp_cmd, proxy_url, requested_model)
+    return (renderer or _DEFAULT_RENDERER).render(acp_cmd, proxy_url, requested_model, cwd=cwd)

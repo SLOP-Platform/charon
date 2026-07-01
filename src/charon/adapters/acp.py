@@ -57,7 +57,8 @@ class AcpBackend:
 
     def __init__(self, command: list[str], name: str = "acp",
                  passthrough_env: dict[str, str] | None = None,
-                 observer: GatewayProxy | None = None) -> None:
+                 observer: GatewayProxy | None = None,
+                 config_json: str | None = None) -> None:
         self.name = name
         self.command = command
         # The observing proxy (R1) the agent's calls flow through; it carries the
@@ -71,6 +72,12 @@ class AcpBackend:
         # escape-scan still guards the blast radius. The observing proxy (R1) is
         # what ultimately removes provider keys from the agent env entirely.
         self.passthrough_env = dict(passthrough_env or {})
+        # The serialised per-run provider config (from the AgentLaunch seam).
+        # Written to ``<worktree>/opencode.json`` in _start() so the agent
+        # resolves providers/models from its working directory (cwd opencode.json
+        # IS honored by opencode 1.17.11 acp; OPENCODE_CONFIG_CONTENT is not,
+        # so it is no longer injected).
+        self._config_json = config_json
         self._proc: subprocess.Popen | None = None
         self._log_fh: IO[bytes] | None = None
         self._next_id = 0
@@ -92,6 +99,12 @@ class AcpBackend:
         if self._proc is not None:
             return
         merged = {**env, **self.passthrough_env}
+        subprocess_cwd = str(worktree)
+        if self._config_json is not None:
+            cfg_dir = worktree / ".charon" / f"agent-{id(self)}"
+            cfg_dir.mkdir(parents=True, exist_ok=True)
+            (cfg_dir / "opencode.json").write_text(self._config_json)
+            subprocess_cwd = str(cfg_dir)
         self._log_fh = None
         if log_path is not None:
             log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -101,7 +114,7 @@ class AcpBackend:
                 pass
         self._proc = subprocess.Popen(
             self.command,
-            cwd=str(worktree),
+            cwd=subprocess_cwd,
             env=merged,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,

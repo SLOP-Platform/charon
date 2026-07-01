@@ -76,7 +76,8 @@ def _up() -> tuple[_Threaded, str]:
 
 # ---------------------------------------------------------------------------
 # Persistent ACP stub: speaks ACP and fires one POST per session/prompt to the
-# per-run gateway proxy with the tier vid baked into OPENCODE_CONFIG_CONTENT.
+# per-run gateway proxy. The tier vid is baked into cwd opencode.json (written by
+# the ACP launcher via AgentLaunch.config_json → AcpBackend._start).
 # Loops (no break) so ONE warm subprocess serves MANY dispatches (D010).
 # ---------------------------------------------------------------------------
 
@@ -84,10 +85,11 @@ _STUB = textwrap.dedent("""\
     import json, os, sys, urllib.request
 
     def _proxy_post():
-        raw = os.environ.get("OPENCODE_CONFIG_CONTENT", "")
-        if not raw:
+        cfg_path = os.path.join(os.getcwd(), "opencode.json")
+        try:
+            cfg = json.loads(open(cfg_path).read())
+        except (FileNotFoundError, json.JSONDecodeError):
             return
-        cfg = json.loads(raw)
         prov = next(iter(cfg.get("provider", {})), None)
         if prov is None:
             return
