@@ -15,6 +15,8 @@ from __future__ import annotations
 import http.server
 import json
 import socketserver
+import sys
+import textwrap
 import threading
 import urllib.error
 import urllib.request
@@ -247,3 +249,97 @@ def test_renderer_writes_cwd_opencode_json(tmp_path):
     assert written["provider"]["charon"]["options"]["apiKey"] == "charon-proxy"
     assert "OPENCODE_CONFIG_CONTENT" not in launch.passthrough_env
     assert launch.config_json is not None
+
+
+# ---------------------------------------------------------------------------
+# Stub ACP agent — reads cwd opencode.json, speaks ACP NDJSON, fires one POST
+# through the in-process proxy to the upstream (adapted from test_run_task_routing.py).
+# ---------------------------------------------------------------------------
+
+_STUB_ORCH = textwrap.dedent("""\
+    import json, os, sys, urllib.request
+
+    def _proxy_post():
+        cfg_path = os.path.join(os.getcwd(), "opencode.json")
+        try:
+            cfg = json.loads(open(cfg_path).read())
+        except (FileNotFoundError, json.JSONDecodeError):
+            return
+        prov = next(iter(cfg.get("provider", {})), None)
+        if prov is None:
+            return
+        opts = cfg["provider"][prov]["options"]
+        model = next(iter(cfg["provider"][prov]["models"]))
+        base = opts["baseURL"].rstrip("/")
+        body = json.dumps({"model": model}).encode()
+        req = urllib.request.Request(
+            base + "/chat/completions",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            urllib.request.urlopen(req, timeout=10)
+        except Exception:
+            pass
+
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        msg = json.loads(line)
+        method, mid = msg.get("method", ""), msg.get("id")
+        if method == "initialize":
+            res: dict = {}
+        elif method == "session/new":
+            res = {"sessionId": "s1"}
+        elif method == "session/prompt":
+            _proxy_post()
+            res = {}
+        else:
+            res = {}
+        sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": mid, "result": res}) + "\\n")
+        sys.stdout.flush()
+""")
+
+
+def test_orchestrator_proxy_path_routes_agent_via_inprocess_gateway(
+    tmp_path, monkeypatch, mock_upstream,
+):
+    """ORCH-ROUTE: run_task(proxy_upstream=…) routes the agent through the
+    in-process proxy.  The upstream receives the model id; the result carries
+    proxy metadata.  The observer (GatewayProxy) records the call via the
+    delta taken by AcpBackend._dispatch_usage()."""
+    upstream_url, upstream_srv, captured = mock_upstream
+    monkeypatch.setenv("ORCH_PROBE_KEY", "dummy-key")
+
+    stub_path = tmp_path / "stub_agent.py"
+    stub_path.write_text(_STUB_ORCH)
+    acp_cmd = f"{sys.executable} {stub_path}"
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+
+    try:
+        result = api.run_task(
+            goal="orch-route-check",
+            accept=["false"],
+            proxy_upstream=upstream_url,
+            proxy_key_env="ORCH_PROBE_KEY",
+            backend_name="acp",
+            acp_cmd=acp_cmd,
+            state_dir=str(state_dir),
+            autonomy="L0",
+            max_checkpoints=1,
+        )
+    finally:
+        upstream_srv.shutdown()
+
+    assert captured.get("model") is not None, (
+        f"upstream never hit; captured={captured}"
+    )
+    assert result.get("status") != "exhausted", (
+        f"expected routing, got {result.get('status')!r}: {result}"
+    )
+    assert result.get("proxy", {}).get("upstream") == upstream_url, (
+        f"proxy upstream mismatch: {result.get('proxy')}"
+    )
