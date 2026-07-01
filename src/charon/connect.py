@@ -352,8 +352,27 @@ def _install_opencode(env: InstallEnv) -> str | None:
     return "curl -fsSL https://opencode.ai/install | bash"
 
 
+def _is_wsl_interop(path: str | None) -> bool:
+    """Return True if ``path`` points to a Windows binary accessed via WSL interop."""
+    if path is None:
+        return False
+    return path.startswith("/mnt/")
+
+
 def _install_omp(env: InstallEnv) -> str | None:
-    # oh-my-pi ships via npm/bun; prefer bun (the operator's path) when present.
+    if env.is_wsl:
+        bun_path = shutil.which("bun")
+        npm_path = shutil.which("npm")
+        native_bun = bun_path is not None and not _is_wsl_interop(bun_path)
+        native_npm = npm_path is not None and not _is_wsl_interop(npm_path)
+        has_unzip = shutil.which("unzip") is not None
+        prereq = "sudo apt-get install -y unzip && " if not has_unzip else ""
+        if native_bun:
+            return prereq + "bun install -g @oh-my-pi/pi-coding-agent"
+        if native_npm:
+            return prereq + "npm install -g @oh-my-pi/pi-coding-agent"
+        return None
+
     if env.has_bun:
         return "bun install -g @oh-my-pi/pi-coding-agent"
     if env.has_npm:
@@ -509,7 +528,17 @@ def run_connect(
                 _path_gap_note(spec, env)
         else:
             _eprint(f"  {spec.binary!r} not found on PATH. Install it with:")
-            _eprint(f"    {cmd}" if cmd else "    (see the client's docs)")
+            if cmd:
+                _eprint(f"    {cmd}")
+            elif env.is_wsl and spec.name == "omp":
+                _eprint("    # omp requires a native WSL bun (or npm) + unzip.")
+                _eprint("    # Windows-side binaries accessed via WSL interop will")
+                _eprint("    # install to the wrong OS. Install these inside WSL first:")
+                _eprint("    curl -fsSL https://bun.sh/install | bash")
+                _eprint("    sudo apt-get install -y unzip")
+                _eprint("    # then re-run: charon connect omp --install")
+            else:
+                _eprint("    (see the client's docs)")
             _path_gap_note(spec, env)
             _eprint("  (re-run with --install to attempt this automatically)")
 
