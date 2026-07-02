@@ -22,14 +22,13 @@ cat <<PREAMBLE
 
 ---
 
-## Bootstrap (copy-paste into next session)
+## Bootstrap (copy-paste one-liner into next session)
 
-Read \`/home/stack/charon-private/fleet/SESSION-HANDOFF.md\` fully, then read
-\`/home/stack/code/charon/AGENTS.md\`, run
-\`bash /home/stack/charon-private/fleet/status.sh\` and
-\`bash /home/stack/charon-private/fleet/validate_board.sh\`, check the board for
-claimed names, then \`register\` with an unused **Jedi name** + \`repo="charon"\`,
-then tell the operator the state and next action.
+\`\`\`
+cat /home/stack/charon-private/fleet/SESSION-HANDOFF.md && read -r && cat /home/stack/code/charon/AGENTS.md | head -5 && bash /home/stack/charon-private/fleet/status.sh && bash /home/stack/charon-private/fleet/validate_board.sh
+\`\`\`
+
+Then \`register\` with an unused **Jedi name** + \`repo="charon"\`, tell the operator the state and next action.
 
 ---
 
