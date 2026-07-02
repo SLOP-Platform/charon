@@ -34,17 +34,8 @@ jobs:
       - name: install (dev + service)
         run: pip install -e '.[dev,service]'
 
-      - name: SLOP-boundary check (INV-B1/B5)
-        run: python3 tools/check_boundary.py src
-
-      - name: version consistency
-        run: python3 tools/check_version.py
-
-      - name: lint
-        run: ruff check src tests tools
-
-      - name: type
-        run: mypy src/charon tools tests
+      - name: charon gate (lint, type, boundary, version, gate-registry)
+        run: python3 -m charon.cli gate
 
       - name: tests
         run: pytest -q

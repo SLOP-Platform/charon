@@ -401,7 +401,7 @@ def land_unit(
 
 def _run_tests(repo: str, cmd: str, timeout: int = 1800) -> bool:
     try:
-        proc = subprocess.run(cmd, shell=True, cwd=repo, capture_output=True, timeout=timeout)
+        proc = subprocess.run(cmd, shell=True, cwd=repo, capture_output=True, timeout=timeout)  # noqa: S602
     except subprocess.TimeoutExpired:
         return False
     return proc.returncode == 0

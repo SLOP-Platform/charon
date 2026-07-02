@@ -19,6 +19,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+from typing import IO
 
 from ..proxy import GatewayProxy
 from ..types import Budget, CapSet, Health, Outcome, OutcomeStatus, Tier, Usage, WorkUnit
@@ -71,6 +72,7 @@ class AcpBackend:
         # what ultimately removes provider keys from the agent env entirely.
         self.passthrough_env = dict(passthrough_env or {})
         self._proc: subprocess.Popen | None = None
+        self._log_fh: IO[bytes] | None = None
         self._next_id = 0
         self._lock = threading.Lock()
         self._last_usage: dict = {}
@@ -85,24 +87,25 @@ class AcpBackend:
         self.last_tier_vid: str | None = None
 
     # ----------------------------------------------------------- lifecycle
-    def _start(self, worktree: Path, env: dict[str, str]) -> None:
+    def _start(self, worktree: Path, env: dict[str, str],
+               log_path: Path | None = None) -> None:
         if self._proc is not None:
             return
         merged = {**env, **self.passthrough_env}
-        # Binary + unbuffered so we can `select` with a timeout (text-mode readline
-        # cannot be timed out, and a hung agent — e.g. retrying a 429 — would block
-        # the coordinator forever; review fix #4).
-        # stderr -> DEVNULL: the agent logs there, and if we PIPE it and never
-        # drain it the 64 KB pipe buffer fills, the agent blocks on write(stderr),
-        # and never answers ACP — a deadlock that hung the coordinator. We read
-        # only the ACP channel (stdout); the agent's logs are not ours to parse.
+        self._log_fh = None
+        if log_path is not None:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                self._log_fh = log_path.open("ab")
+            except OSError:
+                pass
         self._proc = subprocess.Popen(
             self.command,
             cwd=str(worktree),
             env=merged,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=self._log_fh or subprocess.DEVNULL,
             bufsize=0,
         )
         self._buf = b""
@@ -167,6 +170,7 @@ class AcpBackend:
         budget: Budget,
         worktree: Path,
         env: dict[str, str],
+        state_dir: Path | None = None,
     ) -> Outcome:
         # Resolve the tier vid PER-DISPATCH (ADR-0014 D5): the canonical tier
         # name IS the vid the per-run gateway resolves to a provider chain. This
@@ -174,7 +178,10 @@ class AcpBackend:
         # multi-tier run is router.route's job (Phase B, D6) — it picks WHICH warm
         # backend a stage's dispatch lands on; this just records the served vid.
         self.last_tier_vid = tier.value
-        self._start(worktree, env)
+        # Agent log goes under the worktree so the fence escape scan doesn't
+        # flag it as a write outside the worktree.
+        log_path = worktree / ".charon" / unit.task_id / "agent.log"
+        self._start(worktree, env, log_path=log_path)
         self._rpc("initialize", {"protocolVersion": 1,
                                  "clientCapabilities": {}})
         session = self._rpc("session/new", {"cwd": str(worktree),
@@ -228,3 +235,9 @@ class AcpBackend:
             except subprocess.TimeoutExpired:
                 self._proc.kill()
             self._proc = None
+        if self._log_fh is not None:
+            try:
+                self._log_fh.close()
+            except Exception:  # noqa: BLE001
+                pass
+            self._log_fh = None

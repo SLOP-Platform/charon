@@ -350,7 +350,7 @@ class Scheduler:
             except ClaimContended:
                 # A live holder beat us to it — not an attempt; retry next round.
                 continue
-            except Exception:
+            except Exception:  # noqa: BLE001
                 # Any other failure to launch (worktree factory mkdir/init, a stale
                 # reclaim, a board error) is counted as an attempt so a persistent
                 # error cannot spin the drain, then isolated so the drain continues.

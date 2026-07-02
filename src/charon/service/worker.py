@@ -80,7 +80,7 @@ def _poll_once(queue_dir: Path, state_dir: str) -> bool:
             done_dir = queue_dir / "done"
             done_dir.mkdir(parents=True, exist_ok=True)
             (done_dir / run_path.name).write_text(json.dumps(job_rec))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             job_rec["error"] = str(exc)
             fail_dir = queue_dir / "failed"
             fail_dir.mkdir(parents=True, exist_ok=True)

@@ -152,7 +152,8 @@ def run(
 
             before = snapshot_outside(worktree, guard_dir)
             env = Fence.scrubbed_env(worktree)
-            outcome = backend.dispatch(unit, route.tier, route.budget, worktree, env)
+            outcome = backend.dispatch(unit, route.tier, route.budget, worktree, env,
+                                       state_dir=ledger.root.parent)
             seq += 1
 
             # Fence escape scan: any write outside the worktree ⇒ reject + roll back.

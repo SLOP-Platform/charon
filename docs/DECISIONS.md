@@ -39,4 +39,7 @@ Status: `Settled` · `Open` (leaning noted) · `Superseded→Dxxx`.
 | D018 | A thin **`ports/agent_launch.py` `AgentLaunch` renderer seam** keeps the engine product-neutral; **ship the opencode renderer ONLY** (extra renderers gated on a live `charon doctor` probe). | OP+AI | Settled | ADR-0014 D3/D4 |
 | D019 | The **tier vid is resolved per-dispatch** (honor the `tier` param); **backend-selection-by-tier is the named extension point** so multi-tier (warm-agent-per-tier) is additive, not a rewrite. | OP | Settled | ADR-0014 D5/D6 |
 | D020 | CI runner is chosen by the **`CI_RUNNER` repo variable** (`runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}`); maintainer sets `["self-hosted","4-lom"]`, forks fall back to hosted so forked PRs get CI. | OP | Settled | first-run audit 2026-06-27 |
+| D021 | WCI is a **composition/advisory/ordering LAYER** above the engine, not a new engine; three pillars: static reconcile (re-port), depth pre-sort (ordering), chunking (gated). MVP = WCI-1 (reconcile_static) + WCI-2 (depth pre-sort). | OP | Proposed | ADR-0015 |
+| D022 | WCI is **opt-in-orchestrator-only** and **advisory/override for users** — NEVER imposed on gateway-only / single-task fresh installs. | OP | Proposed | ADR-0015 |
+| D023 | WCI-4 (`merge_after` label + concurrency payoff) is **HELD** until §5.1 semantic-independence proof is approved; WCI-6 (auto-slice) is **PARKED** behind §5.1 + ADR-0008 Phase-2 tripwire. | OP | Proposed | ADR-0015 |
 <!-- Append new rows above this line. Keep each to ONE line; cite the ADR/REVIEW-LOG for detail. -->

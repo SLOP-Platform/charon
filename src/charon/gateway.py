@@ -81,11 +81,14 @@ def _build_routes_and_pools(
     """Compile a model registry + ``pool_map`` (virtual id → [model id]) into
     single routes (concrete models) and failover chains (virtual ids). Each chain
     is ordered **free-first then cheapest-first** from the registry's cost metadata
-    (stable → the listed order breaks ties), matching `pools.load_pools` (D4)."""
+    (stable → the listed order breaks ties), matching `pools.load_pools` (D4).
+    Models with ``"enabled": false`` are excluded from routes and pools."""
     providers_cfg = providers_cfg or {}
     routes: dict[str, UpstreamRoute] = {}
     for mid, spec in registry.items():
         if isinstance(spec, dict):
+            if spec.get("enabled") is False:
+                continue
             r = _route_from_spec(spec, providers_cfg)
             if r is not None:
                 routes[mid] = r
@@ -163,6 +166,30 @@ def load_config(
     for vid, chain in _tier_pools(registry, providers_cfg).items():
         pools.setdefault(vid, chain)  # explicit pools.json vid WINS on name collision
 
+    # ---- Global fallback providers (Wave 2) ----
+    from . import config as _cfg
+    fallback_names = _cfg.load_fallback_providers()
+    if fallback_names:
+        fallback_routes: list[UpstreamRoute] = []
+        for fname in fallback_names:
+            try:
+                r = _route_from_spec({"provider": fname}, providers_cfg)
+                if r is not None:
+                    fallback_routes.append(r)
+            except ValueError:
+                pass  # skip invalid/unknown provider names gracefully
+        if fallback_routes:
+            # Append fallback routes to the END of every pool chain (after
+            # the model's own providers — they're tried LAST).
+            for vid in list(pools.keys()):
+                existing = list(pools[vid])
+                pools[vid] = existing + [fr for fr in fallback_routes
+                                         if fr not in existing]
+            # Single-route models (not in any pool) also get the fallback.
+            for mid in list(routes.keys()):
+                if mid not in pools:
+                    pools[mid] = [routes[mid]] + fallback_routes
+
     _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio")
     model_meta: dict[str, dict] = {}
     for mid, spec in registry.items():
@@ -221,19 +248,27 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
         if action == "summary":
             s = config.summary()
             s["presets"] = sorted(P.PRESETS)
+            s["fallback"] = config.load_fallback_providers()
             return 200, s
         if action == "providers":
             name = str(payload.get("name") or "").strip()
             base_url = payload.get("base_url") or None
             preset = P.resolve(name, {"base_url": base_url} if base_url else None)  # validates
             key_env = (payload.get("key_env") or preset.key_env) or None
+            key = (payload.get("key") or None)
+            # Validate the key BEFORE persisting (probe a real completion)
+            probe = None
+            if key_env and key:
+                effective_base = base_url or preset.base_url
+                probe = config.validate_provider_key(name, effective_base, str(key))
+                if not probe["valid"]:
+                    return 400, {"error": {"message": probe["message"]}, "probe": probe}
             config.add_provider(name, base_url=base_url, key_env=key_env,
                                 strip_v1=(preset.strip_v1 if base_url else None))
-            key = payload.get("key")
             if key_env and key:
                 secrets.set_secret(str(key_env), str(key))
             _reload()
-            return 200, {"ok": True, "provider": name}
+            return 200, {"ok": True, "provider": name, "probe": probe}
         if action == "models":
             mid = str(payload.get("id") or "")
             # Preserve existing metadata (context_window, etc.) across re-adds
@@ -293,6 +328,17 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
             )
             _reload()  # recompile tier pools into the live server via apply_routes
             return 200, {"ok": True}
+        if action == "fallback":
+            names = [str(n).strip() for n in (payload.get("providers") or [])
+                     if isinstance(n, str) and n.strip()]
+            config.set_fallback_providers(names)
+            _reload()
+            return 200, {"ok": True}
+        if action in ("enable", "disable"):
+            mid = str(payload.get("id") or "")
+            ok = config.set_model_enabled(mid, action == "enable")
+            _reload()
+            return 200, {"ok": ok}
         if action == "remove":
             ok = config.remove(str(payload.get("kind")), str(payload.get("name")))
             _reload()

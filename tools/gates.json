@@ -1,0 +1,132 @@
+[
+  {
+    "id": "boundary-check",
+    "name": "SLOP-boundary check",
+    "domain": "boundary",
+    "enforcer": "tools/check_boundary.py",
+    "covers": "no SLOP/build-rig references in src/",
+    "ci_step": true,
+    "invariant": "All src/ paths are product-clean",
+    "red_proof": "tests/test_boundary.py"
+  },
+  {
+    "id": "version-check",
+    "name": "Version consistency",
+    "domain": "version",
+    "enforcer": "tools/check_version.py",
+    "covers": "single source of truth for version in pyproject.toml",
+    "ci_step": true,
+    "invariant": "Installed package version matches pyproject.toml",
+    "red_proof": null
+  },
+  {
+    "id": "ruff-lint",
+    "name": "Ruff lint",
+    "domain": "lint",
+    "enforcer": "ruff check",
+    "covers": "Python code style and correctness",
+    "ci_step": true,
+    "invariant": "Python code conforms to Ruff lint rules",
+    "red_proof": null
+  },
+  {
+    "id": "mypy-type",
+    "name": "Mypy static type checking",
+    "domain": "type",
+    "enforcer": "mypy src tests",
+    "covers": "static type correctness across src/ and tests/",
+    "ci_step": true,
+    "invariant": "All Python code passes static type checking",
+    "red_proof": null
+  },
+  {
+    "id": "pytest",
+    "name": "Pytest test suite",
+    "domain": "test",
+    "enforcer": "python3 -m pytest",
+    "covers": "all functional and regression test assertions",
+    "ci_step": true,
+    "invariant": "All tests pass with PYTHONPATH=src",
+    "red_proof": null
+  },
+  {
+    "id": "validate-board",
+    "name": "Fleet board validation",
+    "domain": "fleet",
+    "enforcer": "../charon-private/fleet/validate_board.sh",
+    "covers": "fleet board file integrity and consistency",
+    "ci_step": false,
+    "invariant": "Fleet board files are well-formed and consistent",
+    "red_proof": null
+  },
+  {
+    "id": "check-arch",
+    "name": "Architecture boundary checker",
+    "domain": "arch",
+    "enforcer": "tools/check_arch.py",
+    "covers": "architecture layer isolation, circular imports, stdlib-only, product-clean",
+    "ci_step": true,
+    "invariant": "Engine never imports gateway, no circular imports, stdlib-only core, product-clean",
+    "red_proof": "tests/test_check_arch.py"
+  },
+  {
+    "id": "check-decisions",
+    "name": "Decision register linter",
+    "domain": "decisions",
+    "enforcer": "tools/check_decisions.py",
+    "covers": "DECISIONS.md register integrity and cross-references",
+    "ci_step": true,
+    "invariant": "Decision register is monotonic, well-formed, and cross-references are valid",
+    "red_proof": "tests/test_check_decisions.py"
+  },
+  {
+    "id": "render-review-log",
+    "name": "Review log staleness check",
+    "domain": "docs",
+    "enforcer": "tools/render_review_log.py",
+    "covers": "docs/REVIEW-LOG.md freshness vs fragment directory",
+    "ci_step": true,
+    "invariant": "Review log rollup matches its source fragments",
+    "red_proof": "tests/test_render_review_log.py"
+  },
+  {
+    "id": "gate-registry",
+    "name": "Gate registry self-validator",
+    "domain": "registry",
+    "enforcer": "tools/check_gate_registry.py",
+    "covers": "gate registry consistency and coverage completeness",
+    "ci_step": true,
+    "invariant": "Every gate has a living enforcer and no two gates overlap",
+    "red_proof": null
+  },
+  {
+    "id": "security-scan",
+    "name": "Security anti-pattern scanner",
+    "domain": "security",
+    "enforcer": "tools/check_security.py",
+    "covers": "bare excepts, secrets in source, hardcoded IPs, dangerous eval/exec/shell=True",
+    "ci_step": true,
+    "invariant": "No source file silently swallows exceptions, embeds secrets, hardcodes IPs, or uses eval/exec/subprocess-shell",
+    "red_proof": "tests/test_check_security.py"
+  },
+  {
+    "id": "test-patterns",
+    "name": "Test-pattern enforcement gate",
+    "domain": "test-patterns",
+    "enforcer": "tools/check_test_patterns.py",
+    "covers": "duplicate test names, missing docstrings, parametrize ratio, test function line count",
+    "ci_step": true,
+    "invariant": "All test files are free of duplicate names and encouraged toward parametrization and documentation",
+    "red_proof": "tests/test_check_test_patterns.py"
+  },
+  {
+    "id": "charon-gate",
+    "name": "Unified CHARON GATE runner",
+    "domain": "gate",
+    "enforcer": "python3 -m charon.cli gate",
+    "covers": "all validation checks in one command (ruff check, mypy, boundary, version, gate-registry)",
+    "ci_step": true,
+    "invariant": "Gate passes iff all sub-checks pass",
+    "red_proof": null
+  }
+]

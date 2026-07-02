@@ -110,6 +110,54 @@ async function tick(){
 tick();setInterval(tick,2000);
 </script></body></html>"""
 
+# Self-contained work/board panel (P5, WORK-OBSERVABILITY follow-on). Reads
+# /charon/work?json=0 for the HTML table and /charon/work?json=1 for raw JSON.
+# Purely read-only; no mutation; no secrets rendered.
+_WORK_HTML = """<!doctype html><html><head><meta charset="utf-8">
+<title>Charon Work</title><style>
+body{font:14px system-ui,sans-serif;margin:1.5rem;background:#0b0e14;color:#cdd6f4}
+h1{font-size:1.2rem}h2{font-size:1rem;margin-top:1.4rem;color:#89b4fa}
+table{border-collapse:collapse;width:100%;margin-top:.3rem}
+th,td{text-align:left;padding:.3rem .6rem;border-bottom:1px solid #313244}
+.comp{color:#a6e3a1}.prog{color:#f9e2af}.blkd{color:#f38ba8}.esc{color:#fab387}
+code{background:#1e1e2e;padding:.1rem .3rem;border-radius:3px}
+.muted{color:#6c7086}
+</style></head><body>
+<h1>Charon Work <span class=muted id=ts></span></h1>
+<div id=panel></div>
+<script>
+const tok=new URLSearchParams(location.search).get('token');
+const q=tok?('?token='+encodeURIComponent(tok)):'';
+function esc(s){return String(s).replace(/[&<>"']/g,
+  c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function cls(s){return{'complete':'comp','in-progress':'prog',
+ 'blocked':'blkd','ready':'prog','escaped':'esc','budget':'esc'}[s]||''}
+async function load(){
+ let r; try{r=await fetch('/charon/work?json=1'+q)}catch(e){return}
+ if(!r.ok)return; const d=await r.json();
+ document.getElementById('ts').textContent=new Date().toLocaleTimeString();
+ if(!d.runs||!d.runs.length){
+  document.getElementById('panel').innerHTML=
+   '<p class=muted>no runs found — run &#96;charon work --units …&#96; first</p>';return}
+ const heads='<th>run id<th>status<th>task / goal'
+ +'<th>checks<th>tokens in/out<th>cost $<th>lkg';
+ let h='<table><tr>'+heads;
+ for(const u of d.runs){
+  const goal=u.goal?u.goal.substring(0,60):'';
+  h+='<tr><td><code>'+esc(u.run_id)+'</code><td class='+cls(u.status)+'>'+esc(u.status)+
+   '<td><span title="'+esc(u.goal||'')+'">'+esc(u.task_id)+'</span> '+
+   (goal?'<span class=muted>'+esc(goal)+'</span>':'')+
+   '<td>'+u.verified_count+' / '+u.remaining_count+
+   '<td>'+esc(u.usage.tokens_in)+' / '+esc(u.usage.tokens_out)+
+   '<td>'+esc(u.usage.cost_usd)+
+   '<td><code>'+esc(u.lkg_ref||'—')+'</code>';
+ }
+ h+='</table>';
+ document.getElementById('panel').innerHTML=h;
+}
+load();setInterval(load,5000);
+</script></body></html>"""
+
 # Self-contained web SETUP page (read-write). Posts to /charon/{providers,models,
 # pools}; the key field is a password input and is never rendered back.
 _SETUP_HTML = """<!doctype html><html><head><meta charset="utf-8">
@@ -160,6 +208,10 @@ td,th{text-align:left;padding:.2rem .5rem;border-bottom:1px solid #313244}
 <div><label>high</label><input id=thigh size=36 placeholder="comma,separated,model,ids"></div>
 <div><label>aliases</label><input id=talias size=36 placeholder="opus=high, sonnet=med"></div>
 <button onclick=setTiers()>Save tiers</button></fieldset>
+<fieldset><h2>Global fallback</h2>
+<div class=muted>try these when ANY model's primary fails (comma-separated, ordered)</div>
+<div><label>providers</label><input id=fbprov size=36 placeholder="e.g. opencode-go"></div>
+<button onclick=saveFallback()>Save fallback</button></fieldset>
 <h2>Current config</h2><div id=cfg></div>
 <script>
 const tok=new URLSearchParams(location.search).get('token');
@@ -175,8 +227,11 @@ async function addProvider(){
   const b={name:val('pname'),base_url:val('pbase')||null,
     key_env:val('pkenv')||null,key:val('pkey')||null};
   const {ok,d}=await post('/charon/providers',b);
-  msg(ok?('added provider '+b.name):('error: '+(d.error&&d.error.message)),ok);
-  if(ok){document.getElementById('pkey').value='';load();}}
+  if(ok){document.getElementById('pkey').value='';
+    msg(('added provider '+b.name)+'  '+(d.probe?('('+d.probe.message+
+      (d.probe.models_count?', '+d.probe.models_count+' models':'')+')'):''),true);
+    load();
+  }else{msg('error: '+(d.error&&d.error.message),false);}}
 async function addModel(){
   const free=document.getElementById('mfree').checked;
   const b={id:val('mid'),provider:val('mprov')||null,
@@ -204,18 +259,47 @@ async function setTiers(){
     members:{low:mids('tlow'),med:mids('tmed'),high:mids('thigh')},aliases};
   const {ok,d}=await post('/charon/tiers',b);
   msg(ok?'saved tiers':('error: '+(d.error&&d.error.message)),ok); if(ok)load();}
+async function saveFallback(){
+  const provs=val('fbprov').split(',').map(s=>s.trim()).filter(Boolean);
+  const {ok,d}=await post('/charon/fallback',{providers:provs});
+  msg(ok?('saved fallback: '+provs.join(', ')):('error: '+(d.error&&d.error.message)),ok);
+  if(ok)load();}
+async function removeProvider(n){
+  const {ok,d}=await post('/charon/remove',{kind:'provider',name:n});
+  msg(ok?('removed provider '+n):('error: '+(d.error&&d.error.message)),ok);if(ok)load();}
+async function removeModel(n){
+  const {ok,d}=await post('/charon/remove',{kind:'model',name:n});
+  msg(ok?('removed model '+n):('error: '+(d.error&&d.error.message)),ok);if(ok)load();}
+async function toggleModel(id,en){
+  const {ok,d}=await post('/charon/'+(en?'enable':'disable'),{id:id});
+  msg(ok?(id+' '+(en?'enabled':'disabled')):('error: '+(d.error&&d.error.message)),ok);
+  if(ok)load();}
 async function load(){
   let r; try{r=await fetch('/charon/config',{headers:H})}catch(e){return}
   if(!r.ok){msg('not authorized — append ?token=… to the URL',false);return}
   const d=await r.json();
   document.getElementById('presets').innerHTML=
     (d.presets||[]).map(p=>'<option value="'+esc(p)+'">').join('');
-  let h='<table><tr><th>provider<th>base<th>key</tr>';
+  let h='<table><tr><th>provider<th>base<th>key<th></tr>';
   for(const[n,p]of Object.entries(d.providers||{}))h+='<tr><td><code>'+esc(n)+
     '</code><td>'+esc(p.base_url||'(preset)')+'<td>'+
-    (p.key_set?'<span class=ok>set</span>':'<span class=bad>missing</span>')+'</tr>';
-  h+='</table><b>models:</b> '+Object.keys(d.models||{}).map(esc).join(', ')+'<br><b>pools:</b> '+
+    (p.key_set?'<span class=ok>set</span>':'<span class=bad>missing</span>')+
+    '<td><button onclick=removeProvider("'+esc(n)
++    '") style="background:#f38ba8;font-size:.8rem">remove</button></tr>';
+  h+='</table><b>models:</b><br><table><tr><th>id<th>enabled<th></tr>';
+  for(const[n,m]of Object.entries(d.models||{})){
+    const en=m.enabled!==false;
+    const label=en?'disable':'enable';
+    h+='<tr><td><code>'+esc(n)+'</code><td>'+
+      (en?'<span class=ok>yes</span>':'<span class=bad>no</span>')+
+      '<td><button onclick=toggleModel("'+esc(n)+'",'+(!en)+')'
+      +' style="font-size:.8rem">'+label+'</button>'
+      +'<button onclick=removeModel("'+esc(n)+'")'
+      +' style="background:#f38ba8;font-size:.8rem;margin-left:.3rem">remove</button></tr>';
+  }
+  h+='</table><b>pools:</b> '+
      Object.entries(d.pools||{}).map(([k,v])=>esc(k)+'=['+v.map(esc).join(', ')+']').join('  ');
+  if(d.fallback&&d.fallback.length)h+='<br><b>global fallback:</b> '+d.fallback.map(esc).join(', ');
   document.getElementById('cfg').innerHTML=h;}
 load();
 </script></body></html>"""
@@ -238,7 +322,7 @@ def _extract(raw: bytes, content_type: str) -> dict:
                 continue
             try:
                 obj = json.loads(payload)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 continue
             model = model or obj.get("model", "")
             if obj.get("usage"):
@@ -251,7 +335,7 @@ def _extract(raw: bytes, content_type: str) -> dict:
         return out
     try:
         return json.loads(text)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return {}
 
 
@@ -320,7 +404,7 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 if not c:
                     break
                 out.append(c)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return b"".join(out)
 
@@ -442,7 +526,8 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 return
             if self.command == "POST" and path_only in (
                     "/charon/providers", "/charon/models", "/charon/models/import",
-                    "/charon/pools", "/charon/tiers", "/charon/remove"):
+                    "/charon/pools", "/charon/tiers", "/charon/fallback",
+                    "/charon/enable", "/charon/disable", "/charon/remove"):
                 host = self.headers.get("Host", "")
                 origin = self.headers.get("Origin")
                 if origin and urlsplit(origin).netloc != host:  # CSRF: cross-origin write
@@ -459,7 +544,7 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 raw = self.rfile.read(length) if length else b""
                 try:
                     payload = json.loads(raw) if raw else {}
-                except Exception:
+                except Exception:  # noqa: BLE001
                     self._json(400, {"error": {"message": "invalid JSON"}})
                     return
                 if not isinstance(payload, dict):
@@ -476,6 +561,21 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 self._json(status, obj)
                 return
 
+        # Work/board panel (P5, WORK-OBSERVABILITY follow-on) — read-only,
+        # token-gated above. /charon/work returns HTML; add ?json=1 for raw JSON.
+        if self.command == "GET" and path_only == "/charon/work":
+            from . import console_work
+            try:
+                runs = console_work.gather_runs()
+            except Exception:  # noqa: BLE001
+                runs = []
+            qs = parse_qs(urlsplit(self.path).query)
+            if qs.get("json") == ["1"]:
+                self._json(200, {"runs": runs})
+            else:
+                self._html(_WORK_HTML)
+            return
+
         # Read the client request (size-capped — memory-DoS guard on an exposed bind).
         length = int(self.headers.get("Content-Length") or 0)
         if length > srv.max_body_bytes:
@@ -488,7 +588,7 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
         try:
             orig_bj = json.loads(raw_body) if raw_body else {}
             requested = orig_bj.get("model", "")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         chain = srv.chain_for(requested)

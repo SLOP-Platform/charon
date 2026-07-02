@@ -26,10 +26,15 @@ class AgentBackend(Protocol):
         budget: Budget,
         worktree: Path,
         env: dict[str, str],
+        state_dir: Path | None = None,
     ) -> Outcome:
         """Run the unit in ``worktree`` using the hardened ``env``. Make
         progress toward the unit's acceptance and return an Outcome. Must be
-        safe to kill at a checkpoint boundary with no progress loss (INV-5)."""
+        safe to kill at a checkpoint boundary with no progress loss (INV-5).
+
+        ``state_dir``, when not None, is the durable ledger root's parent
+        directory — the adapter MAY persist per-unit agent output at
+        ``<state_dir>/<task_id>/agent.log``."""
         ...
 
     def health(self) -> Health:

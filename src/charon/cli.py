@@ -163,6 +163,11 @@ def _cmd_gateway(args: argparse.Namespace) -> int:
     return gateway.run(cfg, setup_dir=setup_dir)
 
 
+def _cmd_gate(args: argparse.Namespace) -> int:
+    from .gate_runner import run_gate
+    return run_gate()
+
+
 def _cmd_providers(args: argparse.Namespace) -> int:
     from . import providers, secrets
     secrets.apply_to_env()
@@ -1322,6 +1327,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     su = sub.add_parser("setup", help="Guided first-time setup (providers, keys, models)")
     su.set_defaults(func=_cmd_setup)
+
+    gt = sub.add_parser("gate",
+                        help="Run all validation checks (ruff, mypy, boundary, "
+                             "version, gate-registry)")
+    gt.set_defaults(func=_cmd_gate)
 
     g = sub.add_parser("gateway",
                        help="Start the local API gateway your apps point at")

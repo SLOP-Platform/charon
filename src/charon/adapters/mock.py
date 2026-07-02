@@ -80,6 +80,7 @@ class MockBackend:
         budget: Budget,
         worktree: Path,
         env: dict[str, str],
+        state_dir: Path | None = None,
     ) -> Outcome:
         self._dispatches += 1
         idx = self._dispatches - 1
