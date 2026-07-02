@@ -23,7 +23,8 @@ def _home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def _run(monkeypatch: pytest.MonkeyPatch, client: str, ids: list[str],
          **kw: object) -> int:
-    monkeypatch.setattr(connect, "discover_models", lambda *a, **k: list(ids))
+    monkeypatch.setattr(connect, "discover_models",
+                        lambda *a, **k: [{"id": i, "free": False} for i in ids])
     monkeypatch.setattr(connect.shutil, "which", lambda b: None)
     return connect.run_connect(client=client, token="TOKEN1",  # type: ignore[arg-type]
                                runner=connect._shell_install, **kw)

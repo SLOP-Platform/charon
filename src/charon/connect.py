@@ -49,12 +49,13 @@ class GatewayUnreachable(Exception):
 
 # --------------------------------------------------------------- gateway probe
 def discover_models(host: str, port: int, token: str | None, *,
-                    timeout: float = 10.0) -> list[str]:
+                    timeout: float = 10.0) -> list[dict]:
     """``GET http://<host>:<port>/v1/models`` with the bearer token and return the
-    advertised model ids. Reuses the gateway's OpenAI ``{"data": [...]}`` shape via
-    :func:`providers._parse_models`. Redirects are disabled (no cross-host token
-    leak) and the body is size-capped. Raises :class:`GatewayUnreachable` on any
-    transport/HTTP error so the caller can fail closed without writing config."""
+    full model dicts (id, free, cost_input, cost_output, context_window,
+    max_tokens, reasoning, vision, audio). Redirects are disabled (no cross-host
+    token leak) and the body is size-capped. Raises :class:`GatewayUnreachable`
+    on any transport/HTTP error so the caller can fail closed without writing
+    config."""
     url = f"http://{host}:{port}/v1/models"
     req = urllib.request.Request(url, method="GET")
     req.add_header("User-Agent", "charon-connect/0.1")
@@ -78,7 +79,7 @@ def discover_models(host: str, port: int, token: str | None, *,
         data = json.loads(raw.decode("utf-8", "replace"))
     except json.JSONDecodeError as exc:
         raise GatewayUnreachable("gateway /v1/models returned non-JSON") from exc
-    return [m["id"] for m in providers._parse_models(data)]
+    return providers._parse_models(data)
 
 
 # ------------------------------------------------------------- minimal YAML I/O
@@ -178,11 +179,13 @@ def _write_json_merge(path: Path, mutate: Callable[[dict], None]) -> None:
 @dataclass(frozen=True)
 class Wiring:
     """Everything a per-client writer needs: the resolved gateway endpoint, the
-    bearer token, the chosen model id, and the config path to write."""
+    bearer token, the chosen model id, the config path to write, and the model's
+    metadata (cost, context_window, etc.) from the gateway's /v1/models response."""
     base_url: str
     token: str | None
     model: str
     config_path: Path
+    model_meta: dict | None = None
 
 
 def _home() -> Path:
@@ -216,7 +219,22 @@ def _cline_path() -> Path:
 def _write_opencode(w: Wiring) -> None:
     """``~/.config/opencode/opencode.json`` — opencode's OpenAI-compatible provider
     block. Deep-merges into ``provider.charon`` so other providers/models and the
-    user's other top-level keys are preserved (idempotent)."""
+    user's other top-level keys are preserved (idempotent).
+
+    The model entry includes cost (for OpenCode's built-in cost tracking),
+    context_window, max_tokens, and capability flags when available from the
+    gateway's /v1/models response."""
+    model_entry: dict = {}
+    meta = w.model_meta or {}
+    if "cost_input" in meta or "cost_output" in meta:
+        model_entry["cost"] = {
+            "input": float(meta.get("cost_input", 0)),
+            "output": float(meta.get("cost_output", 0)),
+        }
+    for k in ("context_window", "max_tokens", "reasoning", "vision", "audio"):
+        if k in meta:
+            model_entry[k] = meta[k]
+
     def mutate(data: dict) -> None:
         data.setdefault("$schema", "https://opencode.ai/config.json")
         provs = data.get("provider")
@@ -238,7 +256,7 @@ def _write_opencode(w: Wiring) -> None:
         models = entry.get("models")
         if not isinstance(models, dict):
             models = {}
-        models.setdefault(w.model, {})
+        models[w.model] = model_entry
         entry["models"] = models
         provs["charon"] = entry
 
@@ -485,7 +503,7 @@ def run_connect(
 
     # 1. Verify the gateway FIRST — never write a config pointing at a dead gateway.
     try:
-        ids = discover_models(host, port, tok)
+        model_dicts = discover_models(host, port, tok)
     except GatewayUnreachable as exc:
         _eprint(f"error: {exc}")
         _eprint("  the Charon gateway must be running first — start it with:")
@@ -495,14 +513,18 @@ def run_connect(
                     "CHARON_GATEWAY_TOKEN)")
         return 1
 
+    # Build id→meta lookup for the chosen model's metadata.
+    id_map: dict[str, dict] = {m["id"]: m for m in model_dicts}
+    model_ids = list(id_map)
+
     # 2. Discover a served model (explicit --model wins).
     if model:
         chosen = model
-        if ids and model not in ids:
+        if model_ids and model not in model_ids:
             _eprint(f"  warning: {model!r} is not in the gateway's served list "
-                    f"({len(ids)} model(s)); writing it anyway")
-    elif ids:
-        chosen = ids[0]
+                    f"({len(model_ids)} model(s)); writing it anyway")
+    elif model_ids:
+        chosen = model_ids[0]
     else:
         _eprint("error: the gateway is reachable but serves no models — add one "
                 "with `charon setup` / `charon models import <provider>`, then retry.")
@@ -546,7 +568,8 @@ def run_connect(
     #    or print manual instructions for guided (GUI-only) clients.
     base_url = f"http://{host}:{port}/v1"
     wiring = Wiring(base_url=base_url, token=tok, model=chosen,
-                    config_path=spec.config_path())
+                    config_path=spec.config_path(),
+                    model_meta=id_map.get(chosen))
     if spec.guided:
         print(f"  {spec.name} has no file-writable config (GUI-only settings).")
         print("  Manual setup:")

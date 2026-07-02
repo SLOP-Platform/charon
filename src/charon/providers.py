@@ -121,21 +121,29 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 _MAX_MODELS_BYTES = 1_000_000  # cap the /models response (memory-DoS guard)
 
 
+def _pricing_fields(item: dict) -> tuple[float | None, float | None] | None:
+    """Extract per-M-token USD pricing from a ``pricing`` dict. Returns
+    ``(cost_input, cost_output)`` or ``None`` if no pricing data is present."""
+    pricing = item.get("pricing")
+    if not isinstance(pricing, dict):
+        return None
+    try:
+        cost_input = float(pricing["prompt"])
+        cost_output = float(pricing["completion"])
+        return cost_input, cost_output
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def _is_free(item: dict) -> bool:
     """Best-effort free detection from an OpenAI-style /models entry: an OpenRouter
     ``:free`` id suffix, or a ``pricing`` map whose prompt+completion are all 0."""
     mid = item.get("id")
     if isinstance(mid, str) and mid.endswith(":free"):
         return True
-    pricing = item.get("pricing")
-    if isinstance(pricing, dict):
-        vals = []
-        for k in ("prompt", "completion"):
-            try:
-                vals.append(float(pricing[k]))
-            except (KeyError, TypeError, ValueError):
-                return False
-        return bool(vals) and all(v == 0 for v in vals)
+    prices = _pricing_fields(item)
+    if prices is not None:
+        return prices[0] == 0 and prices[1] == 0
     return False
 
 
@@ -161,6 +169,10 @@ def _parse_models(data: object) -> list[dict]:
     for it in items:
         if isinstance(it, dict) and isinstance(it.get("id"), str):
             entry: dict[str, object] = {"id": it["id"], "free": _is_free(it)}
+            prices = _pricing_fields(it)
+            if prices is not None:
+                entry["cost_input"] = prices[0]
+                entry["cost_output"] = prices[1]
             for src_key, dst_key, want_type in _UPSTREAM_METADATA_MAP:
                 v = it.get(src_key)
                 if v is not None and isinstance(v, want_type):

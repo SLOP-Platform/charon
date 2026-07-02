@@ -498,7 +498,8 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
             for m in exposed:
                 entry: dict = {"id": m, "object": "model", "owned_by": "charon"}
                 meta = srv.model_meta.get(m, {})
-                for k in ("context_window", "max_tokens", "reasoning", "vision", "audio"):
+                for k in ("cost_input", "cost_output", "context_window", "max_tokens",
+                          "reasoning", "vision", "audio"):
                     if k in meta:
                         entry[k] = meta[k]
                 entries.append(entry)

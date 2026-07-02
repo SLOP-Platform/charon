@@ -199,7 +199,8 @@ def test_wsl_no_native_tools_prints_actionable(monkeypatch: pytest.MonkeyPatch,
                                                 capsys: pytest.CaptureFixture[str],
                                                 _home: Path) -> None:
     _mock_wsl(monkeypatch, is_wsl=True)
-    monkeypatch.setattr(connect, "discover_models", lambda *a, **k: ["model-x"])
+    monkeypatch.setattr(connect, "discover_models",
+                        lambda *a, **k: [{"id": "model-x", "free": False}])
     monkeypatch.setattr(connect.shutil, "which",
                         _mock_which({"bun": "/mnt/c/Users/u/.bun/bin/bun.exe",
                                      "npm": "/mnt/c/Program Files/nodejs/npm.exe",
@@ -245,7 +246,8 @@ def test_non_wsl_no_tools_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_omp_token_not_in_stdout(monkeypatch: pytest.MonkeyPatch,
                                   _home: Path,
                                   capsys: pytest.CaptureFixture[str]) -> None:
-    monkeypatch.setattr(connect, "discover_models", lambda *a, **k: ["m1"])
+    monkeypatch.setattr(connect, "discover_models",
+                        lambda *a, **k: [{"id": "m1", "free": False}])
     monkeypatch.setattr(connect.shutil, "which", lambda b: "/usr/bin/omp")
     rc = connect.run_connect(client="omp", token="TOPSECRET",
                              runner=connect._shell_install)
@@ -276,7 +278,8 @@ def test_wsl_install_never_runs_windows_command(monkeypatch: pytest.MonkeyPatch,
                                                  _home: Path,
                                                  capsys: pytest.CaptureFixture[str]) -> None:
     _mock_wsl(monkeypatch, is_wsl=True)
-    monkeypatch.setattr(connect, "discover_models", lambda *a, **k: ["model-z"])
+    monkeypatch.setattr(connect, "discover_models",
+                        lambda *a, **k: [{"id": "model-z", "free": False}])
     monkeypatch.setattr(connect.shutil, "which",
                         _mock_which({"bun": "/mnt/c/Users/u/.bun/bin/bun.exe",
                                      "npm": "/mnt/c/Program Files/nodejs/npm.exe",
@@ -303,7 +306,8 @@ def test_wsl_install_never_runs_windows_command(monkeypatch: pytest.MonkeyPatch,
 def test_wsl_install_uses_native_bun_command(monkeypatch: pytest.MonkeyPatch,
                                               _home: Path) -> None:
     _mock_wsl(monkeypatch, is_wsl=True)
-    monkeypatch.setattr(connect, "discover_models", lambda *a, **k: ["model-z"])
+    monkeypatch.setattr(connect, "discover_models",
+                        lambda *a, **k: [{"id": "model-z", "free": False}])
     monkeypatch.setattr(connect.shutil, "which",
                         _mock_which({"bun": "/usr/local/bin/bun",
                                      "npm": None,

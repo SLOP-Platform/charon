@@ -451,6 +451,7 @@ def list_ledgers(state_dir: str = DEFAULT_STATE_DIR) -> list[dict]:
 # read-only web surface (provider keys live in env/proxy, referenced by key_env).
 _MODEL_FIELDS = ("agent", "cost_tier", "cost_rank", "code_safe", "free",
                  "upstream_base", "key_env", "upstream_model",
+                 "cost_input", "cost_output",
                  "context_window", "max_tokens", "reasoning", "vision", "audio")
 
 

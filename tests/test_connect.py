@@ -61,7 +61,7 @@ def test_discover_models_live() -> None:
         ids = connect.discover_models(host, port, "secret-tok")
     finally:
         srv.shutdown()
-    assert ids == ["gpt-x", "claude-y"]
+    assert [m["id"] for m in ids] == ["gpt-x", "claude-y"]
     assert captured["path"] == "/v1/models"
     assert captured["auth"] == "Bearer secret-tok"
 
@@ -87,7 +87,8 @@ def test_unreachable_gateway_writes_nothing(capsys: pytest.CaptureFixture[str],
 def _run(monkeypatch: pytest.MonkeyPatch, client: str, ids: list[str],
          **kw: object) -> int:
     """Run ``charon connect <client>`` with discovery + install stubbed."""
-    monkeypatch.setattr(connect, "discover_models", lambda *a, **k: list(ids))
+    monkeypatch.setattr(connect, "discover_models",
+                        lambda *a, **k: [{"id": i, "free": False} for i in ids])
     installs: list = []
     def _rec_install(argv: object) -> int:
         installs.append(argv)
@@ -95,7 +96,7 @@ def _run(monkeypatch: pytest.MonkeyPatch, client: str, ids: list[str],
     monkeypatch.setattr(connect, "_shell_install", _rec_install)
     monkeypatch.setattr(connect.shutil, "which", lambda b: None)  # client "missing"
     rc = connect.run_connect(client=client, token="TOPSECRET",  # type: ignore[arg-type]
-                             runner=connect._shell_install, **kw)
+                              runner=connect._shell_install, **kw)
     # no --install passed → install must NOT be attempted
     assert installs == []
     return rc
@@ -205,3 +206,38 @@ def test_registry_is_single_source_of_supported_list() -> None:
     for spec in connect.REGISTRY.values():
         assert callable(spec.write) and callable(spec.config_path)
         assert callable(spec.install) and callable(spec.launch)
+
+
+def test_opencode_writes_cost_when_metadata_present(monkeypatch: pytest.MonkeyPatch,
+                                                     _home: Path) -> None:
+    meta = {"id": "sonnet-4.5", "free": False,
+            "cost_input": 3.0, "cost_output": 15.0,
+            "context_window": 200000, "reasoning": True}
+    monkeypatch.setattr(connect, "discover_models", lambda *a, **k: [meta])
+    monkeypatch.setattr(connect, "_shell_install", lambda a: 0)
+    monkeypatch.setattr(connect.shutil, "which", lambda b: None)
+    rc = connect.run_connect(client="opencode", token="TOK",  # type: ignore[arg-type]
+                              runner=connect._shell_install)
+    assert rc == 0
+    data = json.loads((_home / ".config" / "opencode" / "opencode.json").read_text())
+    model = data["provider"]["charon"]["models"]["sonnet-4.5"]
+    assert model["cost"] == {"input": 3.0, "output": 15.0}
+    assert model["context_window"] == 200000
+    assert model["reasoning"] is True
+    assert "id" not in model  # internal-only keys not leaked
+    assert "free" not in model  # internal-only keys not leaked
+
+
+def test_opencode_no_cost_when_metadata_absent(monkeypatch: pytest.MonkeyPatch,
+                                                _home: Path) -> None:
+    monkeypatch.setattr(connect, "discover_models",
+                        lambda *a, **k: [{"id": "m1", "free": False}])
+    monkeypatch.setattr(connect, "_shell_install", lambda a: 0)
+    monkeypatch.setattr(connect.shutil, "which", lambda b: None)
+    rc = connect.run_connect(client="opencode", token="TOK",  # type: ignore[arg-type]
+                              runner=connect._shell_install)
+    assert rc == 0
+    data = json.loads((_home / ".config" / "opencode" / "opencode.json").read_text())
+    model = data["provider"]["charon"]["models"]["m1"]
+    assert "cost" not in model
+    assert "context_window" not in model

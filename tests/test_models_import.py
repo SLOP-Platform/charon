@@ -30,6 +30,13 @@ def test_parse_models_openai_shape_and_free():
     assert {m["id"] for m in out} == {"gpt-4o", "free-model:free", "cheap", "paid"}
     free = {m["id"] for m in out if m["free"]}
     assert free == {"free-model:free", "cheap"}
+    # Pricing extracted correctly
+    by_id = {m["id"]: m for m in out}
+    assert "cost_input" not in by_id["gpt-4o"]        # no pricing → no cost
+    assert by_id["cheap"]["cost_input"] == 0.0
+    assert by_id["cheap"]["cost_output"] == 0.0
+    assert by_id["paid"]["cost_input"] == 0.001
+    assert by_id["paid"]["cost_output"] == 0.002
 
 
 def test_parse_models_bare_and_string_lists():

@@ -249,7 +249,8 @@ def _import_models(name: str, *, free_only: bool = False, into_pool: str | None 
         return None
     if free_only:
         found = [m for m in found if m["free"]]
-    _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio")
+    _META_KEYS = ("cost_input", "cost_output", "context_window", "max_tokens",
+                  "reasoning", "vision", "audio")
     entries = []
     for m in found:
         entry = {"id": m["id"], "free": m["free"],

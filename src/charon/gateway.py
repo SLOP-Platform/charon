@@ -190,7 +190,8 @@ def load_config(
                 if mid not in pools:
                     pools[mid] = [routes[mid]] + fallback_routes
 
-    _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio")
+    _META_KEYS = ("cost_input", "cost_output", "context_window", "max_tokens",
+                  "reasoning", "vision", "audio")
     model_meta: dict[str, dict] = {}
     for mid, spec in registry.items():
         if not isinstance(spec, dict) or mid not in routes:
@@ -274,7 +275,8 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
             # Preserve existing metadata (context_window, etc.) across re-adds
             # so a web-edit never silently strips model capabilities (MODEL-DISCOVERY).
             existing = config.load_models().get(mid) or {}
-            _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio")
+            _META_KEYS = ("cost_input", "cost_output", "context_window", "max_tokens",
+                          "reasoning", "vision", "audio")
             meta = {k: existing[k] for k in _META_KEYS if k in existing}
             config.add_model(
                 mid,
@@ -303,7 +305,8 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
                     f"could not reach provider {name!r} ({type(exc).__name__})") from exc
             if payload.get("free_only"):
                 found = [m for m in found if m["free"]]
-            _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio")
+            _META_KEYS = ("cost_input", "cost_output", "context_window", "max_tokens",
+                          "reasoning", "vision", "audio")
             entries = []
             for m in found:
                 entry = {"id": m["id"], "free": m["free"],

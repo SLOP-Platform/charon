@@ -216,12 +216,14 @@ def add_provider(name: str, *, base_url: str | None = None, key_env: str | None 
 def add_model(model_id: str, *, provider: str | None = None, upstream_base: str | None = None,
               upstream_model: str | None = None, key_env: str | None = None,
               free: bool = False, cost_rank: int = 1000,
+              cost_input: float | None = None, cost_output: float | None = None,
               context_window: int | None = None, max_tokens: int | None = None,
               reasoning: bool | None = None, vision: bool | None = None,
               audio: bool | None = None) -> Path:
     """Persist a model to ``models.json`` (references a provider, or a direct
     upstream_base). Optional metadata fields (context_window, max_tokens,
-    reasoning, vision, audio) are persisted only when non-None."""
+    reasoning, vision, audio, cost_input, cost_output) are persisted only
+    when non-None."""
     _check_id("model", model_id)
     if provider is None and upstream_base is None:
         raise ValueError("a model needs either provider= or upstream_base=")
@@ -231,7 +233,8 @@ def add_model(model_id: str, *, provider: str | None = None, upstream_base: str 
                  ("upstream_model", upstream_model), ("key_env", key_env)):
         if v is not None:
             entry[k] = v
-    for k, mv in (("context_window", context_window), ("max_tokens", max_tokens),
+    for k, mv in (("cost_input", cost_input), ("cost_output", cost_output),
+                   ("context_window", context_window), ("max_tokens", max_tokens),
                    ("reasoning", reasoning), ("vision", vision), ("audio", audio)):
         if mv is not None:
             entry[k] = mv
@@ -247,7 +250,8 @@ def add_models_bulk(entries: list[dict], *, provider: str) -> tuple[list[str], l
     metadata fields (context_window, max_tokens, reasoning, vision, audio) are
     carried through if present. Returns ``(added, skipped)``."""
     _check_id("provider", provider)
-    _METADATA_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio")
+    _METADATA_KEYS = ("cost_input", "cost_output", "context_window", "max_tokens",
+                       "reasoning", "vision", "audio")
     models = load_models()
     added: list[str] = []
     skipped: list[str] = []
