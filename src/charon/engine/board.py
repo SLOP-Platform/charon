@@ -241,6 +241,35 @@ class Board:
                 return False
         return True
 
+    def _unit_depth(self, unit_id: str,
+                    memo: dict[str, int] | None = None,
+                    path: frozenset[str] = frozenset()) -> int:
+        """Critical-path depth: longest dependency chain ending at ``unit_id``.
+        A unit with no deps has depth 0; a unit that depends on a depth-*d* unit
+        has depth *d*+1. Computed purely from board graph state — no clock, RNG,
+        or iteration-order dependence (ADR-0015 R5 / F2)."""
+        if memo is None:
+            memo = {}
+        if unit_id in memo:
+            return memo[unit_id]
+        if unit_id in path or unit_id not in self._units:
+            memo[unit_id] = 0
+            return 0
+        deps = self._units[unit_id].depends_on
+        if not deps:
+            memo[unit_id] = 0
+            return 0
+        d = 1 + max(self._unit_depth(d, memo, path | {unit_id}) for d in deps)
+        memo[unit_id] = d
+        return d
+
     def claimable_units(self) -> list[Unit]:
-        """The set of units claimable right now, in stable id order."""
-        return [u for u in self.units() if self.claimable(u.id)]
+        """The set of units claimable right now, pre-sorted by critical-path depth
+        (deepest first) with id as the final injective tiebreak (ADR-0015 R5).
+
+        The claimable *set* is unchanged — only the traversal order differs so the
+        longest dependency chain drains first. Depth changes which ready unit a
+        free worker picks first, never whether a unit is claimable."""
+        claimable = [u for u in self.units() if self.claimable(u.id)]
+        memo: dict[str, int] = {}
+        return sorted(claimable, key=lambda u: (-self._unit_depth(u.id, memo), u.id))
