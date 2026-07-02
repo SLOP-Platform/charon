@@ -47,6 +47,7 @@ _PATH_LABELS = frozenset({"files", "file", "paths", "path", "owns", "owned_paths
 _ACCEPT_LABELS = frozenset({"accept", "acceptance", "test", "tests", "check", "checks"})
 _TIER_LABELS = frozenset({"tier"})
 _DEP_LABELS = frozenset({"depends", "depends_on", "deps", "on", "after"})
+_MERGE_LABELS = frozenset({"merge_after", "merge-order"})
 # The source ticket's OWN id. Preserved through import so completion can later be
 # reported back to the right external ticket (the write-back/sink seam). Slugified
 # to a board-safe id; absent → fall back to the title slug as before.
@@ -81,6 +82,7 @@ class RawItem:
     accept: list[str] = field(default_factory=list)
     tier: str = ""
     declared_deps: list[str] = field(default_factory=list)
+    declared_merge: list[str] = field(default_factory=list)
     declared_id: str = ""
 
 
@@ -173,6 +175,8 @@ def _apply_field(item: RawItem, label: str, value: str) -> None:
             item.tier = value.split()[0]
     elif label in _DEP_LABELS:
         item.declared_deps.extend(_split_list(value))
+    elif label in _MERGE_LABELS:
+        item.declared_merge.extend(_split_list(value))
     elif label in _ID_LABELS:
         # Keep the FIRST id seen (verbatim token); _make_id slugifies it later.
         if value and not item.declared_id:
@@ -250,6 +254,7 @@ class PlanUnit:
     tier: str = DEFAULT_TIER
     owned_paths: list[str] = field(default_factory=list)
     depends_on: list[str] = field(default_factory=list)
+    merge_after: list[str] = field(default_factory=list)
     flags: list[str] = field(default_factory=list)
     wave: int = 0
 
@@ -267,6 +272,7 @@ class PlanUnit:
             "owned_paths": list(self.owned_paths),
             "owns": list(self.owned_paths),  # board.Unit reads ``owns``
             "depends_on": list(self.depends_on),
+            "merge_after": list(self.merge_after),
             "state": "ready",
             "wave": self.wave,
             "propose_only": self.propose_only,
@@ -557,6 +563,7 @@ def analyze(items: Iterable[RawItem], product_acceptance: str = "") -> Plan:
             tier=item.tier or DEFAULT_TIER,
             owned_paths=owned,
             flags=flags,
+            merge_after=list(item.declared_merge),
         )
         pairs.append((unit, item))
 
@@ -566,6 +573,30 @@ def analyze(items: Iterable[RawItem], product_acceptance: str = "") -> Plan:
     by_id = {u.id: u for u in real_units}
     for unit, item in pairs:
         for ref in item.declared_deps:
+            target = title_to_id.get(_normalize(ref)) or (ref if ref in by_id else None)
+            if target and target != unit.id:
+                _add_edge_safe(by_id, unit.id, target)
+            elif target != unit.id:
+                plan.issues.append(Issue(
+                    "ambiguous-paths",
+                    f"'{unit.goal}': declared dependency {ref!r} matches no work item "
+                    "— edge dropped (no invented dependencies).",
+                ))
+
+    # Resolve merge_after edges (title → id); same resolution logic as deps.
+    for unit in real_units:
+        raw_merge = list(unit.merge_after)
+        unit.merge_after.clear()
+        for ref in raw_merge:
+            target = title_to_id.get(_normalize(ref)) or (ref if ref in by_id else None)
+            if target and target != unit.id:
+                unit.merge_after.append(target)
+            elif target != unit.id:
+                plan.issues.append(Issue(
+                    "ambiguous-paths",
+                    f"'{unit.goal}': declared merge_after {ref!r} matches no work item "
+                    "— edge dropped (no invented edges).",
+                ))
             target = title_to_id.get(_normalize(ref)) or (ref if ref in by_id else None)
             if target and target != unit.id:
                 _add_edge_safe(by_id, unit.id, target)

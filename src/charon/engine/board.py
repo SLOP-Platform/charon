@@ -73,6 +73,7 @@ class Unit:
     tier: str = ""
     owns: list[str] = field(default_factory=list)
     depends_on: list[str] = field(default_factory=list)
+    merge_after: list[str] = field(default_factory=list)
     state: str = READY
     goal: str = ""
     body: str = ""
@@ -89,6 +90,7 @@ class Unit:
             "tier": self.tier,
             "owns": list(self.owns),
             "depends_on": list(self.depends_on),
+            "merge_after": list(self.merge_after),
             "state": self.state,
             "goal": self.goal,
             "body": self.body,
@@ -103,6 +105,7 @@ class Unit:
                 tier=d.get("tier", ""),
                 owns=list(d.get("owns", [])),
                 depends_on=list(d.get("depends_on", [])),
+                merge_after=list(d.get("merge_after", [])),
                 state=d.get("state", READY),
                 goal=d.get("goal", ""),
                 body=d.get("body", ""),
@@ -119,6 +122,7 @@ class Board:
     def __init__(self, path: Path, units: dict[str, Unit] | None = None) -> None:
         self.path = Path(path)
         self._units: dict[str, Unit] = units or {}
+        self._certs: dict[tuple[str, str], Any] = {}
 
     # --------------------------------------------------------------- lifecycle
     @classmethod
@@ -210,14 +214,21 @@ class Board:
 
     # ------------------------------------------------------- claimable predicate
     def _deps_done(self, unit: Unit) -> bool:
-        for dep_id in unit.depends_on:
+        all_deps: set[str] = set(unit.depends_on)
+        merge_deps: set[str] = set(getattr(unit, "merge_after", []))
+        for dep_id in all_deps | merge_deps:
             dep = self._units.get(dep_id)
             if dep is None:
                 raise BoardError(
                     f"unit {unit.id!r} depends on missing unit {dep_id!r}"
                 )
-            if dep.state != DONE:
-                return False
+            if dep.state == DONE:
+                continue
+            if dep_id in merge_deps:
+                cert = self._get_cert(dep_id, unit.id)
+                if cert is not None and cert.proven:
+                    continue
+            return False
         return True
 
     def claimable(self, unit_id: str) -> bool:
@@ -241,6 +252,13 @@ class Board:
                 return False
         return True
 
+    def set_cert(self, dep_id: str, unit_id: str, cert: Any) -> None:
+        """Store an independence certificate for a merge_after pair."""
+        self._certs[(dep_id, unit_id)] = cert
+
+    def _get_cert(self, dep_id: str, unit_id: str) -> Any | None:
+        return self._certs.get((dep_id, unit_id))
+
     def _unit_depth(self, unit_id: str,
                     memo: dict[str, int] | None = None,
                     path: frozenset[str] = frozenset()) -> int:
@@ -255,7 +273,8 @@ class Board:
         if unit_id in path or unit_id not in self._units:
             memo[unit_id] = 0
             return 0
-        deps = self._units[unit_id].depends_on
+        deps = (list(self._units[unit_id].depends_on)
+                + list(getattr(self._units[unit_id], "merge_after", [])))
         if not deps:
             memo[unit_id] = 0
             return 0
