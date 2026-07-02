@@ -1,19 +1,10 @@
 # Charon Fleet — Session Handoff (2026-07-02T06:35:00Z)
 
-## Bootstrap (copy-paste one-liner into next session)
+## Bootstrap (copy-paste into next session)
 
-```
-# 1. Board + register FIRST (before any work — never time out):
-#    session-bridge_board(repo="charon") → pick unused Jedi name →
-#    session-bridge_register(session_id="<jedi>", name="...", repo="charon")
-
-# 2. Ground yourself:
-cat /home/stack/charon-private/fleet/SESSION-HANDOFF.md && read -r && \
-  bash /home/stack/charon-private/fleet/status.sh && \
-  bash /home/stack/charon-private/fleet/validate_board.sh
-```
-
-**First action:** call `session-bridge_board(repo="charon")`, pick an unused Jedi name, `register`. Then read the handoff, run status + validate, tell operator the state.
+Read `/home/stack/charon-private/fleet/SESSION-HANDOFF.md` fully, then run
+`bash /home/stack/charon-private/fleet/status.sh && bash /home/stack/charon-private/fleet/validate_board.sh`,
+check the board for claimed names, register with an unused Jedi name + `repo="charon"`, then go.
 
 ---
 
