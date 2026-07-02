@@ -1,4 +1,4 @@
-tier: opus
+tier: frontier
 branch: feat/wci-mvp
 depends_on: ADR-0015
 real-dep: ADR-0015 WCI must build against a SIGNED, written design — not an unsigned/unwritten one. The ADR-0015 sign-off is a true build/correctness prereq, not merge-order. Owns are DISJOINT by design (WCI = engine/{reconcile,scheduler,board}.py + tests/test_reconcile.py; ADR-0015 = docs/adr/0015-* + docs/DECISIONS.md); the dep is JUSTIFIED, not assumed.

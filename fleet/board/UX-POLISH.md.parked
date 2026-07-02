@@ -1,4 +1,4 @@
-tier: sonnet
+tier: strong
 branch: feat/first-run-ux-polish
 depends_on:
 owns: src/charon/cli.py   # PROVISIONAL — the `charon setup` wizard / `_cmd_setup` lives here; finalize at activation

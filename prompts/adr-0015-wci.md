@@ -37,6 +37,16 @@ ADR).
    WCI-2; WCI-4/5/6 + §5.1 deferred; opt-in-orchestrator-only constraint.
 
 ## Keep it SMALL
+## Dependencies & sequence
+
+- **Wave:** 0 (foundation document — no code dependency)
+- **depends_on:** none (design/ADR pass; transcribes an already-settled reshape)
+- **Concurrency:** safe to run in parallel with any ticket, including WCI-MVP / TIER7B builds
+- **Blocks:** WCI (WCI `depends_on: ADR-0015` — WCI must not build against an unsigned design)
+- **Type:** design/ADR-pass — produces `docs/adr/0015-work-composition-intelligence.md` + `docs/DECISIONS.md` update only; no `src/` code
+
+## Scope
+
 This ADR records a design that already cleared two adversarial rounds (REWORK → reshape →
 focused review → F1/F2/F3 fixes). Do not invent, expand, or contradict it. If the reshape and
 an existing Settled `docs/DECISIONS.md` row disagree, STOP and report — do not reconcile silently.

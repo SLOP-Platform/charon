@@ -1,4 +1,4 @@
-# Charon Fleet — Session Handoff (2026-07-02T04:38:00Z)
+# Charon Fleet — Session Handoff (2026-07-02T06:35:00Z)
 
 ## Bootstrap
 
@@ -10,19 +10,23 @@ Read `/home/stack/charon-private/fleet/SESSION-HANDOFF.md` fully, then read `/ho
 
 ### Git
 ```
-feat/global-fallback-provider (ahead of origin/master by 1 merge commit c19dedb)
+master — 3 new squash-merged PRs this session: #79 (WCI), #80 (WCI-FOLLOWON), #81 (PROD-INSTALL)
+feat/global-fallback-provider — accumulated branch (needs rebase)
 ```
+
 ### Open PRs
 ```
-(none — PR #78 merged 2026-07-02T04:33Z as squash c9fedf5)
+(none)
 ```
+
 ### Gate
 ```
-874 passed, ruff clean, mypy clean, boundary/version clean, gate-registry clean
+841 passed, ruff clean, mypy clean (pre-existing cli.py errors only), boundary/version clean
 ```
+
 ### Board
 ```
-droids:0   ready:0   blocked:0   done:52
+done: WCI, WCI-FOLLOWON, PROD-INSTALL, DSGN-WCI-PROOF
 ```
 
 ---
@@ -32,17 +36,35 @@ droids:0   ready:0   blocked:0   done:52
 **Session name:** `luke-skywalker`
 
 ### What was done
-1. **PR #78 merged** — squash `c9fedf5`. Gate failure was `gates.json` referencing missing `check_test_hygiene.py` on `feat/obs-ui`. Cherry-picked fix `460b9e1` onto `feat/obs-ui`, CI re-ran green, merged.
-2. **Master merged into feat/global-fallback-provider** — resolved 3 conflicts (ci.yml, DECISIONS.md, acp.py took ours). Gate stays green (874 P).
-3. **Done markers created** for all built tickets: PR #78 batch (CONSOLE-PROVIDER-MGMT, OBS-CAPTURE, OBS-UI, FALLBACK-PROVIDER, DTC-1..8, SETUP-KEY-UX, PUBLIC-CLEAN-LINT, ADR-0015, CLIENT-CONNECT-GUI) + WCI + CONNECT-OMP-WSL + MODEL-DISCOVERY + CWD-CONFIG + ORCH-ROUTE.
 
-### Remaining parked (7, all blocked or design)
-- **Blocked build:** ATC (depends on everything), WCI-FOLLOWON (needs WCI on master + DSGN-WCI-PROOF approved)
-- **Design/research:** DSGN-WCI-PROOF, DSGN-WRITEBACK (authored on activation), OHMYPI-ASSESS, PROD-INSTALL (authored on activation), TIER-RECS (authored on activation), UX-POLISH (authored on activation)
-- **Spec-only:** DOGFOOD, CWD-CONFIG-VERIFY, DS-PLAN-REVIEW
+1. **PR #78 merged** — fixed gate failure (stale `test-hygiene` entry in `gates.json` on `feat/obs-ui`, cherry-picked fix `460b9e1`). Batched 15+ tickets.
 
-### What must happen next
-1. Operator writes prompts for "authored on activation" tickets
-2. DSGN-WCI-PROOF design approved → unblocks WCI-FOLLOWON
-3. WCI land on master (currently only on feat/global-fallback-provider)
-4. Then ATC adversarial audit
+2. **DSGN-WCI-PROOF §5.1 proof contract** — designed, adversarially reviewed (4 gaps found+fixed: decorator registrations, non-main configs, autouse fixtures, re-export chains), operator approved. Artifact: `/home/stack/charon-private/fleet/DSGN-WCI-5-1-PROOF.md`.
+
+3. **WCI landed on master** (PR #79) — `feat/wci-mvp`: static reconciler + depth pre-sort.
+
+4. **WCI-FOLLOWON built** (PR #80) — 4 changes:
+   - `merge_after` edge on Unit/PlanUnit schema
+   - `board.claimable` extended with certificate consumption (F1 invariant)
+   - `engine/semantic_proof.py` — 4-signal independence analysis (S1 import, S2 symbol, S3 config, S4 test)
+   - 18 tests in `test_semantic_proof.py`
+
+5. **PROD-INSTALL built** (PR #81):
+   - `charon update` subcommand (pipx/pip detection)
+   - `charon doctor --gateway` preflight (probes `/v1/models`)
+   - `install.sh` one-liner bootstrap (already complete from earlier)
+
+### Remaining (all approved by operator, prompts authored)
+
+| Ticket | Status | Owns | Key files |
+|---|---|---|---|
+| **TIER-RECS** | prompt written (`prompts/tier-recs.md`), need to author and build | `cli.py`, `recommend.py`, `config.py` | Phase B: LLM-judge tier ranking from live `/v1/models` |
+| **UX-POLISH** | prompt needs authoring, owns expanded for web items | `cli.py`, `proxy_server.py`, templates | 7 remaining items (key validation, sys.argv[0], URL hints, docs, discoverability, token cookie) |
+| **ATC** | blocked — adversarial audit of all committed work | none | Audit after all build work done |
+
+### Next session
+
+Continue building in optimized file-cluster order:
+1. **CLI cluster** — TIER-RECS + UX-POLISH together (both touch `cli.py`, single PR)
+2. **Web cluster** — UX-POLISH web items (`proxy_server.py` + templates)
+3. **ATC** — adversarial audit

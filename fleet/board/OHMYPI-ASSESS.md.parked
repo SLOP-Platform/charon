@@ -1,4 +1,4 @@
-tier: sonnet
+tier: strong
 branch: docs/ohmypi-assess
 depends_on:
 owns:

@@ -1,0 +1,11 @@
+tier: strong
+branch: feat/cwd-config-verify
+depends_on:
+owns:
+prompt: /home/stack/charon-private/prompts/cwd-config-verify.md
+# VERIFIED-BLOCKED — opencode acp does NOT read opencode.json from CWD, even in a git repo.
+# Tested 2026-07-01: temp git repo with opencode.json, launched opencode acp with cwd=repo,
+# sent initialize/session.new/session.prompt — 0 proxy hits. ACP ignores per-project config.
+# Same class of bug as OPENCODE_CONFIG_CONTENT being ignored (issue #34638).
+# Once opencode fixes ACP config initialization, this ticket becomes buildable:
+# write per-run opencode.json to worktree dir, launch ACP from there, proxy routing works.

@@ -16,7 +16,7 @@
 # (claim once, stand down when empty); raise `--retries` to ride out longer dependency gaps.
 set -euo pipefail
 FLEET="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-usage(){ echo "usage: fleet-droid.sh <low|med|high|opus|sonnet|haiku> [--wait <min>] [--retries <n>] [--patience <cycles>]"; exit 2; }
+usage(){ echo "usage: fleet-droid.sh <frontier|strong|economy|low|med|high|opus|sonnet|haiku> [--wait <min>] [--retries <n>] [--patience <cycles>]"; exit 2; }
 TIER=""; WAIT_MIN=3; RETRIES=6; PATIENCE=1
 while [ $# -gt 0 ]; do case "$1" in
   --wait)     WAIT_MIN="${2:?--wait needs minutes}"; shift 2;;

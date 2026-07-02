@@ -1,4 +1,4 @@
-tier: opus
+tier: frontier
 branch: feat/tier-model-recommendations
 depends_on:
 owns: src/charon/cli.py, src/charon/recommend.py, src/charon/config.py   # recommend.py is a NEW module; PROVISIONAL — finalize at activation

@@ -7,7 +7,8 @@ dependency-minimizing waves, every ticket workable by a NON-Claude model via a N
 ## File-ownership / collision matrix (buildable set)
 | File | Ticket(s) | Verdict |
 |---|---|---|
-| `adapters/acp.py` | OBS-CAPTURE | sole writer (after fix below) |
+| `adapters/acp.py` | OBS-CAPTURE | sole writer |
+| `ports/backend.py`, `adapters/mock.py`, `coordinator.py`, `decompose.py` | OBS-CAPTURE | sole writer (state_dir seam, post-DS-PLAN-REVIEW) |
 | `proxy_server.py`, `console_work.py` | OBS-UI | sole writer |
 | `connect.py` | CLIENT-CONNECT-GUI | sole writer |
 | `api.py`, `ports/agent_launch.py` | ORCH-ROUTE | sole writer |
@@ -15,24 +16,27 @@ dependency-minimizing waves, every ticket workable by a NON-Claude model via a N
 | `docs/adr/0015-*`, `docs/DECISIONS.md` | ADR-0015 | sole writer |
 | (none — research/design) | DSGN-WCI-PROOF, OHMYPI-ASSESS | no files |
 
-**One collision found & fixed:** OBS-CAPTURE originally "may extend to `engine/scheduler.py`" for a
-log-path seam → that collides with WCI (owns `scheduler.py`). **Fix: scope OBS-CAPTURE to
-`adapters/acp.py` ONLY** — derive the per-unit log path from the worktree `acp._start` already
-receives (no runner change). Now every buildable ticket is the SOLE writer of its files → no merges
-needed, all splits are already optimal (one writer per file).
+**Collision resolved (post-DS-PLAN-REVIEW, operator-approved 2026-06-28):** the original
+worktree-derived log-path assumption was refuted — `acp._start` cannot recover the durable per-unit
+ledger dir from `worktree` alone. **Fix: thread a `state_dir: Path` seam into
+`AgentBackend.dispatch()`** — adds 4 helper files to OBS-CAPTURE's owns (`ports/backend.py`,
+`adapters/mock.py`, `coordinator.py`, `decompose.py`), none of which collide with WCI (which owns
+`engine/{reconcile,scheduler,board}.py`). The scheduler path is not touched — it delegates to
+`coordinator.run()` which already has the ledger in scope. Every buildable ticket is still the SOLE
+writer of its files → no merges needed, all splits are already optimal (one writer per file).
 
 ## Optimal sequence (waves)
 **WAVE 1 — launch all together (mutually disjoint, full concurrency):**
-- ADR-0015 [opus] · DSGN-WCI-PROOF [opus, design] · OBS-CAPTURE [sonnet] · OBS-UI [opus] ·
-  CLIENT-CONNECT-GUI [sonnet] · ORCH-ROUTE [opus] · OHMYPI-ASSESS [sonnet, research]
+- ADR-0015 [frontier] · DSGN-WCI-PROOF [opus, design] · OBS-CAPTURE [strong] · OBS-UI [frontier] ·
+  CLIENT-CONNECT-GUI [strong] · ORCH-ROUTE [frontier] · OHMYPI-ASSESS [sonnet, research]
 - Rationale: zero shared files; ADR-0015 + DSGN-WCI-PROOF also unblock Wave 2/3 the soonest.
 
 **WAVE 2 — after ADR-0015 merges:**
-- WCI [opus] (`real-dep: ADR-0015` — must build against a signed design). Disjoint from any
+- WCI [frontier] (`real-dep: ADR-0015` — must build against a signed design). Disjoint from any
   leftover Wave-1 work (OBS-CAPTURE is now acp-only), so it overlaps freely.
 
 **WAVE 3 — after WCI merges AND DSGN-WCI-PROOF approved:**
-- WCI-FOLLOWON [opus] (auto-slice; needs BOTH the MVP and the §5.1 proof). LARGE; deferred per
+- WCI-FOLLOWON [frontier] (auto-slice; needs BOTH the MVP and the §5.1 proof). LARGE; deferred per
   operator until production-ready.
 
 **WAVE 4 — after all build work merges:**

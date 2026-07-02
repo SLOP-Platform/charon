@@ -1,4 +1,4 @@
-tier: sonnet
+tier: strong
 branch: feat/connect-omp-wsl
 depends_on: OHMYPI-ASSESS
 real-dep: OHMYPI-ASSESS must determine omp 16.2.2's real custom-provider config schema before the omp writer can be fixed — a true research/correctness prereq, not merge-order.

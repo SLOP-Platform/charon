@@ -4,9 +4,27 @@ Resume doc for a fresh MANAGER session. Read `/home/stack/.claude/projects/-home
 + this + `/home/stack/charon-private/fleet/WORKFLOW.md` first, then run
 `bash /home/stack/charon-private/fleet/board.sh` · `validate_board.sh`.
 
-## STATE — board FULLY CLEAR (no active tickets, no open PRs)
-The autonomous-ticket-runner cluster shipped + was **certified live** this session. Backlog is
-ticketed, optimized into waves, and parked.
+## STATE — CONSOLE-PROVIDER-MGMT LIVE + IN FLIGHT (via opencode, no PR yet)
+This was a FOCUSED manager session: unparked `CONSOLE-PROVIDER-MGMT` (board GREEN; owns
+`proxy_server.py`+`config.py`, both hand-offs historical/DONE — no live co-writer since OBS-UI stays
+parked). **opencode is working the ticket** (operator's "work tickets" flow, not a fleet-droid tab).
+NO branch/PR has appeared yet.
+
+**WHEN THE PR LANDS — manager gate sequence (this ticket is SECURITY-CRITICAL):** (1) spawn a
+read-only adversarial review of key-handling + auth — keys never echoed/logged, last-4 only,
+`secrets.json` 0600, unauth rejected, real-completion key-validation probe; (2) eyeball the diff
+yourself (green gate ≠ proof); (3) live-verify against 4-LOM gateway (http://10.0.1.60:8080, token
+in 4-LOM .env — never print/commit). Then gate + land. Everything else in the backlog stays ON HOLD.
+
+**opencode config touched this session:** added `"external_directory": "allow"` to
+`/home/stack/.config/opencode/opencode.json` (kills file/folder-access prompts; takes effect next
+opencode launch). DEFERRED hygiene item: that file still has the **gateway token hardcoded in
+plaintext** (`apiKey`); swap to `{env:CHARON_GATEWAY_TOKEN}` form (per its `.proofbak`) AFTER the
+ticket lands + after confirming the env var is exported in opencode's shell — else it breaks auth.
+
+## PRIOR STATE (still true) — autonomous-ticket-runner cluster shipped + certified
+The cluster shipped + was **certified live** a prior session. Rest of backlog is ticketed, optimized
+into waves, and parked (see below).
 
 ## SHIPPED THIS SESSION (merged #68–#75)
 - **#68 WGW** — `charon work` forwards `CHARON_GATEWAY_TOKEN` to the spawned acp agent (fixed 401).
@@ -39,7 +57,7 @@ ticket's `depends_on` + `## Dependencies & sequence`. Unpark = `mv <id>.md.parke
   ORCH-ROUTE [opus, api+agent_launch], OHMYPI-ASSESS [sonnet, research].
 - **Wave 2 (after ADR-0015):** WCI [opus, engine/{reconcile,scheduler,board}.py].
 - **Wave 3 (after WCI + DSGN-WCI-PROOF approved):** WCI-FOLLOWON [opus, auto-slice; LARGE, deferred].
-- **Wave 4 (after all above):** ATC [opus] — adversarial audit of ALL committed work → findings +
+- **Wave 4 (after all above):** ATC [frontier] — adversarial audit of ALL committed work → findings +
   fix tickets (owns nothing, runs last).
 
 ## ALSO PARKED (older on-hold; NOT in the wave schedule — revisit at production-readiness)
@@ -66,5 +84,5 @@ re-confirm OP-owned decisions. Product ships standalone — no rig/SLOP/runner l
 
 ## NEW-SESSION BOOTSTRAP ONE-LINER
 ```
-You are the Charon fleet MANAGER. Read /home/stack/.claude/projects/-home-stack-code-charon/memory/MEMORY.md + /home/stack/charon-private/fleet/HANDOFF.md + /home/stack/charon-private/fleet/WORKFLOW.md; run board.sh/validate_board.sh. Board is CLEAR; the autonomous-ticket-runner cluster shipped+certified. Backlog is optimized into waves (fleet/OPTIMIZATION-PASS.md): Wave 1 = ADR-0015/DSGN-WCI-PROOF/OBS-CAPTURE/OBS-UI/CLIENT-CONNECT-GUI/ORCH-ROUTE/OHMYPI-ASSESS (all disjoint, parallel); then WCI; then WCI-FOLLOWON; then ATC (audit) last. STANDING RULE: every ticket carries a ## Dependencies & sequence section (validate_board hard-fails without it). Operator opens droid tabs (fleet-droid.sh <tier> --wait 3 --retries 10) + merges; manager gates/recovers; eyeball correctness before merge. Check the SLOP D&S audit sub-session's result. Pause after any question/handed-action; token-conscious; "TL" = terse status.
+You are the Charon fleet MANAGER — FOCUSED session: ship CONSOLE-PROVIDER-MGMT (token-gated provider/model mgmt panel in the web console). Read /home/stack/.claude/projects/-home-stack-code-charon/memory/MEMORY.md + /home/stack/charon-private/fleet/HANDOFF.md; run board.sh/validate_board.sh. The ticket is LIVE (board GREEN) and opencode is working it via the "work tickets" flow — NO PR yet. When a branch/PR appears: (1) spawn read-only ADVERSARIAL review of key-handling+auth (keys never echoed/logged, last-4 only, secrets.json 0600, unauth rejected, real key-validation probe), (2) eyeball the diff yourself (green gate ≠ proof), (3) live-verify vs 4-LOM gateway http://10.0.1.60:8080 (token in 4-LOM .env, never print/commit), then gate+land. Owns proxy_server.py → keep OBS-UI parked (serialize). DEFERRED: swap opencode's plaintext gateway token in /home/stack/.config/opencode/opencode.json to {env:CHARON_GATEWAY_TOKEN} after the ticket lands + env var confirmed. Everything else in the backlog is ON HOLD. Pause after any question/handed-action; token-conscious; "TL" = terse status.
 ```

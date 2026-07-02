@@ -1,8 +1,8 @@
-tier: opus
+tier: frontier
 branch: docs/dsgn-writeback
 depends_on:
 owns:
-prompt: /home/stack/charon-private/prompts/dsgn-writeback.md
+prompt: (authored on activation)
 scope: DESIGN PASS (not a droid build yet). Close-the-loop: report COMPLETED work back to the
   source tracker via a GENERAL, opt-in, gated `TicketSink` mirroring the read adapter. On
   completing a ticket, mark the source item IN-REVIEW / pending-verify (do NOT auto-close) and

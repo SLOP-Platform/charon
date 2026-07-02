@@ -6,6 +6,16 @@ way `DSGN-WCI-reshape.md` was produced (manager design sub-session → adversari
 synthesize → operator sign-off). No `src/charon` code, no engine module, no PR-to-master
 build. The artifact is a rig design doc.
 
+## Dependencies & sequence
+
+- **Wave:** 0 (foundation design — no code dependency)
+- **depends_on:** none (design/proof pass; independent of any build; reasons about import/symbol/config/test coupling with zero engine code needed)
+- **Concurrency:** safe to run in parallel with ADR-0015, WCI-MVP, and any other ticket
+- **Blocks:** WCI-FOLLOWON (needs both WCI-MVP landed AND this proof approved)
+- **Type:** design/proof-pass — produces a rig-internal design doc only; no `src/` code, no product repo PR
+
+## Scope
+
 Source of truth (read first):
 - `/home/stack/charon-private/fleet/DSGN-WCI-reshape.md` §5 (open question 1 — "Semantic-
   independence proof contract is undefined (highest risk)"), §7.1 (the F1 invariant that

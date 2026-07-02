@@ -1,4 +1,4 @@
-tier: opus
+tier: frontier
 branch: docs/atc-audit
 depends_on: ADR-0015, OBS-CAPTURE, OBS-UI, CLIENT-CONNECT-GUI, ORCH-ROUTE, WCI, WCI-FOLLOWON
 dep-kind: build

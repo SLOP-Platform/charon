@@ -1,4 +1,4 @@
-tier: opus
+tier: frontier
 branch: docs/wci-5-1-proof
 depends_on:
 owns:

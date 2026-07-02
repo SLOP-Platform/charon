@@ -1,4 +1,4 @@
-tier: opus
+tier: frontier
 branch: docs/adr-0015-wci-reconcile-ordering
 depends_on:
 owns: docs/adr/0015-work-composition-intelligence.md, docs/DECISIONS.md

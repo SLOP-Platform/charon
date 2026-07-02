@@ -1,0 +1,7 @@
+tier: strong
+branch: feat/dtc-parametrize
+depends_on: DTC-2, DTC-3
+owns: tests/test_fence.py, tests/test_failover.py, tests/test_decompose.py
+accept: PYTHONPATH=src python3 -m pytest -q tests/test_fence.py tests/test_failover.py tests/test_decompose.py
+prompt: /home/stack/charon-private/prompts/dtc-6.md
+# BACKLOG (parked) — sweep test files for parametrization: convert pattern-repeating test functions into @pytest.mark.parametrize. Start with test_fence.py (7 per-policy tests → 1 parametrized), test_failover.py, test_decompose.py.

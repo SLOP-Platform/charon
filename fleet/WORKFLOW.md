@@ -7,6 +7,10 @@ fleet runs. Two roles, never blurred:
 - **MANAGER** (a watching Claude session) gates + merges + unblocks. **Never** launches
   droids (`fleet-droid.sh`/`claude --bg`) and never pushes (blocked).
 
+**Startup:** Read `SESSION-HANDOFF.md` (canonical handoff — replaces archived
+`HANDOFF.md`/`HANDOFF-CONTINUE.md`/`SESSION-RESTART.md`), then `AGENTS.md`.
+Run `status.sh` + `validate_board.sh`. Re-derive live state; never trust a typed SHA.
+
 Ticket pool: `board/<ID>.md` (metadata) + `../prompts/<id>.md` (work spec).
 State (runtime, git-ignored): `state/{claims,submitted,done}/<ID>`.
 
@@ -194,6 +198,10 @@ auditable. Only *live* dependents are checked — a done ticket's dep blocks not
   when the **AUTONOMOUS** lever is ON (else the operator pushes).
 - Privileged core = **stdlib-only**; no `pip install -e`; **no secrets** committed.
 - One file is owned by exactly one in-flight ticket. Need another's file → STOP.
+- **Tier names must be provider-agnostic** — use `frontier`/`strong`/`economy` (NOT
+  `opus`/`sonnet`/`haiku`) in every board ticket, prompt, fleet doc, and handoff. The tier
+  system canonicalizes opus/haiku as legacy aliases; new work MUST use the generic names.
+  `validate_board.sh` already accepts both, but the standard is frontier/strong/economy.
 - Gate green every commit; conventional commits; per-ticket review-log fragment.
 - A review/DTC that overturns an `OP`-owned decision must be **re-confirmed**, not
   auto-reconciled.
