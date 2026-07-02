@@ -210,7 +210,8 @@ def _cmd_providers(args: argparse.Namespace) -> int:
                   f"with `charon providers add {args.name}`", file=sys.stderr)
             return 2
         path = secrets.set_secret(key_env, value)
-        print(f'stored {key_env} in {path} (0600) + provider "{args.name}" in config.')
+        print(f'stored {key_env} in {path} (0600) {_mask_key(value)}'
+              f' + provider "{args.name}" in config.')
         return 0
     if args.action == "test":
         return _provider_test(args.name, args.base_url)
@@ -248,7 +249,8 @@ def _import_models(name: str, *, free_only: bool = False, into_pool: str | None 
         return None
     if free_only:
         found = [m for m in found if m["free"]]
-    _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio")
+    _META_KEYS = ("cost_input", "cost_output", "context_window", "max_tokens",
+                  "reasoning", "vision", "audio")
     entries = []
     for m in found:
         entry = {"id": m["id"], "free": m["free"],
@@ -288,6 +290,60 @@ def _ansi_emph(text: str) -> str:
     if not sys.stdout.isatty():
         return text
     return f"\x1b[1;36m{text}\x1b[0m"
+
+
+def _mask_key(key: str) -> str:
+    """Safe representation: length + last 4 chars. Short keys echo in quotes."""
+    if not key:
+        return ""
+    if len(key) <= 4:
+        return f"({len(key)} chars, ends in {key!r})"
+    return f"({len(key)} chars, ends in ...{key[-4:]})"
+
+
+def _probe_key(preset: object, api_key: str) -> str | None:
+    """Probe a provider with a minimal chat completion to validate the key.
+    Returns None on success, or an error message string on failure.
+    Security: refuses non-http(s) and link-local bases (SSRF guard)."""
+    import urllib.error
+    import urllib.request
+    from urllib.parse import urlsplit
+
+    base = getattr(preset, "base_url", None)
+    if not base:
+        return None
+    parts = urlsplit(base)
+    if parts.scheme not in ("http", "https"):
+        return f"refusing non-http(s) base {parts.scheme!r}"
+    host = parts.hostname or ""
+    if host.startswith("169.254.") or host == "metadata.google.internal":
+        return "refusing link-local / metadata host"
+
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *a, **k):
+            return None
+
+    opener = urllib.request.build_opener(_NoRedirect())
+    raw_base = base.rstrip("/")
+    body = json.dumps({
+        "model": ".",
+        "messages": [{"role": "user", "content": "hi"}],
+        "max_tokens": 1,
+    }).encode()
+    try:
+        req = urllib.request.Request(raw_base + "/chat/completions", data=body, method="POST")
+        req.add_header("User-Agent", "charon-proxy/0.1")
+        req.add_header("Content-Type", "application/json")
+        req.add_header("Authorization", "Bearer " + api_key)
+        resp = opener.open(req, timeout=15.0)
+        resp.read(1024)
+        return None  # success
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            return f"key rejected (HTTP {exc.code})"
+        return f"probe failed (HTTP {exc.code})"
+    except Exception:  # noqa: S112 — network probe, any transport error is handled
+        return "provider unreachable or probe timed out"
 
 
 def _cmd_setup(args: argparse.Namespace) -> int:
@@ -348,7 +404,12 @@ def _cmd_setup(args: argparse.Namespace) -> int:
                 if key:
                     secrets.set_secret(key_env, key)
                     stored = True
-                    print(f"  key stored (0600, as {key_env})")
+                    print(f"  key stored (0600, as {key_env}) {_mask_key(key)}")
+                    err = _probe_key(preset, key)
+                    if err:
+                        print(f"  WARNING: key check failed — {err}", file=sys.stderr)
+                    else:
+                        print("  key validated")
             else:
                 print(f"  added '{name}' (local provider — no key needed)")
             # offer a catalog import when we can actually reach /models (have a key, or
