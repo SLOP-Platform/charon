@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import providers
+from .cli import _invocation_name
 from .netutil import is_loopback
 from .proxy_server import GatewayProxyServer, UpstreamRoute
 
@@ -360,14 +361,24 @@ def run(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> int:
         print(str(exc), file=sys.stderr)
         return 2
     if not cfg.routes and not cfg.pools:
-        print("warning: no models configured — run `charon setup`, "
-              "`charon providers add <name>`, or open the setup page below",
+        print(f"warning: no models configured — run `{_invocation_name()} setup`, "
+              f"`{_invocation_name()} providers add <name>`, or open the setup page below",
               file=sys.stderr)
     gate = "token-gated" if cfg.token else "loopback, UNGATED"
     print(f"charon gateway ({gate}) on {server.url}/v1 — "
           f"{len(cfg.model_ids)} model(s), {len(cfg.pools)} pool(s)", file=sys.stderr)
     tq = f"?token={cfg.token}" if cfg.token else ""
-    print(f"  console: {server.url}/{tq}", file=sys.stderr)
+    if cfg.host in ("127.0.0.1", "localhost", "::1"):
+        print(f"  console: {server.url}/{tq} (local only)", file=sys.stderr)
+    elif cfg.host == "0.0.0.0":
+        import socket
+        try:
+            lan = socket.gethostbyname(socket.gethostname())
+        except OSError:
+            lan = "localhost"
+        print(f"  console: http://{lan}:{cfg.port}/{tq} (LAN)", file=sys.stderr)
+    else:
+        print(f"  console: {server.url}/{tq}", file=sys.stderr)
     if setup_dir is not None:
         print(f"  setup:   {server.url}/charon/setup{tq}", file=sys.stderr)
     try:

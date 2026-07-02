@@ -1,0 +1,94 @@
+"""Tests for charon.recommend — tier ranking from live catalogs."""
+from __future__ import annotations
+
+from charon.recommend import TierRecommendation, _heuristic_rank, recommend_tiers
+
+
+def test_heuristic_rank_free_model():
+    catalog = [{"id": "free-model", "free": True}]
+    recs = _heuristic_rank(catalog)
+    tiers = {r.tier: r.model_ids for r in recs}
+    assert "free-model" in tiers.get("low", [])
+
+
+def test_heuristic_rank_small_model():
+    catalog = [{"id": "llama-3-8b", "free": False}]
+    recs = _heuristic_rank(catalog)
+    tiers = {r.tier: r.model_ids for r in recs}
+    assert "llama-3-8b" in tiers.get("low", [])
+
+
+def test_heuristic_rank_haiku():
+    catalog = [{"id": "claude-haiku-3.5", "free": False}]
+    recs = _heuristic_rank(catalog)
+    tiers = {r.tier: r.model_ids for r in recs}
+    assert "claude-haiku-3.5" in tiers.get("low", [])
+
+
+def test_heuristic_rank_frontier():
+    catalog = [{"id": "claude-3.5-sonnet", "free": False}]
+    recs = _heuristic_rank(catalog)
+    tiers = {r.tier: r.model_ids for r in recs}
+    assert "claude-3.5-sonnet" in tiers.get("high", [])
+
+
+def test_heuristic_rank_large_context():
+    catalog = [{"id": "some-model", "context_window": 200000, "free": False}]
+    recs = _heuristic_rank(catalog)
+    tiers = {r.tier: r.model_ids for r in recs}
+    assert "some-model" in tiers.get("high", [])
+
+
+def test_heuristic_rank_default_med():
+    catalog = [{"id": "generic-model", "free": False, "context_window": 4096}]
+    recs = _heuristic_rank(catalog)
+    tiers = {r.tier: r.model_ids for r in recs}
+    assert "generic-model" in tiers.get("med", [])
+
+
+def test_heuristic_rank_returns_three_tiers():
+    catalog = [{"id": "m1", "free": False}]
+    recs = _heuristic_rank(catalog)
+    assert len(recs) == 3
+    tier_names = {r.tier for r in recs}
+    assert tier_names == {"low", "med", "high"}
+
+
+def test_heuristic_rank_covers_all_models():
+    catalog = [
+        {"id": "claude-3.5-sonnet", "free": False},
+        {"id": "gpt-4o", "free": False},
+        {"id": "llama-3-8b", "free": False},
+        {"id": "generic-model", "free": False},
+    ]
+    recs = _heuristic_rank(catalog)
+    all_assigned = set()
+    for r in recs:
+        all_assigned.update(r.model_ids)
+    assert all_assigned == {"claude-3.5-sonnet", "gpt-4o", "llama-3-8b", "generic-model"}
+
+
+def test_recommend_tiers_falls_back_with_no_trusted_models(tmp_path):
+    catalog = [{"id": "claude-3.5-sonnet", "free": False}, {"id": "haiku", "free": False}]
+    recs = recommend_tiers("test-provider", catalog, config_dir=str(tmp_path))
+    assert len(recs) == 3
+    all_ids = set()
+    for r in recs:
+        all_ids.update(r.model_ids)
+    assert all_ids == {"claude-3.5-sonnet", "haiku"}
+
+
+def test_recommend_tiers_anti_hallucination(tmp_path):
+    catalog = [{"id": "real-model", "free": False}]
+    recs = recommend_tiers("test-provider", catalog, config_dir=str(tmp_path))
+    all_ids = set()
+    for r in recs:
+        all_ids.update(r.model_ids)
+    assert "hallucinated-model" not in all_ids
+    assert "real-model" in all_ids
+
+
+def test_tier_recommendation_dataclass():
+    r = TierRecommendation("high", ["m1", "m2"])
+    assert r.tier == "high"
+    assert r.model_ids == ["m1", "m2"]

@@ -129,21 +129,21 @@ def test_providers_add_custom_persists_provider(monkeypatch, tmp_path):
 # ----------------------------------------------- S1: sandbox policy (D013)
 
 def test_sandbox_policy_default_is_hybrid():
-    assert load_sandbox_policy({}) is SandboxPolicy.HYBRID
+    assert load_sandbox_policy({}) == SandboxPolicy.HYBRID
 
 
 def test_sandbox_policy_reads_env_var():
-    assert load_sandbox_policy({"CHARON_SANDBOX": "container"}) is SandboxPolicy.CONTAINER
-    assert load_sandbox_policy({"CHARON_SANDBOX": "host"}) is SandboxPolicy.HOST
-    assert load_sandbox_policy({"CHARON_SANDBOX": "hybrid"}) is SandboxPolicy.HYBRID
+    assert load_sandbox_policy({"CHARON_SANDBOX": "container"}) == SandboxPolicy.CONTAINER
+    assert load_sandbox_policy({"CHARON_SANDBOX": "host"}) == SandboxPolicy.HOST
+    assert load_sandbox_policy({"CHARON_SANDBOX": "hybrid"}) == SandboxPolicy.HYBRID
 
 
 def test_sandbox_policy_case_insensitive():
-    assert load_sandbox_policy({"CHARON_SANDBOX": "CONTAINER"}) is SandboxPolicy.CONTAINER
-    assert load_sandbox_policy({"CHARON_SANDBOX": "HOST"}) is SandboxPolicy.HOST
-    assert load_sandbox_policy({"CHARON_SANDBOX": "Hybrid"}) is SandboxPolicy.HYBRID
+    assert load_sandbox_policy({"CHARON_SANDBOX": "CONTAINER"}) == SandboxPolicy.CONTAINER
+    assert load_sandbox_policy({"CHARON_SANDBOX": "HOST"}) == SandboxPolicy.HOST
+    assert load_sandbox_policy({"CHARON_SANDBOX": "Hybrid"}) == SandboxPolicy.HYBRID
 
 
 def test_sandbox_policy_invalid_value_falls_back_to_hybrid():
-    assert load_sandbox_policy({"CHARON_SANDBOX": "bogus"}) is SandboxPolicy.HYBRID
-    assert load_sandbox_policy({"CHARON_SANDBOX": ""}) is SandboxPolicy.HYBRID
+    assert load_sandbox_policy({"CHARON_SANDBOX": "bogus"}) == SandboxPolicy.HYBRID
+    assert load_sandbox_policy({"CHARON_SANDBOX": ""}) == SandboxPolicy.HYBRID

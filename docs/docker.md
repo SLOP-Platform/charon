@@ -14,6 +14,21 @@ on a persistent `/data` volume; they are never baked into the image.
 
 ---
 
+## Prerequisites
+
+Your user must be in the `docker` group, otherwise you'll get a
+`permission denied … /var/run/docker.sock` error:
+
+```bash
+sudo usermod -aG docker $USER
+```
+
+Log out and back in (or start a new login shell with `newgrp docker`) for the
+group change to take effect. Alternatively, prefix every `docker compose` /
+`docker run` command with `sudo`.
+
+---
+
 ## Quick start (compose)
 
 ```bash

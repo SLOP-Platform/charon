@@ -155,8 +155,9 @@ def _path(name: str) -> Path:
     return secrets.config_dir() / name
 
 
-def _load(name: str) -> dict:
-    p = _path(name)
+def _load(name: str, *, config_dir: str | Path | None = None) -> dict:
+    d = Path(config_dir) if config_dir is not None else secrets.config_dir()
+    p = d / name
     if not p.exists():
         return {}
     try:
@@ -176,12 +177,12 @@ def _save(name: str, data: dict) -> Path:
     return p
 
 
-def load_providers() -> dict:
-    return _load("providers.json")
+def load_providers(*, config_dir: str | Path | None = None) -> dict:
+    return _load("providers.json", config_dir=config_dir)
 
 
-def load_models() -> dict:
-    return _load("models.json")
+def load_models(*, config_dir: str | Path | None = None) -> dict:
+    return _load("models.json", config_dir=config_dir)
 
 
 def load_pools() -> dict:

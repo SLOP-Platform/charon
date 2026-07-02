@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import providers
+from .cli import _invocation_name
 
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = 8080
@@ -470,7 +471,7 @@ def run_connect(
     except GatewayUnreachable as exc:
         _eprint(f"error: {exc}")
         _eprint("  the Charon gateway must be running first — start it with:")
-        _eprint("    charon gateway")
+        _eprint(f"    {_invocation_name()} gateway")
         if not tok:
             _eprint("  (if your gateway needs a token, pass --token or set "
                     "CHARON_GATEWAY_TOKEN)")
@@ -486,7 +487,8 @@ def run_connect(
         chosen = ids[0]
     else:
         _eprint("error: the gateway is reachable but serves no models — add one "
-                "with `charon setup` / `charon models import <provider>`, then retry.")
+                f"with `{_invocation_name()} setup` / "
+                f"`{_invocation_name()} models import <provider>`, then retry.")
         return 1
 
     # 3. Install the client if missing (only with --install); else just advise.

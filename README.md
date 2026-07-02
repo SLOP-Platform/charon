@@ -21,7 +21,10 @@ New here? Start with [getting started](docs/getting-started.md).
 > In **Gateway** mode, Charon never touches your code or your tickets — it only answers API calls.
 > In **Orchestrator** mode, Charon *is* the one doing the coding work.
 
-### Mode A — Gateway (the default, ~80% of users)
+### (A) GATEWAY — the default (~80% of users)
+
+Charon is *only* the LLM backend. You point your own agent at your own repo;
+Charon never touches tickets or repos — it just answers API calls.
 
 ```bash
 charon setup          # guided: add providers, keys, and models
@@ -30,7 +33,11 @@ charon gateway        # serves http://127.0.0.1:8080/v1
 
 Point your client's base URL at `http://127.0.0.1:8080/v1`. Full install and setup in [Install](#install) and [Quick start](#quick-start) below.
 
-### Mode B — Orchestrator (opt-in)
+### (B) ORCHESTRATOR — opt-in
+
+Charon *is* the worker. You point Charon at a repo with `--repo` and feed it work
+via `charon work` / `charon intake`; it drives a coding agent through each task
+and opens a PR per task — a human merges.
 
 ```bash
 charon intake import my-tasks.md          # turn your to-do list into a plan
@@ -39,7 +46,7 @@ charon work --units my-tasks.md.plan.json \
             --backend acp --acp-cmd 'opencode acp'
 ```
 
-Charon drives a coding agent through each task and opens a PR per task — a human merges. Full details in [Work engine (opt-in)](#work-engine-opt-in) below.
+Full details in [Work engine (opt-in)](#work-engine-opt-in) below.
 
 ---
 
@@ -120,6 +127,9 @@ Presets: `openrouter, nanogpt, zai, deepseek, chutes, groq, together, mistral,
 opencode-zen, opencode-go, lmstudio, jan, ollama, local`. Keys are stored `0600` in
 `~/.charon/secrets.json` (`%APPDATA%\charon` on Windows) — never in config, never in
 the repo. Prefer a browser? Open `http://127.0.0.1:8080/charon/setup`.
+
+> **Note:** editing `~/.charon/secrets.json` by hand requires a `charon gateway`
+> restart to take effect — config is loaded at startup, not per-request.
 
 ## Connect a client
 

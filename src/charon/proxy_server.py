@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import collections
 import hmac
+import http.cookies
 import http.server
 import json
 import socketserver
@@ -75,6 +76,9 @@ th,td{text-align:left;padding:.3rem .6rem;border-bottom:1px solid #313244}
 code{background:#1e1e2e;padding:.1rem .3rem;border-radius:3px}
 </style></head><body>
 <h1>Charon Gateway <span class=muted id=ts></span></h1>
+<div style="margin-bottom:.6rem">
+<a href="/charon/setup" id=setupLink style="color:#89b4fa;text-decoration:none">⚙ Setup</a>
+</div>
 <div id=usage></div>
 <h2>Providers</h2><table id=providers><thead><tr><th>provider<th>served<th>failed
 <th>errors<th>cost $<th>last<th>cooldown</tr></thead><tbody></tbody></table>
@@ -84,6 +88,8 @@ code{background:#1e1e2e;padding:.1rem .3rem;border-radius:3px}
 <script>
 const tok=new URLSearchParams(location.search).get('token');
 const q=tok?('?token='+encodeURIComponent(tok)):'';
+const setupLink = document.getElementById('setupLink');
+if (tok) setupLink.href = '/charon/setup?token=' + encodeURIComponent(tok);
 function esc(s){return String(s).replace(/[&<>"']/g,
   c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 async function tick(){
@@ -174,7 +180,11 @@ code{background:#1e1e2e;padding:.1rem .3rem;border-radius:3px}.ok{color:#a6e3a1}
 table{border-collapse:collapse;width:100%}
 td,th{text-align:left;padding:.2rem .5rem;border-bottom:1px solid #313244}
 </style></head><body>
-<h1>Charon Setup</h1><div id=msg class=muted></div>
+<h1>Charon Setup</h1>
+<div style="margin-bottom:.6rem">
+<a href="/" id=dashLink style="color:#89b4fa;text-decoration:none">← Dashboard</a>
+</div>
+<div id=msg class=muted></div>
 <fieldset><h2>Add provider</h2>
 <div><label>name</label>
   <input id=pname list=presets placeholder="openrouter / deepseek / my-provider">
@@ -215,6 +225,8 @@ td,th{text-align:left;padding:.2rem .5rem;border-bottom:1px solid #313244}
 <h2>Current config</h2><div id=cfg></div>
 <script>
 const tok=new URLSearchParams(location.search).get('token');
+const dashLink = document.getElementById('dashLink');
+if (tok) dashLink.href = '/?token=' + encodeURIComponent(tok);
 const H=Object.assign({'Content-Type':'application/json'},tok?{'Authorization':'Bearer '+tok}:{});
 function esc(s){return String(s).replace(/[&<>"']/g,
   c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
@@ -356,6 +368,7 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
+        self._maybe_set_token_cookie()
         self.end_headers()
         try:
             self.wfile.write(data)
@@ -367,6 +380,7 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
+        self._maybe_set_token_cookie()
         self.end_headers()
         try:
             self.wfile.write(data)
@@ -374,8 +388,8 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
             pass
 
     def _authorized(self, token: str) -> bool:
-        """Bearer token via ``Authorization`` header or ``?token=`` query (so a
-        browser URL works); constant-time compare to avoid leaking via timing."""
+        """Bearer token via ``Authorization`` header, ``?token=`` query, or
+        ``charon_token`` cookie; constant-time compare to avoid leaking via timing."""
         presented = ""
         auth = self.headers.get("Authorization", "")
         if auth.startswith("Bearer "):
@@ -383,7 +397,22 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
         if not presented:
             qs = parse_qs(urlsplit(self.path).query)
             presented = (qs.get("token") or [""])[0]
+        if not presented:
+            cookie_header = self.headers.get("Cookie", "")
+            cookies = http.cookies.SimpleCookie()
+            cookies.load(cookie_header)
+            cookie_token = cookies.get("charon_token")
+            if cookie_token:
+                presented = cookie_token.value
         return bool(presented) and hmac.compare_digest(presented, token)
+
+    def _maybe_set_token_cookie(self) -> None:
+        """If this request authenticated via ``?token=``, set a short-lived cookie
+        so subsequent page loads don't need the token in the URL."""
+        v = getattr(self, '_set_token_cookie', None)
+        if v:
+            self.send_header("Set-Cookie",
+                f"charon_token={v}; Path=/; HttpOnly; SameSite=Lax; Max-Age=900")
 
     # ---- helpers ---------------------------------------------------------
 
@@ -421,6 +450,7 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                              "; ".join(f"{f['provider']}={f['status']}" for f in failovers))
         if downgrade:
             self.send_header("X-Charon-Downgrade", "served a different model than requested")
+        self._maybe_set_token_cookie()
         self.end_headers()
 
     def _build_upstream_req(self, srv, route: UpstreamRoute, orig_bj: dict,
@@ -482,6 +512,14 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
         if srv.token is not None and not self._authorized(srv.token):
             self._json(401, {"error": {"message": "missing or invalid bearer token"}})
             return
+
+        # If auth was via ?token= query param, set a short-lived cookie so
+        # subsequent page loads don't need the token in the URL.
+        if srv.token is not None:
+            qs = parse_qs(urlsplit(self.path).query)
+            qt = qs.get("token")
+            if qt and qt[0]:
+                self._set_token_cookie = srv.token
 
         # Aggregated model list (gateway mode). Served locally — never forwarded —
         # and field-allowlisted to ids only (no key_env/upstream_base leak, ADR R4).
