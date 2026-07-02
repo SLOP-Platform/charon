@@ -25,10 +25,17 @@ cat <<PREAMBLE
 ## Bootstrap (copy-paste one-liner into next session)
 
 \`\`\`
-cat /home/stack/charon-private/fleet/SESSION-HANDOFF.md && read -r && cat /home/stack/code/charon/AGENTS.md | head -5 && bash /home/stack/charon-private/fleet/status.sh && bash /home/stack/charon-private/fleet/validate_board.sh
+# 1. Board + register FIRST (before any work — never time out):
+#    session-bridge_board(repo="charon") → pick unused Jedi name →
+#    session-bridge_register(session_id="<jedi>", name="...", repo="charon")
+
+# 2. Ground yourself:
+cat /home/stack/charon-private/fleet/SESSION-HANDOFF.md && read -r && \\
+  bash /home/stack/charon-private/fleet/status.sh && \\
+  bash /home/stack/charon-private/fleet/validate_board.sh
 \`\`\`
 
-Then \`register\` with an unused **Jedi name** + \`repo="charon"\`, tell the operator the state and next action.
+**First action:** call \`session-bridge_board(repo="charon")\`, pick an unused Jedi name, \`register\`. Then read the handoff, run status + validate, tell operator the state.
 
 ---
 
