@@ -250,7 +250,8 @@ def _import_models(name: str, *, free_only: bool = False, into_pool: str | None 
         return None
     if free_only:
         found = [m for m in found if m["free"]]
-    _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio")
+    _META_KEYS = ("cost_input", "cost_output", "context_window", "max_tokens",
+                  "reasoning", "vision", "audio")
     entries = []
     for m in found:
         entry = {"id": m["id"], "free": m["free"],
@@ -320,6 +321,21 @@ def _cmd_models(args: argparse.Namespace) -> int:
             return 2
         res = _import_models(args.name, free_only=args.free_only, into_pool=args.into_pool)
         return 0 if res is not None else 1
+    return 2
+
+
+def _cmd_discover(args: argparse.Namespace) -> int:
+    if args.action == "openrouter":
+        from . import discover
+        dry = args.dry_run
+        print(f"Discovering models from OpenRouter{' (dry run)' if dry else ''}...")
+        result = discover.import_openrouter_models(dry_run=dry)
+        print(f"  imported: {result['imported']}")
+        print(f"  new (needs review): {result['new']}")
+        print(f"  skipped: {result['skipped']}")
+        if not dry and result["new"] > 0:
+            print("  review list → ~/.charon/discover_review.json")
+        return 0
     return 2
 
 
@@ -1582,6 +1598,13 @@ def build_parser() -> argparse.ArgumentParser:
                     help="ALSO add the imported models to this pool (opt-in; pools work "
                          "best small + cost-ranked, so this is rarely what you want)")
     md.set_defaults(func=_cmd_models)
+
+    disc = sub.add_parser("discover", help="discover models from provider APIs")
+    discsub = disc.add_subparsers(dest="action", required=True)
+    dor = discsub.add_parser("openrouter", help="import models from OpenRouter catalogue")
+    dor.add_argument("--dry-run", action="store_true",
+                     help="print counts only, do not import")
+    disc.set_defaults(func=_cmd_discover)
 
     t = sub.add_parser("tier",
                        help="Choose which models to use for each tier (low / med / high)")

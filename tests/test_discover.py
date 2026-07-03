@@ -10,7 +10,10 @@ from charon import providers
 from charon.discover import (
     build_cost_map,
     discover_models,
+    discover_openrouter,
     discover_provider,
+    fuzzy_match_model_id,
+    import_openrouter_models,
     load_cost_map,
     save_cost_map,
 )
@@ -413,3 +416,88 @@ class TestDiscoverModels:
 
         discover_models(timeout=5, config_dir=tmp_path)
         assert called_strip == [False]
+
+
+class TestOpenRouterImport:
+    def test_discover_openrouter_parses_list(self, monkeypatch, tmp_path):
+        raw = json.dumps([
+            {"id": "openai/gpt-4o", "pricing": {"prompt": "5", "completion": "15"}},
+            {"id": "anthropic/claude-sonnet", "pricing": {"prompt": "3", "completion": "15"}},
+        ]).encode()
+        monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout: _FakeResp(200, raw))
+        result = discover_openrouter()
+        assert result is not None
+        assert len(result) == 2
+
+    def test_discover_openrouter_returns_none_on_error(self, monkeypatch):
+        def _fail(*a, **kw):
+            _raise(_fake_urlerr(500))
+        monkeypatch.setattr("urllib.request.urlopen", _fail)
+        assert discover_openrouter() is None
+
+    def test_fuzzy_match_exact(self):
+        assert fuzzy_match_model_id("gpt-4o", ["gpt-4o", "claude"]) == ("gpt-4o", 1)
+
+    def test_fuzzy_match_case_insensitive(self):
+        assert fuzzy_match_model_id("GPT-4O", ["gpt-4o"]) == ("gpt-4o", 1)
+
+    def test_fuzzy_match_strips_prefix(self):
+        assert fuzzy_match_model_id("openai/gpt-4o", ["gpt-4o"]) == ("gpt-4o", 2)
+
+    def test_fuzzy_match_no_match(self):
+        assert fuzzy_match_model_id("unknown/model", ["gpt-4o"]) == (None, 0)
+
+    def test_fuzzy_match_alias_map(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+        alias_file = tmp_path / "model_aliases.json"
+        alias_file.write_text('{"custom/id": "gpt-4o"}')
+        assert fuzzy_match_model_id("custom/id", ["gpt-4o"], config_dir=tmp_path) == ("gpt-4o", 3)
+
+    def test_import_openrouter_dry_run(self, monkeypatch, tmp_path):
+        raw = json.dumps([
+            {"id": "openai/gpt-4o", "pricing": {"prompt": "5", "completion": "15"}},
+            {"id": "gpt-4o", "pricing": {"prompt": "5", "completion": "15"}},
+            {"id": "unknown/model-zzz", "pricing": {"prompt": "1", "completion": "1"}},
+        ]).encode()
+        monkeypatch.setattr("charon.discover.urllib.request.urlopen",
+                            lambda req, timeout: _FakeResp(200, raw))
+        monkeypatch.setattr("charon.discover.config.load_models",
+                            lambda **kw: {"gpt-4o": {}, "claude": {}})
+        monkeypatch.setattr("charon.discover.secrets.config_dir", lambda **kw: tmp_path)
+        result = import_openrouter_models(dry_run=True, config_dir=tmp_path)
+        assert result["imported"] == 1      # gpt-4o → gpt-4o (exact, stage 1)
+        assert result["fuzzy_review"] == 1  # openai/gpt-4o → gpt-4o (prefix, stage 2)
+        assert result["new"] == 1           # unknown/model-zzz → no match
+
+    def test_import_openrouter_writes_review(self, monkeypatch, tmp_path):
+        raw = json.dumps([
+            {"id": "brand-new-model", "pricing": {"prompt": "2", "completion": "8"}},
+        ]).encode()
+        monkeypatch.setattr("charon.discover.urllib.request.urlopen",
+                            lambda req, timeout: _FakeResp(200, raw))
+        monkeypatch.setattr("charon.discover.config.load_models", lambda **kw: {})
+        monkeypatch.setattr("charon.discover.secrets.config_dir", lambda **kw: tmp_path)
+        result = import_openrouter_models(dry_run=False, config_dir=tmp_path)
+        assert result["new"] == 1
+        assert result["imported"] == 0
+        review_file = tmp_path / "discover_review.json"
+        assert review_file.exists()
+        review = json.loads(review_file.read_text())
+        assert "brand-new-model" in review
+
+
+def _FakeResp(code, body_bytes):
+    class R:
+        def read(self):
+            return body_bytes
+    return R()
+
+
+def _raise(exc):
+    raise exc
+
+
+def _fake_urlerr(code):
+    class E(Exception):
+        pass
+    return E("error")

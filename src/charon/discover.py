@@ -183,3 +183,134 @@ def discover_models(refresh: bool = False, timeout: int = 10,
     cost_map = build_cost_map(discoveries)
     save_cost_map(cost_map, config_dir=config_dir)
     return cost_map
+
+
+# ── Phase D: OpenRouter swarm import ────────────────────────────────
+
+_OPENROUTER_API = "https://openrouter.ai/api/v1/models"
+_ALIAS_FILE = "model_aliases.json"
+
+
+def discover_openrouter(timeout: float = 10) -> list[dict] | None:
+    """Fetch the OpenRouter model catalogue (no auth needed)."""
+    req = urllib.request.Request(_OPENROUTER_API, method="GET")
+    req.add_header("User-Agent", "charon-proxy/0.1")
+    try:
+        resp = urllib.request.urlopen(req, timeout=timeout)
+        raw = resp.read()
+        data = json.loads(raw.decode("utf-8", "replace"))
+    except Exception:  # noqa: BLE001
+        return None
+    if isinstance(data, list):
+        return [m for m in data if isinstance(m, dict) and "id" in m]
+    items = data.get("data") if isinstance(data, dict) else None
+    if isinstance(items, list):
+        return [m for m in items if isinstance(m, dict) and "id" in m]
+    return None
+
+
+def _load_alias_map(config_dir: str | Path | None = None) -> dict:
+    d = Path(config_dir) if config_dir is not None else secrets.config_dir()
+    p = d / _ALIAS_FILE
+    if not p.exists():
+        return {}
+    try:
+        data = json.loads(p.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+_KNOWN_PREFIXES = {"openai", "anthropic", "google", "meta-llama", "mistralai",
+                   "deepseek", "cohere", "x-ai", "perplexity", "together", "groq"}
+
+
+def fuzzy_match_model_id(or_id: str, charon_models: list[str],
+                         config_dir: str | Path | None = None) -> tuple[str | None, int]:
+    """Match an OpenRouter model ID to an existing Charon model.
+
+    Returns ``(charon_id, match_stage)`` where stage is:
+        0 — no match
+        1 — exact match (case-insensitive)
+        2 — prefix-stripped match
+        3 — alias-map match
+
+    Stage 1 matches can be auto-imported; stages 2-3 need review.
+    """
+    key = or_id.casefold()
+    alias_map = _load_alias_map(config_dir)
+    if key in alias_map:
+        return alias_map[key], 3
+    for m in charon_models:
+        if m.casefold() == key:
+            return m, 1
+    for prefix in _KNOWN_PREFIXES:
+        tag = prefix + "/"
+        if or_id.lower().startswith(tag):
+            bare = or_id[len(tag):]
+            for m in charon_models:
+                if m.casefold() == bare.casefold():
+                    return m, 2
+    return None, 0
+
+
+def import_openrouter_models(dry_run: bool = False,
+                              config_dir: str | Path | None = None) -> dict:
+    """Pull OpenRouter catalogue, cross-reference, and bulk-import.
+
+    Returns ``{"imported": N, "fuzzy_review": N, "new": N, "skipped": N}``.
+    When *dry_run* is True, nothing is persisted.
+    Stage-1 (exact) matches are auto-imported; stage 2-3 matches go to review.
+    """
+    or_models = discover_openrouter()
+    if not or_models:
+        return {"imported": 0, "fuzzy_review": 0, "new": 0, "skipped": 0}
+    existing = config.load_models(config_dir=config_dir)
+    charon_ids = list(existing.keys())
+    imported, fuzzy_review, new, skipped = 0, 0, 0, 0
+    review: dict[str, list[dict]] = {}
+    for m in or_models:
+        or_id = m.get("id")
+        if not isinstance(or_id, str):
+            skipped += 1
+            continue
+        match, stage = fuzzy_match_model_id(or_id, charon_ids, config_dir=config_dir)
+        if match is not None and stage == 1:
+            if not dry_run:
+                cost_input: float | None = None
+                cost_output: float | None = None
+                pricing = m.get("pricing")
+                if isinstance(pricing, dict):
+                    try:
+                        prompt_str = pricing.get("prompt", "0")
+                        comp_str = pricing.get("completion", "0")
+                        cost_input = float(prompt_str) / 1_000_000
+                        cost_output = float(comp_str) / 1_000_000
+                    except (ValueError, TypeError):
+                        pass
+                ctx = m.get("context_length")
+                context_window: int | None = int(ctx) if isinstance(ctx, (int, float)) else None
+                free = or_id.endswith(":free") or (isinstance(pricing, dict) and
+                    all(float(str(pricing.get(k, "0"))) == 0 for k in ("prompt", "completion")))
+                if free:
+                    cost_input = cost_output = 0.0
+                config.add_model(match, free=free, context_window=context_window,
+                                 cost_input=cost_input, cost_output=cost_output)
+            imported += 1
+        elif match is not None:
+            fuzzy_review += 1
+            if not dry_run:
+                key = or_id.casefold()
+                review.setdefault(key, []).append(m)
+        else:
+            new += 1
+            if not dry_run:
+                key = or_id.casefold()
+                review.setdefault(key, []).append(m)
+    if not dry_run and review:
+        d = Path(config_dir) if config_dir is not None else secrets.config_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "discover_review.json").write_text(
+            json.dumps(review, indent=2), encoding="utf-8")
+    return {"imported": imported, "fuzzy_review": fuzzy_review,
+            "new": new, "skipped": skipped}
