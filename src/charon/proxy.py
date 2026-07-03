@@ -172,16 +172,18 @@ def _is_auth_error(body: dict | None, status: int) -> bool:
 
 
 def _normalize_model_id(model_id: str | None) -> str:
-    """Normalize a model id by stripping provider prefix for comparison.
+    """Normalize a model id by taking the FINAL path segment for comparison.
 
-    Converts "provider/model-id" to "model-id", leaving bare ids unchanged.
-    Used for comparing returned vs expected models without false-positives on
-    provider-prefixed aliases (R10d)."""
+    Providers namespace the same model variously — "accounts/fireworks/models/
+    deepseek-v4-pro" and bare "deepseek-v4-pro" are the same model. Comparing the
+    final segment avoids false-positives on provider-prefixed aliases (R10d).
+    Stripping only the FIRST segment left multi-segment ids prefixed
+    ("fireworks/models/deepseek-v4-pro" != "deepseek-v4-pro"), false-flagging
+    honest 200s as silent downgrades and triggering a discard-and-rebill
+    (double-billing, SR-1)."""
     if not model_id:
         return ""
-    if "/" in model_id:
-        return model_id.split("/", 1)[1]
-    return model_id
+    return model_id.rsplit("/", 1)[-1]
 
 
 class GatewayProxy:
