@@ -153,10 +153,10 @@ is active, otherwise preserved here for the next handoff.>
 
 ## Handoff file maintenance
 
-- **One file:** `SESSION-HANDOFF.md` replaces `HANDOFF.md`, `HANDOFF-CONTINUE.md`,
-  and `SESSION-RESTART.md`. Archive the old ones.
-- **Generate:** run `bash /home/stack/charon-private/fleet/handoff.sh > fleet/SESSION-HANDOFF.md`
+- **Per-session files:** \`SESSION-HANDOFF-\$SESSION.md\`. Never reuse a session name.
+  Each boot picks a fresh unused Jedi name from the board. No collisions.
+- **Generate:** run \`SESSION=<name> bash /home/stack/charon-private/fleet/handoff.sh > fleet/SESSION-HANDOFF-<name>.md\`
   at session end, then fill in the Human analysis section.
-- **Commit:** commit the completed `SESSION-HANDOFF.md` to the charon-private fleet repo.
-- **Read:** the next session reads ONLY `SESSION-HANDOFF.md` — it is the single source of truth.
+- **Commit:** commit the completed \`SESSION-HANDOFF-<name>.md\` to the charon-private fleet repo.
+- **Read:** the next session reads ALL \`SESSION-HANDOFF-*.md\` files to ground itself.
 FOOTER
