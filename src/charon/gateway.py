@@ -233,6 +233,18 @@ def load_config(
         pools=pools,
         model_ids=sorted(set(routes) | set(pools)),
         model_meta=model_meta,
+        semantic_cache=_module_inst("cache", state_dir),
+        response_normalizer=_module_inst("normalizer", state_dir),
+        guardrails=_module_inst("guardrails", state_dir),
+        observability=_module_inst("observability", state_dir),
+        quality_scorer=_module_inst("quality", state_dir),
+        spend_limiter=_module_inst("spend", state_dir),
+        request_inspector=_module_inst("inspector", state_dir),
+        session_affinity=_module_inst("session_affinity", state_dir),
+        speculative_executor=_module_inst("speculative", state_dir),
+        consensus_router=_module_inst("consensus", state_dir),
+        virtual_key_manager=_module_inst("vkeys", state_dir),
+        policy_router=_module_inst("policy", state_dir),
     )
 
 
@@ -331,7 +343,8 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
             # Preserve existing metadata (context_window, etc.) across re-adds
             # so a web-edit never silently strips model capabilities (MODEL-DISCOVERY).
             existing = config.load_models().get(mid) or {}
-            _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio")
+            _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio",
+                          "cost_input", "cost_output")
             meta = {k: existing[k] for k in _META_KEYS if k in existing}
             config.add_model(
                 mid,
@@ -360,7 +373,8 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
                     f"could not reach provider {name!r} ({type(exc).__name__})") from exc
             if payload.get("free_only"):
                 found = [m for m in found if m["free"]]
-            _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio")
+            _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio",
+                          "cost_input", "cost_output")
             entries = []
             for m in found:
                 entry = {"id": m["id"], "free": m["free"],

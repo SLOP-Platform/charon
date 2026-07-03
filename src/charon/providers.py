@@ -153,7 +153,8 @@ def _parse_models(data: object) -> list[dict]:
     """Pull ``[{id, free}]`` out of a provider's /models payload — the OpenAI
     ``{"data": [...]}`` shape, a bare list, or a list of strings. Optionally
     carries through upstream metadata (context_window, max_tokens, reasoning,
-    vision, audio) if present."""
+    vision, audio, cost_input, cost_output) if present.
+    OpenRouter pricing (per-1M-token strings) is converted to per-token USD."""
     items = data.get("data") if isinstance(data, dict) else data
     out: list[dict] = []
     if not isinstance(items, list):
@@ -165,10 +166,28 @@ def _parse_models(data: object) -> list[dict]:
                 v = it.get(src_key)
                 if v is not None and isinstance(v, want_type):
                     entry[dst_key] = v
+            _extract_pricing(it, entry)
             out.append(entry)
         elif isinstance(it, str):
             out.append({"id": it, "free": False})
     return out
+
+
+def _extract_pricing(source: dict, entry: dict[str, object]) -> None:
+    """Read OpenRouter-style ``pricing: {prompt, completion}`` (per-1M-token
+    strings or floats) and store as ``cost_input`` / ``cost_output`` (per-token USD)."""
+    pricing = source.get("pricing")
+    if not isinstance(pricing, dict):
+        return
+    for src, dst in ("prompt", "cost_input"), ("completion", "cost_output"):
+        val = pricing.get(src)
+        if val is None:
+            continue
+        try:
+            per_token = float(val) / 1_000_000
+        except (ValueError, TypeError):
+            continue
+        entry[dst] = per_token
 
 
 def list_models(name: str, overrides: dict | None = None, *,
