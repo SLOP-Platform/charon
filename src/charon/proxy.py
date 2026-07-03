@@ -156,7 +156,8 @@ class GatewayProxy:
         dropped = status in _DROP_STATUSES
         # pseudo-success: a 200 that silently served a different model than asked.
         expected = expected_model if expected_model is not None else requested_model
-        pseudo = bool(status == 200 and returned and returned != expected)
+        pseudo = bool(status == 200 and returned
+                      and returned.rsplit("/", 1)[-1] != expected.rsplit("/", 1)[-1])
         usage = _gateway_usage(body) if status == 200 else None
 
         note = ""
