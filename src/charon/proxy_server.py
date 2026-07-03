@@ -18,6 +18,7 @@ import hmac
 import http.cookies
 import http.server
 import json
+import os
 import socketserver
 import threading
 import time
@@ -451,7 +452,8 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
         return b"".join(out)
 
     def _send_resp_headers(self, status: int, ctype: str, provider: str | None,
-                           failovers: list[dict], downgrade: bool) -> None:
+                           failovers: list[dict], downgrade: bool,
+                           cache_status: str | None = None) -> None:
         """Send status + Content-Type + the failover-visibility headers (ADR D3)."""
         self.send_response(status)
         self.send_header("Content-Type", ctype)
@@ -463,6 +465,8 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                              "; ".join(f"{f['provider']}={f['status']}" for f in failovers))
         if downgrade:
             self.send_header("X-Charon-Downgrade", "served a different model than requested")
+        if cache_status:  # real header — must precede end_headers (never in the body)
+            self.send_header("X-Cache-Status", cache_status)
         self._maybe_set_token_cookie()
         self.end_headers()
 
@@ -680,8 +684,11 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
             cached = srv.semantic_cache.get(cache_key)
             if cached is not None:
                 ctype = cached.headers.get("Content-Type", "application/json")
-                self._send_resp_headers(200, ctype, "cache", [], False)
-                self.wfile.write(b"X-Cache-Status: HIT\r\n\r\n")
+                # X-Cache-Status is a REAL header (emitted before end_headers). The
+                # prior `wfile.write(b"X-Cache-Status: HIT\r\n\r\n")` ran AFTER
+                # end_headers, so it landed in the response BODY and corrupted the
+                # cached JSON/SSE payload (DTC CONCERN #5).
+                self._send_resp_headers(200, ctype, "cache", [], False, cache_status="HIT")
                 self._write(cached.content)
                 srv.note_request(requested, "cache-hit", 200, 0.0, [])
                 return
@@ -753,10 +760,22 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                     body_bytes = self._drain(resp)
                     observed = _extract(body_bytes, ctype)
                     obs = srv.observer.classify(okey, 200, rhdrs, observed, expected_model=expected)
-                    if obs.pseudo_success and more:  # downgrade + alternatives → fail over
-                        srv.observer.record(obs, count_usage=False)
-                        failovers.append({"provider": route.label, "status": 200,
-                                          "reason": obs.note})
+                    # ── genuine silent downgrade (obs.pseudo_success) ─────────────
+                    # Operator toggle `failover_on_downgrade` (default False):
+                    #   False → SERVE this COMPLETED, already-billed 200 with the
+                    #     X-Charon-Downgrade header instead of discarding + re-billing a
+                    #     fresh completion from the next provider (the 2026-07-03
+                    #     double-bill incident). SR-1 made the id compare segment-tolerant
+                    #     so only genuine downgrades reach here.
+                    #   True  → fail over to try for the asked model, but record the
+                    #     discarded attempt with count_usage=True — HONEST/VISIBLE, the
+                    #     pre-SR-2 R1 escape hatch WITHOUT the silent count_usage=False
+                    #     double-bill that started this incident. No next provider →
+                    #     fall through and serve it (never error).
+                    if obs.pseudo_success and srv.failover_on_downgrade and more:
+                        srv.observer.record(obs, count_usage=True)  # visible, not silent
+                        failovers.append({"provider": route.label, "status": "downgrade",
+                                          "reason": obs.note or "served different model"})
                         continue
                     srv.observer.record(obs, count_usage=True)  # served → bill usage (R10a)
                     # ── post-response hooks ──────────────────────────
@@ -766,13 +785,19 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                             body_bytes.decode(errors="replace"),
                             NormalizeMode.STANDARDIZE_MD,
                         ).encode()
-                    if srv.semantic_cache is not None:
+                    # NEVER cache a served downgrade — the cache-HIT path can't disclose
+                    # X-Charon-Downgrade, so a cached downgrade would silently re-serve the
+                    # wrong model for the whole TTL (DTC BLOCKER #1).
+                    if srv.semantic_cache is not None and not obs.pseudo_success:
                         cache_key = hashlib.sha256(raw_body).hexdigest()
                         srv.semantic_cache.set(cache_key, body_bytes,
                                                rhdrs, ttl=3600)
                     if srv.quality_scorer is not None:
+                        # A served downgrade is NOT a clean success — scoring it as one
+                        # would reward a habitual downgrader and make quality routing
+                        # PREFER it (feedback loop, DTC CONCERN #4).
                         srv.quality_scorer.record(
-                            route.label, 0, success=True, tokens=0)
+                            route.label, 0, success=not obs.pseudo_success, tokens=0)
                     if srv.spend_limiter is not None and cost > 0:
                         srv.spend_limiter.record(cost)
                     self._send_resp_headers(200, ctype, route.label, failovers, obs.pseudo_success)
@@ -811,28 +836,50 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
 
                 obs = srv.observer.classify(okey, 200, rhdrs, _extract(b"".join(head), ctype),
                                             expected_model=expected)
-                if obs.pseudo_success and more:  # downgrade detected pre-commit → fail over
-                    srv.observer.record(obs, count_usage=False)
-                    failovers.append({"provider": route.label, "status": 200, "reason": obs.note})
+                # ── genuine streaming downgrade (obs.pseudo_success) ──────────────
+                # Same operator toggle as the non-stream path. With failover_on_downgrade
+                # True AND a next provider, fail over BEFORE committing any byte (headers
+                # not yet sent) and record the discarded head attempt with count_usage=True
+                # (visible, not the old silent double-bill). Otherwise (default, or no next
+                # provider) commit and SERVE this completed 200 with X-Charon-Downgrade.
+                if obs.pseudo_success and srv.failover_on_downgrade and more:
+                    srv.observer.record(obs, count_usage=True)  # visible, not silent
+                    failovers.append({"provider": route.label, "status": "downgrade",
+                                      "reason": obs.note or "served different model"})
                     continue
                 # commit: stream the buffered head + the remainder (headers now sent —
                 # a later read error can only truncate, never fail over).
                 self._send_resp_headers(200, ctype, route.label, failovers, obs.pseudo_success)
                 full = list(head)
                 ok = all(self._write(c) for c in head)
+                # stream_complete: True ONLY if the read loop reached natural EOF (`not c`)
+                # with every client write still OK and no exception. A truncated blob —
+                # upstream drop (→ except) or a client-write failure (→ ok False) — must
+                # NEVER be cached and later served as a whole 200 (DTC BLOCKER #2).
+                stream_complete = False
                 try:
                     while ok:
                         c = resp.read(8192)
                         if not c:
+                            stream_complete = True
                             break
                         full.append(c)
                         ok = self._write(c)
                 except Exception:
                     pass  # headers committed; partial stream is unavoidable
+                full_bytes = b"".join(full)
                 served_obs = srv.observer.classify(okey, 200, rhdrs,
-                                                   _extract(b"".join(full), ctype),
+                                                   _extract(full_bytes, ctype),
                                                    expected_model=expected)
                 srv.observer.record(served_obs, count_usage=True)
+                # Cache the streamed 200 (mirrors the non-stream path — only non-stream
+                # was cached before SR-2) but ONLY a cleanly-completed, non-downgrade
+                # stream: BLOCKER #1 (never cache a downgrade — HIT can't disclose it) +
+                # BLOCKER #2 (never cache a truncated blob).
+                if (srv.semantic_cache is not None and stream_complete
+                        and not served_obs.pseudo_success):
+                    cache_key = hashlib.sha256(raw_body).hexdigest()
+                    srv.semantic_cache.set(cache_key, full_bytes, rhdrs, ttl=3600)
                 cost = served_obs.usage.cost_usd if served_obs.usage else 0.0
                 srv.note_request(requested, route.label, 200, cost, failovers)
                 return
@@ -872,6 +919,7 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         max_body_bytes: int = 10 * 1024 * 1024,
         default_cooldown: float = 60.0,
         failover_log_path: str | None = None,
+        failover_on_downgrade: bool = False,
         guardrails: Guardrails | None = None,
         semantic_cache: SemanticCache | None = None,
         response_normalizer: ResponseNormalizer | None = None,
@@ -911,6 +959,11 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         self.max_body_bytes = max_body_bytes
         self.default_cooldown = default_cooldown
         self.failover_log_path = failover_log_path
+        # Operator toggle (SR-2): on a GENUINE silent downgrade, fail over to the next
+        # provider to try for the asked model instead of serving the downgrade. The
+        # discarded attempt is recorded with count_usage=True (visible, not the old
+        # silent double-bill). Default False → serve the downgrade once, billed once.
+        self.failover_on_downgrade = failover_on_downgrade
         self.guardrails = guardrails
         self.semantic_cache = semantic_cache
         self.response_normalizer = response_normalizer
@@ -1043,6 +1096,8 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
             "usage": {"tokens_in": u.tokens_in, "tokens_out": u.tokens_out,
                       "cost_usd": round(u.cost_usd, 6)},
             "recent_failovers": events[-50:],
+            # Running build/version (baked into the image by SR-10); None outside a build.
+            "build_sha": os.environ.get("CHARON_BUILD_SHA"),
         }
 
     @property

@@ -1,8 +1,9 @@
 """P2 — transparent in-request failover across a cost-ranked provider pool.
 
-Covers ADR-0005 R1/R6/R7/R10: fail over on capacity/downgrade, DON'T fail over a
-client error, per-attempt body remap (R10b), no cost double-count (R10a), provider
-cooldown, visibility headers, and the terminal "whole pool exhausted" relay.
+Covers ADR-0005 R1/R6/R7/R10: fail over on capacity, SERVE a genuine downgrade with
+the X-Charon-Downgrade header (SR-2 — never discard-and-rebill a completed 200),
+DON'T fail over a client error, per-attempt body remap (R10b), no cost double-count
+(R10a), provider cooldown, visibility headers, and the terminal "pool exhausted" relay.
 """
 from __future__ import annotations
 
@@ -129,17 +130,22 @@ def test_failover_on_429_serves_next_and_is_visible():
         b.shutdown()
 
 
-def test_silent_downgrade_fails_over_without_double_counting():
-    # A returns 200 but a DIFFERENT model than asked (pseudo-success) at cost 0.05
+def test_genuine_downgrade_is_served_not_rebilled():
+    # SR-2: A returns 200 with a DIFFERENT model than asked (genuine downgrade) at
+    # cost 0.05. A completed 200 is already billed — SERVE it with the
+    # X-Charon-Downgrade header; do NOT discard it and re-bill provider B.
     a, base_a = _up(status=200, return_model="downgraded", cost=0.05)
     b, base_b = _up(status=200, return_model="mb", cost=0.02)
     gw = _gw({"v": [UpstreamRoute(base_a, "ka", upstream_model="ma"),
                     UpstreamRoute(base_b, "kb", upstream_model="mb")]})
     try:
-        status, _, hdrs = _req(gw.url + "/v1/chat/completions", {"model": "v"})
-        assert status == 200 and hdrs["X-Charon-Failovers"] == "1"
-        # R10a: A's 0.05 (discarded) is NOT billed — only B's 0.02
-        assert gw.observer.cumulative_usage().cost_usd == 0.02
+        status, body, hdrs = _req(gw.url + "/v1/chat/completions", {"model": "v"})
+        assert status == 200 and hdrs["X-Charon-Failovers"] == "0"
+        assert hdrs.get("X-Charon-Downgrade")           # downgrade disclosed
+        assert body["model"] == "downgraded"            # A's completion is what we served
+        assert b.received == []                          # B never called → never re-billed
+        # billed A's 0.05 once (the served completion); no discard-and-refetch
+        assert gw.observer.cumulative_usage().cost_usd == 0.05
     finally:
         gw.shutdown()
         a.shutdown()
@@ -229,8 +235,10 @@ def test_streaming_served_bills_usage_once():
         b.shutdown()
 
 
-def test_streaming_downgrade_fails_over_pre_commit():
-    # A streams a DIFFERENT model than asked (downgrade); B streams the right one.
+def test_streaming_genuine_downgrade_is_served_not_rebilled():
+    # SR-2: A streams a DIFFERENT model than asked (genuine downgrade). The head is a
+    # completed, already-billed 200 — commit and SERVE it with X-Charon-Downgrade
+    # rather than discarding it and re-billing B.
     a, base_a = _sse(return_model="downgraded", cost=0.05)
     b, base_b = _sse(return_model="mb", cost=0.03)
     gw = _gw({"v": [UpstreamRoute(base_a, "ka", upstream_model="ma"),
@@ -238,10 +246,11 @@ def test_streaming_downgrade_fails_over_pre_commit():
     try:
         status, hdrs, text = _stream_req(gw.url + "/v1/chat/completions",
                                          {"model": "v", "stream": True})
-        assert status == 200 and hdrs["X-Charon-Failovers"] == "1"
-        # A's bytes must NOT reach the client (failed over before committing); only B
-        assert "downgraded" not in text and "mb" in text
-        assert gw.observer.cumulative_usage().cost_usd == 0.03  # R10a holds for streams
+        assert status == 200 and hdrs["X-Charon-Failovers"] == "0"
+        assert hdrs.get("X-Charon-Downgrade")           # downgrade disclosed
+        # A's bytes ARE served; B is never called (no re-bill)
+        assert "downgraded" in text and b.received == []
+        assert gw.observer.cumulative_usage().cost_usd == 0.05  # A billed once
     finally:
         gw.shutdown()
         a.shutdown()
