@@ -59,7 +59,7 @@ _INLINE_CODE_RE = re.compile(r"`([^`]+)`")
 _PATHISH_RE = re.compile(r"^[\w.][\w./+-]*$")
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
-DEFAULT_TIER = "sonnet"
+DEFAULT_TIER = "med"
 
 
 class IntakeError(RuntimeError):

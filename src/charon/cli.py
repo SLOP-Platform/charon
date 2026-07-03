@@ -33,7 +33,7 @@ def _invocation_name() -> str:
     similar."""
     name = sys.argv[0]
     base = os.path.basename(name)
-    if base.startswith("python") or "/pytest" in name or base == "pytest":
+    if base.startswith("python") or "/pytest" in name or base == "pytest" or base == "-c":
         return "charon"
     return name
 
@@ -260,8 +260,7 @@ def _import_models(name: str, *, free_only: bool = False, into_pool: str | None 
         return None
     if free_only:
         found = [m for m in found if m["free"]]
-    _META_KEYS = ("cost_input", "cost_output", "context_window", "max_tokens",
-                  "reasoning", "vision", "audio")
+    _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio")
     entries = []
     for m in found:
         entry = {"id": m["id"], "free": m["free"],
@@ -728,9 +727,11 @@ def _tier_resolve(tier_name: str, executor: str | None) -> int:
     models = config.load_models()
 
     def _is_anthropic(mid: str) -> bool:
+        # Vendor-specific executor filter — this is the only executor currently
+        # supported. Replace with a generic executor-registry lookup when more
+        # executor backends are added (ATC-009).
         if mid in models:
             return models[mid].get("provider") == "anthropic"
-        # not in registry → assumed native Anthropic model name (haiku/sonnet/opus)
         return True
 
     def _cost_key(mid: str) -> int:
@@ -938,6 +939,7 @@ def _load_plan(plan_path: str) -> tuple[list[dict], str]:
                 "depends_on": list(u.get("depends_on", [])),
                 "goal": u.get("goal", ""),
                 "accept": list(u.get("accept", [])),
+                "body": u.get("body", ""),
             })
         if not units:
             raise ValueError(_no_units_reason(data))
@@ -954,6 +956,7 @@ def _load_plan(plan_path: str) -> tuple[list[dict], str]:
             "depends_on": [],
             "goal": d["goal"],
             "accept": list(d["accept"]),
+            "body": d.get("body", ""),
         })
     return units, ""
 
@@ -1244,9 +1247,14 @@ def run_work(
     DONE unit through the propose-default land gate → the D12 validator runs ONCE
     on the integrated end-product against the top-level acceptance (D-E6-6).
 
+    ``autonomy`` (default L1, partial trust) controls the review gate: L0
+    (manual) and L1 (single-model) run WITHOUT cross-model adversarial review
+    (by-design — the agent's own output is trusted). L2+ threads a second model's
+    GatewayReviewer into the runner (ADR-0010 Tier-4).
+
     ``runner``/``backend_factory``/``reviewer``/``pr_opener`` are test seams;
-    production uses the default fenced runner (with the real ``GatewayReviewer``
-    threaded in — ADR-0010 Tier-4) + the ``charon run`` backend resolution.
+    production uses the default fenced runner + the ``charon run`` backend
+    resolution.
 
     ``progress`` (WORK-OBSERVABILITY) is an opt-in sink for human-readable
     lifecycle lines (claimed/started/checkpoint/land/done) the scheduler + land
@@ -1281,6 +1289,7 @@ def run_work(
             id=u["id"], tier=u.get("tier", ""), owns=list(u.get("owns", [])),
             depends_on=list(u.get("depends_on", [])), goal=u.get("goal", ""),
             accept=list(u.get("accept", [])),
+            body=u.get("body", ""),
         ))
 
     def _wt(unit: Unit) -> str:

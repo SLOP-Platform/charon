@@ -10,8 +10,8 @@ useDefault = true
 description = "CI placeholder tokens and env-var bearer references are not secrets"
 regexTarget = "line"
 regexes = [
-    # env-var references ($VAR or ${VAR}) in Authorization headers are not literals
-    '''Authorization:\s*Bearer\s*\$\{?[A-Z_][A-Z0-9_]*\}?''',
+    # env-var references with CHARON_ prefix in Authorization headers are not literals
+    '''Authorization:\s*Bearer\s*\$\{?CHARON_[A-Z0-9_]+\}?''',
     # ci-smoke-token is the integration smoke-test placeholder used in release.yml
     '''Authorization:\s*Bearer\s*ci-smoke-token''',
 ]

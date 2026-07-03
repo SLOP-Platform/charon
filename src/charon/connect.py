@@ -217,7 +217,12 @@ def _cline_path() -> Path:
 def _write_opencode(w: Wiring) -> None:
     """``~/.config/opencode/opencode.json`` — opencode's OpenAI-compatible provider
     block. Deep-merges into ``provider.charon`` so other providers/models and the
-    user's other top-level keys are preserved (idempotent)."""
+    user's other top-level keys are preserved (idempotent).
+
+    Model metadata (context_window, max_tokens, cost, etc.) is NOT carried through
+    the web connect path — the CLI import path (``charon models import``) is the
+    canonical source that writes these fields into the model registry. The connect
+    path wires only the minimal provider endpoint + model name (ATC-014)."""
     def mutate(data: dict) -> None:
         data.setdefault("$schema", "https://opencode.ai/config.json")
         provs = data.get("provider")
@@ -409,7 +414,8 @@ REGISTRY: dict[str, ClientSpec] = {
             "# To point Cline at Charon, add these to your VS Code settings:\n"
             f'#   "cline.apiProvider": "openai",\n'
             f'#   "cline.openaiBaseUrl": "{w.base_url}",\n'
-            f'#   "cline.openaiApiKey": "{w.token or "?token=... if gateway-gated"}",\n'
+            f'#   "cline.openaiApiKey": '
+            f'{"<your-gateway-token>" if w.token else "?token=... if gateway-gated"},\n'
             f'#   "cline.openaiModel": "{w.model}"'
         ),
         guided=True,

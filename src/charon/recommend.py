@@ -134,6 +134,9 @@ def _heuristic_rank(catalog: list[dict]) -> list[TierRecommendation]:
         is_free = bool(m.get("free"))
         ctx = m.get("context_window") or 0
         name_lower = mid.lower()
+        # Heuristic tier assignment based on model-name keyword patterns —
+        # these WILL rot as providers ship new models and deprecate old names.
+        # Replace with a data-driven ranking (cost × capability) when available (ATC-013).
         if any(k in name_lower for k in ("claude-3.5", "claude-3-5", "claude-4",
                 "gpt-4o", "gpt-4.5", "gpt-4-", "gemini-2.0", "gemini-2-5",
                 "gemini-2.5", "grok-3", "deepseek-r1", "deepseek-v3")):
