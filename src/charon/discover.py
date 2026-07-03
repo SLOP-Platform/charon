@@ -182,7 +182,54 @@ def discover_models(refresh: bool = False, timeout: int = 10,
 
     cost_map = build_cost_map(discoveries)
     save_cost_map(cost_map, config_dir=config_dir)
+    _update_model_pricing_from_discovery(discoveries, config_dir=config_dir)
     return cost_map
+
+
+def _update_model_pricing_from_discovery(
+    discoveries: dict[str, list[dict] | None],
+    config_dir: str | Path | None = None,
+) -> None:
+    """Persist per-token pricing from discovered models into ``models.json``.
+
+    For each discovered model that matches an existing entry in the model
+    registry (case-insensitive), extract ``cost_input`` / ``cost_output``
+    via ``providers._extract_pricing`` and write them into the registry so
+    served models carry real cost data.
+    """
+    models = config.load_models(config_dir=config_dir)
+    if not models:
+        return
+    changed = False
+    for _provider_name, model_list in discoveries.items():
+        if not model_list:
+            continue
+        for m in model_list:
+            mid = m.get("id")
+            if not isinstance(mid, str):
+                continue
+            key = mid.casefold()
+            matched = None
+            for existing_id in models:
+                if existing_id.casefold() == key:
+                    matched = existing_id
+                    break
+            if matched is None:
+                continue
+            entry: dict[str, object] = {}
+            providers._extract_pricing(m, entry)
+            if "cost_input" in entry:
+                v = entry["cost_input"]
+                if isinstance(v, (int, float)):
+                    models[matched]["cost_input"] = float(v)
+                    changed = True
+            if "cost_output" in entry:
+                v = entry["cost_output"]
+                if isinstance(v, (int, float)):
+                    models[matched]["cost_output"] = float(v)
+                    changed = True
+    if changed:
+        config._save("models.json", models)
 
 
 # ── Phase D: OpenRouter swarm import ────────────────────────────────

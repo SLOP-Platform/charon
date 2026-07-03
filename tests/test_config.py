@@ -147,3 +147,59 @@ def test_sandbox_policy_case_insensitive():
 def test_sandbox_policy_invalid_value_falls_back_to_hybrid():
     assert load_sandbox_policy({"CHARON_SANDBOX": "bogus"}) == SandboxPolicy.HYBRID
     assert load_sandbox_policy({"CHARON_SANDBOX": ""}) == SandboxPolicy.HYBRID
+
+
+# ── SR-5: pricing / cost visibility ───────────────────────────────
+
+def test_model_with_pricing_yields_nonzero_cost(monkeypatch, tmp_path):
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    config.add_model("expensive", provider="test", cost_input=0.01, cost_output=0.05)
+    m = config.load_models()["expensive"]
+    assert m["cost_input"] == 0.01
+    assert m["cost_output"] == 0.05
+    cost = 100 * m["cost_input"] + 50 * m["cost_output"]
+    assert cost > 0
+    assert cost == 100 * 0.01 + 50 * 0.05
+
+
+def test_unknown_pricing_flagged_in_summary(monkeypatch, tmp_path):
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    config.add_model("mystery", provider="unknown")
+    config.add_model("priced", provider="openai", cost_input=0.01, cost_output=0.03)
+    config.add_model("freebie", provider="openai", free=True)
+    s = config.summary()
+    assert "unknown_pricing" in s
+    assert "mystery" in s["unknown_pricing"]
+    assert "priced" not in s["unknown_pricing"]
+    assert "freebie" not in s["unknown_pricing"]
+
+
+def test_fallback_pricing_roundtrip(monkeypatch, tmp_path):
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    config.set_fallback_pricing(0.001, 0.002)
+    fb = config.load_fallback_pricing()
+    assert fb["cost_input"] == 0.001
+    assert fb["cost_output"] == 0.002
+
+
+def test_fallback_pricing_makes_unknown_cost_nonzero(monkeypatch, tmp_path):
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    config.set_fallback_pricing(0.005, 0.01)
+    fb = config.load_fallback_pricing()
+    assert fb["cost_input"] == 0.005
+    assert fb["cost_output"] == 0.01
+    cost = 100 * fb["cost_input"] + 50 * fb["cost_output"]
+    assert cost > 0
+
+
+def test_fallback_pricing_absent_returns_empty(monkeypatch, tmp_path):
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    assert config.load_fallback_pricing() == {}
+
+
+def test_set_fallback_pricing_rejects_negative(monkeypatch, tmp_path):
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    with pytest.raises(ValueError):
+        config.set_fallback_pricing(-0.01, 0.02)
+    with pytest.raises(ValueError):
+        config.set_fallback_pricing(0.01, -0.02)

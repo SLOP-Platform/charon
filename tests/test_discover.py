@@ -501,3 +501,80 @@ def _fake_urlerr(code):
     class E(Exception):
         pass
     return E("error")
+
+
+# ── SR-5: pricing persistence from discovery ──────────────────────
+
+class TestDiscoverPricingPersistence:
+    def test_discover_updates_model_pricing(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+        from charon import config
+        config.add_model("gpt-4o", provider="openai")
+
+        def _fake_discover(base_url, api_key, strip_v1=True, timeout=10):
+            return [
+                {"id": "gpt-4o", "pricing": {"prompt": "5", "completion": "15"}},
+            ]
+
+        monkeypatch.setattr("charon.discover.discover_provider", _fake_discover)
+        monkeypatch.setattr("charon.discover.providers.PRESETS", {
+            "openai": providers.ProviderPreset("http://openai/v1", strip_v1=True),
+        })
+        monkeypatch.setattr("charon.discover.config.load_providers", lambda **kw: {})
+        monkeypatch.setattr("charon.discover.secrets.load_secrets", lambda **kw: {})
+        monkeypatch.setattr("charon.discover.secrets.config_dir", lambda **kw: tmp_path)
+
+        discover_models(timeout=5, config_dir=tmp_path)
+
+        models = config.load_models(config_dir=tmp_path)
+        assert "gpt-4o" in models
+        assert models["gpt-4o"].get("cost_input") == 5.0 / 1_000_000
+        assert models["gpt-4o"].get("cost_output") == 15.0 / 1_000_000
+
+    def test_discover_no_match_skips_pricing(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+        from charon import config
+        config.add_model("existing-model", provider="openai")
+
+        def _fake_discover(base_url, api_key, strip_v1=True, timeout=10):
+            return [
+                {"id": "unrelated-model", "pricing": {"prompt": "1", "completion": "2"}},
+            ]
+
+        monkeypatch.setattr("charon.discover.discover_provider", _fake_discover)
+        monkeypatch.setattr("charon.discover.providers.PRESETS", {
+            "openai": providers.ProviderPreset("http://openai/v1", strip_v1=True),
+        })
+        monkeypatch.setattr("charon.discover.config.load_providers", lambda **kw: {})
+        monkeypatch.setattr("charon.discover.secrets.load_secrets", lambda **kw: {})
+        monkeypatch.setattr("charon.discover.secrets.config_dir", lambda **kw: tmp_path)
+
+        discover_models(timeout=5, config_dir=tmp_path)
+
+        models = config.load_models(config_dir=tmp_path)
+        assert "cost_input" not in models["existing-model"]
+        assert "cost_output" not in models["existing-model"]
+
+    def test_discover_preserves_existing_pricing_on_absent(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+        from charon import config
+        config.add_model("gpt-4o", provider="openai", cost_input=0.001)
+
+        def _fake_discover(base_url, api_key, strip_v1=True, timeout=10):
+            return [
+                {"id": "gpt-4o"},
+            ]
+
+        monkeypatch.setattr("charon.discover.discover_provider", _fake_discover)
+        monkeypatch.setattr("charon.discover.providers.PRESETS", {
+            "openai": providers.ProviderPreset("http://openai/v1", strip_v1=True),
+        })
+        monkeypatch.setattr("charon.discover.config.load_providers", lambda **kw: {})
+        monkeypatch.setattr("charon.discover.secrets.load_secrets", lambda **kw: {})
+        monkeypatch.setattr("charon.discover.secrets.config_dir", lambda **kw: tmp_path)
+
+        discover_models(timeout=5, config_dir=tmp_path)
+
+        models = config.load_models(config_dir=tmp_path)
+        assert models["gpt-4o"].get("cost_input") == 0.001
+        assert "cost_output" not in models["gpt-4o"]
