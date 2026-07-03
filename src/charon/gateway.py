@@ -253,8 +253,9 @@ def _module_inst(name: str, state_dir: str | Path | None = None) -> object | Non
 
     Returns ``None`` when the config file is absent (feature disabled).
     """
-    from . import config, secrets
     from pathlib import Path
+
+    from . import secrets
     d = Path(state_dir) if state_dir is not None else secrets.config_dir()
     cfg_file = d / f"{name}.json"
     if not cfg_file.exists():
