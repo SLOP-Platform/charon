@@ -61,6 +61,10 @@ class GatewayConfig:
     pools: dict[str, list[UpstreamRoute]] = field(default_factory=dict)
     model_ids: list[str] = field(default_factory=list)
     model_meta: dict[str, dict] = field(default_factory=dict)
+    # Operator toggle (SR-2): fail over on a genuine silent downgrade (recording the
+    # discarded attempt visibly, count_usage=True) instead of serving it once. Default
+    # False keeps the double-bill leak fixed (serve the downgrade, billed once).
+    failover_on_downgrade: bool = False
     # ── optional B1 gateway modules (None = feature disabled) ────────
     semantic_cache: SemanticCache | None = None
     response_normalizer: ResponseNormalizer | None = None
@@ -165,6 +169,7 @@ def load_config(
     cfg_host: str = _DEFAULT_HOST
     cfg_port: int = _DEFAULT_PORT
     cfg_token: str | None = None
+    cfg_failover_on_downgrade: bool = False
     registry: dict = {}
     pool_map: dict = {}
     providers_cfg: dict = {}
@@ -175,6 +180,7 @@ def load_config(
         cfg_host = str(gw.get("host", cfg_host))
         cfg_port = int(gw.get("port", cfg_port))
         cfg_token = gw.get("token")
+        cfg_failover_on_downgrade = bool(gw.get("failover_on_downgrade", False))
         registry = data.get("models") or {}
         pool_map = data.get("pools") or {}  # virtual id → ordered [model id]
         providers_cfg = data.get("providers") or {}  # preset overrides (P3)
@@ -182,12 +188,21 @@ def load_config(
         models_path = Path(state_dir) / "models.json"
         pools_path = Path(state_dir) / "pools.json"
         providers_path = Path(state_dir) / "providers.json"
+        gateway_path = Path(state_dir) / "gateway.json"
         if models_path.exists():
             registry = json.loads(models_path.read_text())
         if pools_path.exists():
             pool_map = json.loads(pools_path.read_text())  # role → [model id]
         if providers_path.exists():
             providers_cfg = json.loads(providers_path.read_text())
+        if gateway_path.exists():  # gateway-level flags (SR-2 toggle et al.)
+            try:
+                gw_file = json.loads(gateway_path.read_text())
+                if isinstance(gw_file, dict):
+                    cfg_failover_on_downgrade = bool(
+                        gw_file.get("failover_on_downgrade", False))
+            except (OSError, json.JSONDecodeError):
+                pass
 
     routes, pools, _ = _build_routes_and_pools(registry, pool_map, providers_cfg)
     for vid, chain in _tier_pools(registry, providers_cfg).items():
@@ -234,6 +249,7 @@ def load_config(
         pools=pools,
         model_ids=sorted(set(routes) | set(pools)),
         model_meta=model_meta,
+        failover_on_downgrade=cfg_failover_on_downgrade,
         semantic_cache=_module_inst("cache", state_dir),
         response_normalizer=_module_inst("normalizer", state_dir),
         guardrails=_module_inst("guardrails", state_dir),
@@ -352,6 +368,7 @@ def build_server(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> 
     server = GatewayProxyServer(
         routes=cfg.routes, pools=cfg.pools, host=cfg.host, port=cfg.port,
         token=cfg.token, model_ids=cfg.model_ids, model_meta=cfg.model_meta,
+        failover_on_downgrade=cfg.failover_on_downgrade,
         semantic_cache=cfg.semantic_cache,
         response_normalizer=cfg.response_normalizer,
         guardrails=cfg.guardrails,
