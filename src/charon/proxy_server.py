@@ -18,6 +18,7 @@ import hmac
 import http.cookies
 import http.server
 import json
+import os
 import socketserver
 import threading
 import time
@@ -753,11 +754,11 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                     body_bytes = self._drain(resp)
                     observed = _extract(body_bytes, ctype)
                     obs = srv.observer.classify(okey, 200, rhdrs, observed, expected_model=expected)
-                    if obs.pseudo_success and more:  # downgrade + alternatives → fail over
-                        srv.observer.record(obs, count_usage=False)
-                        failovers.append({"provider": route.label, "status": 200,
-                                          "reason": obs.note})
-                        continue
+                    # A genuine downgrade is a COMPLETED, already-billed 200 — SERVE it with
+                    # the X-Charon-Downgrade header (set below via obs.pseudo_success) instead
+                    # of discarding it and re-billing a fresh completion from the next provider
+                    # (the 2026-07-03 double-bill incident). SR-1 made the id compare
+                    # segment-tolerant so only genuine downgrades reach here.
                     srv.observer.record(obs, count_usage=True)  # served → bill usage (R10a)
                     # ── post-response hooks ──────────────────────────
                     cost = obs.usage.cost_usd if obs.usage else 0.0
@@ -811,10 +812,9 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
 
                 obs = srv.observer.classify(okey, 200, rhdrs, _extract(b"".join(head), ctype),
                                             expected_model=expected)
-                if obs.pseudo_success and more:  # downgrade detected pre-commit → fail over
-                    srv.observer.record(obs, count_usage=False)
-                    failovers.append({"provider": route.label, "status": 200, "reason": obs.note})
-                    continue
+                # A genuine streaming downgrade is a COMPLETED, already-billed 200 — commit and
+                # SERVE it with the X-Charon-Downgrade header (via obs.pseudo_success) rather than
+                # discarding the head and re-billing the next provider (2026-07-03 double-bill).
                 # commit: stream the buffered head + the remainder (headers now sent —
                 # a later read error can only truncate, never fail over).
                 self._send_resp_headers(200, ctype, route.label, failovers, obs.pseudo_success)
@@ -829,10 +829,16 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                         ok = self._write(c)
                 except Exception:
                     pass  # headers committed; partial stream is unavoidable
+                full_bytes = b"".join(full)
                 served_obs = srv.observer.classify(okey, 200, rhdrs,
-                                                   _extract(b"".join(full), ctype),
+                                                   _extract(full_bytes, ctype),
                                                    expected_model=expected)
                 srv.observer.record(served_obs, count_usage=True)
+                # Cache the streamed 200 so agent/streaming traffic is cacheable, mirroring
+                # the non-stream success path — only non-stream was cached before SR-2.
+                if srv.semantic_cache is not None:
+                    cache_key = hashlib.sha256(raw_body).hexdigest()
+                    srv.semantic_cache.set(cache_key, full_bytes, rhdrs, ttl=3600)
                 cost = served_obs.usage.cost_usd if served_obs.usage else 0.0
                 srv.note_request(requested, route.label, 200, cost, failovers)
                 return
@@ -1043,6 +1049,8 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
             "usage": {"tokens_in": u.tokens_in, "tokens_out": u.tokens_out,
                       "cost_usd": round(u.cost_usd, 6)},
             "recent_failovers": events[-50:],
+            # Running build/version (baked into the image by SR-10); None outside a build.
+            "build_sha": os.environ.get("CHARON_BUILD_SHA"),
         }
 
     @property
