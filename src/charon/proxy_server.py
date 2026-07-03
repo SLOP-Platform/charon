@@ -683,6 +683,15 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
 
         is_stream = orig_bj.get("stream") is True
         ordered = srv.order_by_cooldown(chain)  # fresh providers first, cooled last (R7)
+
+        # ── quality-aware routing ──────────────────────────────────────
+        if srv.quality_scorer is not None and ordered:
+            scored = [(srv.quality_scorer.score(r.label), r) for r in ordered]
+            filtered = [r for s, r in scored if s >= 0.5]
+            if filtered:
+                ordered = filtered
+            # else: all below floor → use original order (no starvation)
+
         failovers: list[dict] = []
 
         for i, route in enumerate(ordered):
