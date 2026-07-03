@@ -672,10 +672,12 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 # ---- non-200 ----
                 if status != 200:
                     body_bytes = self._drain(resp)
-                    obs = srv.observer.classify(okey, status, rhdrs, {}, expected_model=expected)
+                    obs_body = _extract(body_bytes, ctype)
+                    obs = srv.observer.classify(okey, status, rhdrs, obs_body,
+                                                expected_model=expected)
                     srv.observer.record(obs, count_usage=False)
-                    if obs.failover:  # 429/402/503/404 = capacity/gone → fail over (R6)
-                        if obs.exhausted:  # 429/402/503 are account-level → cool the
+                    if obs.failover:  # 429/402/503/404/401+billing = exhausted → fail over
+                        if obs.exhausted:  # account-level exhaustion → cool the
                             srv.set_cooldown(route, obs.retry_after)  # provider (R10c);
                         # a 404 ("model gone") is model-level — do NOT cool the provider.
                         if more:  # count only providers we actually move PAST

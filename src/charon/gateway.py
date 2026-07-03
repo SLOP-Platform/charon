@@ -211,6 +211,25 @@ def load_config(
     )
 
 
+def _check_failover_safety(cfg: GatewayConfig) -> None:
+    """Emit a strong warning when no failover chain is configured — the gateway will
+    serve but a single provider exhaustion halts ALL traffic. Common pitfall: models
+    are imported but no pools/fallback exist."""
+    if cfg.pools:
+        return  # at least one pool → failover is wired
+    from . import config as _cfg
+    has_fallback = bool(_cfg.load_fallback_providers())
+    has_pools_file = bool(_cfg.load_pools())
+    if has_fallback or has_pools_file:
+        return  # configured but no pool chains compiled (e.g., empty members)
+    print("warning: NO FAILOVER CHAIN — no pools or global fallback configured. "
+          "A single provider exhaustion will stop ALL traffic.",
+          file=sys.stderr)
+    print(f"  fix: `{_invocation_name()} pools add auto <model,ids,...>` "
+          f"or `{_invocation_name()} fallback set <provider-name>` "
+          "or open http://127.0.0.1:8080/charon/setup", file=sys.stderr)
+
+
 def build_server(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> GatewayProxyServer:
     """Construct the gateway server. Enforces the loopback/token invariant HERE —
     at bind time — so it holds for ANY caller, not just ``run`` (security review
@@ -364,6 +383,7 @@ def run(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> int:
         print(f"warning: no models configured — run `{_invocation_name()} setup`, "
               f"`{_invocation_name()} providers add <name>`, or open the setup page below",
               file=sys.stderr)
+    _check_failover_safety(cfg)
     gate = "token-gated" if cfg.token else "loopback, UNGATED"
     print(f"charon gateway ({gate}) on {server.url}/v1 — "
           f"{len(cfg.model_ids)} model(s), {len(cfg.pools)} pool(s)", file=sys.stderr)

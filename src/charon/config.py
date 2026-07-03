@@ -510,7 +510,8 @@ def set_fallback_providers(providers: list[str]) -> Path:
 
 def summary() -> dict:
     """A non-secret view for the CLI/console: providers (with key-set state, NOT the
-    key), models, pools."""
+    key), models, pools, and failover chain health."""
+    from typing import Any
     secs = secrets.load_secrets()
     provs = {}
     for n, e in load_providers().items():
@@ -520,4 +521,28 @@ def summary() -> dict:
             "key_env": ke,
             "key_set": bool(ke and (os.environ.get(ke) or ke in secs)),
         }
-    return {"providers": provs, "models": load_models(), "pools": load_pools()}
+    result: dict[str, Any] = {"providers": provs, "models": load_models(), "pools": load_pools()}
+    fallback = load_fallback_providers()
+    if fallback:
+        result["fallback"] = fallback
+    result["failover_chain_health"] = failover_chain_health()
+    return result
+
+
+def failover_chain_health() -> dict:
+    """Return a summary dict of failover readiness: whether pools, fallback, or
+    providers are configured, and whether any failover chain exists."""
+    pools = load_pools()
+    fallback = load_fallback_providers()
+    provs = load_providers()
+    has_pools = bool(pools)
+    has_fallback = bool(fallback)
+    has_providers = bool(provs)
+    return {
+        "has_pools": has_pools,
+        "has_fallback": has_fallback,
+        "has_providers": has_providers,
+        "pools_count": len(pools),
+        "fallback_provider_count": len(fallback),
+        "provider_count": len(provs),
+    }

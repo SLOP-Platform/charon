@@ -12,6 +12,8 @@ import threading
 import urllib.error
 import urllib.request
 
+import pytest
+
 import charon
 from charon import gateway
 from charon.gateway import GatewayConfig
@@ -262,3 +264,20 @@ def test_run_refuses_nonloopback_without_token(capsys):
     cfg = GatewayConfig(host="0.0.0.0", token=None)
     assert gateway.run(cfg) == 2  # refused before binding
     assert "non-loopback" in capsys.readouterr().err
+
+
+def test_failover_chain_check_warns_when_no_pools_or_fallback(capsys) -> None:
+    """When no pools and no fallback are configured, the gateway must print a
+    strong warning so operators know their setup is fragile."""
+    cfg = GatewayConfig(routes={}, pools={}, token="t",
+                        host="127.0.0.1", port=0)
+    try:
+        srv = gateway.build_server(cfg)
+    except Exception:  # pragma: no cover
+        pytest.fail("build_server should not raise for loopback+token")
+
+    # Simulate the startup warning path (run() calls _check_failover_safety)
+    gateway._check_failover_safety(cfg)
+    captured = capsys.readouterr()
+    assert "NO FAILOVER CHAIN" in captured.err
+    srv.server_close()
