@@ -13,8 +13,12 @@ services:
   # SLOP (or any operator) talks to it over the HTTP surface; the privileged loop
   # stays inside this container.
   charon-service:
-    build: .
-    image: ghcr.io/slop-platform/charon:v0.1.0
+    # SINGLE PRODUCER (SR-10 / D024): image-only — no `build:`. The deploy box only
+    # PULLS a CI-built, immutable semver tag; it can never build a divergent artifact
+    # (two producers can drift). Both services run the SAME image and differ only by
+    # the `command:` below. The image's default target is this Mode-B uvicorn service
+    # on :8473; the gateway (below) is the explicit `command: charon gateway` override.
+    image: ghcr.io/slop-platform/charon:v0.2.1
     command: ["uvicorn", "charon.service.app:app", "--host", "0.0.0.0", "--port", "8473"]
     ports:
       # Bind the host side to LOOPBACK by default (reconciliation BR2-1/D3): the
@@ -38,8 +42,16 @@ services:
   # `pipx install charon && charon gateway` is also fine; use this for a
   # container / VPS / always-on gateway, or when host Python is unavailable.
   gateway:
-    build: .
-    image: ghcr.io/slop-platform/charon:v0.2.0
+    # SINGLE PRODUCER (SR-10 / D024): image-only — no `build:`. Same immutable CI image
+    # as charon-service; the gateway is selected by the explicit command override below.
+    image: ghcr.io/slop-platform/charon:v0.2.1
+    # Spell the gateway command EXPLICITLY as `charon gateway …` (not a bare `gateway`).
+    # The published image's ENTRYPOINT is not guaranteed to prepend `charon`: a
+    # from-source build can have ENTRYPOINT=null and default to the Mode-B uvicorn
+    # service, so a bare `gateway` would fail to resolve. The explicit `charon` prefix
+    # runs correctly whether or not the image ships the charon-entrypoint wrapper — this
+    # closes the image≠source gap that took the gateway down on a past deploy.
+    command: ["charon", "gateway", "--host", "0.0.0.0", "--port", "8080"]
     ports:
       # Publish to the HOST's loopback only (not your LAN). Clients on the host use
       # http://127.0.0.1:8080/v1 ; the token below is their API key. To widen to the
@@ -50,8 +62,17 @@ services:
       # so it refuses to start without a token. Copy .env.example to .env and set it:
       #   openssl rand -hex 16
       - CHARON_GATEWAY_TOKEN=${CHARON_GATEWAY_TOKEN:?set CHARON_GATEWAY_TOKEN — copy .env.example to .env, then run openssl rand -hex 16}
-      # Gateway config home — providers/models/pools + the 0600 secrets file.
+      # Config + STATE both live on the MOUNTED VOLUME (/data). CHARON_HOME points the
+      # config loader (providers/models/pools + 0600 secrets) at /data; CHARON_STATE_DIR
+      # points runtime state writes (spend.json, quality.json, tiers.json) at /data too,
+      # OVERRIDING the image's /work/.charon default. That default is for the Mode-B
+      # service (which bind-mounts ./work:/work); the gateway has NO /work mount, so
+      # leaving CHARON_STATE_DIR=/work/.charon makes it read an EMPTY, EPHEMERAL path —
+      # the gateway comes up with 0 providers and every `docker compose down && up`
+      # (container recreate) wipes state. Keep CHARON_HOME == CHARON_STATE_DIR == /data
+      # (== the charon-config volume) so config survives redeploys.
       - CHARON_HOME=/data
+      - CHARON_STATE_DIR=/data
     volumes:
       # A NAMED volume (not a bind) so Docker seeds it from the image's /data —
       # owned by uid 10001 — and `charon setup` / `providers add` can write the
