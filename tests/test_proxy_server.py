@@ -376,7 +376,7 @@ class _TruncatedChunkedHandler(socketserver.BaseRequestHandler):
     blob must NEVER be cached (DTC BLOCKER #2)."""
 
     def handle(self) -> None:
-        type(self.server).calls += 1
+        type(self.server).calls += 1  # type: ignore[attr-defined]
         data = b""
         while b"\r\n\r\n" not in data:  # consume request headers
             chunk = self.request.recv(4096)
