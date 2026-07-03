@@ -151,10 +151,6 @@ def _validate_base_url(base_url: str) -> None:
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_./:-]*$")
 
 
-def _path(name: str) -> Path:
-    return secrets.config_dir() / name
-
-
 def _load(name: str, *, config_dir: str | Path | None = None) -> dict:
     d = Path(config_dir) if config_dir is not None else secrets.config_dir()
     p = d / name
@@ -167,10 +163,10 @@ def _load(name: str, *, config_dir: str | Path | None = None) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _save(name: str, data: dict) -> Path:
-    d = secrets.config_dir()
+def _save(name: str, data: dict, *, config_dir: str | Path | None = None) -> Path:
+    d = Path(config_dir) if config_dir is not None else secrets.config_dir()
     d.mkdir(parents=True, exist_ok=True)
-    p = _path(name)
+    p = d / name
     tmp = p.with_name(p.name + ".tmp")
     tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
     tmp.replace(p)  # atomic

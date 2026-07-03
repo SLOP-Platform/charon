@@ -511,9 +511,12 @@ class TestDiscoverPricingPersistence:
         from charon import config
         config.add_model("gpt-4o", provider="openai")
 
+        # OpenRouter quotes pricing PER TOKEN (e.g. "0.0000025" == $2.50/1M).
+        # The canonical stored value is that raw per-token float — NO /1e6 scaling.
         def _fake_discover(base_url, api_key, strip_v1=True, timeout=10):
             return [
-                {"id": "gpt-4o", "pricing": {"prompt": "5", "completion": "15"}},
+                {"id": "gpt-4o",
+                 "pricing": {"prompt": "0.0000025", "completion": "0.00001"}},
             ]
 
         monkeypatch.setattr("charon.discover.discover_provider", _fake_discover)
@@ -528,8 +531,10 @@ class TestDiscoverPricingPersistence:
 
         models = config.load_models(config_dir=tmp_path)
         assert "gpt-4o" in models
-        assert models["gpt-4o"].get("cost_input") == 5.0 / 1_000_000
-        assert models["gpt-4o"].get("cost_output") == 15.0 / 1_000_000
+        # Stored verbatim as per-token USD — the exact figure OpenRouter sent.
+        assert models["gpt-4o"].get("cost_input") == 0.0000025
+        assert models["gpt-4o"].get("cost_output") == 0.00001
+        assert models["gpt-4o"].get("priced_by") == "discovery"
 
     def test_discover_no_match_skips_pricing(self, monkeypatch, tmp_path):
         monkeypatch.setenv("CHARON_HOME", str(tmp_path))
@@ -578,3 +583,93 @@ class TestDiscoverPricingPersistence:
         models = config.load_models(config_dir=tmp_path)
         assert models["gpt-4o"].get("cost_input") == 0.001
         assert "cost_output" not in models["gpt-4o"]
+
+    def test_operator_price_survives_discovery(self, monkeypatch, tmp_path):
+        # An operator hand-set price (no discovery marker) must NOT be clobbered
+        # when a discovery reports a different price for the same model.
+        monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+        from charon import config
+        config.add_model("gpt-4o", provider="openai",
+                         cost_input=0.00009, cost_output=0.00042)
+
+        def _fake_discover(base_url, api_key, strip_v1=True, timeout=10):
+            return [
+                {"id": "gpt-4o",
+                 "pricing": {"prompt": "0.0000025", "completion": "0.00001"}},
+            ]
+
+        monkeypatch.setattr("charon.discover.discover_provider", _fake_discover)
+        monkeypatch.setattr("charon.discover.providers.PRESETS", {
+            "openai": providers.ProviderPreset("http://openai/v1", strip_v1=True),
+        })
+        monkeypatch.setattr("charon.discover.config.load_providers", lambda **kw: {})
+        monkeypatch.setattr("charon.discover.secrets.load_secrets", lambda **kw: {})
+        monkeypatch.setattr("charon.discover.secrets.config_dir", lambda **kw: tmp_path)
+
+        discover_models(timeout=5, config_dir=tmp_path)
+
+        models = config.load_models(config_dir=tmp_path)
+        # Operator figures preserved; not overwritten by discovery.
+        assert models["gpt-4o"].get("cost_input") == 0.00009
+        assert models["gpt-4o"].get("cost_output") == 0.00042
+        assert models["gpt-4o"].get("priced_by") != "discovery"
+
+    def test_discovery_refreshes_its_own_earlier_price(self, monkeypatch, tmp_path):
+        # A price previously written BY discovery (carries the marker) may be
+        # refreshed on a subsequent discovery — only operator prices are frozen.
+        monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+        from charon import config
+        config.add_model("gpt-4o", provider="openai")
+
+        prices = {"prompt": "0.0000025", "completion": "0.00001"}
+
+        def _fake_discover(base_url, api_key, strip_v1=True, timeout=10):
+            return [{"id": "gpt-4o", "pricing": dict(prices)}]
+
+        monkeypatch.setattr("charon.discover.discover_provider", _fake_discover)
+        monkeypatch.setattr("charon.discover.providers.PRESETS", {
+            "openai": providers.ProviderPreset("http://openai/v1", strip_v1=True),
+        })
+        monkeypatch.setattr("charon.discover.config.load_providers", lambda **kw: {})
+        monkeypatch.setattr("charon.discover.secrets.load_secrets", lambda **kw: {})
+        monkeypatch.setattr("charon.discover.secrets.config_dir", lambda **kw: tmp_path)
+
+        discover_models(timeout=5, config_dir=tmp_path)
+        assert config.load_models(config_dir=tmp_path)["gpt-4o"]["cost_input"] == 0.0000025
+
+        prices["prompt"] = "0.000003"  # upstream price change
+        discover_models(timeout=5, config_dir=tmp_path)
+        refreshed = config.load_models(config_dir=tmp_path)["gpt-4o"]
+        assert refreshed["cost_input"] == 0.000003
+        assert refreshed["priced_by"] == "discovery"
+
+    def test_discovery_rejects_nonfinite_and_negative(self, monkeypatch, tmp_path):
+        # NaN / inf / negative pricing must be skipped, never persisted.
+        monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+        from charon import config
+        config.add_model("m-nan", provider="openai")
+        config.add_model("m-inf", provider="openai")
+        config.add_model("m-neg", provider="openai")
+
+        def _fake_discover(base_url, api_key, strip_v1=True, timeout=10):
+            return [
+                {"id": "m-nan", "pricing": {"prompt": "nan", "completion": "0.00001"}},
+                {"id": "m-inf", "pricing": {"prompt": "inf", "completion": "0.00001"}},
+                {"id": "m-neg", "pricing": {"prompt": "-5", "completion": "0.00001"}},
+            ]
+
+        monkeypatch.setattr("charon.discover.discover_provider", _fake_discover)
+        monkeypatch.setattr("charon.discover.providers.PRESETS", {
+            "openai": providers.ProviderPreset("http://openai/v1", strip_v1=True),
+        })
+        monkeypatch.setattr("charon.discover.config.load_providers", lambda **kw: {})
+        monkeypatch.setattr("charon.discover.secrets.load_secrets", lambda **kw: {})
+        monkeypatch.setattr("charon.discover.secrets.config_dir", lambda **kw: tmp_path)
+
+        discover_models(timeout=5, config_dir=tmp_path)
+
+        models = config.load_models(config_dir=tmp_path)
+        # Bad prompt values rejected; the valid completion still lands.
+        for mid in ("m-nan", "m-inf", "m-neg"):
+            assert "cost_input" not in models[mid]
+            assert models[mid].get("cost_output") == 0.00001

@@ -15,6 +15,7 @@ providers ship no key (localhost servers are usually unauthenticated).
 from __future__ import annotations
 
 import json
+import math
 import urllib.request
 from dataclasses import dataclass, replace
 from urllib.parse import urlsplit
@@ -154,7 +155,7 @@ def _parse_models(data: object) -> list[dict]:
     ``{"data": [...]}`` shape, a bare list, or a list of strings. Optionally
     carries through upstream metadata (context_window, max_tokens, reasoning,
     vision, audio, cost_input, cost_output) if present.
-    OpenRouter pricing (per-1M-token strings) is converted to per-token USD."""
+    OpenRouter pricing (per-token USD strings) is stored verbatim as per-token USD."""
     items = data.get("data") if isinstance(data, dict) else data
     out: list[dict] = []
     if not isinstance(items, list):
@@ -174,8 +175,19 @@ def _parse_models(data: object) -> list[dict]:
 
 
 def _extract_pricing(source: dict, entry: dict[str, object]) -> None:
-    """Read OpenRouter-style ``pricing: {prompt, completion}`` (per-1M-token
-    strings or floats) and store as ``cost_input`` / ``cost_output`` (per-token USD)."""
+    """Read OpenRouter-style ``pricing: {prompt, completion}`` and store as
+    ``cost_input`` / ``cost_output``.
+
+    CANONICAL UNIT: **per-token USD** (the raw float — NO scaling). The
+    ``pricing.{prompt,completion}`` field is the OpenRouter convention and is
+    already quoted per single token (e.g. ``"0.0000025"`` == $2.50 / 1M tokens),
+    so the value is stored verbatim. (An earlier version divided by 1e6 on the
+    mistaken assumption it was per-1M — that undercounted 1,000,000×.) A provider
+    that ever reports genuinely per-1M pricing would need its own ``/1e6`` seam;
+    none of the wired providers do.
+
+    Values that are non-numeric, non-finite (NaN/inf), or negative are rejected
+    so garbage never persists into ``models.json``."""
     pricing = source.get("pricing")
     if not isinstance(pricing, dict):
         return
@@ -184,8 +196,10 @@ def _extract_pricing(source: dict, entry: dict[str, object]) -> None:
         if val is None:
             continue
         try:
-            per_token = float(val) / 1_000_000
+            per_token = float(val)
         except (ValueError, TypeError):
+            continue
+        if not (math.isfinite(per_token) and per_token >= 0):
             continue
         entry[dst] = per_token
 

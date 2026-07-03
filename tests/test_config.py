@@ -203,3 +203,21 @@ def test_set_fallback_pricing_rejects_negative(monkeypatch, tmp_path):
         config.set_fallback_pricing(-0.01, 0.02)
     with pytest.raises(ValueError):
         config.set_fallback_pricing(0.01, -0.02)
+
+
+def test_save_honors_config_dir_roundtrip(tmp_path):
+    # _save must write to the SAME dir a matching _load reads from, for a
+    # non-default config_dir (the discovery pricing-write path). Regression:
+    # _save used to hardcode secrets.config_dir() and ignore config_dir.
+    d = tmp_path / "alt-config"
+    config._save("models.json", {"m": {"cost_input": 0.0000025}}, config_dir=d)
+    assert (d / "models.json").exists()
+    loaded = config.load_models(config_dir=d)
+    assert loaded["m"]["cost_input"] == 0.0000025
+
+
+def test_save_default_config_dir_unaffected(monkeypatch, tmp_path):
+    # With no config_dir, _save still targets the default (CHARON_HOME) dir.
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    config._save("models.json", {"m": {"cost_output": 0.00001}})
+    assert config.load_models()["m"]["cost_output"] == 0.00001
