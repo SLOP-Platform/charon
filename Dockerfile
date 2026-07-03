@@ -19,6 +19,14 @@
 ARG BASE_IMAGE=python:3.12-slim
 FROM ${BASE_IMAGE} AS base
 
+# Build provenance (SR-10): the git SHA the image was built from, passed by the
+# release workflow as `--build-arg CHARON_BUILD_SHA=<sha>` and baked into the
+# image as an ENV so the running container carries a resolvable build id. The
+# `/charon/status` read-out of this env is a RIDER on the proxy_server.py owner
+# (SR-2), NOT this ticket. Empty for local/dev builds that don't pass the arg.
+ARG CHARON_BUILD_SHA=
+ENV CHARON_BUILD_SHA=${CHARON_BUILD_SHA}
+
 # Non-root by default; the loop should never need host root.
 RUN useradd --create-home --uid 10001 charon
 WORKDIR /app

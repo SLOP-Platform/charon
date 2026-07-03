@@ -8,7 +8,17 @@ name: release
 # digest-PINNED (resolved fresh, recorded in provenance); only the immutable
 # :vX.Y.Z is pushed, never :latest. No publish token surface exists off the
 # release path. Runs on the shared self-hosted 4-LOM runner (zero GitHub minutes).
+#
+# SR-10: publish on TAG PUSH as well as on a published Release, so the GHCR image
+# can never lag a pushed version tag (the deploy box pulls immutable :vX.Y.Z tags).
+# Both triggers still gate on the same `gate` + `image-smoke` jobs (publish needs:
+# them), so an untested image is never pushed. The derive-version step matches the
+# tag to pyproject for both triggers via GITHUB_REF_NAME. Published tags are
+# immutable — never overwritten, never :latest.
 on:
+  push:
+    tags:
+      - "v*"
   release:
     types: [published]
 
@@ -125,6 +135,7 @@ jobs:
           push: true
           build-args: |
             BASE_IMAGE=${{ steps.base.outputs.base }}
+            CHARON_BUILD_SHA=${{ github.sha }}
           tags: ghcr.io/slop-platform/charon:v${{ steps.ver.outputs.version }}
 
       - name: attest build provenance (SLSA via GitHub OIDC)
