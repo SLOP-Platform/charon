@@ -24,6 +24,7 @@ import sys
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from . import providers
 from .api import _invocation_name
@@ -248,24 +249,25 @@ def load_config(
     )
 
 
-def _module_inst(name: str, state_dir: str | Path | None = None) -> object | None:
-    """Create a B1-B3 module instance from its config file in *state_dir*.
+def _module_inst(name: str, state_dir: str | Path | None = None) -> Any:
+    """Return a Smart Routing module instance — always active with defaults.
 
-    Returns ``None`` when the config file is absent (feature disabled).
+    Reads ``<name>.json`` for operator overrides. Only returns None for
+    cost-multiplying features (speculative, consensus) that need explicit opt-in.
     """
     from pathlib import Path
 
     from . import secrets
     d = Path(state_dir) if state_dir is not None else secrets.config_dir()
     cfg_file = d / f"{name}.json"
-    if not cfg_file.exists():
-        return None
-    try:
-        data = json.loads(cfg_file.read_text())
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(data, dict):
-        return None
+    data: dict = {}
+    if cfg_file.exists():
+        try:
+            loaded = json.loads(cfg_file.read_text())
+            if isinstance(loaded, dict):
+                data = loaded
+        except (OSError, json.JSONDecodeError):
+            pass
 
     if name == "cache":
         from .cache import SemanticCache
@@ -275,17 +277,18 @@ def _module_inst(name: str, state_dir: str | Path | None = None) -> object | Non
         return ResponseNormalizer()
     if name == "guardrails":
         from .guardrails import Guardrails
-        return Guardrails(config=data)
+        return Guardrails(config=data if data else {"keywords": []})
     if name == "observability":
         from .observability import Observability
-        return Observability(config=data)
+        return Observability(config=data if data else {})
     if name == "quality":
         from .quality_scorer import QualityScorer
         return QualityScorer(state_dir=d)
     if name == "spend":
         from .spend_limits import SpendLimiter
-        return SpendLimiter(monthly_limit_usd=float(data.get("monthly_limit_usd", 0)),
-                            state_dir=d)
+        return SpendLimiter(
+            monthly_limit_usd=float(data.get("monthly_limit_usd", 0)),
+            state_dir=d)
     if name == "inspector":
         from .request_inspector import RequestInspector
         return RequestInspector()
@@ -293,16 +296,18 @@ def _module_inst(name: str, state_dir: str | Path | None = None) -> object | Non
         from .session_affinity import SessionAffinity
         return SessionAffinity(ttl=float(data.get("ttl", 300)))
     if name == "speculative":
+        if not data.get("enabled"):
+            return None
         from .speculative_execution import SpeculativeExecutor
-        return SpeculativeExecutor(
-            enabled=data.get("enabled", False),
-            max_providers=int(data.get("max_providers", 3)))
+        return SpeculativeExecutor(enabled=True,
+                                   max_providers=int(data.get("max_providers", 3)))
     if name == "consensus":
+        if not data.get("enabled"):
+            return None
         from .consensus import ConsensusRouter
-        return ConsensusRouter(
-            enabled=data.get("enabled", False),
-            default_count=int(data.get("default_count", 3)),
-            similarity=float(data.get("similarity", 0.8)))
+        return ConsensusRouter(enabled=True,
+                               default_count=int(data.get("default_count", 3)),
+                               similarity=float(data.get("similarity", 0.8)))
     if name == "vkeys":
         from .virtual_keys import VirtualKeyManager
         return VirtualKeyManager(state_dir=d)
@@ -494,9 +499,28 @@ def run(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> int:
     except GatewayBindRefused as exc:
         print(str(exc), file=sys.stderr)
         return 2
+    # ── Smart Routing status ─────────────────────────────────────────
+    parts: list[str] = []
+    if cfg.spend_limiter is not None:
+        parts.append(f"spend limit: ${cfg.spend_limiter.remaining():.2f} remaining")
+        if cfg.spend_limiter._limit_usd <= 0:
+            parts.append("no cap set")
+    if cfg.semantic_cache is not None:
+        parts.append("cache")
+    if cfg.guardrails is not None:
+        parts.append("guardrails")
+    if cfg.quality_scorer is not None:
+        parts.append("quality")
+    if cfg.request_inspector is not None:
+        parts.append("inspector")
+    if parts:
+        print(f"Smart Routing: {', '.join(parts)}", file=sys.stderr)
+        if cfg.spend_limiter is not None and cfg.spend_limiter._limit_usd <= 0:
+            print("  hint: set a spend cap with 'charon limits set --monthly N'",
+                  file=sys.stderr)
     if not cfg.routes and not cfg.pools:
-        print(f"warning: no models configured — run `{_invocation_name()} setup`, "
-              f"`{_invocation_name()} providers add <name>`, or open the setup page below",
+        print(f"warning: no models configured — run `{_invocation_name()} setup` or "
+              f"`{_invocation_name()} models import <provider>`",
               file=sys.stderr)
     _check_failover_safety(cfg)
     gate = "token-gated" if cfg.token else "loopback, UNGATED"
