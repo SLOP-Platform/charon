@@ -26,9 +26,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import providers
+from .cache import SemanticCache
 from .cli import _invocation_name
+from .guardrails import Guardrails
 from .netutil import is_loopback
+from .observability import Observability
 from .proxy_server import GatewayProxyServer, UpstreamRoute
+from .quality_scorer import QualityScorer
+from .request_inspector import RequestInspector
+from .response_normalizer import ResponseNormalizer
+from .spend_limits import SpendLimiter
 
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = 8080
@@ -48,6 +55,14 @@ class GatewayConfig:
     pools: dict[str, list[UpstreamRoute]] = field(default_factory=dict)
     model_ids: list[str] = field(default_factory=list)
     model_meta: dict[str, dict] = field(default_factory=dict)
+    # ── optional B1 gateway modules (None = feature disabled) ────────
+    semantic_cache: SemanticCache | None = None
+    response_normalizer: ResponseNormalizer | None = None
+    guardrails: Guardrails | None = None
+    observability: Observability | None = None
+    quality_scorer: QualityScorer | None = None
+    spend_limiter: SpendLimiter | None = None
+    request_inspector: RequestInspector | None = None
 
 
 def _route_from_spec(spec: dict, providers_cfg: dict) -> UpstreamRoute | None:
@@ -246,6 +261,13 @@ def build_server(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> 
     server = GatewayProxyServer(
         routes=cfg.routes, pools=cfg.pools, host=cfg.host, port=cfg.port,
         token=cfg.token, model_ids=cfg.model_ids, model_meta=cfg.model_meta,
+        semantic_cache=cfg.semantic_cache,
+        response_normalizer=cfg.response_normalizer,
+        guardrails=cfg.guardrails,
+        observability=cfg.observability,
+        quality_scorer=cfg.quality_scorer,
+        spend_limiter=cfg.spend_limiter,
+        request_inspector=cfg.request_inspector,
     )
     if setup_dir is not None:
         server.setup_handler = make_setup_handler(server, setup_dir)

@@ -13,6 +13,7 @@ integration test (mock upstream) and live via a real OpenCode-Go call.
 from __future__ import annotations
 
 import collections
+import hashlib
 import hmac
 import http.cookies
 import http.server
@@ -25,8 +26,15 @@ import urllib.request
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlsplit
 
+from .cache import SemanticCache
+from .guardrails import Guardrails
 from .netutil import is_loopback
+from .observability import Observability
 from .proxy import GatewayProxy
+from .quality_scorer import QualityScorer
+from .request_inspector import RequestInspector
+from .response_normalizer import NormalizeMode, ResponseNormalizer
+from .spend_limits import SpendLimiter
 
 
 @dataclass(frozen=True)
@@ -638,6 +646,41 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
             )}})
             return
 
+        # ── spend cap check (before any upstream call) ──────────────────
+        if srv.spend_limiter is not None:
+            est_tokens = max(len(raw_body) // 4, 100)
+            est_cost = est_tokens * 0.0000015  # nominal per-token floor
+            dec = srv.spend_limiter.check(est_cost)
+            if not dec.allowed:
+                self._json(402, {"error": {"message": dec.reason,
+                               "remaining": dec.remaining}})
+                return
+
+        # ── guardrail request scan ──────────────────────────────────────
+        if srv.guardrails is not None:
+            msgs = orig_bj.get("messages", [])
+            violations, _ = srv.guardrails.scan_request(msgs)
+            blocking = [v for v in violations if v.severity == "BLOCK"]
+            if blocking:
+                self._json(400, {"error": {
+                    "message": "request blocked by guardrails",
+                    "violations": [{"pattern": v.pattern, "message": v.message}
+                                   for v in blocking]
+                }})
+                return
+
+        # ── cache check ─────────────────────────────────────────────────
+        if srv.semantic_cache is not None:
+            cache_key = hashlib.sha256(raw_body).hexdigest()
+            cached = srv.semantic_cache.get(cache_key)
+            if cached is not None:
+                ctype = cached.headers.get("Content-Type", "application/json")
+                self._send_resp_headers(200, ctype, "cache", [], False)
+                self.wfile.write(b"X-Cache-Status: HIT\r\n\r\n")
+                self._write(cached.content)
+                srv.note_request(requested, "cache-hit", 200, 0.0, [])
+                return
+
         is_stream = orig_bj.get("stream") is True
         ordered = srv.order_by_cooldown(chain)  # fresh providers first, cooled last (R7)
         failovers: list[dict] = []
@@ -702,9 +745,24 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                                           "reason": obs.note})
                         continue
                     srv.observer.record(obs, count_usage=True)  # served → bill usage (R10a)
+                    # ── post-response hooks ──────────────────────────
+                    cost = obs.usage.cost_usd if obs.usage else 0.0
+                    if srv.response_normalizer is not None:
+                        body_bytes = srv.response_normalizer.normalize(
+                            body_bytes.decode(errors="replace"),
+                            NormalizeMode.STANDARDIZE_MD,
+                        ).encode()
+                    if srv.semantic_cache is not None:
+                        cache_key = hashlib.sha256(raw_body).hexdigest()
+                        srv.semantic_cache.set(cache_key, body_bytes,
+                                               rhdrs, ttl=3600)
+                    if srv.quality_scorer is not None:
+                        srv.quality_scorer.record(
+                            route.label, 0, success=True, tokens=0)
+                    if srv.spend_limiter is not None and cost > 0:
+                        srv.spend_limiter.record(cost)
                     self._send_resp_headers(200, ctype, route.label, failovers, obs.pseudo_success)
                     self._write(body_bytes)
-                    cost = obs.usage.cost_usd if obs.usage else 0.0
                     srv.note_request(requested, route.label, 200, cost, failovers)
                     return
 
@@ -800,6 +858,13 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         max_body_bytes: int = 10 * 1024 * 1024,
         default_cooldown: float = 60.0,
         failover_log_path: str | None = None,
+        guardrails: Guardrails | None = None,
+        semantic_cache: SemanticCache | None = None,
+        response_normalizer: ResponseNormalizer | None = None,
+        observability: Observability | None = None,
+        quality_scorer: QualityScorer | None = None,
+        spend_limiter: SpendLimiter | None = None,
+        request_inspector: RequestInspector | None = None,
     ) -> None:
         super().__init__((host, port), _ProxyHandler)
         self.upstream_base = upstream_base
@@ -827,6 +892,13 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         self.max_body_bytes = max_body_bytes
         self.default_cooldown = default_cooldown
         self.failover_log_path = failover_log_path
+        self.guardrails = guardrails
+        self.semantic_cache = semantic_cache
+        self.response_normalizer = response_normalizer
+        self.observability = observability
+        self.quality_scorer = quality_scorer
+        self.spend_limiter = spend_limiter
+        self.request_inspector = request_inspector
         self._cooldown: dict[str, float] = {}
         self._cooldown_lock = threading.Lock()
         self.failover_events: collections.deque[dict] = collections.deque(maxlen=200)
