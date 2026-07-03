@@ -2,8 +2,11 @@
 # """": true
 # handoff.sh — generate the machine-state section of SESSION-HANDOFF.md.
 #
-# Usage:  bash /home/stack/charon-private/fleet/handoff.sh > fleet/SESSION-HANDOFF.md
+# Usage:  SESSION=mace-windu bash /home/stack/charon-private/fleet/handoff.sh > fleet/SESSION-HANDOFF-mace-windu.md
 # Then the operator fills in the Human analysis section below the auto-generated block.
+#
+# Per-session handoffs: set $SESSION to your Jedi name. Output goes to
+# SESSION-HANDOFF-<session>.md. Multiple concurrent sessions never collide.
 #
 # Contract: this script MUST be idempotent and MUST NOT modify any files — it only
 # reads the current repo state and writes markdown to stdout.
@@ -14,17 +17,16 @@ CHARON_REPO="/home/stack/code/charon"
 DATE_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 cat <<PREAMBLE
-# Charon Fleet — Session Handoff ($DATE_UTC)
+# Charon Fleet — Session Handoff ($DATE_UTC) — \${SESSION:-unknown}
 
-> **This is THE canonical handoff file.** Previous handoffs (HANDOFF.md,
-> HANDOFF-CONTINUE.md, SESSION-RESTART.md) are superseded. There is exactly
-> ONE handoff file per session end: \`SESSION-HANDOFF.md\`.
+> **Per-session handoff.** Each session writes: \`SESSION-HANDOFF-\$SESSION.md\`.
+> No collisions. Next session reads ALL: \`SESSION-HANDOFF-*.md\`.
 
 ---
 
 ## Bootstrap (copy-paste into next session)
 
-Read \`/home/stack/charon-private/fleet/SESSION-HANDOFF.md\` fully, then run
+Read \`/home/stack/charon-private/fleet/SESSION-HANDOFF-*.md\` fully, then run
 \`bash /home/stack/charon-private/fleet/status.sh && bash /home/stack/charon-private/fleet/validate_board.sh\`,
 check the board for claimed names, register with an unused Jedi name + \`repo="charon"\`, then go.
 
