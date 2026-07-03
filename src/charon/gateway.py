@@ -248,6 +248,69 @@ def load_config(
     )
 
 
+def _module_inst(name: str, state_dir: str | Path | None = None) -> object | None:
+    """Create a B1-B3 module instance from its config file in *state_dir*.
+
+    Returns ``None`` when the config file is absent (feature disabled).
+    """
+    from . import config, secrets
+    from pathlib import Path
+    d = Path(state_dir) if state_dir is not None else secrets.config_dir()
+    cfg_file = d / f"{name}.json"
+    if not cfg_file.exists():
+        return None
+    try:
+        data = json.loads(cfg_file.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    if name == "cache":
+        from .cache import SemanticCache
+        return SemanticCache(max_size=data.get("max_size", 1000))
+    if name == "normalizer":
+        from .response_normalizer import ResponseNormalizer
+        return ResponseNormalizer()
+    if name == "guardrails":
+        from .guardrails import Guardrails
+        return Guardrails(config=data)
+    if name == "observability":
+        from .observability import Observability
+        return Observability(config=data)
+    if name == "quality":
+        from .quality_scorer import QualityScorer
+        return QualityScorer(state_dir=d)
+    if name == "spend":
+        from .spend_limits import SpendLimiter
+        return SpendLimiter(monthly_limit_usd=float(data.get("monthly_limit_usd", 0)),
+                            state_dir=d)
+    if name == "inspector":
+        from .request_inspector import RequestInspector
+        return RequestInspector()
+    if name == "session_affinity":
+        from .session_affinity import SessionAffinity
+        return SessionAffinity(ttl=float(data.get("ttl", 300)))
+    if name == "speculative":
+        from .speculative_execution import SpeculativeExecutor
+        return SpeculativeExecutor(
+            enabled=data.get("enabled", False),
+            max_providers=int(data.get("max_providers", 3)))
+    if name == "consensus":
+        from .consensus import ConsensusRouter
+        return ConsensusRouter(
+            enabled=data.get("enabled", False),
+            default_count=int(data.get("default_count", 3)),
+            similarity=float(data.get("similarity", 0.8)))
+    if name == "vkeys":
+        from .virtual_keys import VirtualKeyManager
+        return VirtualKeyManager(state_dir=d)
+    if name == "policy":
+        from .policy_router import PolicyRouter
+        return PolicyRouter(state_dir=d)
+    return None
+
+
 def _check_failover_safety(cfg: GatewayConfig) -> None:
     """Emit a strong warning when no failover chain is configured — the gateway will
     serve but a single provider exhaustion halts ALL traffic. Common pitfall: models
