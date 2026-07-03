@@ -24,18 +24,8 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__, api
+from .api import _invocation_name
 from .doctor import probe
-
-
-def _invocation_name() -> str:
-    """The name the user invoked this process as (sys.argv[0]), defaulting to
-    'charon' in non-interactive/test environments where argv[0] is 'pytest' or
-    similar."""
-    name = sys.argv[0]
-    base = os.path.basename(name)
-    if base.startswith("python") or "/pytest" in name or base == "pytest" or base == "-c":
-        return "charon"
-    return name
 
 
 def _cmd_run(args: argparse.Namespace) -> int:

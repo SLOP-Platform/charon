@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import providers
-from .cli import _invocation_name
+from .api import _invocation_name
 
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = 8080

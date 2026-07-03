@@ -26,8 +26,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import providers
+from .api import _invocation_name
 from .cache import SemanticCache
-from .cli import _invocation_name
 from .guardrails import Guardrails
 from .netutil import is_loopback
 from .observability import Observability
