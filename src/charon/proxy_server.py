@@ -27,14 +27,19 @@ from dataclasses import dataclass
 from urllib.parse import parse_qs, urlsplit
 
 from .cache import SemanticCache
+from .consensus import ConsensusRouter
 from .guardrails import Guardrails
 from .netutil import is_loopback
 from .observability import Observability
+from .policy_router import PolicyRouter
 from .proxy import GatewayProxy
 from .quality_scorer import QualityScorer
 from .request_inspector import RequestInspector
 from .response_normalizer import NormalizeMode, ResponseNormalizer
+from .session_affinity import SessionAffinity
+from .speculative_execution import SpeculativeExecutor
 from .spend_limits import SpendLimiter
+from .virtual_keys import VirtualKeyManager
 
 
 @dataclass(frozen=True)
@@ -874,6 +879,11 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         quality_scorer: QualityScorer | None = None,
         spend_limiter: SpendLimiter | None = None,
         request_inspector: RequestInspector | None = None,
+        session_affinity: SessionAffinity | None = None,
+        speculative_executor: SpeculativeExecutor | None = None,
+        consensus_router: ConsensusRouter | None = None,
+        virtual_key_manager: VirtualKeyManager | None = None,
+        policy_router: PolicyRouter | None = None,
     ) -> None:
         super().__init__((host, port), _ProxyHandler)
         self.upstream_base = upstream_base
@@ -908,6 +918,11 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         self.quality_scorer = quality_scorer
         self.spend_limiter = spend_limiter
         self.request_inspector = request_inspector
+        self.session_affinity = session_affinity
+        self.speculative_executor = speculative_executor
+        self.consensus_router = consensus_router
+        self.virtual_key_manager = virtual_key_manager
+        self.policy_router = policy_router
         self._cooldown: dict[str, float] = {}
         self._cooldown_lock = threading.Lock()
         self.failover_events: collections.deque[dict] = collections.deque(maxlen=200)
@@ -946,6 +961,10 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         with self._cooldown_lock:  # paired with apply_routes → consistent snapshot
             if model in self.pools:
                 return list(self.pools[model])
+            if (self.policy_router is not None and model.startswith("policy/")):
+                policy_name = model[len("policy/"):]
+                return self.policy_router.resolve(policy_name, self.routes,
+                                                  self.pools)
             single = self.route_for(model)
             return [single] if single is not None else []
 

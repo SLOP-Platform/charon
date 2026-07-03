@@ -15,7 +15,6 @@ import random
 from pathlib import Path
 
 from . import secrets as _secrets
-from .proxy_server import UpstreamRoute
 
 
 class PolicyType(enum.Enum):
@@ -30,14 +29,14 @@ class PolicyRouter:
         self._policies: dict[str, dict] = {}
         self._load()
 
-    def resolve(self, policy_name: str, routes: dict[str, UpstreamRoute],
-                pools: dict[str, list[UpstreamRoute]]) -> list[UpstreamRoute]:
+    def resolve(self, policy_name: str, routes: dict[str, object],
+                pools: dict[str, list[object]]) -> list[object]:
         policy = self._policies.get(policy_name)
         if policy is None:
             return []
         ptype = PolicyType(policy.get("type", "fallback"))
         members = policy.get("members", [])
-        chain: list[UpstreamRoute] = []
+        chain: list[object] = []
         for member_id in members:
             if member_id in pools:
                 chain.extend(pools[member_id])
@@ -45,8 +44,6 @@ class PolicyRouter:
                 chain.append(routes[member_id])
         if ptype == PolicyType.LOAD_BALANCE:
             random.shuffle(chain)
-        elif ptype == PolicyType.LATENCY:
-            chain = list(chain)
         return chain
 
     def create_policy(self, name: str, ptype: PolicyType, members: list[str]) -> None:

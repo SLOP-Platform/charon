@@ -36,6 +36,11 @@ from .quality_scorer import QualityScorer
 from .request_inspector import RequestInspector
 from .response_normalizer import ResponseNormalizer
 from .spend_limits import SpendLimiter
+from .consensus import ConsensusRouter
+from .policy_router import PolicyRouter
+from .session_affinity import SessionAffinity
+from .speculative_execution import SpeculativeExecutor
+from .virtual_keys import VirtualKeyManager
 
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = 8080
@@ -63,6 +68,11 @@ class GatewayConfig:
     quality_scorer: QualityScorer | None = None
     spend_limiter: SpendLimiter | None = None
     request_inspector: RequestInspector | None = None
+    session_affinity: SessionAffinity | None = None
+    speculative_executor: SpeculativeExecutor | None = None
+    consensus_router: ConsensusRouter | None = None
+    virtual_key_manager: VirtualKeyManager | None = None
+    policy_router: PolicyRouter | None = None
 
 
 def _route_from_spec(spec: dict, providers_cfg: dict) -> UpstreamRoute | None:
@@ -268,6 +278,11 @@ def build_server(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> 
         quality_scorer=cfg.quality_scorer,
         spend_limiter=cfg.spend_limiter,
         request_inspector=cfg.request_inspector,
+        session_affinity=cfg.session_affinity,
+        speculative_executor=cfg.speculative_executor,
+        consensus_router=cfg.consensus_router,
+        virtual_key_manager=cfg.virtual_key_manager,
+        policy_router=cfg.policy_router,
     )
     if setup_dir is not None:
         server.setup_handler = make_setup_handler(server, setup_dir)
