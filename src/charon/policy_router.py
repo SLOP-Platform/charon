@@ -13,6 +13,7 @@ import enum
 import json
 import random
 from pathlib import Path
+from typing import Any
 
 from . import secrets as _secrets
 
@@ -29,8 +30,8 @@ class PolicyRouter:
         self._policies: dict[str, dict] = {}
         self._load()
 
-    def resolve(self, policy_name: str, routes: dict[str, object],
-                pools: dict[str, list[object]]) -> list[object]:
+    def resolve(self, policy_name: str, routes: dict[str, Any],
+                pools: dict[str, list[Any]]) -> list[Any]:
         policy = self._policies.get(policy_name)
         if policy is None:
             return []

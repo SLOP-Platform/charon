@@ -11,10 +11,13 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
+import logging
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -56,6 +59,7 @@ class SpeculativeExecutor:
                 latency_ms=(time.monotonic() - start) * 1000,
             )
         except Exception as exc:
+            logger.exception("speculative upstream call failed")
             result = SpecResult(
                 provider=getattr(route, "label", "unknown"),
                 error=str(exc),

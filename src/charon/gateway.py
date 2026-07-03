@@ -28,18 +28,18 @@ from pathlib import Path
 from . import providers
 from .api import _invocation_name
 from .cache import SemanticCache
+from .consensus import ConsensusRouter
 from .guardrails import Guardrails
 from .netutil import is_loopback
 from .observability import Observability
+from .policy_router import PolicyRouter
 from .proxy_server import GatewayProxyServer, UpstreamRoute
 from .quality_scorer import QualityScorer
 from .request_inspector import RequestInspector
 from .response_normalizer import ResponseNormalizer
-from .spend_limits import SpendLimiter
-from .consensus import ConsensusRouter
-from .policy_router import PolicyRouter
 from .session_affinity import SessionAffinity
 from .speculative_execution import SpeculativeExecutor
+from .spend_limits import SpendLimiter
 from .virtual_keys import VirtualKeyManager
 
 _DEFAULT_HOST = "127.0.0.1"
