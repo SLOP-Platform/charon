@@ -276,206 +276,54 @@ WORKTREE-ADD-FORCE.md  tier=sonnet  depends_on=
 
 ## Human analysis
 
-**Session name:** yoda
-**Session model:** deepseek-v4-pro
-**Consensus partners:** obi-wan-kenobi, mace-windu
+## Human analysis
+
+**Previous session name:** mace-windu
+**Previous session model:** deepseek-v4-pro (via Charon gateway)
 
 ### What was done this session
 
-**T0: Provider failover — NOT YET BUILT.** Coordination + review consumed entire session.
-The actual failover code is pending. See "What must happen next."
+No commits or PRs — bridge infrastructure + planning session. All work on disk.
 
-**Built:**
-1. **Bridge daemon** (`~/.config/opencode/session-bridge/daemon.py`): Unix socket listener at
-   `~/.charon/bridge.sock`, SQLite-backed, 7 MCP tools (register/board/update/unregister/claim/
-   release/nudge), SIGHUP graceful restart, graduated purge, PID liveness check. Tested: init,
-   register, board, nudge, update all working via `nc -U` to the socket.
+**1. Session-bridge fixes (server.py — on disk, needs daemon deploy):**
+- F1-F4 fixes: nudge return, board() auto-refresh, BEGIN IMMEDIATE race protection, register preserves nudges
+- Structured message support (message_type + payload envelope)
+- E2E tested against on-disk code ✓
 
-2. **Bridge TTL fix** (`server.py:24`): env-var configurable `SESSION_BRIDGE_TTL`, PID liveness
-   check in `_purge_stale()`, graduated response (nudge→escalate→purge).
+**2. Bridge daemon + proxy (built by yoda + obi-wan):**
+- daemon.py (24KB), proxy.py (8.7KB), MCP config updated
+- NOT YET ACTIVE — needs session restart
 
-3. **`charon models import --all`** (uncommitted on `feat/prod-install`): iterates all preset +
-   custom providers with keys set, imports models in bulk. Mypy/ruff clean. Help text shows
-   `--all`. NOTE: first implementation lost to PR #78 merge collision; recovered.
+**3. Fleet documents (authored):**
+- ADOPT-GATEWAY-FEATURES.md: 23-ticket competitive plan
+- CROSS-SESSION-REVIEW-PROTOCOL.md: consensus, quorum, deadlock
+- BRIDGE-DAEMON-PROPOSAL.md: daemon architecture + SLOP/repowire/llm_conversation research
+- PROPOSAL-1-COST-AWARE-ROUTING.md: 5-phase cost-aware routing
+- PROPOSAL-2-SESSION-COMMUNICATION.md: daemon + structured protocol
 
-4. **Cost tracking pipeline** (committed `bb75206` on `feat/global-fallback-provider`, pushed):
-   upstream pricing capture → model registry → `/v1/models` → opencode config `cost` field.
-   876 passed, all gates green.
+**4. Research:** 5 competitors + 4 open-source projects surveyed
 
-5. **AGENTS.md fix**: 300s→600s TTL doc bug (3 instances). File is gitignored, local only.
+### Key decisions
 
-**Reviewed (adversarial):**
-- `bridge-update-nudge-return`: APPROVED (2 CONCERN — yoda + obi-wan)
-- `CROSS-SESSION-REVIEW-PROTOCOL.md`: REJECTED → FIXED → ACCEPTED
-- `BRIDGE-DAEMON-PROPOSAL.md`: CONCERN → FIXED → APPROVED (all 3 findings resolved)
-- `PROPOSAL-1-COST-AWARE-ROUTING.md`: APPROVED (15 findings addressed across yoda + obi-wan)
-- `PROPOSAL-2-SESSION-COMMUNICATION.md`: REJECTED (blocking: subagent timeout) → FIXED → APPROVED
+- opencode MCP stubs strip nudge_messages from update() → use board() for nudge delivery
+- File division: yoda=failover, obi-wan=cli/ATC, mace-windu=new modules
+- Proposals APPROVED via 3-session adversarial review (15/15 findings addressed)
+- Daemon uses SIGHUP graceful restart (not importlib.reload)
 
-**Tickets created:**
-- `BRIDGE-HARDEN` (parked): 5 bridge improvements from mediastack droid patterns
-- `PROVIDER-FLATRATE` (parked): featherless.ai + DeepInfra + Cerebras presets
-- `BRIDGE-RELAYFEATURES` (parked): 6 RelayFreeLLM features + 3 transformative gaps
+### Next session priority
 
-**Docs written:**
-- `BRIDGE-IMPROVEMENT-PLAN.md`: bridge improvement roadmap
-- `EVAL-RelayFreeLLM.md`: relay comparison + reusable evaluation template
-- Provider research: featherless.ai ✓, synthetic.net ✗, useapiary.com ✗
+1. Activate daemon + restart sessions
+2. Build new modules (discover.py, quality_scorer.py, cache.py, guardrails.py, etc.) — ALL new files, zero collision
+3. Wire modules into gateway AFTER yoda lands failover
+4. Cost-aware routing per PROPOSAL-1 phases A-C
 
-### Key findings / decisions
+### Session-bridge HOW-TO
 
-**Critical: billable billing failure.** Operator hit "Insufficient balance" on opencode
-sessions. Gateway did NOT fail over. Root causes:
-1. OpenCode returns 401 for everything (billing, bad key, bad model) — `_EXHAUSTION_STATUSES = {429, 402, 503}` never matches 401
-2. No pools/fallback configured — `pools.json` + `fallback.json` + `providers.json` all empty
-3. No API keys for fallback providers
+- **heartbeat:** update(status="in-progress") every ~3 min
+- **before subagent:** update(busy="subagent") — prevents timeout
+- **nudge check:** board(repo="charon", session_id="<id>") — returns nudges + auto-refreshes liveness
+- **consensus:** 2 CONCERN=APPROVED, any REJECT=REJECTED, see CROSS-SESSION-REVIEW-PROTOCOL.md
 
-**Three-session consensus reached:**
-- bridge-nudge: APPROVED
-- cross-session-protocol: ACCEPTED (after fixes)
-- bridge-daemon: APPROVED (after fixes)
-- File division: ALL AGREE — yoda=failover/proxy/gateway/config/routing/coordinator, obi-wan=cli/connect/secrets/gitleaks/recommend/intake, mace-windu=new modules (cache, guardrails, observability, response_normalizer, request_inspector, quality_scorer, speculative_execution, consensus, virtual_keys, policy_router, session_affinity) + tests + wiring after yoda lands. ZERO collision.
-
-**PROP-1 and PROP-2 both APPROVED** after all 15 review findings addressed.
-
-**Bridge daemon architecture:** Single daemon process replacing 4 per-session server.py instances.
-Fixes everything: stale code, lost nudges, race conditions, inconsistent state. Deploy via: start
-daemon, update opencode MCP config to proxy.py, restart sessions.
-
-**Session-bridge usage pattern (proven today):**
-1. Register immediately: `session-bridge_register(session_id="<jedi>", name="<work>", repo="charon")`
-2. Check board before any work: `session-bridge_board(repo="charon")` — includes liveness refresh
-3. Before subagent dispatch: `session-bridge_update(status="in-progress", busy="subagent")` — extends TTL to 1800s
-4. After subagent returns: `session-bridge_update(status="in-progress", busy=null)` — restores 600s TTL
-5. Heartbeat every 2-3 min: `session-bridge_update(status="in-progress")`
-6. During coordination: poll `board()` every 30s
-7. Communicate via blockers field (plain text) or nudge tool (structured — post daemon deploy)
-
-### What must happen next (in priority order)
-
-**1. T0 FAILOVER — BUILD IMMEDIATELY. This is the #1 priority. Operator hit billing failure
-and work stopped. Files owned: `src/charon/proxy.py`, `src/charon/proxy_server.py`,
-`src/charon/gateway.py`, `src/charon/config.py`, `src/charon/cli.py`.**
-
-Package A — Expand exhaustion detection (`proxy.py`):
-- Add `_is_billing_error(response_body, status_code)` — inspects response JSON for
-  patterns: "insufficient_balance", "insufficient quota", "billing", "out of funds"
-- Extend `classify()` to detect billing errors in the response body, not just HTTP status
-- Add `EXHAUSTION_BODY_PATTERNS = ["insufficient_balance", "insufficient quota", "billing",
-  "out of funds", "payment required", "credits exhausted"]`
-
-Package B — Fix OpenCode 401 false-negative (`proxy.py`):
-- OpenCode returns 401 for billing. `_EXHAUSTION_STATUSES = {429, 402, 503}` never matches.
-- When status=401 and body contains billing patterns, treat as exhausted (fail over).
-- When status=401 and body contains "invalid key" / "unauthorized" / "authentication",
-  do NOT fail over (auth error, not billing).
-- Add `_is_auth_error()` to distinguish: 401 + auth patterns → return immediately.
-  401 + billing patterns → fail over.
-- Test: add test case for OpenCode billing response format.
-
-Package C — Pool/fallback auto-config (`cli.py`, `gateway.py`, `config.py`):
-- `charon doctor --gateway` should flag "no pools configured = no failover" as a WARNING
-- `charon setup` should offer to create a sensible default pool from imported models
-- Add `_missing_failover_chain()` check to doctor: if pools.json + fallback.json are empty,
-  print actionable guidance
-
-Package D — Probe provider error codes (new `tools/probe_provider_errors.py`):
-- Catalog what HTTP status + body pattern every provider returns for billing/rate-limit/
-  model-not-found/auth failures
-- Run `charon models import <provider>` first to populate keys, then probe each provider
-- Write `~/.charon/provider_errors.json` with per-provider error signatures
-- Goal: feed Package A with concrete pattern lists per provider
-
-**Gate command for all work:**
-```
-PYTHONPATH=src python3 -m pytest -q ; ruff check ; mypy src tests ; python3 tools/check_boundary.py src ; python3 tools/check_version.py
-```
-
-**2. Commit `--all` import:** code is on disk (`feat/prod-install`), gate green, needs commit+push.
-
-**3. Cost tracking rebase:** commit `bb75206` on `feat/global-fallback-provider` needs rebase onto
-master. PR #79-#81 landed independently.
-
-### Collision matrix
-
-| File | Owner (live) | Owner (next-yoda) |
-|---|---|---|
-| `src/charon/proxy.py` | none | yoda — T0 packages A+B+D |
-| `src/charon/proxy_server.py` | none | yoda — T0 packages A+B+C |
-| `src/charon/gateway.py` | none | yoda — T0 package C |
-| `src/charon/config.py` | none | yoda — T0 package C |
-| `src/charon/cli.py` | obi-wan (ATC fixes) | yoda — T0 package C (doctor check only) + obi-wan for CLI fixes |
-
-**Note:** yoda's `cli.py` change for T0-C is a single doctor warning addition — low collision risk
-with obi-wan's ATC CLI fixes. Coordinate on the bridge.
-
-### Open questions / Blockers
-
-- **Bridge daemon NOT deployed.** The daemon is built and tested but the 4 stale server.py
-  instances are still running. New bridge features (nudge tool, structured messages, auto-refresh)
-  won't work until sessions restart with proxy.py MCP config.
-- **All consensus partners agreed but bridge still runs stale code.** Commands work but
-  structured nudges are garbled. Use plain-text blockers for coordination until daemon deployed.
-- **`feat/global-fallback-provider` needs rebase** for cost tracking commit to land.
-- **OpenCode billing error format NOT verified.** Need to probe the exact HTTP status + body
-  OpenCode returns for "Insufficient balance." This is Package D work.
-
-### Files modified this session
-
-| File | Change |
-|---|---|
-| `~/.config/opencode/session-bridge/daemon.py` | **New**: bridge daemon core (Unix socket + SQLite + 7 tools) |
-| `~/.config/opencode/session-bridge/server.py` | Env-var TTL + PID liveness + graduated purge + nudge return |
-| `~/.config/opencode/opencode.json` | MCP config: `SESSION_BRIDGE_TTL=600` env var |
-| `AGENTS.md` | 300s→600s TTL fix (3 instances) — gitignored |
-| `src/charon/cli.py` | `_import_all_models()` + `--all` flag (uncommitted) |
-| `src/charon/providers.py` | `_pricing_fields()` + cost capture |
-| `src/charon/config.py` | `cost_input`/`cost_output` in registry |
-| `src/charon/gateway.py` | `_META_KEYS` + cost (5 sites) |
-| `src/charon/proxy_server.py` | cost in `/v1/models` |
-| `src/charon/connect.py` | `discover_models()` returns dicts; cost+metadata in `_write_opencode()` |
-| `fleet/BRIDGE-IMPROVEMENT-PLAN.md` | **New** |
-| `fleet/EVAL-RelayFreeLLM.md` | **New** |
-| `fleet/board/BRIDGE-HARDEN.md.parked` | **New ticket** |
-| `fleet/board/PROVIDER-FLATRATE.md.parked` | **New ticket** |
-| `fleet/board/BRIDGE-RELAYFEATURES.md.parked` | **New ticket** |
-| `fleet/prompts/bridge-harden.md` | **New prompt** |
-| `fleet/prompts/provider-flatrate.md` | **New prompt** |
-| `fleet/prompts/bridge-relay-features.md` | **New prompt** |
-
-### Cross-repo improvements to propose
-
-**Charon → mediastack:** The bridge daemon architecture (single Unix socket listener replacing
-per-session MCP instances) could replace mediastack's filesystem-based heartbeat system.
-Benefits: single codebase (no stale instances), SQLite persistence (survives crashes),
-graduated purge (nudge→escalate→reap), structured messaging (machine-readable coordination).
-Mediastack's warden election pattern is not needed with a single daemon.
-
-### Session-bridge quick reference (for next yoda session)
-
-```
-# 1. Register (pick unused Jedi name)
-session-bridge_register(session_id="yoda", name="T0 failover packages A-D", repo="charon", status="in-progress")
-
-# 2. Check board before work — auto-refreshes liveness
-session-bridge_board(repo="charon")
-
-# 3. Before subagent: extend TTL
-session-bridge_update(session_id="yoda", status="in-progress", busy="subagent")
-
-# 4. After subagent: restore TTL
-session-bridge_update(session_id="yoda", status="in-progress", busy=null)
-
-# 5. Communicate: use blockers (plain text) or nudge (structured — post daemon deploy)
-session-bridge_update(session_id="yoda", blockers=["@target: message"])
-
-# 6. Coordinate with obi-wan-kenobi (cli.py collision risk) and mace-windu
-session-bridge_board(repo="charon")  # poll every 30s during coordination
-
-# 7. Heartbeat every 2-3 min
-session-bridge_update(session_id="yoda", status="in-progress")
-```
-
----
 
 ## Handoff file maintenance
 
