@@ -141,6 +141,7 @@ def test_load_config_builds_cost_ranked_pool(tmp_path):
 def test_models_endpoint_and_token_gate():
     cfg = GatewayConfig(
         token="s3cret",
+        port=0,  # ephemeral bind — avoids 8080 collision with the concurrent image-smoke job
         routes={"m1": UpstreamRoute("http://127.0.0.1:1/v1", api_key="k")},
         model_ids=["m1"],
     )
@@ -168,6 +169,7 @@ def test_models_endpoint_and_token_gate():
 def test_gateway_forwards_chat_completions_end_to_end():
     up, base = _mk_upstream()
     cfg = GatewayConfig(
+        port=0,  # ephemeral bind — avoids 8080 collision with the concurrent image-smoke job
         routes={"kimi": UpstreamRoute(base, api_key="k", upstream_model="kimi-real")},
         model_ids=["kimi"],
     )
