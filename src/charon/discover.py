@@ -182,7 +182,66 @@ def discover_models(refresh: bool = False, timeout: int = 10,
 
     cost_map = build_cost_map(discoveries)
     save_cost_map(cost_map, config_dir=config_dir)
+    _update_model_pricing_from_discovery(discoveries, config_dir=config_dir)
     return cost_map
+
+
+def _update_model_pricing_from_discovery(
+    discoveries: dict[str, list[dict] | None],
+    config_dir: str | Path | None = None,
+) -> None:
+    """Persist per-token pricing from discovered models into ``models.json``.
+
+    For each discovered model that matches an existing entry in the model
+    registry (case-insensitive), extract ``cost_input`` / ``cost_output``
+    via ``providers._extract_pricing`` and write them into the registry so
+    served models carry real cost data.
+
+    Clobber-protection: an operator's hand-set price is never overwritten. A
+    price written by this function stamps ``priced_by: "discovery"``; on later
+    discoveries only entries carrying that marker are refreshed. An existing
+    ``cost_input``/``cost_output`` without the marker is treated as operator-set
+    (``config.add_model``, ``models import``, or a hand-edit) and left untouched.
+    """
+    models = config.load_models(config_dir=config_dir)
+    if not models:
+        return
+    changed = False
+    for _provider_name, model_list in discoveries.items():
+        if not model_list:
+            continue
+        for m in model_list:
+            mid = m.get("id")
+            if not isinstance(mid, str):
+                continue
+            key = mid.casefold()
+            matched = None
+            for existing_id in models:
+                if existing_id.casefold() == key:
+                    matched = existing_id
+                    break
+            if matched is None:
+                continue
+            existing = models[matched]
+            # Protect an operator-set price: a cost value NOT stamped by a prior
+            # discovery is operator-owned and must survive re-discovery.
+            if existing.get("priced_by") != "discovery" and (
+                "cost_input" in existing or "cost_output" in existing):
+                continue
+            entry: dict[str, object] = {}
+            providers._extract_pricing(m, entry)
+            wrote = False
+            for field in ("cost_input", "cost_output"):
+                if field in entry:
+                    v = entry[field]
+                    if isinstance(v, (int, float)):
+                        existing[field] = float(v)
+                        wrote = True
+            if wrote:
+                existing["priced_by"] = "discovery"
+                changed = True
+    if changed:
+        config._save("models.json", models, config_dir=config_dir)
 
 
 # ── Phase D: OpenRouter swarm import ────────────────────────────────
@@ -280,14 +339,16 @@ def import_openrouter_models(dry_run: bool = False,
                 cost_input: float | None = None
                 cost_output: float | None = None
                 pricing = m.get("pricing")
-                if isinstance(pricing, dict):
-                    try:
-                        prompt_str = pricing.get("prompt", "0")
-                        comp_str = pricing.get("completion", "0")
-                        cost_input = float(prompt_str) / 1_000_000
-                        cost_output = float(comp_str) / 1_000_000
-                    except (ValueError, TypeError):
-                        pass
+                # Canonical per-token USD, validated (finite/non-negative), via the
+                # single pricing seam — OpenRouter values are already per-token.
+                price_entry: dict[str, object] = {}
+                providers._extract_pricing(m, price_entry)
+                ci = price_entry.get("cost_input")
+                co = price_entry.get("cost_output")
+                if isinstance(ci, (int, float)):
+                    cost_input = float(ci)
+                if isinstance(co, (int, float)):
+                    cost_output = float(co)
                 ctx = m.get("context_length")
                 context_window: int | None = int(ctx) if isinstance(ctx, (int, float)) else None
                 free = or_id.endswith(":free") or (isinstance(pricing, dict) and

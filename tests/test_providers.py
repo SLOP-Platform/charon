@@ -101,3 +101,40 @@ def test_model_referencing_provider_resolves_route(monkeypatch, tmp_path):
     assert qwen.provider == "openrouter" and qwen.strip_v1 is True
     assert cfg.routes["glm"].strip_v1 is True            # zai preset quirk (strips /v1)
     assert cfg.routes["n"].upstream_base == "http://my-nano/v1"  # override applied
+
+
+# ── SR-5: pricing extraction unit + guards ────────────────────────
+
+def test_extract_pricing_stores_per_token_verbatim():
+    # OpenRouter quotes pricing per TOKEN; the value is stored raw (no /1e6).
+    entry: dict = {}
+    providers._extract_pricing(
+        {"pricing": {"prompt": "0.0000025", "completion": "0.00001"}}, entry)
+    assert entry["cost_input"] == 0.0000025
+    assert entry["cost_output"] == 0.00001
+
+
+def test_extract_pricing_accepts_numeric_and_zero():
+    entry: dict = {}
+    providers._extract_pricing({"pricing": {"prompt": 0.0, "completion": 3e-7}}, entry)
+    assert entry["cost_input"] == 0.0
+    assert entry["cost_output"] == 3e-7
+
+
+def test_extract_pricing_rejects_nonfinite_and_negative():
+    for bad in ("nan", "inf", "-inf", "-5", float("nan"), float("inf"), -0.01):
+        entry: dict = {}
+        providers._extract_pricing({"pricing": {"prompt": bad}}, entry)
+        assert "cost_input" not in entry, bad
+
+
+def test_extract_pricing_rejects_garbage_string():
+    entry: dict = {}
+    providers._extract_pricing({"pricing": {"prompt": "free!"}}, entry)
+    assert "cost_input" not in entry
+
+
+def test_extract_pricing_no_pricing_field():
+    entry: dict = {}
+    providers._extract_pricing({"id": "x"}, entry)
+    assert entry == {}
