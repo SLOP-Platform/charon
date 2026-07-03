@@ -1,3 +1,13 @@
+"""Thread-safe SHA-256 prompt cache with LRU eviction and TTL expiry.
+
+Cache correctness is critical for code / precise work — a FALSE positive (serving
+a cached response for a *similar* but not identical prompt) returns a WRONG answer.
+For that reason this cache uses **exact SHA-256 hash keying only**; it deliberately
+does NOT implement fuzzy / semantic similarity matching. The caller hashes the full
+canonical prompt before lookup, so a near-miss ("add two numbers" vs "add 2 numbers")
+is always a cache miss, never a false hit.
+"""
+
 from __future__ import annotations
 
 import threading
@@ -5,6 +15,17 @@ import time
 from collections import OrderedDict
 
 from .types import CachedResponse, CacheStats
+
+
+def format_stats(cache: SemanticCache) -> str:
+    """Human-readable hit/miss/eviction summary for status / CLI output."""
+    s = cache.stats()
+    total = s.hits + s.misses
+    rate = s.hits / total if total > 0 else 0.0
+    return (
+        f"cache: {s.size} entries, {s.hits} hits, {s.misses} misses "
+        f"({rate:.1%} hit rate), {s.evictions} evictions"
+    )
 
 
 class SemanticCache:

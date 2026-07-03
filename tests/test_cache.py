@@ -4,7 +4,7 @@ import hashlib
 import threading
 import time
 
-from charon.cache import SemanticCache
+from charon.cache import SemanticCache, format_stats
 
 
 def _hash(s: str) -> str:
@@ -138,3 +138,27 @@ def test_update_existing_key() -> None:
     result = cache.get(h)
     assert result is not None
     assert result.content == b"v2"
+
+
+def test_similar_prompt_is_cache_miss() -> None:
+    cache = SemanticCache()
+    cache.set(_hash("add two numbers"), b"result1", {}, 60.0)
+    assert cache.get(_hash("add 2 numbers")) is None
+
+
+def test_format_stats_reports_hits_misses_hit_rate() -> None:
+    cache = SemanticCache()
+    h = _hash("a")
+    cache.set(h, b"x", {}, 60.0)
+    cache.get(h)       # hit
+    cache.get(_hash("b"))  # miss
+    out = format_stats(cache)
+    assert "1 hits" in out
+    assert "1 misses" in out
+    assert "50.0% hit rate" in out
+
+
+def test_format_stats_zero_total_shows_zero_rate() -> None:
+    cache = SemanticCache()
+    out = format_stats(cache)
+    assert "0.0% hit rate" in out
