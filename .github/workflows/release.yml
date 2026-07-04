@@ -65,14 +65,19 @@ jobs:
         # Mode-B service surface (:8473/healthz) is exercised by the test suite in
         # the gate job and does not need a separate container here.
         run: |
+          # Host port 18080 (not 8080): the production gateway on the shared
+          # self-hosted 4-LOM runner already binds host 8080, so a host-8080
+          # smoke bind collides ("port is already allocated", exit 125). The
+          # container still listens on its internal 8080 — only the host side
+          # moves to a free port.
           docker run -d --name charon-rel \
             -e CHARON_GATEWAY_TOKEN=ci-smoke-token \
-            -p 127.0.0.1:8080:8080 charon:ci
+            -p 127.0.0.1:18080:8080 charon:ci
           ok=0
           for _ in $(seq 1 30); do
             code=$(curl -s -o /dev/null -w '%{http_code}' \
               -H "Authorization: Bearer ci-smoke-token" \
-              http://127.0.0.1:8080/v1/models) || true
+              http://127.0.0.1:18080/v1/models) || true
             if [ "$code" = "200" ]; then ok=1; break; fi
             sleep 1
           done
