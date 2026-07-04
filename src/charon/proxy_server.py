@@ -664,6 +664,8 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 self._json(402, {"error": {"message": dec.reason,
                                "remaining": dec.remaining}})
                 return
+        else:
+            est_cost = 0.0
 
         # ── guardrail request scan ──────────────────────────────────────
         if srv.guardrails is not None:
@@ -798,8 +800,8 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                         # PREFER it (feedback loop, DTC CONCERN #4).
                         srv.quality_scorer.record(
                             route.label, 0, success=not obs.pseudo_success, tokens=0)
-                    if srv.spend_limiter is not None and cost > 0:
-                        srv.spend_limiter.record(cost)
+                    if srv.spend_limiter is not None:
+                        srv.spend_limiter.record(cost if cost > 0 else est_cost)
                     self._send_resp_headers(200, ctype, route.label, failovers, obs.pseudo_success)
                     self._write(body_bytes)
                     srv.note_request(requested, route.label, 200, cost, failovers)
@@ -881,6 +883,8 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                     cache_key = hashlib.sha256(raw_body).hexdigest()
                     srv.semantic_cache.set(cache_key, full_bytes, rhdrs, ttl=3600)
                 cost = served_obs.usage.cost_usd if served_obs.usage else 0.0
+                if srv.spend_limiter is not None:
+                    srv.spend_limiter.record(cost if cost > 0 else est_cost)
                 srv.note_request(requested, route.label, 200, cost, failovers)
                 return
             finally:
