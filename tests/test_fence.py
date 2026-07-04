@@ -198,7 +198,7 @@ def test_sandbox_policy_ceiling(
 
 def test_hybrid_is_default_when_no_sandbox_env() -> None:
     no_sandbox = AutonomyPolicy.from_env({})
-    assert no_sandbox.sandbox is SandboxPolicy.HYBRID
+    assert no_sandbox.sandbox == SandboxPolicy.HYBRID
     assert no_sandbox.ceiling() == _pol("hybrid").ceiling()
 
 

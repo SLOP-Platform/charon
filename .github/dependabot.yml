@@ -1,0 +1,33 @@
+# Mechanizes GitHub Actions version bumps so pinned action SHAs (and their
+# trailing `# vX` comments) never go stale — clears Node-20-style deprecations.
+# Dependabot bumps SHA -> new SHA (never reverts to a floating @tag) and rewrites
+# the trailing version comment to match (comment must be at end-of-line, which all
+# of Charon's pins are). See docs/SUPPLY-CHAIN.md §5 — the SHA-pin posture is
+# preserved. PR-only (D006 propose-default): a human reviews the SHA and merges.
+#
+# Scope is github-actions ONLY, deliberately:
+#   - docker: the Dockerfile base is a build-arg re-resolved fresh at release time
+#     (release.yml `publish`), so a Dockerfile digest pin would fight that design.
+#   - pip: the [dev]/[service]/[packaging] extras use open `>=` ranges with no
+#     lockfile, so pip version-updates would be near-no-ops here.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"                 # scans all of .github/workflows/*.yml
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"                 # e.g. "ci(deps): bump actions/checkout ..."
+    labels:
+      - "dependencies"
+      - "github-actions"
+    # One grouped PR for all action bumps per week -> minimal review churn,
+    # keeps the noise from major-tag SHA moves (dependabot-core#13466) in check.
+    groups:
+      github-actions:
+        patterns:
+          - "*"

@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import sys
 import threading
 import uuid
 from collections.abc import Mapping
@@ -29,6 +30,17 @@ from .router import StaticRouter
 from .types import Autonomy, Budget, WorkUnit
 
 DEFAULT_STATE_DIR = ".charon"
+
+
+def _invocation_name() -> str:
+    """The name the user invoked this process as (sys.argv[0]), defaulting to
+    'charon' in non-interactive/test environments where argv[0] is 'pytest' or
+    similar."""
+    name = sys.argv[0]
+    base = os.path.basename(name)
+    if base.startswith("python") or "/pytest" in name or base == "pytest" or base == "-c":
+        return "charon"
+    return name
 
 
 @dataclass(frozen=True)

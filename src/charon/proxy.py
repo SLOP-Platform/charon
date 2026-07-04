@@ -32,6 +32,23 @@ _EXHAUSTION_STATUSES = {429, 402, 503}
 # Statuses meaning "this model is gone" — drop it from the pool permanently for
 # this run, not retry (free rosters churn; renames/removals return 404). ADR R6.
 _DROP_STATUSES = {404}
+# Body patterns that signal a billing/capacity exhaustion — we inspect the JSON
+# response body because some providers (e.g. OpenCode) return 401 for billing
+# failures, not 402/429/503. Without this, the gateway never fails over.
+_EXHAUSTION_BODY_PATTERNS = [
+    "insufficient_balance", "insufficient quota", "billing",
+    "out of funds", "payment required", "credits exhausted",
+    "insufficient_quota", "quota exceeded", "rate limit",
+    "rate_limit", "too many requests", "overloaded",
+]
+# Body patterns that signal an AUTHENTICATION error, NOT a billing error. A 401
+# with these patterns must NOT trigger failover — it's a bad key, not a depleted
+# account. Retrying with the same key on another provider is pointless.
+_AUTH_BODY_PATTERNS = [
+    "invalid api key", "invalid_key", "unauthorized",
+    "authentication failed", "auth error", "incorrect api key",
+    "invalid token", "bad credentials", "access denied",
+]
 
 
 @dataclass(frozen=True)
@@ -95,17 +112,78 @@ def _error_type(body: dict | None) -> str:
     return ""
 
 
-def _normalize_model_id(model_id: str | None) -> str:
-    """Normalize a model id by stripping provider prefix for comparison.
+def _body_text_lower(body: dict | None) -> str:
+    """Collapse the response body into a lowercased string for pattern matching —
+    inspects ``error.message``, ``error.code``, ``detail``, and top-level keys."""
+    if not body:
+        return ""
+    parts: list[str] = []
+    err = body.get("error")
+    if isinstance(err, dict):
+        for k in ("message", "code", "type"):
+            v = err.get(k)
+            if isinstance(v, str):
+                parts.append(v)
+    detail = body.get("detail")
+    if isinstance(detail, str):
+        parts.append(detail)
+    msg = body.get("message")
+    if isinstance(msg, str):
+        parts.append(msg)
+    return " ".join(parts).lower()
 
-    Converts "provider/model-id" to "model-id", leaving bare ids unchanged.
-    Used for comparing returned vs expected models without false-positives on
-    provider-prefixed aliases (R10d)."""
+
+def _has_body_pattern(body: dict | None, patterns: list[str]) -> bool:
+    """True when any pattern appears in the collapsed body text. Normalizes
+    both the body text and patterns by collapsing non-alphanumeric chars to
+    spaces, so code-style keys like ``insufficient_balance`` match human-
+    readable messages like ``Insufficient balance``."""
+    import re
+    text = _body_text_lower(body)
+    if not text:
+        return False
+    normalized_text = re.sub(r"[^a-z0-9]+", " ", text).strip()
+    for p in patterns:
+        normalized_p = re.sub(r"[^a-z0-9]+", " ", p).strip()
+        if normalized_p and normalized_p in normalized_text:
+            return True
+    return False
+
+
+def _is_billing_error(body: dict | None, status: int) -> bool:
+    """A capacity/billing exhaustion: either a well-known HTTP status (429/402/503)
+    or a 401 whose response body contains billing/credit-exhaustion language —
+    the OpenCode provider returns 401 for "Insufficient balance", not 402."""
+    return status in _EXHAUSTION_STATUSES or (
+        status == 401 and _has_body_pattern(body, _EXHAUSTION_BODY_PATTERNS))
+
+
+def _is_auth_error(body: dict | None, status: int) -> bool:
+    """An authentication/authorization error — bad key, not billing. A 401 with
+    auth patterns must NOT fail over (pointless; every provider rejects a bad key).
+    A 401 without billing patterns is conservatively treated as auth."""
+    if status != 401:
+        return False
+    if _has_body_pattern(body, _EXHAUSTION_BODY_PATTERNS):
+        return False  # 401 + billing = exhausted, not auth
+    if not body:
+        return True  # 401 with no body → assume auth, not billing
+    return _has_body_pattern(body, _AUTH_BODY_PATTERNS)
+
+
+def _normalize_model_id(model_id: str | None) -> str:
+    """Normalize a model id by taking the FINAL path segment for comparison.
+
+    Providers namespace the same model variously — "accounts/fireworks/models/
+    deepseek-v4-pro" and bare "deepseek-v4-pro" are the same model. Comparing the
+    final segment avoids false-positives on provider-prefixed aliases (R10d).
+    Stripping only the FIRST segment left multi-segment ids prefixed
+    ("fireworks/models/deepseek-v4-pro" != "deepseek-v4-pro"), false-flagging
+    honest 200s as silent downgrades and triggering a discard-and-rebill
+    (double-billing, SR-1)."""
     if not model_id:
         return ""
-    if "/" in model_id:
-        return model_id.split("/", 1)[1]
-    return model_id
+    return model_id.rsplit("/", 1)[-1]
 
 
 class GatewayProxy:
@@ -165,7 +243,8 @@ class GatewayProxy:
         """Classify one upstream response into a ``ProxyObservation`` — PURE, no
         state mutation (so the gateway can classify before deciding to serve)."""
         returned = (body or {}).get("model")
-        exhausted = status in _EXHAUSTION_STATUSES
+        exhausted = _is_billing_error(body, status)
+        auth_error = _is_auth_error(body, status)
         dropped = status in _DROP_STATUSES
         # pseudo-success: a 200 that silently served a different model than asked.
         # Use normalized comparison to avoid false-positives when an upstream returns
@@ -177,7 +256,10 @@ class GatewayProxy:
 
         note = ""
         if exhausted:
-            note = f"exhausted: status={status} {_error_type(body)}".strip()
+            hint = _error_type(body) or _body_text_lower(body)[:60]
+            note = f"exhausted: status={status} {hint}".strip()
+        elif auth_error:
+            note = f"auth: status={status} {_error_type(body)}".strip()
         elif dropped:
             note = f"dropped: status=404 {_error_type(body)} (model gone)".strip()
         elif pseudo:

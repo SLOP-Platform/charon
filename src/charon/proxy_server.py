@@ -13,9 +13,12 @@ integration test (mock upstream) and live via a real OpenCode-Go call.
 from __future__ import annotations
 
 import collections
+import hashlib
 import hmac
+import http.cookies
 import http.server
 import json
+import os
 import socketserver
 import threading
 import time
@@ -24,8 +27,20 @@ import urllib.request
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlsplit
 
+from .cache import SemanticCache
+from .consensus import ConsensusRouter
+from .guardrails import Guardrails
 from .netutil import is_loopback
+from .observability import Observability
+from .policy_router import PolicyRouter
 from .proxy import GatewayProxy
+from .quality_scorer import QualityScorer
+from .request_inspector import RequestInspector
+from .response_normalizer import NormalizeMode, ResponseNormalizer
+from .session_affinity import SessionAffinity
+from .speculative_execution import SpeculativeExecutor
+from .spend_limits import SpendLimiter
+from .virtual_keys import VirtualKeyManager
 
 
 @dataclass(frozen=True)
@@ -75,6 +90,9 @@ th,td{text-align:left;padding:.3rem .6rem;border-bottom:1px solid #313244}
 code{background:#1e1e2e;padding:.1rem .3rem;border-radius:3px}
 </style></head><body>
 <h1>Charon Gateway <span class=muted id=ts></span></h1>
+<div style="margin-bottom:.6rem">
+<a href="/charon/setup" id=setupLink style="color:#89b4fa;text-decoration:none">⚙ Setup</a>
+</div>
 <div id=usage></div>
 <h2>Providers</h2><table id=providers><thead><tr><th>provider<th>served<th>failed
 <th>errors<th>cost $<th>last<th>cooldown</tr></thead><tbody></tbody></table>
@@ -84,6 +102,8 @@ code{background:#1e1e2e;padding:.1rem .3rem;border-radius:3px}
 <script>
 const tok=new URLSearchParams(location.search).get('token');
 const q=tok?('?token='+encodeURIComponent(tok)):'';
+const setupLink = document.getElementById('setupLink');
+if (tok) setupLink.href = '/charon/setup?token=' + encodeURIComponent(tok);
 function esc(s){return String(s).replace(/[&<>"']/g,
   c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 async function tick(){
@@ -174,7 +194,11 @@ code{background:#1e1e2e;padding:.1rem .3rem;border-radius:3px}.ok{color:#a6e3a1}
 table{border-collapse:collapse;width:100%}
 td,th{text-align:left;padding:.2rem .5rem;border-bottom:1px solid #313244}
 </style></head><body>
-<h1>Charon Setup</h1><div id=msg class=muted></div>
+<h1>Charon Setup</h1>
+<div style="margin-bottom:.6rem">
+<a href="/" id=dashLink style="color:#89b4fa;text-decoration:none">← Dashboard</a>
+</div>
+<div id=msg class=muted></div>
 <fieldset><h2>Add provider</h2>
 <div><label>name</label>
   <input id=pname list=presets placeholder="openrouter / deepseek / my-provider">
@@ -215,6 +239,8 @@ td,th{text-align:left;padding:.2rem .5rem;border-bottom:1px solid #313244}
 <h2>Current config</h2><div id=cfg></div>
 <script>
 const tok=new URLSearchParams(location.search).get('token');
+const dashLink = document.getElementById('dashLink');
+if (tok) dashLink.href = '/?token=' + encodeURIComponent(tok);
 const H=Object.assign({'Content-Type':'application/json'},tok?{'Authorization':'Bearer '+tok}:{});
 function esc(s){return String(s).replace(/[&<>"']/g,
   c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
@@ -356,6 +382,7 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
+        self._maybe_set_token_cookie()
         self.end_headers()
         try:
             self.wfile.write(data)
@@ -367,6 +394,7 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
+        self._maybe_set_token_cookie()
         self.end_headers()
         try:
             self.wfile.write(data)
@@ -374,8 +402,8 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
             pass
 
     def _authorized(self, token: str) -> bool:
-        """Bearer token via ``Authorization`` header or ``?token=`` query (so a
-        browser URL works); constant-time compare to avoid leaking via timing."""
+        """Bearer token via ``Authorization`` header, ``?token=`` query, or
+        ``charon_token`` cookie; constant-time compare to avoid leaking via timing."""
         presented = ""
         auth = self.headers.get("Authorization", "")
         if auth.startswith("Bearer "):
@@ -383,7 +411,22 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
         if not presented:
             qs = parse_qs(urlsplit(self.path).query)
             presented = (qs.get("token") or [""])[0]
+        if not presented:
+            cookie_header = self.headers.get("Cookie", "")
+            cookies = http.cookies.SimpleCookie()
+            cookies.load(cookie_header)
+            cookie_token = cookies.get("charon_token")
+            if cookie_token:
+                presented = cookie_token.value
         return bool(presented) and hmac.compare_digest(presented, token)
+
+    def _maybe_set_token_cookie(self) -> None:
+        """If this request authenticated via ``?token=``, set a short-lived cookie
+        so subsequent page loads don't need the token in the URL."""
+        v = getattr(self, '_set_token_cookie', None)
+        if v:
+            self.send_header("Set-Cookie",
+                f"charon_token={v}; Path=/; HttpOnly; SameSite=Lax; Max-Age=900")
 
     # ---- helpers ---------------------------------------------------------
 
@@ -409,7 +452,8 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
         return b"".join(out)
 
     def _send_resp_headers(self, status: int, ctype: str, provider: str | None,
-                           failovers: list[dict], downgrade: bool) -> None:
+                           failovers: list[dict], downgrade: bool,
+                           cache_status: str | None = None) -> None:
         """Send status + Content-Type + the failover-visibility headers (ADR D3)."""
         self.send_response(status)
         self.send_header("Content-Type", ctype)
@@ -421,6 +465,9 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                              "; ".join(f"{f['provider']}={f['status']}" for f in failovers))
         if downgrade:
             self.send_header("X-Charon-Downgrade", "served a different model than requested")
+        if cache_status:  # real header — must precede end_headers (never in the body)
+            self.send_header("X-Cache-Status", cache_status)
+        self._maybe_set_token_cookie()
         self.end_headers()
 
     def _build_upstream_req(self, srv, route: UpstreamRoute, orig_bj: dict,
@@ -482,6 +529,14 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
         if srv.token is not None and not self._authorized(srv.token):
             self._json(401, {"error": {"message": "missing or invalid bearer token"}})
             return
+
+        # If auth was via ?token= query param, set a short-lived cookie so
+        # subsequent page loads don't need the token in the URL.
+        if srv.token is not None:
+            qs = parse_qs(urlsplit(self.path).query)
+            qt = qs.get("token")
+            if qt and qt[0]:
+                self._set_token_cookie = srv.token
 
         # Aggregated model list (gateway mode). Served locally — never forwarded —
         # and field-allowlisted to ids only (no key_env/upstream_base leak, ADR R4).
@@ -600,8 +655,55 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
             )}})
             return
 
+        # ── spend cap check (before any upstream call) ──────────────────
+        if srv.spend_limiter is not None:
+            est_tokens = max(len(raw_body) // 4, 100)
+            est_cost = est_tokens * 0.0000015  # nominal per-token floor
+            dec = srv.spend_limiter.check(est_cost)
+            if not dec.allowed:
+                self._json(402, {"error": {"message": dec.reason,
+                               "remaining": dec.remaining}})
+                return
+
+        # ── guardrail request scan ──────────────────────────────────────
+        if srv.guardrails is not None:
+            msgs = orig_bj.get("messages", [])
+            violations, _ = srv.guardrails.scan_request(msgs)
+            blocking = [v for v in violations if v.severity == "BLOCK"]
+            if blocking:
+                self._json(400, {"error": {
+                    "message": "request blocked by guardrails",
+                    "violations": [{"pattern": v.pattern, "message": v.message}
+                                   for v in blocking]
+                }})
+                return
+
+        # ── cache check ─────────────────────────────────────────────────
+        if srv.semantic_cache is not None:
+            cache_key = hashlib.sha256(raw_body).hexdigest()
+            cached = srv.semantic_cache.get(cache_key)
+            if cached is not None:
+                ctype = cached.headers.get("Content-Type", "application/json")
+                # X-Cache-Status is a REAL header (emitted before end_headers). The
+                # prior `wfile.write(b"X-Cache-Status: HIT\r\n\r\n")` ran AFTER
+                # end_headers, so it landed in the response BODY and corrupted the
+                # cached JSON/SSE payload (DTC CONCERN #5).
+                self._send_resp_headers(200, ctype, "cache", [], False, cache_status="HIT")
+                self._write(cached.content)
+                srv.note_request(requested, "cache-hit", 200, 0.0, [])
+                return
+
         is_stream = orig_bj.get("stream") is True
         ordered = srv.order_by_cooldown(chain)  # fresh providers first, cooled last (R7)
+
+        # ── quality-aware routing ──────────────────────────────────────
+        if srv.quality_scorer is not None and ordered:
+            scored = [(srv.quality_scorer.score(r.label), r) for r in ordered]
+            filtered = [r for s, r in scored if s >= 0.5]
+            if filtered:
+                ordered = filtered
+            # else: all below floor → use original order (no starvation)
+
         failovers: list[dict] = []
 
         for i, route in enumerate(ordered):
@@ -634,10 +736,12 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 # ---- non-200 ----
                 if status != 200:
                     body_bytes = self._drain(resp)
-                    obs = srv.observer.classify(okey, status, rhdrs, {}, expected_model=expected)
+                    obs_body = _extract(body_bytes, ctype)
+                    obs = srv.observer.classify(okey, status, rhdrs, obs_body,
+                                                expected_model=expected)
                     srv.observer.record(obs, count_usage=False)
-                    if obs.failover:  # 429/402/503/404 = capacity/gone → fail over (R6)
-                        if obs.exhausted:  # 429/402/503 are account-level → cool the
+                    if obs.failover:  # 429/402/503/404/401+billing = exhausted → fail over
+                        if obs.exhausted:  # account-level exhaustion → cool the
                             srv.set_cooldown(route, obs.retry_after)  # provider (R10c);
                         # a 404 ("model gone") is model-level — do NOT cool the provider.
                         if more:  # count only providers we actually move PAST
@@ -656,15 +760,48 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                     body_bytes = self._drain(resp)
                     observed = _extract(body_bytes, ctype)
                     obs = srv.observer.classify(okey, 200, rhdrs, observed, expected_model=expected)
-                    if obs.pseudo_success and more:  # downgrade + alternatives → fail over
-                        srv.observer.record(obs, count_usage=False)
-                        failovers.append({"provider": route.label, "status": 200,
-                                          "reason": obs.note})
+                    # ── genuine silent downgrade (obs.pseudo_success) ─────────────
+                    # Operator toggle `failover_on_downgrade` (default False):
+                    #   False → SERVE this COMPLETED, already-billed 200 with the
+                    #     X-Charon-Downgrade header instead of discarding + re-billing a
+                    #     fresh completion from the next provider (the 2026-07-03
+                    #     double-bill incident). SR-1 made the id compare segment-tolerant
+                    #     so only genuine downgrades reach here.
+                    #   True  → fail over to try for the asked model, but record the
+                    #     discarded attempt with count_usage=True — HONEST/VISIBLE, the
+                    #     pre-SR-2 R1 escape hatch WITHOUT the silent count_usage=False
+                    #     double-bill that started this incident. No next provider →
+                    #     fall through and serve it (never error).
+                    if obs.pseudo_success and srv.failover_on_downgrade and more:
+                        srv.observer.record(obs, count_usage=True)  # visible, not silent
+                        failovers.append({"provider": route.label, "status": "downgrade",
+                                          "reason": obs.note or "served different model"})
                         continue
                     srv.observer.record(obs, count_usage=True)  # served → bill usage (R10a)
+                    # ── post-response hooks ──────────────────────────
+                    cost = obs.usage.cost_usd if obs.usage else 0.0
+                    if srv.response_normalizer is not None:
+                        body_bytes = srv.response_normalizer.normalize(
+                            body_bytes.decode(errors="replace"),
+                            NormalizeMode.STANDARDIZE_MD,
+                        ).encode()
+                    # NEVER cache a served downgrade — the cache-HIT path can't disclose
+                    # X-Charon-Downgrade, so a cached downgrade would silently re-serve the
+                    # wrong model for the whole TTL (DTC BLOCKER #1).
+                    if srv.semantic_cache is not None and not obs.pseudo_success:
+                        cache_key = hashlib.sha256(raw_body).hexdigest()
+                        srv.semantic_cache.set(cache_key, body_bytes,
+                                               rhdrs, ttl=3600)
+                    if srv.quality_scorer is not None:
+                        # A served downgrade is NOT a clean success — scoring it as one
+                        # would reward a habitual downgrader and make quality routing
+                        # PREFER it (feedback loop, DTC CONCERN #4).
+                        srv.quality_scorer.record(
+                            route.label, 0, success=not obs.pseudo_success, tokens=0)
+                    if srv.spend_limiter is not None and cost > 0:
+                        srv.spend_limiter.record(cost)
                     self._send_resp_headers(200, ctype, route.label, failovers, obs.pseudo_success)
                     self._write(body_bytes)
-                    cost = obs.usage.cost_usd if obs.usage else 0.0
                     srv.note_request(requested, route.label, 200, cost, failovers)
                     return
 
@@ -699,28 +836,50 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
 
                 obs = srv.observer.classify(okey, 200, rhdrs, _extract(b"".join(head), ctype),
                                             expected_model=expected)
-                if obs.pseudo_success and more:  # downgrade detected pre-commit → fail over
-                    srv.observer.record(obs, count_usage=False)
-                    failovers.append({"provider": route.label, "status": 200, "reason": obs.note})
+                # ── genuine streaming downgrade (obs.pseudo_success) ──────────────
+                # Same operator toggle as the non-stream path. With failover_on_downgrade
+                # True AND a next provider, fail over BEFORE committing any byte (headers
+                # not yet sent) and record the discarded head attempt with count_usage=True
+                # (visible, not the old silent double-bill). Otherwise (default, or no next
+                # provider) commit and SERVE this completed 200 with X-Charon-Downgrade.
+                if obs.pseudo_success and srv.failover_on_downgrade and more:
+                    srv.observer.record(obs, count_usage=True)  # visible, not silent
+                    failovers.append({"provider": route.label, "status": "downgrade",
+                                      "reason": obs.note or "served different model"})
                     continue
                 # commit: stream the buffered head + the remainder (headers now sent —
                 # a later read error can only truncate, never fail over).
                 self._send_resp_headers(200, ctype, route.label, failovers, obs.pseudo_success)
                 full = list(head)
                 ok = all(self._write(c) for c in head)
+                # stream_complete: True ONLY if the read loop reached natural EOF (`not c`)
+                # with every client write still OK and no exception. A truncated blob —
+                # upstream drop (→ except) or a client-write failure (→ ok False) — must
+                # NEVER be cached and later served as a whole 200 (DTC BLOCKER #2).
+                stream_complete = False
                 try:
                     while ok:
                         c = resp.read(8192)
                         if not c:
+                            stream_complete = True
                             break
                         full.append(c)
                         ok = self._write(c)
                 except Exception:
                     pass  # headers committed; partial stream is unavoidable
+                full_bytes = b"".join(full)
                 served_obs = srv.observer.classify(okey, 200, rhdrs,
-                                                   _extract(b"".join(full), ctype),
+                                                   _extract(full_bytes, ctype),
                                                    expected_model=expected)
                 srv.observer.record(served_obs, count_usage=True)
+                # Cache the streamed 200 (mirrors the non-stream path — only non-stream
+                # was cached before SR-2) but ONLY a cleanly-completed, non-downgrade
+                # stream: BLOCKER #1 (never cache a downgrade — HIT can't disclose it) +
+                # BLOCKER #2 (never cache a truncated blob).
+                if (srv.semantic_cache is not None and stream_complete
+                        and not served_obs.pseudo_success):
+                    cache_key = hashlib.sha256(raw_body).hexdigest()
+                    srv.semantic_cache.set(cache_key, full_bytes, rhdrs, ttl=3600)
                 cost = served_obs.usage.cost_usd if served_obs.usage else 0.0
                 srv.note_request(requested, route.label, 200, cost, failovers)
                 return
@@ -760,6 +919,19 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         max_body_bytes: int = 10 * 1024 * 1024,
         default_cooldown: float = 60.0,
         failover_log_path: str | None = None,
+        failover_on_downgrade: bool = False,
+        guardrails: Guardrails | None = None,
+        semantic_cache: SemanticCache | None = None,
+        response_normalizer: ResponseNormalizer | None = None,
+        observability: Observability | None = None,
+        quality_scorer: QualityScorer | None = None,
+        spend_limiter: SpendLimiter | None = None,
+        request_inspector: RequestInspector | None = None,
+        session_affinity: SessionAffinity | None = None,
+        speculative_executor: SpeculativeExecutor | None = None,
+        consensus_router: ConsensusRouter | None = None,
+        virtual_key_manager: VirtualKeyManager | None = None,
+        policy_router: PolicyRouter | None = None,
     ) -> None:
         super().__init__((host, port), _ProxyHandler)
         self.upstream_base = upstream_base
@@ -787,6 +959,23 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         self.max_body_bytes = max_body_bytes
         self.default_cooldown = default_cooldown
         self.failover_log_path = failover_log_path
+        # Operator toggle (SR-2): on a GENUINE silent downgrade, fail over to the next
+        # provider to try for the asked model instead of serving the downgrade. The
+        # discarded attempt is recorded with count_usage=True (visible, not the old
+        # silent double-bill). Default False → serve the downgrade once, billed once.
+        self.failover_on_downgrade = failover_on_downgrade
+        self.guardrails = guardrails
+        self.semantic_cache = semantic_cache
+        self.response_normalizer = response_normalizer
+        self.observability = observability
+        self.quality_scorer = quality_scorer
+        self.spend_limiter = spend_limiter
+        self.request_inspector = request_inspector
+        self.session_affinity = session_affinity
+        self.speculative_executor = speculative_executor
+        self.consensus_router = consensus_router
+        self.virtual_key_manager = virtual_key_manager
+        self.policy_router = policy_router
         self._cooldown: dict[str, float] = {}
         self._cooldown_lock = threading.Lock()
         self.failover_events: collections.deque[dict] = collections.deque(maxlen=200)
@@ -825,6 +1014,10 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         with self._cooldown_lock:  # paired with apply_routes → consistent snapshot
             if model in self.pools:
                 return list(self.pools[model])
+            if (self.policy_router is not None and model.startswith("policy/")):
+                policy_name = model[len("policy/"):]
+                return self.policy_router.resolve(policy_name, self.routes,
+                                                  self.pools)
             single = self.route_for(model)
             return [single] if single is not None else []
 
@@ -903,6 +1096,8 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
             "usage": {"tokens_in": u.tokens_in, "tokens_out": u.tokens_out,
                       "cost_usd": round(u.cost_usd, 6)},
             "recent_failovers": events[-50:],
+            # Running build/version (baked into the image by SR-10); None outside a build.
+            "build_sha": os.environ.get("CHARON_BUILD_SHA"),
         }
 
     @property

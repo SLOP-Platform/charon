@@ -23,6 +23,9 @@ _SENSITIVE_ENV = frozenset({
     "PYTHONPATH", "PYTHONSTARTUP", "PATH", "BROWSER", "IFS", "SHELL",
     "GIT_SSH", "GIT_SSH_COMMAND", "GIT_EXTERNAL_DIFF", "GIT_PAGER", "PAGER",
     "NODE_OPTIONS", "BASH_ENV", "ENV",
+    "PYTHONHOME", "PYTHONCASEOK", "PERL5OPT", "RUBYOPT",
+    "JAVA_TOOL_OPTIONS", "GIT_CONFIG_PARAMETERS",
+    "SSL_CERT_FILE", "SSL_CERT_DIR",
 })
 
 
@@ -42,9 +45,10 @@ def secrets_path() -> Path:
     return config_dir() / _SECRETS_FILE
 
 
-def load_secrets() -> dict[str, str]:
+def load_secrets(*, cd: str | Path | None = None) -> dict[str, str]:
     """Read ``{key_env: value}`` from the secrets file (empty/absent → ``{}``)."""
-    p = secrets_path()
+    d = Path(cd) if cd is not None else config_dir()
+    p = d / _SECRETS_FILE
     if not p.exists():
         return {}
     try:

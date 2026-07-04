@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__, api
+from .api import _invocation_name
 from .doctor import probe
 
 
@@ -207,7 +208,7 @@ def _cmd_providers(args: argparse.Namespace) -> int:
             value = getpass.getpass(f"Paste the API key for {args.name} ({key_env}): ")
         if not value:
             print(f'provider "{args.name}" saved, but no key entered — add it later '
-                  f"with `charon providers add {args.name}`", file=sys.stderr)
+                  f"with `{_invocation_name()} providers add {args.name}`", file=sys.stderr)
             return 2
         path = secrets.set_secret(key_env, value)
         print(f'stored {key_env} in {path} (0600) {_mask_key(value)}'
@@ -271,12 +272,70 @@ def _import_models(name: str, *, free_only: bool = False, into_pool: str | None 
     return added, skipped
 
 
+def _import_all_models(free_only: bool = False, into_pool: str | None = None,
+                       quiet: bool = False) -> dict[str, tuple[list[str], list[str]] | None]:
+    """Import models from every configurable provider that has an API key set
+    (or is a localhost provider needing no key). Returns ``{provider: result}``."""
+    from . import config, providers
+    results: dict[str, tuple[list[str], list[str]] | None] = {}
+    all_presets = set(providers.PRESETS)
+    custom = set(config.load_providers())
+    candidates = all_presets | custom
+    for name in sorted(candidates):
+        try:
+            preset = providers.resolve(name, config.load_providers().get(name))
+        except ValueError:
+            continue
+        if preset.key_env and preset.key_env not in os.environ:
+            continue  # no key set — skip silently
+        res = _import_models(name, free_only=free_only, into_pool=None, quiet=True)
+        if res is not None:
+            results[name] = res
+    if into_pool and results:
+        all_added: list[str] = []
+        for v in results.values():
+            if v is not None:
+                all_added.extend(v[0])
+        if all_added:
+            config.set_pool(into_pool, all_added)
+            if not quiet:
+                print(f"pool {into_pool!r} now holds all {len(all_added)} imported models "
+                      "— pools work best as a small, cost-ranked, comparable set")
+    if not quiet:
+        total_added = sum(len(v[0]) for v in results.values() if v)
+        total_skipped = sum(len(v[1]) for v in results.values() if v)
+        print(f"import-all: {total_added} model(s) from {len(results)} provider(s)"
+              + (f", skipped {total_skipped} invalid id(s)" if total_skipped else ""))
+    return results
+
+
 def _cmd_models(args: argparse.Namespace) -> int:
     from . import secrets
     secrets.apply_to_env()
     if args.action == "import":
+        if args.all:
+            all_results = _import_all_models(free_only=args.free_only, into_pool=args.into_pool)
+            return 0 if all_results else 1
+        if not args.name:
+            print("error: specify a provider name or use --all", file=sys.stderr)
+            return 2
         res = _import_models(args.name, free_only=args.free_only, into_pool=args.into_pool)
         return 0 if res is not None else 1
+    return 2
+
+
+def _cmd_discover(args: argparse.Namespace) -> int:
+    if args.action == "openrouter":
+        from . import discover
+        dry = args.dry_run
+        print(f"Discovering models from OpenRouter{' (dry run)' if dry else ''}...")
+        result = discover.import_openrouter_models(dry_run=dry)
+        print(f"  imported: {result['imported']}")
+        print(f"  new (needs review): {result['new']}")
+        print(f"  skipped: {result['skipped']}")
+        if not dry and result["new"] > 0:
+            print("  review list → ~/.charon/discover_review.json")
+        return 0
     return 2
 
 
@@ -476,7 +535,8 @@ def _cmd_setup(args: argparse.Namespace) -> int:
         print("\nsetup cancelled — anything you already added is saved.", file=sys.stderr)
         return 0
     except EOFError:
-        print("\nsetup needs an interactive terminal. Use `charon providers add <name>` "
+        print(f"\nsetup needs an interactive terminal. "
+              f"Use `{_invocation_name()} providers add <name>` "
               f"or edit the files in {secrets.config_dir()}.", file=sys.stderr)
         return 2
     if not added_models:
@@ -487,16 +547,18 @@ def _cmd_setup(args: argparse.Namespace) -> int:
         catalog_n = sum(1 for e in config.load_models().values()
                         if isinstance(e, dict))
         if not catalog_n:
-            print("\n⚠ 0 models served — your gateway won't respond to requests.\n"
-                  "  Import a provider's catalog with `charon models import <provider>`, "
-                  "or\n  re-run `charon setup` and serve a model when prompted.",
+            print(f"\n⚠ 0 models served — your gateway won't respond to requests.\n"
+                  f"  Import a provider's catalog with "
+                  f"`{_invocation_name()} models import <provider>`, "
+                  f"or\n  re-run `{_invocation_name()} setup` "
+                  f"and serve a model when prompted.",
                   file=sys.stderr)
             return 0
         print(f"\n{catalog_n} model(s) in your catalog are served by id; no failover "
               "pool set — clients can request them directly.")
         return 0
     print(f"\nDone. {len(added_models)} model(s) configured. Start the gateway:\n"
-          "  charon gateway")
+          f"  {_invocation_name()} gateway")
     return 0
 
 
@@ -671,9 +733,11 @@ def _tier_resolve(tier_name: str, executor: str | None) -> int:
     models = config.load_models()
 
     def _is_anthropic(mid: str) -> bool:
+        # Vendor-specific executor filter — this is the only executor currently
+        # supported. Replace with a generic executor-registry lookup when more
+        # executor backends are added (ATC-009).
         if mid in models:
             return models[mid].get("provider") == "anthropic"
-        # not in registry → assumed native Anthropic model name (haiku/sonnet/opus)
         return True
 
     def _cost_key(mid: str) -> int:
@@ -717,6 +781,95 @@ def _tier_set(tier_name: str, members_str: str | None) -> int:
     return 0
 
 
+def _tier_recommend(provider_name: str) -> int:
+    """Recommend tier assignments for a provider's live model catalog using
+    LLM-judge consensus from already-configured trusted models."""
+    from . import config, providers, recommend, secrets
+    secrets.apply_to_env()
+
+    try:
+        catalog = providers.list_models(provider_name)
+    except Exception as exc:
+        print(f"error: cannot reach {provider_name} — {exc}", file=sys.stderr)
+        return 2
+    if not catalog:
+        print(f"no models found for provider '{provider_name}'")
+        return 1
+
+    print(f"Fetched {len(catalog)} models from {provider_name}")
+    print("Asking trusted models to rank the catalog…")
+
+    recs = recommend.recommend_tiers(provider_name, catalog)
+
+    tier_order = ["high", "med", "low"]
+    proposal: dict[str, list[str]] = {}
+    for r in recs:
+        if r.tier in tier_order and r.model_ids:
+            proposal[r.tier] = r.model_ids
+
+    if not any(proposal.values()):
+        print("no recommendations produced")
+        return 1
+
+    for tier in tier_order:
+        ids = proposal.get(tier, [])
+        if ids:
+            print(f"\n  {tier.upper()} ({len(ids)} models):")
+            for mid in ids[:15]:
+                print(f"    - {mid}")
+            if len(ids) > 15:
+                print(f"    … and {len(ids) - 15} more")
+
+    try:
+        ans = input("\nAccept these tier assignments? [Y/n/each]: ").strip().lower()
+    except EOFError:
+        print("recommend needs an interactive terminal", file=sys.stderr)
+        return 2
+    if ans == "" or ans.startswith("y"):
+        tiers = config.load_tiers()
+        for canon in tier_order:
+            ids = proposal.get(canon, [])
+            if ids:
+                existing = list(tiers.get("members", {}).get(canon, []))
+                for mid in ids:
+                    if mid not in existing:
+                        existing.append(mid)
+                tiers.setdefault("members", {})[canon] = existing
+        config.set_tiers(
+            order=tiers.get("order", list(config.CANONICAL_TIERS)),
+            members=tiers.get("members", {}),
+            aliases=tiers.get("aliases", {}),
+        )
+        print("tiers updated")
+    elif ans == "each":
+        tiers = config.load_tiers()
+        for canon in tier_order:
+            ids = proposal.get(canon, [])
+            if not ids:
+                continue
+            try:
+                tier_ans = input(
+                    f"  accept {canon} tier ({len(ids)} models)? [Y/n]: ").strip().lower()
+            except EOFError:
+                print("aborted", file=sys.stderr)
+                return 2
+            if tier_ans == "" or tier_ans.startswith("y"):
+                existing = list(tiers.get("members", {}).get(canon, []))
+                for mid in ids:
+                    if mid not in existing:
+                        existing.append(mid)
+                tiers.setdefault("members", {})[canon] = existing
+        config.set_tiers(
+            order=tiers.get("order", list(config.CANONICAL_TIERS)),
+            members=tiers.get("members", {}),
+            aliases=tiers.get("aliases", {}),
+        )
+        print("tiers updated")
+    else:
+        print("aborted")
+    return 0
+
+
 def _cmd_tier(args: argparse.Namespace) -> int:
     action = args.tier_action
     if action == "init":
@@ -729,6 +882,8 @@ def _cmd_tier(args: argparse.Namespace) -> int:
         return _tier_resolve(args.tier_name, getattr(args, "executor", None))
     if action == "set":
         return _tier_set(args.tier_name, getattr(args, "members", None))
+    if action == "recommend":
+        return _tier_recommend(args.provider)
     return 2
 
 
@@ -790,6 +945,7 @@ def _load_plan(plan_path: str) -> tuple[list[dict], str]:
                 "depends_on": list(u.get("depends_on", [])),
                 "goal": u.get("goal", ""),
                 "accept": list(u.get("accept", [])),
+                "body": u.get("body", ""),
             })
         if not units:
             raise ValueError(_no_units_reason(data))
@@ -806,6 +962,7 @@ def _load_plan(plan_path: str) -> tuple[list[dict], str]:
             "depends_on": [],
             "goal": d["goal"],
             "accept": list(d["accept"]),
+            "body": d.get("body", ""),
         })
     return units, ""
 
@@ -1096,9 +1253,14 @@ def run_work(
     DONE unit through the propose-default land gate → the D12 validator runs ONCE
     on the integrated end-product against the top-level acceptance (D-E6-6).
 
+    ``autonomy`` (default L1, partial trust) controls the review gate: L0
+    (manual) and L1 (single-model) run WITHOUT cross-model adversarial review
+    (by-design — the agent's own output is trusted). L2+ threads a second model's
+    GatewayReviewer into the runner (ADR-0010 Tier-4).
+
     ``runner``/``backend_factory``/``reviewer``/``pr_opener`` are test seams;
-    production uses the default fenced runner (with the real ``GatewayReviewer``
-    threaded in — ADR-0010 Tier-4) + the ``charon run`` backend resolution.
+    production uses the default fenced runner + the ``charon run`` backend
+    resolution.
 
     ``progress`` (WORK-OBSERVABILITY) is an opt-in sink for human-readable
     lifecycle lines (claimed/started/checkpoint/land/done) the scheduler + land
@@ -1133,6 +1295,7 @@ def run_work(
             id=u["id"], tier=u.get("tier", ""), owns=list(u.get("owns", [])),
             depends_on=list(u.get("depends_on", [])), goal=u.get("goal", ""),
             accept=list(u.get("accept", [])),
+            body=u.get("body", ""),
         ))
 
     def _wt(unit: Unit) -> str:
@@ -1426,12 +1589,22 @@ def build_parser() -> argparse.ArgumentParser:
     mdsub = md.add_subparsers(dest="action", required=True)
     mi = mdsub.add_parser("import",
                           help="import a provider's full model list into the catalog")
-    mi.add_argument("name", help="provider name (a preset or one you've added)")
+    mi.add_argument("name", nargs="?", default=None,
+                    help="provider name (omitted when --all)")
+    mi.add_argument("--all", action="store_true",
+                    help="import from every provider with a key set")
     mi.add_argument("--free-only", action="store_true", help="import only free models")
     mi.add_argument("--into-pool", default=None,
                     help="ALSO add the imported models to this pool (opt-in; pools work "
                          "best small + cost-ranked, so this is rarely what you want)")
     md.set_defaults(func=_cmd_models)
+
+    disc = sub.add_parser("discover", help="discover models from provider APIs")
+    discsub = disc.add_subparsers(dest="action", required=True)
+    dor = discsub.add_parser("openrouter", help="import models from OpenRouter catalogue")
+    dor.add_argument("--dry-run", action="store_true",
+                     help="print counts only, do not import")
+    disc.set_defaults(func=_cmd_discover)
 
     t = sub.add_parser("tier",
                        help="Choose which models to use for each tier (low / med / high)")
@@ -1454,6 +1627,10 @@ def build_parser() -> argparse.ArgumentParser:
     trv.add_argument("--executor", default=None,
                      help="filter by executor (anthropic); exit non-zero if none found "
                           "so shell || fallbacks fire")
+    trec = tsub.add_parser("recommend",
+                           help="recommend tier assignments from a provider's live "
+                                "model catalog")
+    trec.add_argument("provider", help="provider to query for models")
     t.set_defaults(func=_cmd_tier)
 
     r = sub.add_parser("run", help="Run a coding goal until it passes its tests")

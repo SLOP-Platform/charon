@@ -151,12 +151,9 @@ def _validate_base_url(base_url: str) -> None:
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_./:-]*$")
 
 
-def _path(name: str) -> Path:
-    return secrets.config_dir() / name
-
-
-def _load(name: str) -> dict:
-    p = _path(name)
+def _load(name: str, *, config_dir: str | Path | None = None) -> dict:
+    d = Path(config_dir) if config_dir is not None else secrets.config_dir()
+    p = d / name
     if not p.exists():
         return {}
     try:
@@ -166,22 +163,22 @@ def _load(name: str) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _save(name: str, data: dict) -> Path:
-    d = secrets.config_dir()
+def _save(name: str, data: dict, *, config_dir: str | Path | None = None) -> Path:
+    d = Path(config_dir) if config_dir is not None else secrets.config_dir()
     d.mkdir(parents=True, exist_ok=True)
-    p = _path(name)
+    p = d / name
     tmp = p.with_name(p.name + ".tmp")
     tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
     tmp.replace(p)  # atomic
     return p
 
 
-def load_providers() -> dict:
-    return _load("providers.json")
+def load_providers(*, config_dir: str | Path | None = None) -> dict:
+    return _load("providers.json", config_dir=config_dir)
 
 
-def load_models() -> dict:
-    return _load("models.json")
+def load_models(*, config_dir: str | Path | None = None) -> dict:
+    return _load("models.json", config_dir=config_dir)
 
 
 def load_pools() -> dict:
@@ -218,10 +215,11 @@ def add_model(model_id: str, *, provider: str | None = None, upstream_base: str 
               free: bool = False, cost_rank: int = 1000,
               context_window: int | None = None, max_tokens: int | None = None,
               reasoning: bool | None = None, vision: bool | None = None,
-              audio: bool | None = None) -> Path:
+              audio: bool | None = None,
+              cost_input: float | None = None, cost_output: float | None = None) -> Path:
     """Persist a model to ``models.json`` (references a provider, or a direct
     upstream_base). Optional metadata fields (context_window, max_tokens,
-    reasoning, vision, audio) are persisted only when non-None."""
+    reasoning, vision, audio, cost_input, cost_output) are persisted only when non-None."""
     _check_id("model", model_id)
     if provider is None and upstream_base is None:
         raise ValueError("a model needs either provider= or upstream_base=")
@@ -232,7 +230,8 @@ def add_model(model_id: str, *, provider: str | None = None, upstream_base: str 
         if v is not None:
             entry[k] = v
     for k, mv in (("context_window", context_window), ("max_tokens", max_tokens),
-                   ("reasoning", reasoning), ("vision", vision), ("audio", audio)):
+                   ("reasoning", reasoning), ("vision", vision), ("audio", audio),
+                   ("cost_input", cost_input), ("cost_output", cost_output)):
         if mv is not None:
             entry[k] = mv
     models[model_id] = entry
@@ -244,10 +243,11 @@ def add_models_bulk(entries: list[dict], *, provider: str) -> tuple[list[str], l
     `charon models import` path). Each entry is ``{id, free?, cost_rank?}``; the
     catalog id doubles as the upstream id (no ``upstream_model``). Ids failing
     ``_ID_RE`` are SKIPPED (not raised — an upstream list is untrusted). Optional
-    metadata fields (context_window, max_tokens, reasoning, vision, audio) are
-    carried through if present. Returns ``(added, skipped)``."""
+    metadata fields (context_window, max_tokens, reasoning, vision, audio,
+    cost_input, cost_output) are carried through if present. Returns ``(added, skipped)``."""
     _check_id("provider", provider)
-    _METADATA_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio")
+    _METADATA_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio",
+                      "cost_input", "cost_output")
     models = load_models()
     added: list[str] = []
     skipped: list[str] = []
@@ -507,9 +507,50 @@ def set_fallback_providers(providers: list[str]) -> Path:
     return _save(_FALLBACK_FILE, {"providers": cleaned})
 
 
+def _unknown_pricing_models(models: dict) -> list[str]:
+    """Models that have neither ``cost_input`` nor ``cost_output`` (and are not
+    marked as free — free models are genuinely free and should not be flagged)."""
+    unknown: list[str] = []
+    for mid, entry in models.items():
+        if entry.get("free"):
+            continue
+        if "cost_input" not in entry and "cost_output" not in entry:
+            unknown.append(mid)
+    return unknown
+
+
+_FALLBACK_PRICING_FILE = "fallback_pricing.json"
+
+
+def load_fallback_pricing() -> dict:
+    """Read fallback per-token pricing from ``fallback_pricing.json``.
+    Returns ``{}`` when the file is absent or malformed."""
+    data = _load(_FALLBACK_PRICING_FILE)
+    result: dict[str, float] = {}
+    for k in ("cost_input", "cost_output"):
+        v = data.get(k)
+        if isinstance(v, (int, float)):
+            result[k] = float(v)
+    return result
+
+
+def set_fallback_pricing(cost_input: float, cost_output: float) -> Path:
+    """Persist the fallback per-token pricing to ``fallback_pricing.json``."""
+    cost_input = float(cost_input)
+    cost_output = float(cost_output)
+    if cost_input < 0 or cost_output < 0:
+        raise ValueError("fallback pricing must be non-negative")
+    return _save(_FALLBACK_PRICING_FILE, {
+        "cost_input": cost_input,
+        "cost_output": cost_output,
+    })
+
+
 def summary() -> dict:
     """A non-secret view for the CLI/console: providers (with key-set state, NOT the
-    key), models, pools."""
+    key), models, pools, failover chain health, unknown-pricing models, and optional
+    fallback pricing."""
+    from typing import Any
     secs = secrets.load_secrets()
     provs = {}
     for n, e in load_providers().items():
@@ -519,4 +560,33 @@ def summary() -> dict:
             "key_env": ke,
             "key_set": bool(ke and (os.environ.get(ke) or ke in secs)),
         }
-    return {"providers": provs, "models": load_models(), "pools": load_pools()}
+    models = load_models()
+    result: dict[str, Any] = {"providers": provs, "models": models, "pools": load_pools()}
+    result["unknown_pricing"] = _unknown_pricing_models(models)
+    fallback = load_fallback_providers()
+    if fallback:
+        result["fallback"] = fallback
+    fallback_pricing = load_fallback_pricing()
+    if fallback_pricing:
+        result["fallback_pricing"] = fallback_pricing
+    result["failover_chain_health"] = failover_chain_health()
+    return result
+
+
+def failover_chain_health() -> dict:
+    """Return a summary dict of failover readiness: whether pools, fallback, or
+    providers are configured, and whether any failover chain exists."""
+    pools = load_pools()
+    fallback = load_fallback_providers()
+    provs = load_providers()
+    has_pools = bool(pools)
+    has_fallback = bool(fallback)
+    has_providers = bool(provs)
+    return {
+        "has_pools": has_pools,
+        "has_fallback": has_fallback,
+        "has_providers": has_providers,
+        "pools_count": len(pools),
+        "fallback_provider_count": len(fallback),
+        "provider_count": len(provs),
+    }

@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import providers
+from .api import _invocation_name
 
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = 8080
@@ -216,7 +217,12 @@ def _cline_path() -> Path:
 def _write_opencode(w: Wiring) -> None:
     """``~/.config/opencode/opencode.json`` — opencode's OpenAI-compatible provider
     block. Deep-merges into ``provider.charon`` so other providers/models and the
-    user's other top-level keys are preserved (idempotent)."""
+    user's other top-level keys are preserved (idempotent).
+
+    Model metadata (context_window, max_tokens, cost, etc.) is NOT carried through
+    the web connect path — the CLI import path (``charon models import``) is the
+    canonical source that writes these fields into the model registry. The connect
+    path wires only the minimal provider endpoint + model name (ATC-014)."""
     def mutate(data: dict) -> None:
         data.setdefault("$schema", "https://opencode.ai/config.json")
         provs = data.get("provider")
@@ -408,7 +414,8 @@ REGISTRY: dict[str, ClientSpec] = {
             "# To point Cline at Charon, add these to your VS Code settings:\n"
             f'#   "cline.apiProvider": "openai",\n'
             f'#   "cline.openaiBaseUrl": "{w.base_url}",\n'
-            f'#   "cline.openaiApiKey": "{w.token or "?token=... if gateway-gated"}",\n'
+            f'#   "cline.openaiApiKey": '
+            f'{"<your-gateway-token>" if w.token else "?token=... if gateway-gated"},\n'
             f'#   "cline.openaiModel": "{w.model}"'
         ),
         guided=True,
@@ -470,7 +477,7 @@ def run_connect(
     except GatewayUnreachable as exc:
         _eprint(f"error: {exc}")
         _eprint("  the Charon gateway must be running first — start it with:")
-        _eprint("    charon gateway")
+        _eprint(f"    {_invocation_name()} gateway")
         if not tok:
             _eprint("  (if your gateway needs a token, pass --token or set "
                     "CHARON_GATEWAY_TOKEN)")
@@ -486,7 +493,8 @@ def run_connect(
         chosen = ids[0]
     else:
         _eprint("error: the gateway is reachable but serves no models — add one "
-                "with `charon setup` / `charon models import <provider>`, then retry.")
+                f"with `{_invocation_name()} setup` / "
+                f"`{_invocation_name()} models import <provider>`, then retry.")
         return 1
 
     # 3. Install the client if missing (only with --install); else just advise.

@@ -24,10 +24,24 @@ import sys
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from . import providers
+from .api import _invocation_name
+from .cache import SemanticCache
+from .consensus import ConsensusRouter
+from .guardrails import Guardrails
 from .netutil import is_loopback
+from .observability import Observability
+from .policy_router import PolicyRouter
 from .proxy_server import GatewayProxyServer, UpstreamRoute
+from .quality_scorer import QualityScorer
+from .request_inspector import RequestInspector
+from .response_normalizer import ResponseNormalizer
+from .session_affinity import SessionAffinity
+from .speculative_execution import SpeculativeExecutor
+from .spend_limits import SpendLimiter
+from .virtual_keys import VirtualKeyManager
 
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = 8080
@@ -47,6 +61,23 @@ class GatewayConfig:
     pools: dict[str, list[UpstreamRoute]] = field(default_factory=dict)
     model_ids: list[str] = field(default_factory=list)
     model_meta: dict[str, dict] = field(default_factory=dict)
+    # Operator toggle (SR-2): fail over on a genuine silent downgrade (recording the
+    # discarded attempt visibly, count_usage=True) instead of serving it once. Default
+    # False keeps the double-bill leak fixed (serve the downgrade, billed once).
+    failover_on_downgrade: bool = False
+    # ── optional B1 gateway modules (None = feature disabled) ────────
+    semantic_cache: SemanticCache | None = None
+    response_normalizer: ResponseNormalizer | None = None
+    guardrails: Guardrails | None = None
+    observability: Observability | None = None
+    quality_scorer: QualityScorer | None = None
+    spend_limiter: SpendLimiter | None = None
+    request_inspector: RequestInspector | None = None
+    session_affinity: SessionAffinity | None = None
+    speculative_executor: SpeculativeExecutor | None = None
+    consensus_router: ConsensusRouter | None = None
+    virtual_key_manager: VirtualKeyManager | None = None
+    policy_router: PolicyRouter | None = None
 
 
 def _route_from_spec(spec: dict, providers_cfg: dict) -> UpstreamRoute | None:
@@ -138,6 +169,7 @@ def load_config(
     cfg_host: str = _DEFAULT_HOST
     cfg_port: int = _DEFAULT_PORT
     cfg_token: str | None = None
+    cfg_failover_on_downgrade: bool = False
     registry: dict = {}
     pool_map: dict = {}
     providers_cfg: dict = {}
@@ -148,6 +180,7 @@ def load_config(
         cfg_host = str(gw.get("host", cfg_host))
         cfg_port = int(gw.get("port", cfg_port))
         cfg_token = gw.get("token")
+        cfg_failover_on_downgrade = bool(gw.get("failover_on_downgrade", False))
         registry = data.get("models") or {}
         pool_map = data.get("pools") or {}  # virtual id → ordered [model id]
         providers_cfg = data.get("providers") or {}  # preset overrides (P3)
@@ -155,12 +188,21 @@ def load_config(
         models_path = Path(state_dir) / "models.json"
         pools_path = Path(state_dir) / "pools.json"
         providers_path = Path(state_dir) / "providers.json"
+        gateway_path = Path(state_dir) / "gateway.json"
         if models_path.exists():
             registry = json.loads(models_path.read_text())
         if pools_path.exists():
             pool_map = json.loads(pools_path.read_text())  # role → [model id]
         if providers_path.exists():
             providers_cfg = json.loads(providers_path.read_text())
+        if gateway_path.exists():  # gateway-level flags (SR-2 toggle et al.)
+            try:
+                gw_file = json.loads(gateway_path.read_text())
+                if isinstance(gw_file, dict):
+                    cfg_failover_on_downgrade = bool(
+                        gw_file.get("failover_on_downgrade", False))
+            except (OSError, json.JSONDecodeError):
+                pass
 
     routes, pools, _ = _build_routes_and_pools(registry, pool_map, providers_cfg)
     for vid, chain in _tier_pools(registry, providers_cfg).items():
@@ -207,7 +249,107 @@ def load_config(
         pools=pools,
         model_ids=sorted(set(routes) | set(pools)),
         model_meta=model_meta,
+        failover_on_downgrade=cfg_failover_on_downgrade,
+        semantic_cache=_module_inst("cache", state_dir),
+        response_normalizer=_module_inst("normalizer", state_dir),
+        guardrails=_module_inst("guardrails", state_dir),
+        observability=_module_inst("observability", state_dir),
+        quality_scorer=_module_inst("quality", state_dir),
+        spend_limiter=_module_inst("spend", state_dir),
+        request_inspector=_module_inst("inspector", state_dir),
+        session_affinity=_module_inst("session_affinity", state_dir),
+        speculative_executor=_module_inst("speculative", state_dir),
+        consensus_router=_module_inst("consensus", state_dir),
+        virtual_key_manager=_module_inst("vkeys", state_dir),
+        policy_router=_module_inst("policy", state_dir),
     )
+
+
+def _module_inst(name: str, state_dir: str | Path | None = None) -> Any:
+    """Return a Smart Routing module instance — always active with defaults.
+
+    Reads ``<name>.json`` for operator overrides. Only returns None for
+    cost-multiplying features (speculative, consensus) that need explicit opt-in.
+    """
+    from pathlib import Path
+
+    from . import secrets
+    d = Path(state_dir) if state_dir is not None else secrets.config_dir()
+    cfg_file = d / f"{name}.json"
+    data: dict = {}
+    if cfg_file.exists():
+        try:
+            loaded = json.loads(cfg_file.read_text())
+            if isinstance(loaded, dict):
+                data = loaded
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    if name == "cache":
+        from .cache import SemanticCache
+        return SemanticCache(max_size=data.get("max_size", 1000))
+    if name == "normalizer":
+        from .response_normalizer import ResponseNormalizer
+        return ResponseNormalizer()
+    if name == "guardrails":
+        from .guardrails import Guardrails
+        return Guardrails(config=data if data else {"keywords": []})
+    if name == "observability":
+        from .observability import Observability
+        return Observability(config=data if data else {})
+    if name == "quality":
+        from .quality_scorer import QualityScorer
+        return QualityScorer(state_dir=d)
+    if name == "spend":
+        from .spend_limits import SpendLimiter
+        return SpendLimiter(
+            monthly_limit_usd=float(data.get("monthly_limit_usd", 0)),
+            state_dir=d)
+    if name == "inspector":
+        from .request_inspector import RequestInspector
+        return RequestInspector()
+    if name == "session_affinity":
+        from .session_affinity import SessionAffinity
+        return SessionAffinity(ttl=float(data.get("ttl", 300)))
+    if name == "speculative":
+        if not data.get("enabled"):
+            return None
+        from .speculative_execution import SpeculativeExecutor
+        return SpeculativeExecutor(enabled=True,
+                                   max_providers=int(data.get("max_providers", 3)))
+    if name == "consensus":
+        if not data.get("enabled"):
+            return None
+        from .consensus import ConsensusRouter
+        return ConsensusRouter(enabled=True,
+                               default_count=int(data.get("default_count", 3)),
+                               similarity=float(data.get("similarity", 0.8)))
+    if name == "vkeys":
+        from .virtual_keys import VirtualKeyManager
+        return VirtualKeyManager(state_dir=d)
+    if name == "policy":
+        from .policy_router import PolicyRouter
+        return PolicyRouter(state_dir=d)
+    return None
+
+
+def _check_failover_safety(cfg: GatewayConfig) -> None:
+    """Emit a strong warning when no failover chain is configured — the gateway will
+    serve but a single provider exhaustion halts ALL traffic. Common pitfall: models
+    are imported but no pools/fallback exist."""
+    if cfg.pools:
+        return  # at least one pool → failover is wired
+    from . import config as _cfg
+    has_fallback = bool(_cfg.load_fallback_providers())
+    has_pools_file = bool(_cfg.load_pools())
+    if has_fallback or has_pools_file:
+        return  # configured but no pool chains compiled (e.g., empty members)
+    print("warning: NO FAILOVER CHAIN — no pools or global fallback configured. "
+          "A single provider exhaustion will stop ALL traffic.",
+          file=sys.stderr)
+    print(f"  fix: `{_invocation_name()} pools add auto <model,ids,...>` "
+          f"or `{_invocation_name()} fallback set <provider-name>` "
+          "or open http://127.0.0.1:8080/charon/setup", file=sys.stderr)
 
 
 def build_server(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> GatewayProxyServer:
@@ -226,6 +368,19 @@ def build_server(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> 
     server = GatewayProxyServer(
         routes=cfg.routes, pools=cfg.pools, host=cfg.host, port=cfg.port,
         token=cfg.token, model_ids=cfg.model_ids, model_meta=cfg.model_meta,
+        failover_on_downgrade=cfg.failover_on_downgrade,
+        semantic_cache=cfg.semantic_cache,
+        response_normalizer=cfg.response_normalizer,
+        guardrails=cfg.guardrails,
+        observability=cfg.observability,
+        quality_scorer=cfg.quality_scorer,
+        spend_limiter=cfg.spend_limiter,
+        request_inspector=cfg.request_inspector,
+        session_affinity=cfg.session_affinity,
+        speculative_executor=cfg.speculative_executor,
+        consensus_router=cfg.consensus_router,
+        virtual_key_manager=cfg.virtual_key_manager,
+        policy_router=cfg.policy_router,
     )
     if setup_dir is not None:
         server.setup_handler = make_setup_handler(server, setup_dir)
@@ -274,7 +429,8 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
             # Preserve existing metadata (context_window, etc.) across re-adds
             # so a web-edit never silently strips model capabilities (MODEL-DISCOVERY).
             existing = config.load_models().get(mid) or {}
-            _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio")
+            _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio",
+                          "cost_input", "cost_output")
             meta = {k: existing[k] for k in _META_KEYS if k in existing}
             config.add_model(
                 mid,
@@ -303,7 +459,8 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
                     f"could not reach provider {name!r} ({type(exc).__name__})") from exc
             if payload.get("free_only"):
                 found = [m for m in found if m["free"]]
-            _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio")
+            _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio",
+                          "cost_input", "cost_output")
             entries = []
             for m in found:
                 entry = {"id": m["id"], "free": m["free"],
@@ -359,15 +516,45 @@ def run(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> int:
     except GatewayBindRefused as exc:
         print(str(exc), file=sys.stderr)
         return 2
+    # ── Smart Routing status ─────────────────────────────────────────
+    parts: list[str] = []
+    if cfg.spend_limiter is not None:
+        parts.append(f"spend limit: ${cfg.spend_limiter.remaining():.2f} remaining")
+        if cfg.spend_limiter._limit_usd <= 0:
+            parts.append("no cap set")
+    if cfg.semantic_cache is not None:
+        parts.append("cache")
+    if cfg.guardrails is not None:
+        parts.append("guardrails")
+    if cfg.quality_scorer is not None:
+        parts.append("quality")
+    if cfg.request_inspector is not None:
+        parts.append("inspector")
+    if parts:
+        print(f"Smart Routing: {', '.join(parts)}", file=sys.stderr)
+        if cfg.spend_limiter is not None and cfg.spend_limiter._limit_usd <= 0:
+            print("  hint: set a spend cap with 'charon limits set --monthly N'",
+                  file=sys.stderr)
     if not cfg.routes and not cfg.pools:
-        print("warning: no models configured — run `charon setup`, "
-              "`charon providers add <name>`, or open the setup page below",
+        print(f"warning: no models configured — run `{_invocation_name()} setup` or "
+              f"`{_invocation_name()} models import <provider>`",
               file=sys.stderr)
+    _check_failover_safety(cfg)
     gate = "token-gated" if cfg.token else "loopback, UNGATED"
     print(f"charon gateway ({gate}) on {server.url}/v1 — "
           f"{len(cfg.model_ids)} model(s), {len(cfg.pools)} pool(s)", file=sys.stderr)
     tq = f"?token={cfg.token}" if cfg.token else ""
-    print(f"  console: {server.url}/{tq}", file=sys.stderr)
+    if cfg.host in ("127.0.0.1", "localhost", "::1"):
+        print(f"  console: {server.url}/{tq} (local only)", file=sys.stderr)
+    elif cfg.host == "0.0.0.0":
+        import socket
+        try:
+            lan = socket.gethostbyname(socket.gethostname())
+        except OSError:
+            lan = "localhost"
+        print(f"  console: http://{lan}:{cfg.port}/{tq} (LAN)", file=sys.stderr)
+    else:
+        print(f"  console: {server.url}/{tq}", file=sys.stderr)
     if setup_dir is not None:
         print(f"  setup:   {server.url}/charon/setup{tq}", file=sys.stderr)
     try:

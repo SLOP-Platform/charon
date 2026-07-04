@@ -100,11 +100,11 @@ class AutonomyPolicy:
 
     def _rung_ok(self, level: Autonomy) -> bool:
         """Precondition for a SINGLE rung (no climb implied)."""
-        if self.sandbox is SandboxPolicy.CONTAINER:
+        if self.sandbox == SandboxPolicy.CONTAINER:
             # ALL rungs ≥L1 require the verified container; the uncontained
             # override path is refused (D013: container is the trust boundary).
             return self.contained
-        if self.sandbox is SandboxPolicy.HOST:
+        if self.sandbox == SandboxPolicy.HOST:
             # Host is the declared environment. L0/L1 always OK. L2+ requires
             # the loud uncontained override — the container flag alone is not
             # sufficient; the operator must explicitly acknowledge the uncontained
@@ -149,13 +149,13 @@ class AutonomyPolicy:
         return EscalationDecision(requested, granted, cap, reason)
 
     def _deny_reason(self, requested: Autonomy) -> str:
-        if self.sandbox is SandboxPolicy.CONTAINER:
+        if self.sandbox == SandboxPolicy.CONTAINER:
             return (
                 f"{requested.name} denied: sandbox=container requires "
                 f"{_CONTAINER_ENV}=1 for ALL rungs — the uncontained override "
                 f"path is refused in this policy (D013)."
             )
-        if self.sandbox is SandboxPolicy.HOST:
+        if self.sandbox == SandboxPolicy.HOST:
             # In host policy L2+ needs the override; L3 additionally needs the
             # distinct unattended opt-in.  Container alone is not sufficient.
             if (

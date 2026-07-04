@@ -152,3 +152,86 @@ class Outcome:
     note: str = ""
     # Resource spend for this dispatch (Tier 3); None if the backend reports none.
     usage: Usage | None = None
+
+
+# ── Gateway feature types (ADOPT-GATEWAY-FEATURES Track B) ──────────────
+
+
+@dataclass(frozen=True)
+class CachedResponse:
+    """In-memory cache entry: raw upstream response bytes + metadata."""
+
+    content: bytes
+    headers: dict = field(default_factory=dict)
+    created_at: float = 0.0
+    ttl: float = 300.0
+
+
+@dataclass
+class CacheStats:
+    """Snapshot of cache state for operator inspection."""
+
+    hits: int = 0
+    misses: int = 0
+    size: int = 0
+    evictions: int = 0
+
+
+@dataclass(frozen=True)
+class RequestHints:
+    """Lightweight request inspection — cheap enough for every call."""
+
+    has_images: bool = False
+    has_tools: bool = False
+    estimated_tokens: int = 0
+    preferred_context_window: int | None = None
+
+
+@dataclass(frozen=True)
+class SpendDecision:
+    """Result of a pre-flight spend-cap check."""
+
+    allowed: bool
+    remaining: float
+    reason: str = ""
+
+
+class ObsTarget(enum.Enum):
+    """Observability export backends."""
+
+    JSONL = "jsonl"
+    PROMETHEUS = "prometheus"
+    WEBHOOK = "webhook"
+    LANGFUSE = "langfuse"
+
+
+@dataclass(frozen=True)
+class ObsEvent:
+    """One observability event emitted at a gateway hook point."""
+
+    event_type: str
+    provider: str | None = None
+    model: str | None = None
+    timestamp: float = 0.0
+    data: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class GuardrailViolation:
+    """A single guardrail hit — request or response."""
+
+    severity: str  # "WARN" or "BLOCK"
+    pattern: str
+    location: str
+    message: str = ""
+
+
+@dataclass
+class QualityRecord:
+    """Persistent per-provider quality data."""
+
+    provider: str = ""
+    calls: int = 0
+    successes: int = 0
+    latency_ewma_ms: float = 0.0
+    reliability_score: float = 0.5  # bootstrap default (cold-start safe)

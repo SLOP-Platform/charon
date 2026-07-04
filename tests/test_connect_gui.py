@@ -92,7 +92,8 @@ def test_cline_prints_manual_instructions(monkeypatch: pytest.MonkeyPatch,
     out = capsys.readouterr().out
     assert "Manual setup:" in out and "VS Code" in out
     assert "cline.apiProvider" in out or "openaiBaseUrl" in out
-    assert "TOKEN1" in out  # token IS included in the manual instructions
+    assert "<your-gateway-token>" in out
+    assert "TOKEN1" not in out   # token MUST NOT appear in user-facing instructions
     assert "gpt-5" in out
 
 

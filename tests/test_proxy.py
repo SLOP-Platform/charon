@@ -179,3 +179,88 @@ def test_normalized_comparison_different_prefixes_same_model() -> None:
     assert not obs.pseudo_success and not obs.failover
     assert obs.usage is not None
     assert p.exhausted_models() == set()
+
+
+def test_401_with_billing_body_is_exhaustion() -> None:
+    """OpenCode returns 401 for billing failures — body says 'insufficient_balance'.
+    The proxy must detect this as exhausted (fail over), not auth (don't fail over)."""
+    p = GatewayProxy()
+    obs = p.observe("opencode-go/kimi-k2.7-code", 401,
+                    body={"error": {"message": "Insufficient balance"}})
+    assert obs.exhausted and obs.failover
+    assert "exhausted" in obs.note
+    assert p.is_exhausted("opencode-go/kimi-k2.7-code")
+
+
+def test_401_with_auth_body_is_not_exhaustion() -> None:
+    """A 401 with 'invalid_api_key' is an auth error — do NOT fail over because
+    retrying with the same bad key on another provider is pointless."""
+    p = GatewayProxy()
+    obs = p.observe("opencode-go/kimi-k2.7-code", 401,
+                    body={"error": {"message": "Invalid API key"}})
+    assert not obs.exhausted and not obs.failover
+    assert p.exhausted_models() == set()
+
+
+def test_401_with_neither_pattern_is_auth() -> None:
+    """A 401 with an unrecognized body is conservatively treated as auth — don't
+    fail over if we can't confirm it's billing."""
+    p = GatewayProxy()
+    obs = p.observe("opencode-go/kimi-k2.7-code", 401,
+                    body={"error": {"message": "something else"}})
+    assert not obs.exhausted and not obs.failover
+    assert p.exhausted_models() == set()
+
+
+def test_401_with_no_body_is_auth() -> None:
+    """A 401 with no response body — assume auth, don't fail over."""
+    p = GatewayProxy()
+    obs = p.observe("opencode-go/kimi-k2.7-code", 401, body=None)
+    assert not obs.exhausted and not obs.failover
+    assert p.exhausted_models() == set()
+
+
+def test_billing_body_pattern_insufficient_quota() -> None:
+    p = GatewayProxy()
+    obs = p.observe("m", 402,
+                    body={"error": {"message": "Insufficient quota exceeded"}})
+    assert obs.exhausted and obs.failover
+
+
+def test_billing_body_pattern_credits_exhausted() -> None:
+    p = GatewayProxy()
+    obs = p.observe("m", 429,
+                    body={"error": {"type": "credits_exhausted"}})
+    assert obs.exhausted and obs.failover
+
+
+def test_billing_body_detail_field() -> None:
+    """Check the 'detail' field (some providers put error text there)."""
+    p = GatewayProxy()
+    obs = p.observe("m", 401,
+                    body={"detail": "Payment required — account balance is zero"})
+    assert obs.exhausted and obs.failover
+
+
+def test_billing_body_message_field() -> None:
+    """Check top-level 'message' field."""
+    p = GatewayProxy()
+    obs = p.observe("m", 401,
+                    body={"message": "Rate limit exceeded"})
+    assert obs.exhausted and obs.failover
+
+
+def test_exhaustion_body_does_not_match_auth_case_insensitive() -> None:
+    """Auth patterns should NOT be caught as billing."""
+    p = GatewayProxy()
+    obs = p.observe("m", 401,
+                    body={"error": {"code": "INVALID_KEY", "message": "Bad credentials"}})
+    assert not obs.exhausted and not obs.failover
+
+
+def test_exhaustion_body_patterns_in_error_code_field() -> None:
+    """Error code field can carry a billing-pattern string."""
+    p = GatewayProxy()
+    obs = p.observe("m", 401,
+                    body={"error": {"code": "insufficient_balance"}})
+    assert obs.exhausted and obs.failover
