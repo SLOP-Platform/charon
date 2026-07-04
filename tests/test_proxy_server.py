@@ -512,3 +512,54 @@ def test_zero_cost_response_still_advances_spend_cap(monkeypatch, tmp_path) -> N
     finally:
         proxy.shutdown()
         up.shutdown()
+
+
+def test_priced_zero_provider_cost_advances_cap_with_real_cost(monkeypatch, tmp_path) -> None:
+    """SR-5b + SR-7: a served response whose provider reports NO cost but whose model
+    IS priced advances the universal spend cap by the REAL computed cost (per-token),
+    not the nominal pre-flight floor — SR-7's guarantee holds with real cost."""
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    from charon.spend_limits import SpendLimiter
+
+    up = _Threaded(("127.0.0.1", 0), _NoCostUpstream)
+    threading.Thread(target=up.serve_forever, daemon=True).start()
+    base = f"http://{up.server_address[0]}:{up.server_address[1]}"
+
+    limiter = SpendLimiter(monthly_limit_usd=100.0)
+    # _NoCostUpstream returns prompt_tokens=10, completion_tokens=5 with no cost.
+    # Priced at 0.001/token → computed cost = 10*0.001 + 5*0.001 = 0.015.
+    proxy = GatewayProxyServer(
+        routes={"m": UpstreamRoute(base, "k")},
+        spend_limiter=limiter,
+        model_pricing={"m": {"cost_input": 0.001, "cost_output": 0.001}})
+    proxy.serve_in_thread()
+    try:
+        status, body = _post(proxy.url + "/v1/chat/completions", {"model": "m"})
+        assert status == 200
+        assert body["choices"][0]["message"]["content"] == "ok"
+        # cap advanced by the REAL computed cost, not the nominal floor (~1.5e-4).
+        assert abs(limiter._spent_usd - 0.015) < 1e-9
+    finally:
+        proxy.shutdown()
+        up.shutdown()
+
+
+def test_pre_flight_estimate_resolves_namespaced_pricing() -> None:
+    """SR-5b: the pre-flight spend estimate resolves a namespaced model id against
+    pricing stored under the bare final segment (parity with _lookup_pricing), not
+    the nominal per-token floor."""
+    from charon.proxy_server import _pre_flight_estimate
+
+    srv = GatewayProxyServer(
+        routes={"deepseek-v4-pro": UpstreamRoute("http://127.0.0.1:1/v1", "k")},
+        model_pricing={"deepseek-v4-pro": {"cost_input": 0.00002,
+                                           "cost_output": 0.00004}})
+    try:
+        est = _pre_flight_estimate("deepseek/deepseek-v4-pro", 1000, srv)
+        # rate = max(2e-5, 4e-5) = 4e-5 → 1000 * 4e-5 = 0.04, not the 0.0000015 floor.
+        assert abs(est - 0.04) < 1e-9
+        # an unknown model falls back to the nominal floor.
+        floor = _pre_flight_estimate("totally-unknown", 1000, srv)
+        assert abs(floor - 1000 * 0.0000015) < 1e-12
+    finally:
+        srv.server_close()

@@ -33,7 +33,7 @@ from .guardrails import Guardrails
 from .netutil import is_loopback
 from .observability import Observability
 from .policy_router import PolicyRouter
-from .proxy import GatewayProxy
+from .proxy import GatewayProxy, _normalize_model_id
 from .quality_scorer import QualityScorer
 from .request_inspector import RequestInspector
 from .response_normalizer import NormalizeMode, ResponseNormalizer
@@ -365,6 +365,34 @@ def _extract(raw: bytes, content_type: str) -> dict:
         return {}
 
 
+def _pre_flight_estimate(model: str, est_tokens: int,
+                         srv: GatewayProxyServer) -> float:
+    """Compute the pre-flight spend estimate for ``model`` from its stored per-token
+    pricing. Falls back to a nominal floor when pricing is unknown."""
+    pricing = _pre_flight_pricing(model, srv)
+    ci = pricing.get("cost_input")
+    co = pricing.get("cost_output")
+    if ci is not None and co is not None:
+        rate = max(float(ci), float(co), 0.0000001)
+        return est_tokens * rate
+    return est_tokens * 0.0000015
+
+
+def _pre_flight_pricing(model: str, srv: GatewayProxyServer) -> dict:
+    """Resolve a model's pricing entry with the same normalization the proxy's
+    ``_lookup_pricing`` uses — exact id first, then a normalized final-segment
+    match — so a namespaced id (e.g. ``deepseek/deepseek-v4-pro``) doesn't silently
+    fall through to the nominal floor (parity with the cost_usd path, SR-5b)."""
+    exact = srv.model_pricing.get(model)
+    if exact is not None:
+        return exact
+    cleaned = _normalize_model_id(model)
+    for known_id, entry in srv.model_pricing.items():
+        if _normalize_model_id(known_id) == cleaned:
+            return entry
+    return {}
+
+
 class _ProxyHandler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.0"  # close-delimited; works for SSE without length
 
@@ -658,7 +686,7 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
         # ── spend cap check (before any upstream call) ──────────────────
         if srv.spend_limiter is not None:
             est_tokens = max(len(raw_body) // 4, 100)
-            est_cost = est_tokens * 0.0000015  # nominal per-token floor
+            est_cost = _pre_flight_estimate(requested, est_tokens, srv)
             dec = srv.spend_limiter.check(est_cost)
             if not dec.allowed:
                 self._json(402, {"error": {"message": dec.reason,
@@ -920,6 +948,7 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         model_ids: list[str] | None = None,
         pools: dict[str, list[UpstreamRoute]] | None = None,
         model_meta: dict[str, dict] | None = None,
+        model_pricing: dict[str, dict] | None = None,
         max_body_bytes: int = 10 * 1024 * 1024,
         default_cooldown: float = 60.0,
         failover_log_path: str | None = None,
@@ -941,7 +970,7 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         self.upstream_base = upstream_base
         self.api_key = api_key
         self.routes = routes or {}
-        self.observer = observer or GatewayProxy()
+        self.observer = observer or GatewayProxy(model_pricing=model_pricing)
         self.fwd_timeout = fwd_timeout
         self.strip_v1 = strip_v1
         # Anti-DNS-rebinding: when bound to loopback, only accept requests whose Host
@@ -956,6 +985,9 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         # Per-model metadata surfaced in /v1/models (context_window, max_tokens,
         # reasoning, vision, audio) — optional, never carries secrets.
         self.model_meta = model_meta or {}
+        # Per-model pricing (cost_input, cost_output) for computing cost_usd when
+        # the provider doesn't self-report — optional (SR-5b).
+        self.model_pricing = model_pricing or {}
         # P2 failover: model id → ordered (cost-ranked) candidate chain; a
         # provider-keyed cooldown with Retry-After expiry (R7/R10c); and a bounded
         # in-memory failover event log (+ optional JSONL file) for visibility (D3).
@@ -1000,15 +1032,19 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         return None
 
     def apply_routes(self, routes: dict, pools: dict, model_ids: list[str],
-                     model_meta: dict[str, dict] | None = None) -> None:
+                     model_meta: dict[str, dict] | None = None,
+                     model_pricing: dict[str, dict] | None = None) -> None:
         """Atomically swap the live routing config (web-setup hot-reload) under the
         same lock ``chain_for`` reads — so an in-flight request never sees a torn
-        (mixed old/new) routes-vs-pools view (security review LOW)."""
+        (mixed old/new) routes-vs-pools view (security review LOW). Also refreshes
+        the observer's pricing so a live config reload updates cost_usd too (SR-5b)."""
         with self._cooldown_lock:
             self.routes = routes
             self.pools = pools
             self.model_ids = model_ids
             self.model_meta = model_meta or {}
+            self.model_pricing = model_pricing or {}
+            self.observer.set_pricing(self.model_pricing)
 
     def chain_for(self, model: str) -> list[UpstreamRoute]:
         """The ordered failover chain for ``model``: a configured pool (multiple
