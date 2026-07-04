@@ -465,3 +465,50 @@ def test_status_snapshot_surfaces_build_sha(monkeypatch) -> None:
         assert proxy.status_snapshot()["build_sha"] is None
     finally:
         proxy.server_close()
+
+
+class _NoCostUpstream(http.server.BaseHTTPRequestHandler):
+    """Returns 200 with usage but NO cost field — the provider didn't self-report."""
+    def log_message(self, *a) -> None:
+        pass
+
+    def do_POST(self) -> None:
+        length = int(self.headers.get("Content-Length") or 0)
+        self.rfile.read(length)
+        payload = json.dumps({
+            "model": "m",
+            "choices": [{"message": {"content": "ok"}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        }).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+
+def test_zero_cost_response_still_advances_spend_cap(monkeypatch, tmp_path) -> None:
+    """SR-7: a zero-priced but SERVED response records the pre-flight estimated
+    cost so the universal monthly cap can't be bypassed by uncosted calls."""
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    from charon.spend_limits import SpendLimiter
+
+    up = _Threaded(("127.0.0.1", 0), _NoCostUpstream)
+    threading.Thread(target=up.serve_forever, daemon=True).start()
+    base = f"http://{up.server_address[0]}:{up.server_address[1]}"
+
+    limiter = SpendLimiter(monthly_limit_usd=100.0)
+    proxy = GatewayProxyServer(routes={"m": UpstreamRoute(base, "k")},
+                                spend_limiter=limiter)
+    proxy.serve_in_thread()
+    try:
+        # a 200 with no cost field → computed cost is 0
+        status, body = _post(proxy.url + "/v1/chat/completions", {"model": "m"})
+        assert status == 200
+        assert body["choices"][0]["message"]["content"] == "ok"
+        # the spend cap must have advanced despite zero computed cost
+        assert limiter._spent_usd > 0
+        assert limiter.remaining() < 100.0
+    finally:
+        proxy.shutdown()
+        up.shutdown()
