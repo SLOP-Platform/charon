@@ -36,10 +36,16 @@ jobs:
 
       - name: Smoke test — charon.exe --help exits 0
         run: |
-          $proc = Start-Process -FilePath "dist\charon.exe" -ArgumentList "--help" `
-            -Wait -PassThru -NoNewWindow
-          if ($proc.ExitCode -ne 0) {
-            Write-Error "charon.exe --help returned exit code $($proc.ExitCode)"
+          # Invoke directly (reliable $LASTEXITCODE) and print output — Start-Process
+          # -PassThru .ExitCode is unreliable with -NoNewWindow and hides the exe's
+          # output, so a real crash was invisible. Capture both.
+          $out = & "dist\charon.exe" --help 2>&1
+          $code = $LASTEXITCODE
+          Write-Host "--- charon.exe --help output ---"
+          $out | ForEach-Object { Write-Host $_ }
+          Write-Host "--- exit code: $code ---"
+          if ($code -ne 0) {
+            Write-Error "charon.exe --help returned exit code $code"
             exit 1
           }
         shell: pwsh
