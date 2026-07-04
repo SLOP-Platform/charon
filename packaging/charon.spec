@@ -10,7 +10,7 @@ from PyInstaller.building.api import PYZ, EXE
 from PyInstaller.building.build_main import Analysis
 
 a = Analysis(
-    ["../src/charon/cli.py"],
+    ["charon_entry.py"],
     pathex=["../src"],
     binaries=[],
     datas=[],

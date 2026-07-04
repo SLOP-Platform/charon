@@ -35,20 +35,11 @@ jobs:
         run: pyinstaller packaging/charon.spec
 
       - name: Smoke test — charon.exe --help exits 0
-        run: |
-          # Invoke directly (reliable $LASTEXITCODE) and print output — Start-Process
-          # -PassThru .ExitCode is unreliable with -NoNewWindow and hides the exe's
-          # output, so a real crash was invisible. Capture both.
-          $out = & "dist\charon.exe" --help 2>&1
-          $code = $LASTEXITCODE
-          Write-Host "--- charon.exe --help output ---"
-          $out | ForEach-Object { Write-Host $_ }
-          Write-Host "--- exit code: $code ---"
-          if ($code -ne 0) {
-            Write-Error "charon.exe --help returned exit code $code"
-            exit 1
-          }
-        shell: pwsh
+        # bash (Git Bash, preinstalled on windows-latest) uses `set -eo pipefail`,
+        # so a non-zero exit fails the step; the exe's --help output prints inline.
+        # Avoids the pwsh Start-Process exit-code footgun entirely.
+        shell: bash
+        run: dist/charon.exe --help
 
       - name: Upload charon.exe artifact
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  # v4.4.3
