@@ -33,6 +33,16 @@ def test_huggingface_neuralwatt_presets_present():
     assert providers.resolve("neuralwatt").base_url == "https://api.neuralwatt.com/v1"
 
 
+def test_opencode_zen_go_presets_present():
+    # SR-12: lock in the opencode-zen / opencode-go presets (both on the zen key)
+    p_zen = providers.resolve("opencode-zen")
+    assert p_zen.base_url == "https://opencode.ai/zen/v1"
+    assert p_zen.key_env == "OPENCODE_ZEN_KEY"
+    p_go = providers.resolve("opencode-go")
+    assert p_go.base_url == "https://opencode.ai/zen/go/v1"
+    assert p_go.key_env == "OPENCODE_ZEN_KEY"
+
+
 def test_preset_resolves_known_provider():
     p = providers.resolve("openrouter")
     assert p.base_url == "https://openrouter.ai/api/v1"
