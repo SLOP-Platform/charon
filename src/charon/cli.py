@@ -1957,6 +1957,18 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Windows consoles default to cp1252, which can't encode the non-ASCII glyphs
+    # in our help/output (§, →, …) — printing `--help` there raises
+    # UnicodeEncodeError and crashes the frozen exe. Force UTF-8 (errors=replace)
+    # so CLI output is never fatal, on any platform/console. No-op where the
+    # stream lacks reconfigure (e.g. a plain buffer).
+    for _stream in (sys.stdout, sys.stderr):
+        _reconfigure = getattr(_stream, "reconfigure", None)
+        if _reconfigure is not None:
+            try:
+                _reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):
+                pass
     parser = build_parser()
     args = parser.parse_args(argv)
     return args.func(args)
