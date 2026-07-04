@@ -759,8 +759,9 @@ def _tier_resolve(tier_name: str, executor: str | None) -> int:
     return 0
 
 
-def _tier_set(tier_name: str, members_str: str | None) -> int:
-    from . import config
+def _tier_set(tier_name: str, members_str: str | None,
+              from_catalog: list[str] | None = None) -> int:
+    from . import config, model_catalog
     try:
         tiers = config.load_tiers()
         canon = config.resolve_tier(tier_name, tiers)
@@ -772,6 +773,17 @@ def _tier_set(tier_name: str, members_str: str | None) -> int:
     cur_aliases = tiers["aliases"]
     if members_str is not None:
         cur_members[canon] = [m.strip() for m in members_str.split(",") if m.strip()]
+    if from_catalog is not None:
+        known_ids = {e.id for e in model_catalog.catalog()}
+        for mid in from_catalog:
+            if mid not in known_ids:
+                print(f"error: {mid!r} is not in the curated catalog. "
+                      f"Use --members to assign an off-catalog id, "
+                      f"or check 'charon tier catalog' for available models.",
+                      file=sys.stderr)
+                return 2
+        existing = set(cur_members.get(canon, []))
+        cur_members[canon] = list(existing | set(from_catalog))
     try:
         config.set_tiers(order=order, members=cur_members, aliases=cur_aliases)
     except ValueError as exc:
@@ -870,6 +882,87 @@ def _tier_recommend(provider_name: str) -> int:
     return 0
 
 
+def _tier_catalog(args: argparse.Namespace) -> int:
+    from . import model_catalog
+    tier = getattr(args, "tier", None)
+    entries = (model_catalog.catalog_for_tier(tier)
+               if tier else model_catalog.catalog())
+    if not entries:
+        print("(no catalog entries for this tier)")
+        return 0
+    tiers_display = {"high": "frontier", "med": "strong", "low": "economy"}
+    cur = None
+    for e in sorted(entries, key=lambda e: ({"high": 0, "med": 1, "low": 2}[e.tier_hint], e.id)):
+        if e.tier_hint != cur:
+            cur = e.tier_hint
+            label = f"{cur} ({tiers_display.get(cur, cur)})"
+            print(f"\n  {label}:")
+        print(f"    {e.id:<26s}  [{e.access}]")
+        print(f"    {' ' * 26}    {e.note}")
+    return 0
+
+
+def _tier_pick(_args: argparse.Namespace) -> int:
+    from . import config, model_catalog
+
+    entries = model_catalog.catalog()
+    tiers_display = {"high": "frontier", "med": "strong", "low": "economy"}
+
+    print("Pick models for each tier from the curated catalog.")
+    print("Type model ids (space/comma-separated) or press Enter to skip.\n")
+
+    current = config.load_tiers()
+    cur_members = current.get("members", {})
+
+    picks: dict[str, list[str]] = {}
+    for canon in ("high", "med", "low"):
+        tier_entries = [e for e in entries if e.tier_hint == canon]
+        label = f"{canon} ({tiers_display.get(canon, canon)})"
+        existing = ", ".join(cur_members.get(canon, []))
+        if existing:
+            print(f"  {label} (current: {existing}):")
+        else:
+            print(f"  {label}:")
+        for e in tier_entries:
+            print(f"    {e.id:<26s}  [{e.access}]")
+        try:
+            sel = input(f"  → {canon} ids: ").strip()
+        except EOFError:
+            print("aborted — pick needs an interactive terminal", file=sys.stderr)
+            return 2
+        if sel:
+            ids = [s.strip() for s in sel.replace(",", " ").split() if s.strip()]
+            known_ids = {e.id for e in entries}
+            bad = [mid for mid in ids if mid not in known_ids]
+            if bad:
+                print(f"  skipped (not in catalog): {', '.join(bad)}")
+                ids = [mid for mid in ids if mid in known_ids]
+            if not ids:
+                continue
+            picks[canon] = ids
+
+    if not picks:
+        print("no selections made")
+        return 0
+
+    new_members = dict(cur_members)
+    for canon, ids in picks.items():
+        merged = set(new_members.get(canon, [])) | set(ids)
+        new_members[canon] = list(merged)
+
+    try:
+        config.set_tiers(
+            order=current.get("order", list(config.CANONICAL_TIERS)),
+            members=new_members,
+            aliases=current.get("aliases", {}),
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print("tiers updated")
+    return 0
+
+
 def _cmd_tier(args: argparse.Namespace) -> int:
     action = args.tier_action
     if action == "init":
@@ -881,9 +974,15 @@ def _cmd_tier(args: argparse.Namespace) -> int:
     if action == "resolve":
         return _tier_resolve(args.tier_name, getattr(args, "executor", None))
     if action == "set":
-        return _tier_set(args.tier_name, getattr(args, "members", None))
+        fc_raw = getattr(args, "from_catalog", None)
+        fc_list = [s.strip() for s in fc_raw.split(",") if s.strip()] if fc_raw else None
+        return _tier_set(args.tier_name, getattr(args, "members", None), fc_list)
     if action == "recommend":
         return _tier_recommend(args.provider)
+    if action == "catalog":
+        return _tier_catalog(args)
+    if action == "pick":
+        return _tier_pick(args)
     return 2
 
 
@@ -1616,6 +1715,9 @@ def build_parser() -> argparse.ArgumentParser:
     ts.add_argument("tier_name", help="canonical tier (low|med|high) or alias")
     ts.add_argument("--members", default=None,
                     help="comma-separated model ids (replaces current list)")
+    ts.add_argument("--from-catalog", default=None,
+                    help="comma-separated model ids FROM the curated catalog "
+                         "(merges into the tier); non-catalog ids are rejected")
     tsub.add_parser("list", help="show tier config (human-readable)")
     tsub.add_parser("ranks",
                     help="print canonical+alias rank rows for fleet parsing, "
@@ -1631,6 +1733,12 @@ def build_parser() -> argparse.ArgumentParser:
                            help="recommend tier assignments from a provider's live "
                                 "model catalog")
     trec.add_argument("provider", help="provider to query for models")
+    tcat = tsub.add_parser("catalog",
+                           help="show the curated model catalog (recommended options)")
+    tcat.add_argument("--tier", default=None,
+                      help="filter to one tier (low|med|high|frontier|strong|economy|…)")
+    tsub.add_parser("pick",
+                    help="interactive tier picker: choose catalog models per tier")
     t.set_defaults(func=_cmd_tier)
 
     r = sub.add_parser("run", help="Run a coding goal until it passes its tests")
