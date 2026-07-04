@@ -64,6 +64,7 @@ class ProxyObservation:
     retry_after: int | None = None
     usage: Usage | None = None
     note: str = ""
+    cost_source: str = ""  # "provider" | "computed" | "unpriced" | "" (no usage)
 
     @property
     def failover(self) -> bool:
@@ -192,10 +193,11 @@ class GatewayProxy:
     State is per-run (the coordinator owns one): a set of exhausted model ids the
     router excludes (H6), and a cumulative ``Usage`` mirrored into the Ledger."""
 
-    def __init__(self) -> None:
+    def __init__(self, model_pricing: dict[str, dict] | None = None) -> None:
         self._exhausted: dict[str, ProxyObservation] = {}
         self._usage = Usage()
         self._delta_seen = Usage()
+        self._model_pricing = model_pricing or {}
         # The proxy server is THREADED — concurrent agent calls race on this
         # state. A lock keeps usage summation and the exhausted set atomic.
         self._lock = threading.Lock()
@@ -253,6 +255,31 @@ class GatewayProxy:
         pseudo = bool(status == 200 and returned and
                       _normalize_model_id(returned) != _normalize_model_id(expected))
         usage = _gateway_usage(body) if status == 200 else None
+        cost_source = ""
+
+        # When the provider reports no cost, compute from stored per-token pricing.
+        if usage is not None and usage.cost_usd == 0:
+            pricing = self._lookup_pricing(requested_model, expected_model)
+            ci = pricing.get("cost_input")
+            co = pricing.get("cost_output")
+            if pricing.get("free") is True:
+                cost_source = "free"
+            elif ci is not None and co is not None:
+                computed = usage.tokens_in * float(ci) + usage.tokens_out * float(co)
+                if computed > 0:
+                    usage = Usage(
+                        tokens_in=usage.tokens_in,
+                        tokens_out=usage.tokens_out,
+                        cost_usd=computed,
+                        latency_ms=usage.latency_ms,
+                    )
+                    cost_source = "computed"
+                else:
+                    cost_source = "unpriced"
+            else:
+                cost_source = "unpriced"
+        elif usage is not None:
+            cost_source = "provider"
 
         note = ""
         if exhausted:
@@ -275,7 +302,37 @@ class GatewayProxy:
             retry_after=_retry_after(headers),
             usage=usage,
             note=note,
+            cost_source=cost_source,
         )
+
+    def _lookup_pricing(self, requested_model: str,
+                        expected_model: str | None) -> dict:
+        """Find per-token pricing for a model. Tries the exact requested model id
+        first, then a normalized match against expected/requested, then a final-
+        segment match against all known model ids."""
+        if not self._model_pricing:
+            return {}
+        models = [requested_model]
+        if expected_model and expected_model != requested_model:
+            models.append(expected_model)
+        for mid in models:
+            if mid in self._model_pricing:
+                return self._model_pricing[mid]
+        for mid in models:
+            cleaned = _normalize_model_id(mid)
+            if cleaned in self._model_pricing:
+                return self._model_pricing[cleaned]
+        cleaned_req = _normalize_model_id(requested_model)
+        for known_id, entry in self._model_pricing.items():
+            if _normalize_model_id(known_id) == cleaned_req:
+                return entry
+        return {}
+
+    def set_pricing(self, model_pricing: dict[str, dict] | None) -> None:
+        """Swap in fresh per-token pricing (web-setup hot-reload). A reference
+        reassignment is atomic under the GIL, so a concurrent ``classify`` read
+        sees the whole old or whole new dict, never a torn view."""
+        self._model_pricing = model_pricing or {}
 
     def record(self, obs: ProxyObservation, *, count_usage: bool = True) -> None:
         """Fold a classified observation into proxy state (atomically). Exclusion is

@@ -61,6 +61,9 @@ class GatewayConfig:
     pools: dict[str, list[UpstreamRoute]] = field(default_factory=dict)
     model_ids: list[str] = field(default_factory=list)
     model_meta: dict[str, dict] = field(default_factory=dict)
+    # Per-model per-token pricing (cost_input, cost_output, free) used to compute
+    # cost_usd when the provider doesn't self-report it (SR-5b). Never a secret.
+    model_pricing: dict[str, dict] = field(default_factory=dict)
     # Operator toggle (SR-2): fail over on a genuine silent downgrade (recording the
     # discarded attempt visibly, count_usage=True) instead of serving it once. Default
     # False keeps the double-bill leak fixed (serve the downgrade, billed once).
@@ -241,6 +244,18 @@ def load_config(
         if meta:
             model_meta[mid] = meta
 
+    # Per-token pricing surfaced to the proxy so it can compute cost_usd when a
+    # provider returns a 200 with no cost (SR-5b). Keyed by registry model id;
+    # the proxy's lookup also matches on the normalized final segment.
+    model_pricing: dict[str, dict] = {}
+    for mid, spec in registry.items():
+        if not isinstance(spec, dict):
+            continue
+        price = {k: spec[k] for k in ("cost_input", "cost_output", "free")
+                 if k in spec}
+        if price:
+            model_pricing[mid] = price
+
     return GatewayConfig(
         host=host or cfg_host,
         port=port if port is not None else cfg_port,
@@ -249,6 +264,7 @@ def load_config(
         pools=pools,
         model_ids=sorted(set(routes) | set(pools)),
         model_meta=model_meta,
+        model_pricing=model_pricing,
         failover_on_downgrade=cfg_failover_on_downgrade,
         semantic_cache=_module_inst("cache", state_dir),
         response_normalizer=_module_inst("normalizer", state_dir),
@@ -368,6 +384,7 @@ def build_server(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> 
     server = GatewayProxyServer(
         routes=cfg.routes, pools=cfg.pools, host=cfg.host, port=cfg.port,
         token=cfg.token, model_ids=cfg.model_ids, model_meta=cfg.model_meta,
+        model_pricing=cfg.model_pricing,
         failover_on_downgrade=cfg.failover_on_downgrade,
         semantic_cache=cfg.semantic_cache,
         response_normalizer=cfg.response_normalizer,
@@ -397,7 +414,8 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
     def _reload() -> None:
         secrets.apply_to_env()  # newly-stored keys → env so routes resolve
         new = load_config(state_dir=setup_dir)
-        server.apply_routes(new.routes, new.pools, new.model_ids, new.model_meta)
+        server.apply_routes(new.routes, new.pools, new.model_ids, new.model_meta,
+                            new.model_pricing)
 
     def handler(action: str, payload: dict):
         if action == "summary":

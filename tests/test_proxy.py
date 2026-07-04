@@ -264,3 +264,83 @@ def test_exhaustion_body_patterns_in_error_code_field() -> None:
     obs = p.observe("m", 401,
                     body={"error": {"code": "insufficient_balance"}})
     assert obs.exhausted and obs.failover
+
+
+# ── SR-5b: computed cost_usd from captured per-token pricing ──────────
+
+def test_computed_cost_from_pricing_when_provider_reports_none() -> None:
+    """A priced model that returns a 200 with NO cost → cost_usd is computed from
+    the stored per-token rates (units are per-TOKEN, not per-1M)."""
+    pricing = {"m": {"cost_input": 0.000002, "cost_output": 0.000006}}
+    p = GatewayProxy(model_pricing=pricing)
+    obs = p.observe("m", 200,
+                    body={"model": "m",
+                          "usage": {"prompt_tokens": 1000, "completion_tokens": 500}})
+    assert obs.usage is not None
+    # 1000 * 2e-6 + 500 * 6e-6 = 0.002 + 0.003 = 0.005
+    assert obs.usage.cost_usd == 0.005
+    assert obs.cost_source == "computed"
+    assert p.cumulative_usage().cost_usd == 0.005
+
+
+def test_provider_reported_cost_is_not_overwritten() -> None:
+    """When the provider self-reports a non-zero cost, it wins — pricing is ignored."""
+    pricing = {"m": {"cost_input": 0.000002, "cost_output": 0.000006}}
+    p = GatewayProxy(model_pricing=pricing)
+    obs = p.observe("m", 200,
+                    body={"model": "m",
+                          "usage": {"prompt_tokens": 1000, "completion_tokens": 500,
+                                    "cost": 0.42}})
+    assert obs.usage is not None and obs.usage.cost_usd == 0.42
+    assert obs.cost_source == "provider"
+
+
+def test_unpriced_model_falls_back_to_zero_no_crash() -> None:
+    """A model with NO stored pricing → cost stays 0/None, cost_source=unpriced,
+    and nothing crashes."""
+    p = GatewayProxy(model_pricing={"other": {"cost_input": 1.0, "cost_output": 1.0}})
+    obs = p.observe("m", 200,
+                    body={"model": "m",
+                          "usage": {"prompt_tokens": 1000, "completion_tokens": 500}})
+    assert obs.usage is not None and obs.usage.cost_usd == 0.0
+    assert obs.cost_source == "unpriced"
+    assert p.cumulative_usage().cost_usd == 0.0
+
+
+def test_free_flag_pricing_path() -> None:
+    """A model flagged free:true → cost stays 0 and cost_source=free (not computed)."""
+    p = GatewayProxy(model_pricing={"m": {"free": True}})
+    obs = p.observe("m", 200,
+                    body={"model": "m",
+                          "usage": {"prompt_tokens": 1000, "completion_tokens": 500}})
+    assert obs.usage is not None and obs.usage.cost_usd == 0.0
+    assert obs.cost_source == "free"
+
+
+def test_namespaced_model_id_resolves_pricing() -> None:
+    """A namespaced request id (deepseek/deepseek-v4-pro) resolves pricing stored
+    under the bare final segment — parity with the pre-flight estimate, not the
+    silent default floor."""
+    pricing = {"deepseek-v4-pro": {"cost_input": 0.000001, "cost_output": 0.000001}}
+    p = GatewayProxy(model_pricing=pricing)
+    obs = p.observe("deepseek/deepseek-v4-pro", 200,
+                    body={"model": "deepseek/deepseek-v4-pro",
+                          "usage": {"prompt_tokens": 100, "completion_tokens": 100}})
+    assert obs.usage is not None
+    assert abs(obs.usage.cost_usd - 0.0002) < 1e-12  # 200 * 1e-6
+    assert obs.cost_source == "computed"
+
+
+def test_set_pricing_hot_reload_updates_cost() -> None:
+    """set_pricing swaps pricing live (web-setup hot-reload) so subsequent calls
+    compute cost from the new rates."""
+    p = GatewayProxy()
+    obs0 = p.observe("m", 200,
+                     body={"model": "m", "usage": {"prompt_tokens": 100}})
+    assert obs0.cost_source == "unpriced"
+    p.set_pricing({"m": {"cost_input": 0.00001, "cost_output": 0.00001}})
+    obs1 = p.classify("m", 200,
+                      body={"model": "m",
+                            "usage": {"prompt_tokens": 100, "completion_tokens": 0}})
+    assert obs1.usage is not None and obs1.usage.cost_usd == 0.001
+    assert obs1.cost_source == "computed"
