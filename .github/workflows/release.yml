@@ -22,6 +22,15 @@ on:
   release:
     types: [published]
 
+# A tag push and its published Release both fire this workflow for the same ref
+# (refs/tags/vX.Y.Z). On the shared self-hosted 4-LOM runner those two runs would
+# otherwise execute at the same time and stomp each other (shared Docker state,
+# duplicate publish push). Serialize per-ref so they run one after another;
+# cancel-in-progress is false so the first run completes and publishes.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   gate:
     # Runner is chosen by the CI_RUNNER repo variable (Settings → Variables).
@@ -65,24 +74,29 @@ jobs:
         # Mode-B service surface (:8473/healthz) is exercised by the test suite in
         # the gate job and does not need a separate container here.
         run: |
-          # Host port 18080 (not 8080): the production gateway on the shared
-          # self-hosted 4-LOM runner already binds host 8080, so a host-8080
-          # smoke bind collides ("port is already allocated", exit 125). The
-          # container still listens on its internal 8080 — only the host side
-          # moves to a free port.
-          docker run -d --name charon-rel \
+          # Host port 0 = a free, kernel-assigned host port; never a fixed one.
+          # The production gateway on the shared self-hosted 4-LOM runner already
+          # binds host 8080, and multiple release runs can land on that runner, so
+          # any fixed host port (8080, 18080, ...) collides ("port is already
+          # allocated", exit 125). The container name is run-scoped for the same
+          # reason (a fixed name conflicts across concurrent runs). The container
+          # still listens on its internal 8080 — only the host side is dynamic.
+          name="charon-rel-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker rm -f "$name" >/dev/null 2>&1 || true
+          docker run -d --name "$name" \
             -e CHARON_GATEWAY_TOKEN=ci-smoke-token \
-            -p 127.0.0.1:18080:8080 charon:ci
+            -p 127.0.0.1:0:8080 charon:ci
+          hostport=$(docker port "$name" 8080/tcp | head -n1 | sed 's/.*://')
           ok=0
           for _ in $(seq 1 30); do
             code=$(curl -s -o /dev/null -w '%{http_code}' \
               -H "Authorization: Bearer ci-smoke-token" \
-              http://127.0.0.1:18080/v1/models) || true
+              "http://127.0.0.1:${hostport}/v1/models") || true
             if [ "$code" = "200" ]; then ok=1; break; fi
             sleep 1
           done
-          docker logs charon-rel
-          docker rm -f charon-rel
+          docker logs "$name"
+          docker rm -f "$name"
           test "${ok:-0}" = "1"
 
   publish:
