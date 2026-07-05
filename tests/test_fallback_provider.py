@@ -318,7 +318,9 @@ def test_fallback_end_to_end_failover(monkeypatch, tmp_path):
 
 
 def test_fallback_end_to_end_exhausted_then_served(monkeypatch, tmp_path):
-    """Both primary and fallback return 429 — all exhausted → 502."""
+    """Both primary and fallback return 429 — every provider in the pool is exhausted,
+    so the gateway synthesizes a terminal "all providers exhausted" 503 (carrying the
+    tracked failover reasons) rather than relaying the last raw 429."""
     monkeypatch.setenv("CHARON_HOME", str(tmp_path))
     monkeypatch.delenv("CHARON_GATEWAY_TOKEN", raising=False)
     primary_srv, primary_base = _start_mock(_FailPrimary)
@@ -337,7 +339,8 @@ def test_fallback_end_to_end_exhausted_then_served(monkeypatch, tmp_path):
     try:
         status, body = _req(server.url + "/v1/chat/completions",
                             method="POST", payload={"model": "m"})
-        assert status == 429  # terminal — no more providers to try
+        assert status == 503  # synthesized terminal — every provider exhausted
+        assert body["error"]["type"] == "all_providers_exhausted"
     finally:
         server.shutdown()
         primary_srv.shutdown()

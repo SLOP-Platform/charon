@@ -283,14 +283,23 @@ def test_402_and_404_also_fail_over():
             b.shutdown()
 
 
-def test_whole_pool_exhausted_relays_last_error():
+def test_whole_pool_exhausted_synthesizes_terminal():
+    # RED failover-401-not-classified (part 3): when the LAST provider also fails
+    # over-eligibly, EVERY provider is exhausted/unsupported — relaying that one
+    # provider's raw upstream error is misleading. Synthesize a terminal
+    # "all providers exhausted" response that carries the tracked failover reasons.
+    # On master this relayed the last raw 429 instead (real last error, not synthesized).
     a, base_a = _up(status=429)
     b, base_b = _up(status=429)
     gw = _gw({"v": [UpstreamRoute(base_a, "ka"), UpstreamRoute(base_b, "kb")]})
     try:
-        status, _, hdrs = _req(gw.url + "/v1/chat/completions", {"model": "v"})
-        assert status == 429                        # real last error relayed, not synthesized
-        assert hdrs["X-Charon-Failovers"] == "1"    # one failover before the terminal attempt
+        status, body, hdrs = _req(gw.url + "/v1/chat/completions", {"model": "v"})
+        assert status == 503                              # synthesized terminal, NOT the raw 429
+        assert body["error"]["type"] == "all_providers_exhausted"
+        # every provider (both) is named in the tracked failover reasons
+        assert len(body["error"]["failover_reasons"]) == 2
+        assert hdrs["X-Charon-Failovers"] == "2"
+        assert hdrs["X-Charon-Failover-Reasons"].count("429") == 2
     finally:
         gw.shutdown()
         a.shutdown()

@@ -56,11 +56,16 @@ _AUTH_BODY_PATTERNS = [
 # the pool (the model may exist elsewhere, possibly on a free/cheaper tier). This
 # is what makes tier/cross-provider fallback work. Gated on the body so a generic
 # 400 (bad params) is NOT dropped.
-_UNSUPPORTED_STATUSES = {400, 422}
+# 401 is included because some gateways (opencode-go) return a *401* for a model
+# they don't host ("Model gpt-5.5 is not supported"), not a 400/404. It is only
+# ever treated as unsupported when the BODY matches an availability pattern below,
+# so a genuine auth-401 (bad key) is never dropped — see ``_is_unsupported_model``.
+_UNSUPPORTED_STATUSES = {400, 401, 422}
 _UNSUPPORTED_BODY_PATTERNS = [
     "not supported", "unsupported", "no such model", "model not found",
     "model_not_found", "does not exist", "unknown model", "invalid model",
-    "no route for model", "model is not available",
+    "no route for model", "model is not available", "no endpoints",
+    "no endpoints found", "not a valid model",
 ]
 
 
@@ -126,24 +131,48 @@ def _error_type(body: dict | None) -> str:
     return ""
 
 
+def _collect_error_strings(value: object, out: list[str], depth: int = 0) -> None:
+    """Recursively gather every string under a (possibly nested) error value.
+
+    Gateways wrap the real upstream error: OpenRouter returns
+    ``{"error":{"message":"Provider returned error","metadata":{"raw":"…Invalid
+    model…"}}}`` where the actionable text lives in ``error.metadata.raw`` — and
+    ``raw`` is frequently a *stringified JSON blob*. Reading only ``error.message``
+    misses it, so the classifier can't tell an unsupported-model error from an
+    opaque one. This walks the whole ``error`` subtree, and when a string looks
+    like embedded JSON (starts with ``{`` / ``[``) it parses and recurses so the
+    nested message is matched too. Depth-bounded to avoid pathological bodies."""
+    if depth > 6:
+        return
+    if isinstance(value, str):
+        out.append(value)
+        s = value.strip()
+        if s and s[0] in "{[":  # a stringified JSON error blob (error.metadata.raw)
+            import json
+            try:
+                _collect_error_strings(json.loads(s), out, depth + 1)
+            except (ValueError, TypeError):
+                pass
+    elif isinstance(value, dict):
+        for v in value.values():
+            _collect_error_strings(v, out, depth + 1)
+    elif isinstance(value, list):
+        for v in value:
+            _collect_error_strings(v, out, depth + 1)
+
+
 def _body_text_lower(body: dict | None) -> str:
     """Collapse the response body into a lowercased string for pattern matching —
-    inspects ``error.message``, ``error.code``, ``detail``, and top-level keys."""
+    walks the entire ``error`` subtree (including wrapped/stringified
+    ``error.metadata.raw``) plus the top-level ``detail``/``message`` fields."""
     if not body:
         return ""
     parts: list[str] = []
-    err = body.get("error")
-    if isinstance(err, dict):
-        for k in ("message", "code", "type"):
-            v = err.get(k)
-            if isinstance(v, str):
-                parts.append(v)
-    detail = body.get("detail")
-    if isinstance(detail, str):
-        parts.append(detail)
-    msg = body.get("message")
-    if isinstance(msg, str):
-        parts.append(msg)
+    _collect_error_strings(body.get("error"), parts)
+    for k in ("detail", "message"):
+        v = body.get(k)
+        if isinstance(v, str):
+            parts.append(v)
     return " ".join(parts).lower()
 
 
@@ -186,10 +215,10 @@ def _is_auth_error(body: dict | None, status: int) -> bool:
 
 
 def _is_unsupported_model(body: dict | None, status: int) -> bool:
-    """A per-provider "this model isn't served here" error (400/422 whose body
+    """A per-provider "this model isn't served here" error (400/401/422 whose body
     says so). DROP the candidate and fail over — the model may exist on another
     provider (tier/cross-provider fallback). Body-gated so a generic bad-request
-    400 is not mistaken for a model-availability error."""
+    400 or an auth-401 (bad key) is not mistaken for a model-availability error."""
     return status in _UNSUPPORTED_STATUSES and _has_body_pattern(
         body, _UNSUPPORTED_BODY_PATTERNS)
 

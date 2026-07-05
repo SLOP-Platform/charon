@@ -197,7 +197,8 @@ class AcpBackend:
                 },
             )
         except AcpError as exc:
-            if "rate" in str(exc).lower() or "quota" in str(exc).lower():
+            low = str(exc).lower()
+            if "rate" in low or "quota" in low or "exhausted" in low:
                 return Outcome(OutcomeStatus.EXHAUSTED, self.name, note=str(exc))
             return Outcome(OutcomeStatus.BLOCKED, self.name, note=str(exc))
         # The agent edited files in the worktree directly (PERF-1: we do not
