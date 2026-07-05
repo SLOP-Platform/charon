@@ -84,8 +84,8 @@ def test_add_models_bulk_skips_bad_ids_and_sets_fields(monkeypatch, tmp_path):
         provider="openrouter")
     assert added == ["good-1", "free-1"] and len(skipped) == 2
     models = config.load_models()
-    assert models["good-1"] == {"free": False, "cost_rank": 1000, "provider": "openrouter"}
-    assert models["free-1"] == {"free": True, "cost_rank": 0, "provider": "openrouter"}
+    assert models["good-1"] == {"free": False, "provider": "openrouter"}
+    assert models["free-1"] == {"free": True, "provider": "openrouter"}
 
 
 def test_add_models_bulk_empty_no_write(monkeypatch, tmp_path):

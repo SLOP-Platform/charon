@@ -254,8 +254,9 @@ def _import_models(name: str, *, free_only: bool = False, into_pool: str | None 
                   "reasoning", "vision", "audio")
     entries = []
     for m in found:
-        entry = {"id": m["id"], "free": m["free"],
-                 "cost_rank": 0 if m["free"] else 1000}
+        entry: dict[str, object] = {"id": m["id"], "free": m["free"]}
+        if m.get("cost_rank") is not None:
+            entry["cost_rank"] = int(m["cost_rank"])
         for k in _META_KEYS:
             if k in m:
                 entry[k] = m[k]
@@ -509,7 +510,7 @@ def _cmd_setup(args: argparse.Namespace) -> int:
                 try:
                     config.add_model(mid, provider=name,
                                      upstream_model=(upm if upm != mid else None),
-                                     free=free, cost_rank=(0 if free else 1000))
+                                     free=free)
                 except ValueError as exc:
                     print(f"    {exc}")
                     continue
@@ -744,7 +745,8 @@ def _tier_resolve(tier_name: str, executor: str | None) -> int:
         m = models.get(mid, {})
         if m.get("free"):
             return 0
-        return int(m.get("cost_rank", 1000))
+        from .pools import derived_cost_rank
+        return derived_cost_rank(m)
 
     candidates = list(members)
     if executor and executor.lower() == "anthropic":

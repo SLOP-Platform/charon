@@ -34,6 +34,7 @@ from .guardrails import Guardrails
 from .netutil import is_loopback
 from .observability import Observability
 from .policy_router import PolicyRouter
+from .pools import derived_cost_rank
 from .proxy_server import GatewayProxyServer, UpstreamRoute
 from .quality_scorer import QualityScorer
 from .request_inspector import RequestInspector
@@ -136,28 +137,9 @@ def _build_routes_and_pools(
             if r is not None:
                 routes[mid] = r
 
-    def _derived_cost_rank(spec: dict) -> int:
-        """SR-6: derive cost_rank from per-token pricing (3:1 in:out blend) when
-        pricing is present and no explicit ``cost_rank`` override is set. Returns
-        the explicit ``cost_rank`` when set, else the derived rank, else 1000."""
-        explicit = spec.get("cost_rank")
-        if explicit is not None:
-            return int(explicit)
-        ci = spec.get("cost_input")
-        co = spec.get("cost_output")
-        if ci is None and co is None:
-            return 1000  # missing-pricing fallback: neutral middle rank
-        ci = float(ci) if ci is not None else 0.0
-        co = float(co) if co is not None else 0.0
-        blended = (3.0 * ci + co) / 4.0
-        # Scale USD-per-token to an integer rank. Pricing is per 1M tokens in the
-        # registry convention; divide by 1e-6-equivalent → rank ≈ $/1M * 100.
-        # Use round() so $1.50/1M-in maps to rank 150 (cheap), $15 → 1500 (dear).
-        return max(0, round(blended * 1_000_000 * 100))
-
     def _rank(mid: str) -> tuple[bool, int]:
         spec = registry.get(mid, {})
-        return (not bool(spec.get("free", False)), _derived_cost_rank(spec))
+        return (not bool(spec.get("free", False)), derived_cost_rank(spec))
 
     def _is_premium(mid: str) -> bool:
         return registry.get(mid, {}).get("cost_class") == "premium"
@@ -497,7 +479,7 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
                 upstream_base=(payload.get("upstream_base") or None),
                 upstream_model=(payload.get("upstream_model") or None),
                 free=bool(payload.get("free")),
-                cost_rank=int(payload.get("cost_rank", 1000)),
+                cost_rank=payload.get("cost_rank"),
                 **meta,
             )
             _reload()
@@ -522,8 +504,9 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
                           "cost_input", "cost_output", "cost_class")
             entries = []
             for m in found:
-                entry = {"id": m["id"], "free": m["free"],
-                         "cost_rank": 0 if m["free"] else 1000}
+                entry: dict[str, object] = {"id": m["id"], "free": m["free"]}
+                if m.get("cost_rank") is not None:
+                    entry["cost_rank"] = int(m["cost_rank"])
                 for k in _META_KEYS:
                     if k in m:
                         entry[k] = m[k]

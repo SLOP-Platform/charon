@@ -262,7 +262,7 @@ async function addProvider(){
 async function addModel(){
   const free=document.getElementById('mfree').checked;
   const b={id:val('mid'),provider:val('mprov')||null,
-    upstream_model:val('mups')||null,free:free,cost_rank:free?0:1000};
+    upstream_model:val('mups')||null,free:free};
   const {ok,d}=await post('/charon/models',b);
   msg(ok?('added model '+b.id):('error: '+(d.error&&d.error.message)),ok); if(ok)load();}
 async function importModels(){
