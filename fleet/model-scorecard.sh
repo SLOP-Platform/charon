@@ -5,7 +5,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TSV="$HERE/state/model-scorecard.tsv"
+TSV="$HERE/model-scorecard.tsv"
 MARK="$HERE/state/last-scorecard-review"
 TODAY="$(date +%F)"
 TAB=$'\t'
