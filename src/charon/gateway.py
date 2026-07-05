@@ -34,6 +34,7 @@ from .guardrails import Guardrails
 from .netutil import is_loopback
 from .observability import Observability
 from .policy_router import PolicyRouter
+from .pools import derived_cost_rank
 from .proxy_server import GatewayProxyServer, UpstreamRoute
 from .quality_scorer import QualityScorer
 from .request_inspector import RequestInspector
@@ -116,6 +117,15 @@ def _build_routes_and_pools(
     single routes (concrete models) and failover chains (virtual ids). Each chain
     is ordered **free-first then cheapest-first** from the registry's cost metadata
     (stable → the listed order breaks ties), matching `pools.load_pools` (D4).
+
+    Effective ``cost_rank`` (SR-6) is **derived** from per-token pricing when
+    present: ``blended = (3*cost_input + cost_output) / 4`` (a 3:1 input:output
+    blend approximating typical chat-completion token mix). An explicit
+    ``cost_rank`` override still wins (operator escape hatch). Genuinely-free
+    models (``free:true``) sort first regardless. Models with ``cost_class:
+    "premium"`` are GATED OUT of pool chains — they're usable only when explicitly
+    requested or in a premium role, never the cheap-first default.
+
     Models with ``"enabled": false`` are excluded from routes and pools."""
     providers_cfg = providers_cfg or {}
     routes: dict[str, UpstreamRoute] = {}
@@ -129,13 +139,25 @@ def _build_routes_and_pools(
 
     def _rank(mid: str) -> tuple[bool, int]:
         spec = registry.get(mid, {})
-        return (not bool(spec.get("free", False)), int(spec.get("cost_rank", 1000)))
+        return (not bool(spec.get("free", False)), derived_cost_rank(spec))
+
+    def _is_premium(mid: str) -> bool:
+        return registry.get(mid, {}).get("cost_class") == "premium"
 
     pools: dict[str, list[UpstreamRoute]] = {}
     for vid, members in pool_map.items():
         if not isinstance(members, list):
             continue
-        ordered = sorted([m for m in members if m in routes], key=_rank)
+        # SR-6: premium models are excluded from default-primary pool chains.
+        # They remain in `routes` (explicitly requestable) but never appear in a
+        # cheap-first failover chain unless the operator opts in by listing the
+        # premium model's own id as the pool vid (a premium-only role).
+        eligible = [m for m in members if m in routes and not _is_premium(m)]
+        # If every member is premium, keep them — an explicit premium-only pool
+        # is the operator's opt-in to a premium role (don't silently empty it).
+        if not eligible and members:
+            eligible = [m for m in members if m in routes]
+        ordered = sorted(eligible, key=_rank)
         if ordered:
             pools[vid] = [routes[m] for m in ordered]
 
@@ -235,7 +257,8 @@ def load_config(
                 if mid not in pools:
                     pools[mid] = [routes[mid]] + fallback_routes
 
-    _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio")
+    _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio",
+                  "cost_class")
     model_meta: dict[str, dict] = {}
     for mid, spec in registry.items():
         if not isinstance(spec, dict) or mid not in routes:
@@ -448,7 +471,7 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
             # so a web-edit never silently strips model capabilities (MODEL-DISCOVERY).
             existing = config.load_models().get(mid) or {}
             _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio",
-                          "cost_input", "cost_output")
+                          "cost_input", "cost_output", "cost_class")
             meta = {k: existing[k] for k in _META_KEYS if k in existing}
             config.add_model(
                 mid,
@@ -456,7 +479,7 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
                 upstream_base=(payload.get("upstream_base") or None),
                 upstream_model=(payload.get("upstream_model") or None),
                 free=bool(payload.get("free")),
-                cost_rank=int(payload.get("cost_rank", 1000)),
+                cost_rank=payload.get("cost_rank"),
                 **meta,
             )
             _reload()
@@ -478,11 +501,12 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
             if payload.get("free_only"):
                 found = [m for m in found if m["free"]]
             _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio",
-                          "cost_input", "cost_output")
+                          "cost_input", "cost_output", "cost_class")
             entries = []
             for m in found:
-                entry = {"id": m["id"], "free": m["free"],
-                         "cost_rank": 0 if m["free"] else 1000}
+                entry: dict[str, object] = {"id": m["id"], "free": m["free"]}
+                if m.get("cost_rank") is not None:
+                    entry["cost_rank"] = int(m["cost_rank"])
                 for k in _META_KEYS:
                     if k in m:
                         entry[k] = m[k]

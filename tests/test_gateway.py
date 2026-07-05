@@ -281,3 +281,207 @@ def test_failover_chain_check_warns_when_no_pools_or_fallback(capsys) -> None:
     captured = capsys.readouterr()
     assert "NO FAILOVER CHAIN" in captured.err
     srv.server_close()
+
+
+# ---- SR-6: auto-derive cost_rank + cost_class ------------------------------
+# The failover chain is now CHEAP-FIRST automatically: cost_rank is DERIVED from
+# per-token pricing (3:1 in:out blend) when no explicit override is set, free
+# models still sort first, and `cost_class: "premium"` is gated out of
+# default-primary pools (usable only when explicitly requested or in a premium
+# role). See `gateway._build_routes_and_pools` (SR-6).
+
+def test_sr6_derived_rank_orders_by_blended_cost(tmp_path):
+    """cost_rank is DERIVED from cost_input/cost_output (3:1 blend) when no
+    explicit override is set; cheaper-input models sort first within the paid
+    bucket (free models still sort absolutely first).
+
+    Pricing convention is per-token USD (``0.0000025`` == $2.50/1M tokens, see
+    ``providers._extract_pricing``). The derived-rank scale maps ~$1/1M tokens
+    to rank ~100, composing with the historical hand-set range (0-9999)."""
+    toml = tmp_path / "charon.toml"
+    toml.write_text(
+        # cheap-paid: $0.50/1M in, $1.50/1M out → blended ~$0.75/1M → rank ~75
+        '[models."cheap-paid"]\nupstream_base = "http://cheap/v1"\n'
+        'cost_input = 0.0000005\ncost_output = 0.0000015\n\n'
+        # dear-paid: $5/1M in, $15/1M out → blended ~$7.50/1M → rank ~750
+        '[models."dear-paid"]\nupstream_base = "http://dear/v1"\n'
+        'cost_input = 0.000005\ncost_output = 0.000015\n\n'
+        # free still sorts first despite having "expensive-looking" pricing metadata
+        '[models."free-one"]\nupstream_base = "http://free/v1"\nfree = true\n'
+        'cost_input = 0.1\ncost_output = 0.1\n\n'
+        '[pools]\nauto = ["dear-paid", "cheap-paid", "free-one"]\n'  # listed dear-first
+    )
+    cfg = gateway.load_config(toml_path=toml)
+    chain = cfg.pools["auto"]
+    assert [r.upstream_base for r in chain] == [
+        "http://free/v1",      # free-first (always)
+        "http://cheap/v1",     # then cheapest blended
+        "http://dear/v1",      # then dearer
+    ]
+
+
+def test_sr6_explicit_cost_rank_override_wins(tmp_path):
+    """An explicit `cost_rank` is the operator escape hatch — it OVERRIDES the
+    derived-from-pricing rank (preserves SR-5b hand-set behavior).
+
+    force-dear would naturally be cheaper ($0.10/1M) than natural ($2/1M), but
+    the operator force-ranks it dear (9999) → it sorts LAST."""
+    toml = tmp_path / "charon.toml"
+    toml.write_text(
+        '[models."force-dear"]\nupstream_base = "http://a/v1"\n'
+        'cost_input = 0.0000001\ncost_output = 0.0000001\ncost_rank = 9999\n\n'
+        '[models."natural"]\nupstream_base = "http://b/v1"\n'
+        'cost_input = 0.000002\ncost_output = 0.000002\n\n'
+        '[pools]\nauto = ["force-dear", "natural"]\n'
+    )
+    cfg = gateway.load_config(toml_path=toml)
+    chain = cfg.pools["auto"]
+    assert [r.upstream_base for r in chain] == ["http://b/v1", "http://a/v1"]
+
+
+def test_sr6_missing_pricing_falls_back_to_default_rank(tmp_path):
+    """A model with neither cost_input/cost_output NOR an explicit cost_rank gets
+    the neutral default (1000) — it sorts after cheap models, before dear ones."""
+    toml = tmp_path / "charon.toml"
+    toml.write_text(
+        '[models."priced"]\nupstream_base = "http://a/v1"\n'
+        'cost_input = 0.0000001\ncost_output = 0.0000001\n\n'  # → rank ~10
+        '[models."unpriced"]\nupstream_base = "http://b/v1"\n'   # → default 1000
+        '[pools]\nauto = ["unpriced", "priced"]\n'
+    )
+    cfg = gateway.load_config(toml_path=toml)
+    chain = cfg.pools["auto"]
+    assert [r.upstream_base for r in chain] == ["http://a/v1", "http://b/v1"]
+
+
+def test_sr6_premium_class_gated_out_of_default_pool(tmp_path):
+    """A `cost_class: "premium"` model is EXCLUDED from a default-primary pool
+    chain (it's still routable directly via `routes`, just not the cheap-first
+    default). This prevents a GPT-5.5/Opus-class model from ever being the
+    silent default-primary."""
+    toml = tmp_path / "charon.toml"
+    toml.write_text(
+        '[models."cheap"]\nupstream_base = "http://cheap/v1"\n'
+        'cost_input = 0.0000005\ncost_output = 0.0000015\n\n'
+        '[models."premium-opus"]\nupstream_base = "http://opus/v1"\n'
+        'cost_input = 0.00005\ncost_output = 0.00015\ncost_class = "premium"\n\n'
+        '[pools]\nauto = ["premium-opus", "cheap"]\n'
+    )
+    cfg = gateway.load_config(toml_path=toml)
+    # premium gated out of the default chain
+    chain = cfg.pools["auto"]
+    assert [r.upstream_base for r in chain] == ["http://cheap/v1"]
+    # but it remains explicitly routable (not removed from routes)
+    assert "premium-opus" in cfg.routes
+    assert cfg.routes["premium-opus"].upstream_base == "http://opus/v1"
+
+
+def test_sr6_premium_only_pool_is_operators_opt_in(tmp_path):
+    """If EVERY member of a pool is premium, the pool is kept as-is (an explicit
+    premium-only role is the operator's opt-in — we don't silently empty it)."""
+    toml = tmp_path / "charon.toml"
+    toml.write_text(
+        '[models."opus-a"]\nupstream_base = "http://a/v1"\ncost_class = "premium"\n\n'
+        '[models."opus-b"]\nupstream_base = "http://b/v1"\ncost_class = "premium"\n\n'
+        '[pools]\nprem = ["opus-a", "opus-b"]\n'
+    )
+    cfg = gateway.load_config(toml_path=toml)
+    chain = cfg.pools["prem"]
+    assert {r.upstream_base for r in chain} == {"http://a/v1", "http://b/v1"}
+
+
+def test_sr6_cost_class_normalized_on_add_model(tmp_path, monkeypatch):
+    """`config.add_model` normalizes cost_class to the canonical lowercase
+    vocabulary and silently drops unknown values (no crash, just not persisted)."""
+    from charon import config as _config
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    _config.add_model("m1", upstream_base="http://x/v1", cost_class="PREMIUM")
+    _config.add_model("m2", upstream_base="http://x/v1", cost_class="bogus")
+    models = _config.load_models()
+    assert models["m1"].get("cost_class") == "premium"  # normalized
+    assert "cost_class" not in models["m2"]              # bogus dropped
+
+
+def test_sr6_cost_carried_through_bulk_import(tmp_path, monkeypatch):
+    """`add_models_bulk` carries `cost_class` through the import path (same as
+    cost_input/cost_output/context_window)."""
+    from charon import config as _config
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    _config.add_models_bulk([
+        {"id": "m1", "free": False, "cost_class": "premium"},
+        {"id": "m2", "free": True, "cost_class": "free-daily"},
+        {"id": "m3", "free": False, "cost_class": "garbage"},  # dropped
+    ], provider="openrouter")
+    models = _config.load_models()
+    assert models["m1"]["cost_class"] == "premium"
+    assert models["m2"]["cost_class"] == "free-daily"
+    assert "cost_class" not in models["m3"]
+
+
+# ---- SR-6: production path tests (models.json / add_model / add_models_bulk) ----
+
+def test_sr6_derived_rank_from_add_model_production_path(tmp_path, monkeypatch):
+    """cost_rank is DERIVED from pricing when models are added through add_model
+    (the models.json production path) WITHOUT an explicit cost_rank — the dear-first
+    pool listing MUST be reordered cheap-first. This is the test whose absence masked
+    the blocker defect."""
+    from charon import config as _config
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+
+    # dear-paid: $5/1M in, $15/1M out → blended ~$7.50/1M → rank ~750
+    _config.add_model("dear", upstream_base="http://dear/v1",
+                      cost_input=0.000005, cost_output=0.000015)
+    # cheap-paid: $0.50/1M in, $1.50/1M out → blended ~$0.75/1M → rank ~75
+    _config.add_model("cheap", upstream_base="http://cheap/v1",
+                      cost_input=0.0000005, cost_output=0.0000015)
+    # free with "expensive" pricing still sorts first
+    _config.add_model("freebie", upstream_base="http://free/v1", free=True,
+                      cost_input=0.1, cost_output=0.1)
+
+    _config.set_pool("auto", ["dear", "cheap", "freebie"])  # listed dear-first
+    cfg = gateway.load_config(state_dir=tmp_path)
+    chain = cfg.pools["auto"]
+    assert [r.upstream_base for r in chain] == [
+        "http://free/v1",      # free-first
+        "http://cheap/v1",     # then cheapest (rank ~75)
+        "http://dear/v1",      # then dear (rank ~750)
+    ]
+
+
+def test_sr6_derived_rank_from_add_models_bulk_production_path(tmp_path, monkeypatch):
+    """cost_rank is DERIVED when models are added through add_models_bulk (the
+    models-import production path) with pricing but no explicit cost_rank."""
+    from charon import config as _config
+    from charon.pools import derived_cost_rank
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+
+    _config.add_models_bulk([
+        {"id": "dear",  "free": False, "cost_input": 0.000005,  "cost_output": 0.000015},
+        {"id": "cheap", "free": False, "cost_input": 0.0000005, "cost_output": 0.0000015},
+        {"id": "freebie", "free": True, "cost_input": 0.1, "cost_output": 0.1},
+    ], provider="test")
+
+    models = _config.load_models()
+    # No cost_rank was stamped on any model
+    for mid in ("dear", "cheap", "freebie"):
+        assert "cost_rank" not in models[mid], f"{mid} must not have stamped cost_rank"
+    # Derived ranks compute correctly from pricing
+    assert derived_cost_rank(models["cheap"]) < derived_cost_rank(models["dear"])
+
+
+def test_sr6_explicit_cost_rank_via_add_model_still_honored(tmp_path, monkeypatch):
+    """An operator-set cost_rank via add_model is still honored — the derivation
+    must NOT overwrite a genuine operator override (SR-6 escape hatch)."""
+    from charon import config as _config
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+
+    # force-dear would naturally be cheap ($0.10/1M) but operator ranks it 9999
+    _config.add_model("force-dear", upstream_base="http://a/v1",
+                      cost_input=0.0000001, cost_output=0.0000001, cost_rank=9999)
+    _config.add_model("natural", upstream_base="http://b/v1",
+                      cost_input=0.000002, cost_output=0.000002)
+
+    _config.set_pool("auto", ["force-dear", "natural"])
+    cfg = gateway.load_config(state_dir=tmp_path)
+    chain = cfg.pools["auto"]
+    assert [r.upstream_base for r in chain] == ["http://b/v1", "http://a/v1"]
