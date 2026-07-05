@@ -6,6 +6,15 @@
 4. /home/stack/charon-private/fleet/SESSION-HANDOFF-*.md     (all recent handoffs)
 5. /home/stack/code/charon/docs/DECISIONS.md       (settled design decisions)
 
+## Reds registry preflight (manager first-act)
+
+At startup run:  `bash /home/stack/charon-private/fleet/preflight.sh`
+It re-verifies every known red deterministically. Address or explicitly DEFER each
+STILL-RED — do NOT dismiss any red as "pre-existing/unrelated". A red closes ONLY via a
+passing check or a recorded override (`preflight.sh close <id>` / `--override "<reason>"`
+/ `--evidence "<text>"`), never by assertion. New red found this session → add it now:
+`preflight.sh add <id> <sev> <area> "<desc>" "<check_cmd>"`.
+
 ## Model-scorecard anti-rot (manager first-act)
 
 At startup run:  `bash /home/stack/charon-private/fleet/model-scorecard.sh --due`
