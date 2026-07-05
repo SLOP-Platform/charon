@@ -97,6 +97,27 @@ def test_404_drops_model_from_pool() -> None:
     assert "dropped" in obs.note
 
 
+def test_400_unsupported_model_drops_and_fails_over() -> None:
+    # A provider that doesn't host a model returns a terminal 400 ("Model gpt-5.5
+    # is not supported"). Treat it like a 404 drop so the router fails over to a
+    # provider that DOES have it (tier/cross-provider fallback), instead of
+    # returning the error straight to the client.
+    p = GatewayProxy()
+    obs = p.observe("gpt-5.5", 400,
+                    body={"error": {"message": "Model gpt-5.5 is not supported"}})
+    assert obs.dropped and obs.failover and not obs.exhausted
+    assert p.is_exhausted("gpt-5.5")  # excluded from the next route
+    assert "dropped" in obs.note and "unsupported" in obs.note
+
+
+def test_400_generic_bad_request_does_not_fail_over() -> None:
+    # A generic 400 (bad params, NOT a model-availability error) must not drop or
+    # fail over — it would fail identically on every provider.
+    p = GatewayProxy()
+    obs = p.observe("m", 400, body={"error": {"message": "temperature must be <= 2.0"}})
+    assert not obs.dropped and not obs.failover and not obs.exhausted
+
+
 def test_take_delta_returns_increment() -> None:
     p = GatewayProxy()
     p.observe("m", 200, body={"model": "m", "usage": {"prompt_tokens": 10, "completion_tokens": 5}})

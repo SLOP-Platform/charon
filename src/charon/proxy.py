@@ -49,6 +49,19 @@ _AUTH_BODY_PATTERNS = [
     "authentication failed", "auth error", "incorrect api key",
     "invalid token", "bad credentials", "access denied",
 ]
+# Statuses + body patterns meaning "THIS provider does not serve this model" — a
+# per-provider availability error (providers like OpenCode return a terminal 400
+# for models they don't host, e.g. "Model gpt-5.5 is not supported"). Treat it
+# like a 404 DROP: exclude this candidate and fail over to the next provider in
+# the pool (the model may exist elsewhere, possibly on a free/cheaper tier). This
+# is what makes tier/cross-provider fallback work. Gated on the body so a generic
+# 400 (bad params) is NOT dropped.
+_UNSUPPORTED_STATUSES = {400, 422}
+_UNSUPPORTED_BODY_PATTERNS = [
+    "not supported", "unsupported", "no such model", "model not found",
+    "model_not_found", "does not exist", "unknown model", "invalid model",
+    "no route for model", "model is not available",
+]
 
 
 @dataclass(frozen=True)
@@ -172,6 +185,15 @@ def _is_auth_error(body: dict | None, status: int) -> bool:
     return _has_body_pattern(body, _AUTH_BODY_PATTERNS)
 
 
+def _is_unsupported_model(body: dict | None, status: int) -> bool:
+    """A per-provider "this model isn't served here" error (400/422 whose body
+    says so). DROP the candidate and fail over — the model may exist on another
+    provider (tier/cross-provider fallback). Body-gated so a generic bad-request
+    400 is not mistaken for a model-availability error."""
+    return status in _UNSUPPORTED_STATUSES and _has_body_pattern(
+        body, _UNSUPPORTED_BODY_PATTERNS)
+
+
 def _normalize_model_id(model_id: str | None) -> str:
     """Normalize a model id by taking the FINAL path segment for comparison.
 
@@ -247,7 +269,7 @@ class GatewayProxy:
         returned = (body or {}).get("model")
         exhausted = _is_billing_error(body, status)
         auth_error = _is_auth_error(body, status)
-        dropped = status in _DROP_STATUSES
+        dropped = status in _DROP_STATUSES or _is_unsupported_model(body, status)
         # pseudo-success: a 200 that silently served a different model than asked.
         # Use normalized comparison to avoid false-positives when an upstream returns
         # the model id with a provider prefix (e.g. "openai/gpt-4" vs "gpt-4").
@@ -288,7 +310,8 @@ class GatewayProxy:
         elif auth_error:
             note = f"auth: status={status} {_error_type(body)}".strip()
         elif dropped:
-            note = f"dropped: status=404 {_error_type(body)} (model gone)".strip()
+            reason = "model gone" if status in _DROP_STATUSES else "unsupported here"
+            note = f"dropped: status={status} {_error_type(body)} ({reason})".strip()
         elif pseudo:
             note = f"silent downgrade: asked {expected!r}, got {returned!r}"
 
