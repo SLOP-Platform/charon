@@ -33,6 +33,9 @@ FIRST ACTS, in order:
 THE LOOP (repeat):
 - I open the tab(s) you name; a droid claims the ticket, works in its own worktree, opens
   a DRAFT PR (base master), and stands down. It never merges.
+- Hand-authoring a one-off brief (not via fleet-droid.sh)? Start from
+  `fleet/BRIEF-TEMPLATE.md` — it ends with a mandatory, unmissable commit step so work is
+  never left uncommitted in the worktree (see memory: droid-brief-final-commit-rule).
 - Gate each PR: `gh pr checks <n> --repo SLOP-Platform/charon` green on `gate`;
   mergeable/CLEAN; own-files-only vs the ticket's `owns`; no secrets / no `pip install -e`;
   conventional commits; consistent with docs/DECISIONS.md (flag, don't merge, anything that
