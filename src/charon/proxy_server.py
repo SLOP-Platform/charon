@@ -36,6 +36,7 @@ from .policy_router import PolicyRouter
 from .proxy import GatewayProxy, _normalize_model_id
 from .quality_scorer import QualityScorer
 from .request_inspector import RequestInspector
+from .request_normalizer import normalize_messages as _normalize_request_messages
 from .response_normalizer import NormalizeMode, ResponseNormalizer
 from .session_affinity import SessionAffinity
 from .speculative_execution import SpeculativeExecutor
@@ -512,6 +513,13 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 opts = dict(bj.get("stream_options") or {})
                 opts["include_usage"] = True
                 bj["stream_options"] = opts
+            # Strip output-only fields (e.g. assistant ``reasoning_content`` echoed
+            # by DeepSeek-style providers) before forwarding — another provider
+            # (e.g. Groq) rejects the request otherwise. Safe-by-default: these
+            # fields are output-only and never part of a valid OpenAI chat request.
+            stripped = _normalize_request_messages(bj.get("messages"))
+            if stripped is not None:
+                bj["messages"] = stripped
             data: bytes | None = json.dumps(bj).encode()
         else:
             data = raw_body or None
