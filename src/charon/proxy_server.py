@@ -778,7 +778,7 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                     obs = srv.observer.classify(okey, status, rhdrs, obs_body,
                                                 expected_model=expected)
                     srv.observer.record(obs, count_usage=False)
-                    if obs.failover:  # 429/402/503/404/401+billing = exhausted → fail over
+                    if obs.failover:  # 429/402/503/404/401+billing/unsupported → fail over
                         if obs.exhausted:  # account-level exhaustion → cool the
                             srv.set_cooldown(route, obs.retry_after)  # provider (R10c);
                         # a 404 ("model gone") is model-level — do NOT cool the provider.
@@ -786,8 +786,29 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                             failovers.append({"provider": route.label, "status": status,
                                               "reason": obs.note or "exhausted"})
                             continue
-                    # terminal capacity error, OR a 400/401/403 client/auth error we must
-                    # NOT fail over (R6) — relay the real upstream response as-is.
+                        if failovers:
+                            # The LAST provider of a POOL we already failed across also
+                            # failed over-eligibly → EVERY provider is exhausted/
+                            # unsupported. Relaying this one provider's raw error is
+                            # misleading (the client asked for a model no provider could
+                            # serve); synthesize a terminal "all providers exhausted"
+                            # response carrying the tracked failover reasons. (A single-
+                            # upstream gateway with no pool falls through and relays the
+                            # real upstream error transparently — nothing was failed over.)
+                            failovers.append({"provider": route.label, "status": status,
+                                              "reason": obs.note or "exhausted"})
+                            self._send_resp_headers(503, "application/json", route.label,
+                                                    failovers, False)
+                            self._write(json.dumps({"error": {
+                                "message": "all providers exhausted",
+                                "type": "all_providers_exhausted",
+                                "failover_reasons": [
+                                    f"{f['provider']}={f['status']}" for f in failovers],
+                            }}).encode())
+                            srv.note_request(requested, route.label, status, 0.0, failovers)
+                            return
+                    # a single-upstream exhaustion, OR a 400/401/403 client/auth error we
+                    # must NOT fail over (R6) — relay the real upstream response as-is.
                     self._send_resp_headers(status, ctype, route.label, failovers, False)
                     self._write(body_bytes)
                     srv.note_request(requested, route.label, status, 0.0, failovers)

@@ -241,6 +241,43 @@ def test_401_with_no_body_is_auth() -> None:
     assert p.exhausted_models() == set()
 
 
+def test_401_unsupported_model_drops_and_fails_over() -> None:
+    """RED failover-401-not-classified: opencode-go returns a *401* for a model it
+    doesn't host ("Model gpt-5.5 is not supported") — neither billing nor auth. It
+    must be classified as an unsupported-model DROP so failover advances to the next
+    provider (the model may exist on a cheaper/free tier elsewhere). On master 401
+    is absent from the unsupported-status set, so this is misclassified as auth and
+    failover never fires."""
+    p = GatewayProxy()
+    obs = p.observe("opencode-go/gpt-5.5", 401,
+                    body={"error": {"message": "Model gpt-5.5 is not supported"}})
+    assert obs.dropped and obs.failover
+    assert not obs.exhausted  # not billing — nothing to cool down
+    assert "dropped" in obs.note and "unsupported" in obs.note
+    assert p.is_exhausted("opencode-go/gpt-5.5")
+
+
+def test_openrouter_wrapped_error_is_classifiable() -> None:
+    """RED failover-401-not-classified: OpenRouter wraps the real upstream error under
+    ``error.metadata.raw`` — often a *stringified JSON* blob — while ``error.message``
+    is a generic "Provider returned error". On master ``_body_text_lower`` reads only
+    ``error.message``, so the actionable "Invalid model" text is invisible and the
+    body matches no classifier → the raw error is relayed instead of failing over.
+    Flattening the nested/stringified error makes it classify as unsupported → drop."""
+    p = GatewayProxy()
+    body = {"error": {
+        "message": "Provider returned error",
+        "code": 400,
+        "metadata": {
+            "provider_name": "OpenRouter",
+            "raw": '{"error": {"message": "Invalid model ID: gpt-5.5"}}',
+        },
+    }}
+    obs = p.observe("openrouter/gpt-5.5", 400, body=body)
+    assert obs.dropped and obs.failover
+    assert p.is_exhausted("openrouter/gpt-5.5")
+
+
 def test_billing_body_pattern_insufficient_quota() -> None:
     p = GatewayProxy()
     obs = p.observe("m", 402,

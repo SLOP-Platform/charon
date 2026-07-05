@@ -196,9 +196,10 @@ def test_tier_routes_through_gateway_failover_no_engine_selection():
 
 
 def test_whole_tier_exhausted_surfaces_skipped_and_terminal_error():
-    # Both providers 429 → whole chain exhausted: terminal 429 relayed (the agent
-    # surfaces it → OutcomeStatus.EXHAUSTED at acp.py:162-163), and the re-homed
-    # note still lists the skipped provider (ADR-0014 B4).
+    # Both providers 429 → whole chain exhausted: the gateway synthesizes a terminal
+    # "all providers exhausted" 503 (the agent surfaces "exhausted" →
+    # OutcomeStatus.EXHAUSTED in acp.py), and the re-homed note still lists the
+    # skipped provider (ADR-0014 B4).
     a, ba = _up(status=429)
     b, bb = _up(status=429)
     try:
@@ -208,8 +209,9 @@ def test_whole_tier_exhausted_surfaces_skipped_and_terminal_error():
         gw = GatewayProxyServer(pools={TIER_VID: pools[TIER_VID]}, model_ids=[TIER_VID])
         gw.serve_in_thread()
         try:
-            status, _ = _req(gw.url + "/v1/chat/completions", {"model": TIER_VID})
-            assert status == 429                          # real last error relayed
+            status, body = _req(gw.url + "/v1/chat/completions", {"model": TIER_VID})
+            assert status == 503                          # synthesized terminal
+            assert body["error"]["type"] == "all_providers_exhausted"
             note = api._tier_failover_note(gw.status_snapshot(), TIER_VID)
             assert ba.split("//")[1] in note              # the skipped first provider
         finally:
