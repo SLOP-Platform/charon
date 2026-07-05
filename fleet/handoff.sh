@@ -60,10 +60,18 @@ gh pr list --repo SLOP-Platform/charon --state open --json number,title,headRefN
 echo '```'
 
 # --- gate --------------------------------------------------------------------
+# A RED gate MUST be fatal: capture each gate's OWN exit code (not the tail's) so
+# a failing pytest/ruff propagates. We keep tail for output brevity but never
+# swallow the gate result with '|| true' (that defeated set -e — see reds.tsv
+# handoff-pipefail-mask). The full handoff still renders; handoff.sh then exits
+# non-zero at the end so a red gate cannot be handed off as green.
 echo "### Gate"
 echo '```'
-PYTHONPATH=src python3 -m pytest -q --no-header 2>&1 | tail -3 || true
-ruff check src tests 2>&1 | tail -3 || true
+GATE_RC=0
+gate_out="$( { PYTHONPATH=src python3 -m pytest -q --no-header 2>&1; } )" || GATE_RC=$?
+printf '%s\n' "$gate_out" | tail -3
+gate_out="$( { ruff check src tests 2>&1; } )" || GATE_RC=$?
+printf '%s\n' "$gate_out" | tail -3
 echo '```'
 
 # --- board -------------------------------------------------------------------
@@ -169,3 +177,7 @@ files touched, expected benefit.>
 - **Commit:** commit the completed \`SESSION-HANDOFF-<name>.md\` to the charon-private fleet repo.
 - **Read:** the next session reads ALL \`SESSION-HANDOFF-*.md\` files to ground itself.
 FOOTER
+
+# A red gate is fatal: exit non-zero so handoff.sh cannot report a red gate as a
+# clean handoff (it still emitted the full doc above for the operator's record).
+exit "${GATE_RC:-0}"
