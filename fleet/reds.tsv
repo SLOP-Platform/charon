@@ -6,7 +6,7 @@
 #              use literal "manual:<instruction>" for reds not auto-checkable from this box.
 #   severity: P0|P1|P2   area: bridge|board|ci|gate|routing|billing|packaging|other
 #   status: open|closed   closed_by: blank | YYYY-MM-DD:<evidence>
-bridge-daemon-down	2026-07-05	P1	bridge	session-bridge MCP register fails 'daemon not running' on a stale socket though daemon.py PID exists	python3 -c "import socket,os,sys,json;p=os.environ.get('BRIDGE_SOCKET','/tmp/charon-bridge.sock');s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);s.settimeout(3);s.connect(p);s.sendall(json.dumps({'jsonrpc':'2.0','id':1,'method':'tools/list'}).encode()+b'\n');sys.exit(0 if s.recv(4096) else 1)"	open	
+bridge-daemon-down	2026-07-05	P1	bridge	session-bridge MCP register fails 'daemon not running' on a stale socket though daemon.py PID exists	python3 /home/stack/charon-private/fleet/checks/bridge-health.py	closed	2026-07-05:auto-verified
 board-validator-red	2026-07-05	P2	board	validate_board.sh reports ~19+ issues (WCI-FOLLOWON stale dep + orphan done-markers)	bash /home/stack/charon-private/fleet/validate_board.sh >/dev/null 2>&1	closed	2026-07-05:auto-verified
 handoff-pipefail-mask	2026-07-05	P2	ci	handoff.sh runs gates under '| tail -3 || true', masking set -e on a red gate	! grep -Fq '| tail -3 || true' /home/stack/charon-private/fleet/handoff.sh	closed	2026-07-05:auto-verified
 version-gate-false-positive	2026-07-05	P2	gate	check_version.py compares pyproject to INSTALLED editable metadata -> false VERSION DRIFT in fresh worktrees	git -C /home/stack/code/charon show origin/master:tools/check_version.py | grep -q _in_ci	closed	2026-07-05:auto-verified
