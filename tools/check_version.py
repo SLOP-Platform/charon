@@ -2,30 +2,56 @@
 # @covers: version
 """Version-consistency check (ADR-0002 §4: one true home for version).
 
-The single source of truth is ``pyproject.toml::project.version``. This asserts
-the installed package reports the same string, so a satellite copy cannot drift.
+Single source of truth is ``pyproject.toml::project.version``. Two drift modes,
+both caught:
+  * a hardcoded ``__version__ = "x"`` LITERAL in the source disagreeing with
+    pyproject — the real "a satellite copy cannot drift" (checked everywhere);
+  * the INSTALLED package metadata disagreeing with pyproject — only meaningful
+    in CI (fresh install); a local editable install lags until ``pip install -e .``,
+    so that is a benign dev artifact, not real drift.
 """
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tomllib
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
+_LITERAL = re.compile(r"""__version__\s*=\s*['"]([^'"]+)['"]""")
+
 
 def _in_ci() -> bool:
-    # GitHub Actions (and most CI) set CI=true; the release/gate jobs pip-install
-    # fresh, so installed metadata ALWAYS matches pyproject there — any drift is
-    # real. A local editable install lags pyproject until `pip install -e .`, so
-    # drift there is a benign dev artifact, not a satellite copy diverging.
     return os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true"
 
 
+def _literal_drift(declared: str) -> list[str]:
+    """Source files hardcoding a ``__version__`` literal that disagrees with
+    pyproject. Skips ``__init__.py`` — the sanctioned home reads the version from
+    importlib.metadata and only carries a non-version ``0+unknown`` fallback."""
+    src = Path("src")
+    bad: list[str] = []
+    if not src.is_dir():
+        return bad
+    for py in src.rglob("*.py"):
+        if py.name == "__init__.py":
+            continue
+        for m in _LITERAL.finditer(py.read_text(encoding="utf-8")):
+            if m.group(1) != declared:
+                bad.append(f"{py}:{m.group(1)}")
+    return bad
+
+
 def main() -> int:
-    pyproject = Path("pyproject.toml")
-    data = tomllib.loads(pyproject.read_text())
-    declared = data["project"]["version"]
+    declared = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+
+    drift = _literal_drift(declared)
+    if drift:
+        print(f"VERSION DRIFT: pyproject={declared} but source literals disagree: "
+              + ", ".join(drift), file=sys.stderr)
+        return 1
+
     try:
         installed = version("charon")
     except PackageNotFoundError:
@@ -36,7 +62,6 @@ def main() -> int:
         if _in_ci():
             print(msg + " (fresh CI install must match — real drift)", file=sys.stderr)
             return 1
-        # Local dev: editable metadata is stale until reinstall — warn, don't fail.
         print(msg + " — stale local editable metadata; run 'pip install -e .' to "
               "refresh. Not failing outside CI.")
         return 0
