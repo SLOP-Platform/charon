@@ -563,3 +563,126 @@ def test_pre_flight_estimate_resolves_namespaced_pricing() -> None:
         assert abs(floor - 1000 * 0.0000015) < 1e-12
     finally:
         srv.server_close()
+
+
+# ---------------------------------------------------------------------------
+# #5 — strip output-only fields (reasoning_content) from inbound messages
+# ---------------------------------------------------------------------------
+
+# Captured messages the upstream actually received, for assertion.
+_SEEN_MESSAGES: list[list[dict]] = []
+
+
+class _MessageCapturingUpstream(http.server.BaseHTTPRequestHandler):
+    """A 200 upstream that records the messages array it actually received."""
+
+    def log_message(self, *a) -> None:
+        pass
+
+    def do_POST(self) -> None:
+        length = int(self.headers.get("Content-Length") or 0)
+        body = json.loads(self.rfile.read(length) or b"{}")
+        _SEEN_MESSAGES.append(body.get("messages", []))
+        payload = json.dumps({
+            "model": body.get("model", ""),
+            "choices": [{"message": {"content": "ok"}}],
+            "usage": {"prompt_tokens": 1},
+        }).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+
+def test_proxy_strips_reasoning_content_before_forwarding() -> None:
+    """#5: the proxy MUST strip assistant ``reasoning_content`` from the
+    forwarded body — another provider (Groq-style) rejects it otherwise."""
+    _SEEN_MESSAGES.clear()
+    up = _Threaded(("127.0.0.1", 0), _MessageCapturingUpstream)
+    threading.Thread(target=up.serve_forever, daemon=True).start()
+    base = f"http://{up.server_address[0]}:{up.server_address[1]}"
+
+    proxy = GatewayProxyServer(routes={"m": UpstreamRoute(base, "k")})
+    proxy.serve_in_thread()
+    try:
+        status, _ = _post(proxy.url + "/v1/chat/completions", {
+            "model": "m",
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "hello",
+                 "reasoning_content": "internal thoughts"},
+                {"role": "user", "content": "again"},
+            ],
+        })
+        assert status == 200
+        assert len(_SEEN_MESSAGES) == 1
+        forwarded = _SEEN_MESSAGES[0]
+        assert forwarded[1] == {"role": "assistant", "content": "hello"}
+        assert "reasoning_content" not in forwarded[1]
+    finally:
+        proxy.shutdown()
+        up.shutdown()
+
+
+def test_proxy_preserves_tool_calls_when_stripping() -> None:
+    """#5: tool_calls on assistant messages survive the strip — only
+    output-only fields are removed."""
+    _SEEN_MESSAGES.clear()
+    up = _Threaded(("127.0.0.1", 0), _MessageCapturingUpstream)
+    threading.Thread(target=up.serve_forever, daemon=True).start()
+    base = f"http://{up.server_address[0]}:{up.server_address[1]}"
+
+    proxy = GatewayProxyServer(routes={"m": UpstreamRoute(base, "k")})
+    proxy.serve_in_thread()
+    try:
+        status, _ = _post(proxy.url + "/v1/chat/completions", {
+            "model": "m",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "reasoning_content": "thinking",
+                    "tool_calls": [
+                        {"id": "call_1", "type": "function",
+                         "function": {"name": "f", "arguments": "{}"}},
+                    ],
+                },
+            ],
+        })
+        assert status == 200
+        forwarded = _SEEN_MESSAGES[0]
+        assert "reasoning_content" not in forwarded[0]
+        assert forwarded[0]["tool_calls"] == [
+            {"id": "call_1", "type": "function",
+             "function": {"name": "f", "arguments": "{}"}},
+        ]
+    finally:
+        proxy.shutdown()
+        up.shutdown()
+
+
+def test_proxy_forwards_normal_body_unchanged() -> None:
+    """#5: a body with no output-only fields is forwarded verbatim."""
+    _SEEN_MESSAGES.clear()
+    up = _Threaded(("127.0.0.1", 0), _MessageCapturingUpstream)
+    threading.Thread(target=up.serve_forever, daemon=True).start()
+    base = f"http://{up.server_address[0]}:{up.server_address[1]}"
+
+    proxy = GatewayProxyServer(routes={"m": UpstreamRoute(base, "k")})
+    proxy.serve_in_thread()
+    try:
+        original = [
+            {"role": "system", "content": "be helpful"},
+            {"role": "user", "content": "hello"},
+        ]
+        status, _ = _post(proxy.url + "/v1/chat/completions", {
+            "model": "m",
+            "messages": original,
+        })
+        assert status == 200
+        assert _SEEN_MESSAGES[0] == original
+    finally:
+        proxy.shutdown()
+        up.shutdown()
+
