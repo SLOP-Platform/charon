@@ -119,10 +119,117 @@ cmd_close(){
   echo "closed: $id -> $closure"
 }
 
+# --- detect: ACTIVE detectors for drift/risk NOT yet in reds.tsv. Prints hits,
+# never mutates reds.tsv (that stays a human/DTC decision via `add`). ---
+CHARON_REPO="/home/stack/code/charon"
+
+# print a DETECTED line + up to 5 examples + "+N more".
+report_hits(){
+  local class="$1" count="$2" shown_list="$3"
+  [ "$count" -gt 0 ] || return 0
+  echo "DETECTED (unregistered): $class — $count hit(s)"
+  local n=0 line
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    [ $n -ge 5 ] && break
+    echo "    $line"
+    n=$((n+1))
+  done <<< "$shown_list"
+  [ "$count" -gt "$n" ] && echo "    +$((count-n)) more"
+}
+
+detect_untracked_drift(){
+  local list count
+  list="$(git -C "$HERE" ls-files --others --exclude-standard -- board/ '*.md' 2>/dev/null)"
+  count=0
+  [ -n "$list" ] && count="$(printf '%s\n' "$list" | grep -c .)"
+  report_hits "untracked-drift" "$count" "$list"
+}
+
+# allowlist: substrings that suppress known documentation false-positives.
+secret_allowlisted(){
+  printf '%s' "$1" | grep -qF -e 'password = Phase 2' -e 'scrypt hash' -e '<your-' -e 'example'
+}
+
+detect_secret_scan(){
+  local pattern='sk-[a-zA-Z0-9]{20,}|BEGIN [A-Z ]*PRIVATE KEY|(api[_-]?key|apikey|password)[[:space:]]*[:=][[:space:]]*.{20,}'
+  local files f hits=0 shown=""
+  files="$( { git -C "$HERE" ls-files; git -C "$HERE" ls-files --others --exclude-standard; } | sort -u )"
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    [ -f "$HERE/$f" ] || continue
+    grep -IqE "$pattern" "$HERE/$f" 2>/dev/null || continue
+    local hit
+    while IFS= read -r hit; do
+      [ -n "$hit" ] || continue
+      secret_allowlisted "$hit" && continue
+      hits=$((hits+1))
+      shown="$shown
+$f:$hit"
+    done < <(grep -InE "$pattern" "$HERE/$f" 2>/dev/null)
+  done <<< "$files"
+  if [ $hits -gt 0 ]; then
+    report_hits "secret-scan" "$hits" "$(printf '%s\n' "$shown" | grep -v '^$')"
+  else
+    echo "clean: secret-scan (0 unallowlisted matches)"
+  fi
+}
+
+# unpushed commits + dirty tracked files for one repo (path, label).
+detect_repo_drift_one(){
+  local path="$1" label="$2" unpushed=0 dirty=0 dirty_list=""
+  [ -d "$path/.git" ] || { git -C "$path" rev-parse --git-dir >/dev/null 2>&1; } || {
+    echo "repo-drift: $label — no git repo at $path"; return 0; }
+  local ahead
+  ahead="$(git -C "$path" log '@{u}..HEAD' --oneline 2>/dev/null)"
+  unpushed=0; [ -n "$ahead" ] && unpushed="$(printf '%s\n' "$ahead" | grep -c .)"
+  dirty_list="$(git -C "$path" status --porcelain -- . 2>/dev/null | grep -v '^??')"
+  dirty=0; [ -n "$dirty_list" ] && dirty="$(printf '%s\n' "$dirty_list" | grep -c .)"
+  echo "repo-drift: $label — $unpushed unpushed commit(s), $dirty dirty tracked file(s)"
+  if [ "$dirty" -gt 0 ]; then
+    report_hits "repo-drift:$label:dirty-tracked" "$dirty" "$dirty_list"
+  fi
+}
+
+detect_repo_drift(){
+  detect_repo_drift_one "$HERE" "fleet"
+  detect_repo_drift_one "$CHARON_REPO" "charon"
+}
+
+detect_health(){
+  local vb="$HERE/validate_board.sh"
+  [ -f "$vb" ] || { echo "health: validate_board.sh not found at $vb"; return 0; }
+  local out rc
+  out="$(bash "$vb" 2>&1)"; rc=$?
+  if [ $rc -eq 0 ]; then
+    echo "health: validate_board.sh GREEN"
+  else
+    echo "DETECTED (unregistered): health — validate_board.sh exited $rc"
+    printf '%s\n' "$out" | tail -5 | sed 's/^/    /'
+  fi
+}
+
+cmd_detect(){
+  local full=0
+  case "${1:-}" in --full) full=1;; esac
+  echo "--- ACTIVE DETECTORS (unregistered risk not yet in reds.tsv) ---"
+  detect_untracked_drift
+  detect_secret_scan
+  detect_repo_drift
+  if [ $full -eq 1 ]; then
+    detect_health
+  else
+    echo "health: skipped (pass --full to run validate_board.sh)"
+  fi
+  echo "--- end detectors ---"
+  return 0
+}
+
 case "${1:-scan}" in
-  scan|"") cmd_scan ;;
+  scan|"") cmd_scan; cmd_detect ;;
   add)     shift; cmd_add "$@" ;;
   close)   shift; cmd_close "$@" ;;
   list)    shift; cmd_list "$@" ;;
-  *) echo "usage: $0 {scan|add <id> <sev> <area> \"<desc>\" \"<check>\"|close <id> [--override r|--evidence t]|list [open|closed|all]}" >&2; exit 1 ;;
+  detect)  shift; cmd_detect "$@" ;;
+  *) echo "usage: $0 {scan|add <id> <sev> <area> \"<desc>\" \"<check>\"|close <id> [--override r|--evidence t]|list [open|closed|all]|detect [--full]}" >&2; exit 1 ;;
 esac
