@@ -210,16 +210,32 @@ def add_provider(name: str, *, base_url: str | None = None, key_env: str | None 
     return _save("providers.json", provs)
 
 
+_COST_CLASSES: tuple[str, ...] = (
+    "free-daily", "expiring", "prepaid", "metered", "premium",
+)
+
+
+def _normalize_cost_class(value: object) -> str | None:
+    if value is None:
+        return None
+    v = str(value).strip().lower()
+    return v if v in _COST_CLASSES else None
+
+
 def add_model(model_id: str, *, provider: str | None = None, upstream_base: str | None = None,
               upstream_model: str | None = None, key_env: str | None = None,
               free: bool = False, cost_rank: int = 1000,
               context_window: int | None = None, max_tokens: int | None = None,
               reasoning: bool | None = None, vision: bool | None = None,
               audio: bool | None = None,
-              cost_input: float | None = None, cost_output: float | None = None) -> Path:
+              cost_input: float | None = None, cost_output: float | None = None,
+              cost_class: str | None = None) -> Path:
     """Persist a model to ``models.json`` (references a provider, or a direct
     upstream_base). Optional metadata fields (context_window, max_tokens,
-    reasoning, vision, audio, cost_input, cost_output) are persisted only when non-None."""
+    reasoning, vision, audio, cost_input, cost_output, cost_class) are persisted
+    only when non-None. ``cost_class`` is one of ``free-daily | expiring |
+    prepaid | metered | premium`` (``premium`` is gated out of default-primary
+    routing by the gateway compiler — see SR-6)."""
     _check_id("model", model_id)
     if provider is None and upstream_base is None:
         raise ValueError("a model needs either provider= or upstream_base=")
@@ -234,6 +250,9 @@ def add_model(model_id: str, *, provider: str | None = None, upstream_base: str 
                    ("cost_input", cost_input), ("cost_output", cost_output)):
         if mv is not None:
             entry[k] = mv
+    cc = _normalize_cost_class(cost_class)
+    if cc is not None:
+        entry["cost_class"] = cc
     models[model_id] = entry
     return _save("models.json", models)
 
@@ -247,7 +266,7 @@ def add_models_bulk(entries: list[dict], *, provider: str) -> tuple[list[str], l
     cost_input, cost_output) are carried through if present. Returns ``(added, skipped)``."""
     _check_id("provider", provider)
     _METADATA_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio",
-                      "cost_input", "cost_output")
+                      "cost_input", "cost_output", "cost_class")
     models = load_models()
     added: list[str] = []
     skipped: list[str] = []
@@ -264,6 +283,8 @@ def add_models_bulk(entries: list[dict], *, provider: str) -> tuple[list[str], l
         }
         for k in _METADATA_KEYS:
             v = e.get(k)
+            if k == "cost_class":
+                v = _normalize_cost_class(v)
             if v is not None:
                 models[mid][k] = v
         added.append(mid)

@@ -116,6 +116,15 @@ def _build_routes_and_pools(
     single routes (concrete models) and failover chains (virtual ids). Each chain
     is ordered **free-first then cheapest-first** from the registry's cost metadata
     (stable → the listed order breaks ties), matching `pools.load_pools` (D4).
+
+    Effective ``cost_rank`` (SR-6) is **derived** from per-token pricing when
+    present: ``blended = (3*cost_input + cost_output) / 4`` (a 3:1 input:output
+    blend approximating typical chat-completion token mix). An explicit
+    ``cost_rank`` override still wins (operator escape hatch). Genuinely-free
+    models (``free:true``) sort first regardless. Models with ``cost_class:
+    "premium"`` are GATED OUT of pool chains — they're usable only when explicitly
+    requested or in a premium role, never the cheap-first default.
+
     Models with ``"enabled": false`` are excluded from routes and pools."""
     providers_cfg = providers_cfg or {}
     routes: dict[str, UpstreamRoute] = {}
@@ -127,15 +136,46 @@ def _build_routes_and_pools(
             if r is not None:
                 routes[mid] = r
 
+    def _derived_cost_rank(spec: dict) -> int:
+        """SR-6: derive cost_rank from per-token pricing (3:1 in:out blend) when
+        pricing is present and no explicit ``cost_rank`` override is set. Returns
+        the explicit ``cost_rank`` when set, else the derived rank, else 1000."""
+        explicit = spec.get("cost_rank")
+        if explicit is not None:
+            return int(explicit)
+        ci = spec.get("cost_input")
+        co = spec.get("cost_output")
+        if ci is None and co is None:
+            return 1000  # missing-pricing fallback: neutral middle rank
+        ci = float(ci) if ci is not None else 0.0
+        co = float(co) if co is not None else 0.0
+        blended = (3.0 * ci + co) / 4.0
+        # Scale USD-per-token to an integer rank. Pricing is per 1M tokens in the
+        # registry convention; divide by 1e-6-equivalent → rank ≈ $/1M * 100.
+        # Use round() so $1.50/1M-in maps to rank 150 (cheap), $15 → 1500 (dear).
+        return max(0, round(blended * 1_000_000 * 100))
+
     def _rank(mid: str) -> tuple[bool, int]:
         spec = registry.get(mid, {})
-        return (not bool(spec.get("free", False)), int(spec.get("cost_rank", 1000)))
+        return (not bool(spec.get("free", False)), _derived_cost_rank(spec))
+
+    def _is_premium(mid: str) -> bool:
+        return registry.get(mid, {}).get("cost_class") == "premium"
 
     pools: dict[str, list[UpstreamRoute]] = {}
     for vid, members in pool_map.items():
         if not isinstance(members, list):
             continue
-        ordered = sorted([m for m in members if m in routes], key=_rank)
+        # SR-6: premium models are excluded from default-primary pool chains.
+        # They remain in `routes` (explicitly requestable) but never appear in a
+        # cheap-first failover chain unless the operator opts in by listing the
+        # premium model's own id as the pool vid (a premium-only role).
+        eligible = [m for m in members if m in routes and not _is_premium(m)]
+        # If every member is premium, keep them — an explicit premium-only pool
+        # is the operator's opt-in to a premium role (don't silently empty it).
+        if not eligible and members:
+            eligible = [m for m in members if m in routes]
+        ordered = sorted(eligible, key=_rank)
         if ordered:
             pools[vid] = [routes[m] for m in ordered]
 
@@ -235,7 +275,8 @@ def load_config(
                 if mid not in pools:
                     pools[mid] = [routes[mid]] + fallback_routes
 
-    _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio")
+    _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio",
+                  "cost_class")
     model_meta: dict[str, dict] = {}
     for mid, spec in registry.items():
         if not isinstance(spec, dict) or mid not in routes:
@@ -448,7 +489,7 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
             # so a web-edit never silently strips model capabilities (MODEL-DISCOVERY).
             existing = config.load_models().get(mid) or {}
             _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio",
-                          "cost_input", "cost_output")
+                          "cost_input", "cost_output", "cost_class")
             meta = {k: existing[k] for k in _META_KEYS if k in existing}
             config.add_model(
                 mid,
@@ -478,7 +519,7 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
             if payload.get("free_only"):
                 found = [m for m in found if m["free"]]
             _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio",
-                          "cost_input", "cost_output")
+                          "cost_input", "cost_output", "cost_class")
             entries = []
             for m in found:
                 entry = {"id": m["id"], "free": m["free"],
