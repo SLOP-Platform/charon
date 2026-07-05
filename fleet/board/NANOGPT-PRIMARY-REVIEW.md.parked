@@ -1,0 +1,16 @@
+tier: economy
+branch: feat/nanogpt-primary-review
+depends_on: DRAIN-ROUTING
+real-dep: DRAIN-ROUTING (the review only makes sense once DRAIN is live and we can
+  observe whether drainable balances should outrank NanoGPT in practice).
+owns: /home/stack/charon-private/fleet/board/NANOGPT-PRIMARY-REVIEW.md
+accept: test -f /home/stack/charon-private/fleet/board/NANOGPT-PRIMARY-REVIEW.md
+prompt: /home/stack/charon-private/prompts/nanogpt-primary-review.md
+scope: PARKED — operator decision #30: create a parked ticket to review whether drainable
+  balances should generally outrank NanoGPT later. Current policy (decision #29): keep
+  NanoGPT primary unless a specific drain fast-path applies. After DRAIN-ROUTING has been
+  live for a period, review: (1) did NanoGPT's $12/mo flat sub get underutilized because
+  drainable balances were spent first? (2) did any drainable balance expire unused because
+  NanoGPT was always primary? (3) should the policy change to "drain expiring balances
+  first, then NanoGPT, then metered"? This is a data-driven review, not a code change.
+  Suggested agent: this session (manager) — review routing logs + balance data, no build.

@@ -1,0 +1,23 @@
+tier: frontier
+branch: feat/sr-6-phase2-openai-anthropic-translation
+depends_on: SR-6
+real-dep: SR-6 build (single-owner file proxy_server.py + shared module translate.py) — Phase-2 grows
+  translate.py into the full bidirectional translator and edits proxy_server.py's dispatch, both of
+  which SR-6 (Phase-1) creates/owns; it must land AFTER SR-6 so the two never write the shared files
+  concurrently. Overlapping owns => a real build/sequencing prereq.
+owns: src/charon/translate.py, src/charon/proxy_server.py
+prompt: /home/stack/charon-private/prompts/sr-6-phase2.md
+state: PARKED (created 2026-07-04). Deferred split-out of SR-6's large surface. Do NOT launch — un-park
+  (drop the .parked suffix on this file AND the prompt) only when the revisit trigger below fires.
+scope: PHASE-2 — full bidirectional OpenAI<->Anthropic translation so an OpenAI-wire client can reach an
+  Anthropic-wire upstream transparently (and vice versa): request-body translation + response-body
+  translation + SSE-stream event remap (message_start / content_block_delta / message_delta <->
+  chat.completion.chunk, tool-call deltas, usage accounting). This is the risky large surface Phase-1
+  deliberately avoided.
+WHY PARKED: deferred until Phase-1 proves the prompt-cache saving is worth it AND there is real demand
+  for cross-format routing. Not worth the blast-radius/effort speculatively.
+RISKS: HIGH blast radius on the money-path dispatch; SSE/streaming translation is the hard part (chunk
+  reassembly, tool-call deltas, usage accounting); risks breaking the transparent-proxy contract and
+  EVERY existing OpenAI client if done wrong.
+REVISIT-TRIGGER: a user needs an OpenAI-format client to hit an Anthropic-only provider through the
+  gateway.

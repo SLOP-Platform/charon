@@ -1,0 +1,23 @@
+tier: strong
+branch: feat/cost-rank-auto
+depends_on: SR-5b, DRAIN-ROUTING
+real-dep: SR-5b (cost_input/cost_output pricing must be captured and real). DRAIN-ROUTING
+  (cost_class enum is the ordering primitive DRAIN uses — design them together).
+owns: src/charon/config.py, src/charon/gateway.py, tests/test_gateway.py
+accept: PYTHONPATH=src python3 -m pytest tests/test_gateway.py -v -q
+prompt: /home/stack/charon-private/prompts/cost-rank-auto.md
+scope: Auto-derive cost_rank from SR-5b's now-real cost_input/cost_output pricing instead
+  of hand-set values. Add a cost_class enum (operator-approved decision #16, design/spec
+  first): free-daily / expiring / prepaid / metered. One scalar (cost_rank) cannot express
+  "spend expiring credits first" — cost_class is the policy axis, cost_rank is the
+  within-class ordering. Compute cost_rank = f(cost_input, cost_output) so NanoGPT
+  (prepaid flat $12/mo, effectively $0/token) ranks ahead of OpenRouter (metered, no
+  credits) and opencode-zen (metered, $0 balance). This is the systemic fix for BUG 1's
+  root cause: all gpt-5.5 entries tied at cost_rank:1000 because ranks were hand-set and
+  never differentiated. With auto-derive + cost_class, the sort in gateway.py:109-139
+  (`_build_routes_and_pools` sorts by `(not free, cost_rank)`) becomes balance/class-aware.
+  Design/spec first (decision #16), then implement. Suggested agent: DeepSeek V4-Pro
+  (strong tier) for the spec; Claude Opus 4.8 (frontier) for the implementation — WHY:
+  the math (cost_rank = f(cost_input, cost_output)) is mechanical, but the cost_class
+  enum's interaction with DRAIN's priority chain and the gateway sort order is
+  design-sensitive. Split: spec on strong, implement on frontier.

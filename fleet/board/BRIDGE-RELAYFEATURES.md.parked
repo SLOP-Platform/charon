@@ -1,0 +1,8 @@
+tier: frontier
+branch: feat/bridge-relay-features
+depends_on: BRIDGE-HARDEN
+owns: src/charon/proxy_server.py, src/charon/proxy.py, src/charon/gateway.py, src/charon/config.py
+accept: PYTHONPATH=src python3 -m pytest -q ; ruff check ; mypy src tests
+prompt: /home/stack/charon-private/prompts/bridge-relay-features.md
+# PARKED — depends on BRIDGE-HARDEN (bridge server improvements must land first).
+# Incorporates RelayFreeLLM's superior features + transformative gaps neither project covers.

@@ -1,0 +1,10 @@
+tier: strong
+branch: feat/provider-flatrate
+depends_on:
+owns: src/charon/providers.py, src/charon/config.py
+accept: PYTHONPATH=src python3 -m pytest -q tests/test_providers.py tests/test_config.py ; ruff check src/charon/providers.py
+prompt: /home/stack/charon-private/prompts/provider-flatrate.md
+# Add featherless.ai flat-rate provider + cost-optimized tier/pool config.
+# featherless.ai is the only flat-rate ($25/mo unlimited, 40k+ models) OpenAI-compatible provider found.
+# Also adds DeepInfra + Cerebras as ultra-cheap per-token providers. SiliconFlow optional.
+# synthetic.net and useapiary.com investigated — both dead ends (unreachable / B2C chat only).

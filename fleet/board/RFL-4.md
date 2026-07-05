@@ -1,0 +1,21 @@
+tier: strong
+branch: feat/rfl-4-limit-editor
+depends_on: RFL-2, RFL-1
+real-dep: RFL-2 build (single-owner file src/charon/proxy_server.py) — proxy_server.py is the
+  single-writer bottleneck (chain … SR-13 -> RFL-1 -> RFL-3 -> RFL-2). RFL-4 adds POST endpoints +
+  console table edits to the SAME file, so it rebases onto RFL-2's file, never a concurrent second
+  writer. Shared-file sequencing, JUSTIFIED (not merge-order).
+real-dep: RFL-1 build — FUNCTIONAL pairing: RFL-4 edits the per-provider/model RPM/TPM/RPD quota
+  numbers that RFL-1 introduces (there is nothing to hot-edit until RFL-1's quota tracker + limits
+  config exist). True build/correctness prereq, not merge-order. (Also transitively ordered after RFL-1
+  via RFL-2 -> RFL-3 -> RFL-1.)
+owns: src/charon/proxy_server.py, tests/test_limit_editor.py
+prompt: /home/stack/charon-private/prompts/rfl-4.md
+scope: RelayFreeLLM comparison R4 — inline limit editor + hot-reload in the console; pairs with RFL-1.
+  Make the console's provider/limit view EDITABLE: edit RPM/TPM/RPD/cooldown inline and apply WITHOUT a
+  restart. Add POST endpoints behind the EXISTING console token gate that mutate the in-memory quota/
+  limits config (RFL-1's tracker) and persist to the config file; the console already renders the
+  provider table. Turns the console from read-only status into an ops surface. Suggested agent: DeepSeek
+  V4-Pro (strong tier) — WHY: mechanical POST-endpoint + in-memory-config-write + form wiring on top of
+  an existing table; well-specced ops UX, low blast radius. Reserve Claude for design-heavy work. Guard
+  the write path (token-gated, validate inputs); stdlib-only; CI gate is the backstop.

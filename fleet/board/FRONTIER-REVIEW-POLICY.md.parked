@@ -1,0 +1,17 @@
+tier: economy
+branch: feat/frontier-review-policy
+depends_on:
+owns: /home/stack/charon-private/fleet/board/FRONTIER-REVIEW-POLICY.md
+accept: test -f /home/stack/charon-private/fleet/board/FRONTIER-REVIEW-POLICY.md
+prompt: /home/stack/charon-private/prompts/frontier-review-policy.md
+scope: PARKED — operator decision #22/#23: create a parked ticket to review/spec the
+  "frontier model review for free-tier work" policy, but do NOT implement/enforce it this
+  session. The policy: work done by free-tier models should have a frontier-model review
+  before merge. Open questions to resolve in the spec: (1) is it a hard gate for ALL
+  free-tier-generated code, or only for money/auth/routing/deploy-sensitive changes?
+  (2) which models count as "frontier" for review purposes? (3) does the review happen
+  pre-merge or post-merge-as-follow-up? (4) how does this interact with the autonomous
+  land-push workflow? This ticket is research/design only — produce a spec, do not build
+  enforcement. Suggested agent: Claude Opus 4.8 (frontier tier) for the policy design —
+  WHY: designing a review-policy that doesn't bottleneck autonomous work while catching
+  free-tier quality gaps requires judgement about what "frontier review" means in practice.

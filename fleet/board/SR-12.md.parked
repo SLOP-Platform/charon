@@ -1,0 +1,16 @@
+tier: economy
+branch: feat/sr-12-opencode-zen-preset
+depends_on: SR-5
+real-dep: SR-5 build (single-owner file src/charon/providers.py) — shared-file sequencing on
+  providers.py. SR-5 is LIVE on a DeepSeek session and owns providers.py; SR-12 also edits
+  providers.py, so it must land AFTER SR-5 to avoid a concurrent write to the same file. Owns
+  overlap on providers.py; the dep is a true build/ordering prereq, not merge-order.
+owns: src/charon/providers.py, tests/test_providers.py
+prompt: /home/stack/charon-private/prompts/sr-12.md
+scope: Re-add the `opencode-zen` built-in provider preset dropped from source. The v0.2.0 IMAGE
+  shipped `opencode-zen` (https://opencode.ai/zen/v1, key_env OPENCODE_ZEN_KEY) but the v0.2.0-tag /
+  v0.2.1 SOURCE dropped it — leaving only `opencode-go` (https://opencode.ai/zen/go/v1, same
+  OPENCODE_ZEN_KEY) — so a config referencing `opencode-zen` crash-loops with `unknown provider
+  'opencode-zen'` unless it carries a manual base_url override (the band-aid currently on 4-LOM).
+  Operator confirmed BOTH `opencode-go` AND `opencode-zen` must be supported. Mechanical preset add.
+  Optional (operator-decides): also add a `neuralwatt` preset. depends_on SR-5 — shared-owner file.

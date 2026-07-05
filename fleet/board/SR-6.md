@@ -1,0 +1,24 @@
+tier: frontier
+branch: feat/sr-6-anthropic-prompt-cache
+depends_on: SR-2, INC-401-FAILOVER
+real-dep: SR-2 build (single-owner file proxy_server.py) — SR-6 edits proxy_server.py which SR-2 also
+  owns; it must land AFTER SR-2 so the two never write the shared file concurrently. Overlapping
+  owns => this is a real build/sequencing prereq.
+real-dep: INC-401-FAILOVER build (single-owner file proxy_server.py) — INC-401-FAILOVER is a live
+  P1 bug fix (2026-07-04 incident) that also owns proxy_server.py and hasn't landed yet; since
+  SR-6 hasn't started (still design-gated), the urgent fix should land first so SR-6 rebases
+  onto it rather than blocking it. Shared-file sequencing, JUSTIFIED (not merge-order-only).
+  (board-validator-red audit 2026-07-05 — resolves the unordered proxy_server.py collision.)
+owns: src/charon/translate.py, src/charon/proxy_server.py
+prompt: /home/stack/charon-private/prompts/sr-6.md
+scope: W3, first in the SR-6 -> SR-7 -> SR-8 proxy_server.py chain. PHASE-1 ONLY (design-approved
+  2026-07-04 — see SR-6-DESIGN.md). Inject exactly ONE Anthropic cache_control:{"type":"ephemeral"}
+  breakpoint on the last system block (or last tool def) of ALREADY-Anthropic-routed request bodies,
+  and only when the stable prefix clears ~2048 tokens. Config flag anthropic_prompt_cache: bool = True
+  (default ON, plumbed like failover_on_downgrade; toggle off via [gateway] anthropic_prompt_cache=false).
+  NEVER touch OpenAI-wire routes; no streaming / response-body changes. translate.py is a NEW module.
+  The large surface — full bidirectional OpenAI<->Anthropic body + SSE-stream translation — is split
+  out and PARKED as SR-6-Phase2, deliberately NOT built here.
+review-log: the flag/marker plumbing lightly touches gateway.py (GatewayConfig field) + providers.py
+  (ProviderPreset wire marker), OUTSIDE this ticket's stated owns (translate.py + proxy_server.py) —
+  flag this at sign-off for the review-log.
