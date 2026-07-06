@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 # run-many.sh <model1> <model2> ... [-- --sections S0,S2,S6]
 #
+# STILL USEFUL, kept (not superseded): this is the one thing bench.sh does
+# NOT do - bulk-provisioning fixture worktrees for a whole ROSTER of models
+# in one invocation, e.g. so several opencode tabs can each be pointed at
+# their own model's pre-copied worktrees before anyone starts driving them.
+# For the single-model interactive flow (announce -> all 7 sections ->
+# auto-record -> tier chart, one paste, no per-section shuttling), use
+# bench.sh instead - see its header and README.md. Once worktrees are
+# prepared here, either bench.sh or run.sh can grade/advance them (shared
+# state via lib/grade_state.py + lib/sections.sh).
+#
 # Thin wrapper: loops run.sh's PREPARE mode over a list of models so an
 # operator can kick off a whole roster in one invocation instead of one
 # session per model. Each model still goes through the same manual

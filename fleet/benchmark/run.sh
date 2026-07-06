@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 # run.sh — fleet model-benchmark runner (build-rig only; see MODEL-BENCHMARK-SPEC.md
-# and TICKET-BENCHMARK-HARNESS.md). Two modes:
+# and TICKET-BENCHMARK-HARNESS.md).
+#
+# SUPERSEDED for the interactive one-model flow by bench.sh: `run.sh <model>`
+# requires the operator to type the model name and then manually shuttle
+# each `--grade <section> <model>` call themselves. bench.sh instead
+# auto-detects the model (no typing it) and auto-advances through all 7
+# sections with a single `bench.sh grade` invocation per section, ending in
+# a tier chart with intra-tier rank - see bench.sh's header and README.md.
+# This file is kept because (a) it still works standalone for scripted/
+# unattended prepare+grade sequences, and (b) run-many.sh depends on its
+# PREPARE mode to bulk-provision fixture worktrees for several models at
+# once. It shares on-disk state with bench.sh (lib/grade_state.py,
+# lib/sections.sh, runs/<model>/<section>/) - a worktree prepared by either
+# script can be graded by the other. Two modes:
 #
 #   run.sh <model> [--sections S0,S2,S6]
 #       PREPARE mode. For each section (default: all S0-S6): copies the
@@ -29,66 +42,14 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BENCH_DIR="$HERE"
 FLEET_DIR="$(cd "$HERE/.." && pwd)"
 SCORECARD="$FLEET_DIR/model-scorecard.sh"
 STATE_PY="$HERE/lib/grade_state.py"
 TODAY="$(date +%F)"
 
-ALL_SECTIONS=(S0 S1 S2 S3 S4 S5 S6)
-
-section_grader() {
-  case "$1" in
-    S6) echo "node $HERE/graders/s6.js" ;;
-    *)  echo "python3 $HERE/graders/$(echo "$1" | tr 'A-Z' 'a-z').py" ;;
-  esac
-}
-
-section_fixture() {
-  case "$1" in
-    S6) echo "$HERE/fixtures-fe" ;;
-    *)  echo "$HERE/fixtures/sections/$(echo "$1" | tr 'A-Z' 'a-z')" ;;
-  esac
-}
-
-section_timebox_sec() {
-  case "$1" in
-    S0) echo 180 ;;   # ~3 min
-    S1) echo 360 ;;   # ~6 min
-    S2) echo 600 ;;   # ~10 min
-    S3) echo 480 ;;   # ~8 min
-    S4) echo 720 ;;   # ~12 min
-    S5) echo 600 ;;   # ~10 min
-    S6) echo 720 ;;   # ~12 min
-    *) die "unknown section $1" ;;
-  esac
-}
-
-section_work_class() {
-  case "$1" in
-    S0) echo bugfix ;;
-    S1) echo money-path ;;
-    S2) echo routing ;;
-    S3) echo ci-infra ;;
-    S4) echo refactor ;;   # spec calls it "refactor+tests"; ledger enum has no combined value
-    S5) echo greenfield-feature ;;
-    S6) echo frontend ;;
-    *) die "unknown section $1" ;;
-  esac
-}
-
-section_tier() {
-  case "$1" in
-    S0) echo 0 ;; S1) echo 1 ;; S2) echo 2 ;; S3) echo 2 ;; S4) echo 3 ;; S5) echo 4 ;;
-    *) die "unknown section $1" ;;
-  esac
-}
-
-die() { echo "error: $*" >&2; exit 1; }
-
-verdict_from_score() {
-  local s="$1"
-  if [ "$s" -ge 90 ]; then echo MERGE; elif [ "$s" -ge 50 ]; then echo FIXES; else echo BLOCK; fi
-}
+# shellcheck source=lib/sections.sh
+source "$HERE/lib/sections.sh"   # ALL_SECTIONS, section_*(), verdict_from_score(), die() - shared with bench.sh
 
 prepare_section() {
   local section="$1" model="$2"
