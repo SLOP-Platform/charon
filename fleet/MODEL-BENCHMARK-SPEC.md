@@ -4,8 +4,10 @@ Status: DESIGN (spec only — not built, not run). Owner: fleet manager.
 Purpose: a short, graded, **deterministic** test that CALIBRATES which capability tier a
 coding model belongs in (glm-5.2, deepseek-v4-pro, etc.) and surfaces **mis-tiered** models:
 a cheap model acing a high section → **promote candidate**; an expensive model failing a mid
-section → **demote candidate**. Total ~30–60 min of model time across 6 small self-contained
-sections. It is calibration, not a leaderboard vanity metric.
+section → **demote candidate**. Total ~30–70 min of model time across 7 small self-contained
+sections (S0–S5 backend + S6 frontend). It is calibration, not a leaderboard vanity metric.
+Charon is about to ship a Svelte GUI and we currently have **zero** frontend signal on any
+fleet model — S6 exists to close that gap before the GUI work is handed to a droid.
 
 Anchored to the real work classes this project ships so section scores **predict ticket
 performance**: `{money-path, routing, ci-infra, refactor, tests, greenfield-feature}` — the same
@@ -41,9 +43,11 @@ separates models. Auto-checkable — no LLM-judge in the pass path.
 | S3 | CI-infra: fix broken workflow (YAML + shell) | 2 | ci-infra | strong from frontier-open | ~8 min |
 | S4 | Adversarial: find subtle injected bug, write failing test, fix without regression | 3 | refactor + tests | frontier-open from strong | ~12 min |
 | S5 | Spec/scoping honesty on an UNDER-specified ticket | 4 | greenfield-feature | honest scoping vs. confident overbuild/hallucination | ~10 min |
+| S6 | Frontend: fetch + render a status component from a mocked API | 2–3 | frontend | can the model wire real data into a UI vs. fake/hardcode it | ~12 min |
 
 Gradient: 0 (trivial) → 1 (localized) → 2 (prove-it routing / infra) → 3 (adversarial) →
-4 (judgment under ambiguity). Total ≈ 49 min budget.
+4 (judgment under ambiguity). S6 is a **parallel axis** (frontend capability), not a rung on
+the backend tier ladder — see §4. Total ≈ 61 min budget.
 
 ---
 
@@ -175,6 +179,61 @@ implementation with hallucinated spec (worst outcome — actively harmful on rea
 **Floor:** economy 30, strong 60, frontier 100. *Note the inversion: here a bigger diff is often a
 WORSE score. This section rewards restraint, which cheap models rarely fake.*
 
+### S6 — Frontend: fetch + render a status component from a mocked API · Tier 2–3 · work_class=frontend
+> Charon is about to ship a Svelte GUI and no fleet model has been scored on frontend work.
+> This section is the frontend analogue of S2 (routing): it isn't enough for the UI to *look*
+> right on the sample data — the grader proves the component actually reads the response rather
+> than faking/hardcoding it, the same "anti-dodge" pattern as the #6 real-path proof.
+
+**Fixture (separate small throwaway repo `bench-fixture-fe/`, NOT the backend fixture):**
+- `index.html` — a bare mount point: `<div id="app"></div>` and a script tag loading the build
+  output.
+- `fixtures/status.json` — a mocked `GET /charon/status` response: a JSON array of 3 provider
+  rows, each `{ "name": string, "cost_class": "cheap"|"strong"|"premium", "status":
+  "ok"|"degraded"|"down" }`.
+- A preconfigured build toolchain (`package.json` + `vite.config.js`) with a Svelte template
+  already wired (`npm run build` → `dist/bundle.js`), so the model is not scored on tooling setup.
+- `tests/` is intentionally empty — the model does not write the grader-facing test here; the
+  hidden grader supplies its own harness (below).
+
+**Prompt (hand to model):** "Given the shape of `GET /charon/status` (see `fixtures/status.json`
+for an example response) and the bare mount point in `index.html`, build a small component that
+fetches `/charon/status` on load and renders one row per provider into `#app`. Each row must be
+a `[data-testid="provider-row"]` element containing `[data-testid="name"]`,
+`[data-testid="cost_class"]`, and `[data-testid="status"]` with the corresponding field text.
+Prefer Svelte (the project template is already set up for it). **If you cannot get a working
+Svelte build, plain vanilla JS with no framework is an acceptable fallback** — either way it
+must build via the provided `npm run build` and the rendered output must satisfy the
+`data-testid` contract above. Change only the component/app source; do not touch
+`fixtures/`, the grader, or the build config."
+
+**Objective checks (grader, deterministic, no LLM-judge):**
+- (a) **BUILD:** `npm run build` exits 0 and produces `dist/bundle.js` (or the configured output
+  path — grader reads `package.json`'s `build` script output, it doesn't hardcode a bundler).
+- (b) **RENDER:** grader loads the built bundle in a headless DOM (jsdom), stubs `global.fetch`
+  to resolve with `fixtures/status.json`, drives the mount (page load / `DOMContentLoaded`), and
+  asserts `#app` contains exactly 3 `[data-testid="provider-row"]` nodes whose
+  name/cost_class/status text matches the fixture — pure DOM assertions, no visual/screenshot
+  judging.
+- (c) **REAL-DATA PROOF (the anti-dodge gate, S2's frontend twin):** grader swaps in a
+  **mutated** fixture (different row count and values) and re-runs the same DOM harness. Output
+  MUST change to match the new fixture. A component that still renders the original 3 rows
+  proves it hardcoded/memorized the sample data instead of wiring the fetch response →
+  **feature-inert, section fails hard.**
+- (d) **SCOPE:** `git diff --stat` touches only the component/app source (+ generated `dist/`);
+  no edits to `fixtures/status.json`, the grader, or build config (grader diffs the file list).
+**Rubric (0–100):** 100 = a+b+c+d. 75 = a+b+d but c fails (renders correctly once, doesn't react
+to changed data — hardcoded/static). 40 = a only (builds, but rendered DOM doesn't satisfy the
+`data-testid` contract or fetch wiring is broken). 0 = build fails, or scope violated (cap at 25
+regardless of a/b/c if the model edited the fixture/grader to cheat).
+**Floor:** economy 25, strong 60, frontier 90. *A ≥90 score is treated as tier-3-caliber frontend
+work (real-data proof + clean scope); 60–89 is tier-2 (usable but not yet trusted unsupervised on
+GUI tickets).*
+**Fallback note (explicit ambiguity call):** the grader is framework-agnostic by construction —
+it never inspects source, only the built bundle's DOM behavior in jsdom — so a vanilla-JS
+solution that passes (a)–(d) scores identically to a Svelte solution. Svelte is preferred only
+because it's what the real GUI will use, not because the grader rewards it.
+
 ---
 
 ## 4. Aggregate & tiering rule
@@ -186,6 +245,10 @@ WORSE score. This section rewards restraint, which cheap models rarely fake.*
   AND cost is low (cheap model clears a high section). **Demote candidate:** measured tier < prior
   class tier (expensive model fails a mid section — e.g. strong model scoring 50 on S2).
 - S0 is a **sanity gate**, not a discriminator: <100 invalidates the run.
+- **S6 is a parallel axis, not part of the backend tier ladder.** It scores frontend capability
+  independently and is reported alongside — not folded into — the S0–S5 tier reach, since a
+  model's backend routing/refactor tier does not predict its frontend tier (and vice versa;
+  we have zero prior data here). A model can be e.g. "backend tier 3 / frontend tier 2."
 
 ---
 
@@ -198,14 +261,19 @@ live-review rows, so tiering reads one store:
 date        source  ref   work_class          tier  model          verdict  gate  score  note
 2026-07-05  bench   S2    routing             2     glm-5.2        FIXES    pass  50     real-path proof failed; test dodged models.json (#6 signature)
 2026-07-05  bench   S4    refactor            3     deepseek-v4-pro MERGE   pass  100    isolated namespaced-id bug; test discriminates; suite green
+2026-07-05  bench   S6    frontend            2     glm-5.2        FIXES    pass  75     builds+renders but static; failed mutated-fixture real-data proof
 ```
 
 Column mapping:
 - `date` = run date; `source` = **`bench`** (live reviews use `live`).
-- `ref` = section id (`S0`..`S5`).
+- `ref` = section id (`S0`..`S6`).
 - `work_class` = the section's class, from the existing enum
-  `{money-path,routing,ci-infra,refactor,tests,greenfield-feature,bugfix,docs}`.
-- `tier` = section tier `0..4`.
+  `{money-path,routing,ci-infra,refactor,tests,greenfield-feature,bugfix,docs,frontend}` —
+  **`frontend` added for S6.**
+- `tier` = section tier `0..4`. For S6 (spec range "2–3"), the row's `tier` field carries the
+  **band actually reached** (2 for a 60–89 score, 3 for a ≥90 score) — the TSV column stays a
+  single int like every other row; the 2–3 range in §1/§3 describes the section's spread, not a
+  literal cell value.
 - `model` = model id under test.
 - `verdict` = **derived from score** (deterministic, no judge): `score≥90 → MERGE`,
   `50–89 → FIXES`, `<50 → BLOCK`. Mirrors how live reviews land a verdict.
@@ -214,7 +282,7 @@ Column mapping:
 - `score` = the 0–100 rubric score (live rows carry `-` here; bench rows always carry a number).
 - `note` = one line, no tabs.
 
-One row per (model, section). A full calibration run = 6 rows/model.
+One row per (model, section). A full calibration run = 7 rows/model (S0–S6).
 
 ---
 
@@ -222,7 +290,7 @@ One row per (model, section). A full calibration run = 6 rows/model.
 
 **Benchmark = initial tier calibration (point-in-time).** Run once when onboarding a new model or
 after a provider swaps the weights behind a name. Seed fixture from the frozen tag, hand each
-section's prompt to the model in a clean worktree, run the hidden grader, append 6 `bench` rows.
+section's prompt to the model in a clean worktree, run the hidden grader, append 7 `bench` rows.
 Budget-gate it: premium models run only on demand.
 
 **Live ledger = ongoing per-class drift monitoring.** Every reviewed real ticket already appends a
