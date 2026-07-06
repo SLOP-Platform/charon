@@ -601,6 +601,24 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
             if path_only == "/charon/status":
                 self._json(200, srv.status_snapshot())
                 return
+            # Read-only per-session cost exposure (SESSION-COST): a caller that
+            # tags its own requests with X-Charon-Session can read back exactly its
+            # own cumulative cost, isolated from concurrent gateway traffic tagged
+            # with a different (or no) session id. No session= -> the global
+            # cumulative counter (same numbers as /charon/status's "usage"), so
+            # this endpoint degrades gracefully for a caller that never adopted
+            # sessions. Never a billing change — read-only view over existing
+            # cost_usd bookkeeping.
+            if path_only == "/charon/cost":
+                qs = parse_qs(urlsplit(self.path).query)
+                session_vals = qs.get("session") or []
+                session_q: str | None = session_vals[0] if session_vals else None
+                u = (srv.observer.session_usage(session_q) if session_q
+                     else srv.observer.cumulative_usage())
+                self._json(200, {"session": session_q, "tokens_in": u.tokens_in,
+                                 "tokens_out": u.tokens_out,
+                                 "cost_usd": round(u.cost_usd, 6)})
+                return
             if path_only in ("", "/charon"):
                 self._html(_CONSOLE_HTML)
                 return
@@ -673,6 +691,14 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
             self._json(413, {"error": {"message": "request body too large"}})
             return
         raw_body = self.rfile.read(length) if length else b""
+
+        # Optional per-session cost attribution (SESSION-COST): a caller (e.g. the
+        # benchmark harness) tags its own requests with a self-chosen id so its
+        # cumulative cost can be read back in isolation from concurrent gateway
+        # traffic — see GatewayProxy.session_usage / GET /charon/cost. Absent
+        # header → session=None, meaning "don't attribute" (global counter is
+        # unaffected either way).
+        session_id = self.headers.get("X-Charon-Session") or None
 
         orig_bj: dict = {}
         requested = ""
@@ -757,7 +783,7 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 resp, status, rhdrs = exc, exc.code, dict(exc.headers)
             except Exception:  # provider unreachable → fail over (don't 502 outright)
                 srv.observer.record(srv.observer.classify(okey, 503, {}, {},
-                                    expected_model=expected), count_usage=False)
+                                    expected_model=expected), count_usage=False, session=session_id)
                 srv.set_cooldown(route, None)
                 if more:  # count only providers we actually move PAST
                     failovers.append({"provider": route.label, "status": "unreachable",
@@ -777,7 +803,7 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                     obs_body = _extract(body_bytes, ctype)
                     obs = srv.observer.classify(okey, status, rhdrs, obs_body,
                                                 expected_model=expected)
-                    srv.observer.record(obs, count_usage=False)
+                    srv.observer.record(obs, count_usage=False, session=session_id)
                     if obs.failover:  # 429/402/503/404/401+billing/unsupported → fail over
                         if obs.exhausted:  # account-level exhaustion → cool the
                             srv.set_cooldown(route, obs.retry_after)  # provider (R10c);
@@ -832,11 +858,13 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                     #     double-bill that started this incident. No next provider →
                     #     fall through and serve it (never error).
                     if obs.pseudo_success and srv.failover_on_downgrade and more:
-                        srv.observer.record(obs, count_usage=True)  # visible, not silent
+                        srv.observer.record(  # visible, not silent
+                            obs, count_usage=True, session=session_id)
                         failovers.append({"provider": route.label, "status": "downgrade",
                                           "reason": obs.note or "served different model"})
                         continue
-                    srv.observer.record(obs, count_usage=True)  # served → bill usage (R10a)
+                    srv.observer.record(  # served → bill usage (R10a)
+                        obs, count_usage=True, session=session_id)
                     # ── post-response hooks ──────────────────────────
                     cost = obs.usage.cost_usd if obs.usage else 0.0
                     if srv.response_normalizer is not None:
@@ -881,8 +909,9 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 except Exception:  # upstream dropped/garbled before we committed any byte
                     stream_broke = True
                 if stream_broke:  # nothing sent yet → treat like a failed attempt, fail over
-                    srv.observer.record(srv.observer.classify(okey, 503, {}, {},
-                                        expected_model=expected), count_usage=False)
+                    srv.observer.record(
+                        srv.observer.classify(okey, 503, {}, {}, expected_model=expected),
+                        count_usage=False, session=session_id)
                     if more:
                         failovers.append({"provider": route.label, "status": "stream-error",
                                           "reason": "upstream stream interrupted"})
@@ -902,7 +931,8 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 # (visible, not the old silent double-bill). Otherwise (default, or no next
                 # provider) commit and SERVE this completed 200 with X-Charon-Downgrade.
                 if obs.pseudo_success and srv.failover_on_downgrade and more:
-                    srv.observer.record(obs, count_usage=True)  # visible, not silent
+                    srv.observer.record(  # visible, not silent
+                        obs, count_usage=True, session=session_id)
                     failovers.append({"provider": route.label, "status": "downgrade",
                                       "reason": obs.note or "served different model"})
                     continue
@@ -930,7 +960,7 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 served_obs = srv.observer.classify(okey, 200, rhdrs,
                                                    _extract(full_bytes, ctype),
                                                    expected_model=expected)
-                srv.observer.record(served_obs, count_usage=True)
+                srv.observer.record(served_obs, count_usage=True, session=session_id)
                 # Cache the streamed 200 (mirrors the non-stream path — only non-stream
                 # was cached before SR-2) but ONLY a cleanly-completed, non-downgrade
                 # stream: BLOCKER #1 (never cache a downgrade — HIT can't disclose it) +
