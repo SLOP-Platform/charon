@@ -1,0 +1,18 @@
+S6 — Frontend: fetch + render a status component from a mocked API
+(Tier 2-3, work_class=frontend; parallel axis, not part of the backend ladder)
+
+Given the shape of GET /charon/status (see fixtures/status.json for an
+example response) and the bare mount point in index.html, build a small
+component that fetches /charon/status on load and renders one row per
+provider into #app. Each row must be a [data-testid="provider-row"] element
+containing [data-testid="name"], [data-testid="cost_class"], and
+[data-testid="status"] with the corresponding field text.
+
+Prefer Svelte (the project template in src/App.svelte is already set up for
+it). If you cannot get a working Svelte build, plain vanilla JS with no
+framework is an acceptable fallback (replace src/main.js) - either way it
+must build via the provided `npm run build` and the rendered output must
+satisfy the data-testid contract above.
+
+Change only the component/app source (src/**, and index.html if needed); do
+not touch fixtures/, the grader, package.json, or vite.config.js.

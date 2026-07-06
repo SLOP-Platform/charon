@@ -1,7 +1,7 @@
 # model-scorecard.tsv — per-model x per-work-class performance ledger (build-rig only)
 # TSV, tab-separated, one row per reviewed unit. Columns (in order):
 # date	source	ref	work_class	tier	model	verdict	gate	score	time_s	cost_usd	corrections	note
-# date=YYYY-MM-DD; source=live|bench; work_class={money-path,routing,ci-infra,refactor,bugfix,tests,greenfield-feature,docs}
+# date=YYYY-MM-DD; source=live|bench; work_class={money-path,routing,ci-infra,refactor,bugfix,tests,greenfield-feature,docs,frontend}
 # tier=0-4 or - ; verdict=MERGE|FIXES|BLOCK ; gate=pass|fail|- ; score=0-100 (bench) or - (live)
 # time_s=wall-clock seconds or - ; cost_usd=gateway-attributed request cost or - ; corrections=correction/iteration rounds or - ; note has NO tabs
 2026-07-05	live	#5 strip-reasoning-content	routing	-	glm-5.2	MERGE	pass	-	-	-	-	clean; test captures forwarded body

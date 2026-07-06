@@ -1,0 +1,14 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install deps
+        run: pip install -e .
+      - name: Run tests
+        run: pytest -q
+      - name: Smoke test
+        run: HOST_PORT="$(shuf -i 20000-59999 -n1)" bash scripts/smoke.sh

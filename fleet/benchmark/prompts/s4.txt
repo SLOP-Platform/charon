@@ -1,0 +1,6 @@
+S4 — Adversarial: find subtle bug, write failing test, fix without regression
+(Tier 3, work_class=refactor+tests)
+
+normalize_response() has a subtle bug that corrupts a minority of responses.
+Find it, write a test that fails on the current code and passes once fixed,
+then fix it. All existing tests must stay green.

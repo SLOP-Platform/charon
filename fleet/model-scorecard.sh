@@ -11,7 +11,7 @@ TODAY="$(date +%F)"
 TAB=$'\t'
 
 VALID_SOURCE="live bench"
-VALID_CLASS="money-path routing ci-infra refactor bugfix tests greenfield-feature docs"
+VALID_CLASS="money-path routing ci-infra refactor bugfix tests greenfield-feature docs frontend"
 VALID_VERDICT="MERGE FIXES BLOCK"
 VALID_GATE="pass fail -"
 

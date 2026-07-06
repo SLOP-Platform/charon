@@ -1,0 +1,4 @@
+S0 — Trivial fix (Tier 0, work_class=bugfix)
+
+Provider.cost_class has an enum value misspelled 'chearp'; it should be 'cheap'.
+Fix it. Change nothing else.

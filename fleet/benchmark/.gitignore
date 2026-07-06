@@ -1,0 +1,7 @@
+node_modules/
+dist/
+runs/
+.pytest_cache/
+.hypothesis/
+__pycache__/
+*.pyc

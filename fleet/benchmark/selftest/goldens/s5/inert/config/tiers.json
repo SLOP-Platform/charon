@@ -1,0 +1,5 @@
+{
+  "default_tier": "cheap",
+  "exhausted_after": 3,
+  "free_first": true
+}

@@ -1,0 +1,4 @@
+[
+  { "name": "prov-x", "cost_class": "premium", "status": "ok" },
+  { "name": "prov-y", "cost_class": "cheap", "status": "down" }
+]

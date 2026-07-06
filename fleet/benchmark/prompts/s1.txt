@@ -1,0 +1,5 @@
+S1 — Localized money-path bugfix + obvious test (Tier 1, work_class=money-path)
+
+cheapest_provider(providers) is meant to return the provider with the lowest
+cost_rank. It currently returns the last provider in the list. Fix it and add
+a test that would have caught the bug.

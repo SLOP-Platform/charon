@@ -1,0 +1,10 @@
+{
+  "name": "charon-fleet-benchmark",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Grader tooling deps for fleet/benchmark (S6 jsdom render + anti-dodge checks). Build-rig only, not shipped with the product.",
+  "license": "ISC",
+  "devDependencies": {
+    "jsdom": "^29.1.1"
+  }
+}

@@ -1,0 +1,15 @@
+S3 — CI-infra: fix broken workflow (Tier 2, work_class=ci-infra)
+
+CI is red. .github/workflows/ci.yml and scripts/smoke.sh are broken. Make the
+gate green without weakening what it checks:
+  1. Fix the YAML indentation error under `steps:`.
+  2. Fix the shell bug: the smoke script's pipeline can mask a curl failure
+     because `set -o pipefail` is missing — a stage after grep (tee) always
+     exits 0 even when curl fails, so the script can report "ok" when the
+     health endpoint is actually unreachable/unhealthy. Fix it so a failing
+     health check makes the whole script exit non-zero.
+  3. Remove the hardcoded host port (8080) — it can collide with another
+     process. Make it configurable/ephemeral instead of a fixed literal, in
+     both ci.yml and smoke.sh.
+Do not delete or weaken any existing check (the two "CHECK:" markers in
+smoke.sh must still be satisfied).

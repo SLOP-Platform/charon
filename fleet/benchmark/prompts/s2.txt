@@ -1,0 +1,7 @@
+S2 — Routing correctness proven on the REAL path (Tier 2, work_class=routing)
+
+Add cost-aware ordering: select_provider() must return candidate providers
+sorted by ascending cost_rank as declared in models.json. Prove it with a
+test that exercises the real config-loading path end-to-end (do not
+monkeypatch/stub the models.json loader or use the _shortcut_providers_for_tests
+helper — that does not prove the real path works).
