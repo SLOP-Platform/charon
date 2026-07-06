@@ -13,7 +13,9 @@ import socketserver
 import threading
 import urllib.request
 
+from charon.proxy import _SESSION_USAGE_MAX, GatewayProxy, ProxyObservation
 from charon.proxy_server import GatewayProxyServer, UpstreamRoute
+from charon.types import Usage
 
 _SEEN_AUTH: list[str] = []
 _SEEN_UA: list[str] = []  # User-Agent the upstream actually received
@@ -723,6 +725,48 @@ def test_session_cost_isolated_across_sessions_and_from_global() -> None:
     finally:
         proxy.shutdown()
         upstream.shutdown()
+
+
+def _record_session(observer: GatewayProxy, session: str, cost: float = 0.01) -> None:
+    obs = ProxyObservation(
+        requested_model="m", returned_model="m", status=200,
+        exhausted=False, pseudo_success=False,
+        usage=Usage(tokens_in=1, tokens_out=1, cost_usd=cost),
+    )
+    observer.record(obs, count_usage=True, session=session)
+
+
+def test_session_usage_bounded_lru_eviction() -> None:
+    """SESSION-COST bucket is keyed by the caller-supplied ``X-Charon-Session``
+    header on an open-by-default gateway — an unbounded dict there is a
+    memory-leak / DoS vector (a client can mint unlimited distinct session ids).
+    ``_session_usage`` must therefore be a bounded LRU: inserting more than
+    ``_SESSION_USAGE_MAX`` distinct ids evicts the OLDEST (least-recently-used),
+    while a session touched recently survives."""
+    observer = GatewayProxy()
+
+    # Fill to the cap.
+    for i in range(_SESSION_USAGE_MAX):
+        _record_session(observer, f"s{i}")
+    assert len(observer._session_usage) == _SESSION_USAGE_MAX
+
+    # Touch "s0" (the oldest) again so it becomes most-recently-used, then push
+    # one brand-new session past the cap — the LRU evicted must be "s1" (the
+    # next-oldest untouched entry), NOT "s0".
+    _record_session(observer, "s0")
+    _record_session(observer, "s-new")
+
+    assert len(observer._session_usage) == _SESSION_USAGE_MAX
+    assert observer.session_usage("s0").cost_usd > 0.0  # recently used -> survives
+    assert observer.session_usage("s1").cost_usd == 0.0  # oldest untouched -> evicted
+    assert observer.session_usage("s-new").cost_usd > 0.0  # newest -> present
+
+    # Isolation still holds under eviction pressure: two live (unevicted)
+    # sessions never see each other's cost.
+    _record_session(observer, "alive-a", cost=0.02)
+    _record_session(observer, "alive-b", cost=0.05)
+    assert round(observer.session_usage("alive-a").cost_usd, 6) == 0.02
+    assert round(observer.session_usage("alive-b").cost_usd, 6) == 0.05
 
 
 def test_proxy_forwards_normal_body_unchanged() -> None:

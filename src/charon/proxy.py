@@ -22,9 +22,18 @@ live via ``charon doctor`` (no real network in these unit tests).
 from __future__ import annotations
 
 import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 
 from .types import Usage
+
+# Cap on distinct session ids tracked in ``GatewayProxy._session_usage`` (SESSION-COST).
+# The bucket is keyed by the caller-supplied ``X-Charon-Session`` header on an
+# open-by-default gateway, so without a bound a client minting varied session ids
+# grows this dict (and process RSS) without limit — a memory-leak / DoS vector.
+# Bounded with LRU eviction: the least-recently-used session id is dropped once a
+# NEW session id would push the dict past this cap.
+_SESSION_USAGE_MAX = 4096
 
 # Gateway statuses that mean "this model/account is out of capacity right now"
 # (transient — retry later / fail over).
@@ -253,10 +262,11 @@ class GatewayProxy:
         # ``X-Charon-Session`` id (proxy_server.py). Purely additive bookkeeping
         # alongside ``_usage`` — never read for routing/billing decisions, so this
         # is read-only cost EXPOSURE, not a billing change. A session id that never
-        # appears simply never gets an entry (unbounded only in the number of
-        # distinct session ids a caller chooses to use — the benchmark/CLI mint one
-        # per run, not per request).
-        self._session_usage: dict[str, Usage] = {}
+        # appears simply never gets an entry. Bounded via LRU eviction
+        # (``_SESSION_USAGE_MAX``) so a caller minting unbounded distinct session ids
+        # cannot grow this dict without limit (memory-leak / DoS on an
+        # open-by-default gateway) — see ``_SESSION_USAGE_MAX`` docstring.
+        self._session_usage: OrderedDict[str, Usage] = OrderedDict()
         # The proxy server is THREADED — concurrent agent calls race on this
         # state. A lock keeps usage summation and the exhausted set atomic.
         self._lock = threading.Lock()
@@ -420,12 +430,16 @@ class GatewayProxy:
                 )
                 if session is not None:
                     prev = self._session_usage.get(session, Usage())
+                    is_new = session not in self._session_usage
                     self._session_usage[session] = Usage(
                         tokens_in=prev.tokens_in + u.tokens_in,
                         tokens_out=prev.tokens_out + u.tokens_out,
                         cost_usd=prev.cost_usd + u.cost_usd,
                         latency_ms=prev.latency_ms + u.latency_ms,
                     )
+                    self._session_usage.move_to_end(session)
+                    if is_new and len(self._session_usage) > _SESSION_USAGE_MAX:
+                        self._session_usage.popitem(last=False)
 
     def is_exhausted(self, model: str) -> bool:
         with self._lock:
@@ -448,6 +462,8 @@ class GatewayProxy:
         traffic hits the same gateway. An unrecognized/never-seen session id returns
         a zero ``Usage`` (never raises)."""
         with self._lock:
+            if session in self._session_usage:
+                self._session_usage.move_to_end(session)
             return self._session_usage.get(session, Usage())
 
     def take_delta(self) -> Usage:
