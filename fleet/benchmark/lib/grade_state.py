@@ -48,10 +48,16 @@ def cmd_init(model, section, timebox_sec):
         "model": model, "section": section,
         "start_ts": time.time(), "timebox_sec": float(timebox_sec),
         "attempts": 0, "finalized": False, "worktree": str(worktree),
-        # cumulative gateway cost_usd (SR-5b) at section start, or None if the
-        # gateway isn't reachable/discoverable - `record` diffs against this to
-        # attribute the section's spend (best-effort, never estimated).
+        # cumulative gateway cost_usd (SR-5b, or the isolated per-session bucket
+        # when SESSION-COST is wired - see charon_cost.session_id()) at section
+        # start, or None if the gateway isn't reachable/discoverable - `record`
+        # diffs against this to attribute the section's spend (best-effort,
+        # never estimated).
         "cost_start_usd": charon_cost.snapshot_cost_usd(),
+        # "session" or "global" (charon_cost.cost_attribution_method) - recorded
+        # for audit: whether this section's cost delta was isolated from
+        # concurrent gateway traffic or (the pre-SESSION-COST default) global.
+        "cost_method": charon_cost.cost_attribution_method(),
     }
     save(model, section, meta)
     print(str(worktree))
@@ -122,6 +128,7 @@ def cmd_record(model, section, score, gate):
         "time_s": round(elapsed, 1),
         "timed_out": timed_out,
         "cost_usd": cost_usd,
+        "cost_method": meta.get("cost_method", "global"),
     }))
 
 

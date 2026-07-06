@@ -105,6 +105,28 @@ section_in_progress() {
   [ -f "$HERE/runs/$1/$2/meta.json" ]
 }
 
+cost_mode_notice() {
+  # SESSION-COST: one-time notice of which cost-attribution mode is active -
+  # "session" (isolated from concurrent gateway traffic under any OTHER
+  # session id) if the operator pre-wired CHARON_BENCH_SESSION_ID + a
+  # matching opencode.json X-Charon-Session header BEFORE launching this
+  # opencode tab, else "global" (the original method - a concurrent fleet
+  # tab hitting the same gateway during this run WILL pollute cost_usd).
+  # See lib/charon_cost.py `session_id()` for exactly why bench.sh cannot
+  # mint this id itself (opencode's request headers are fixed at ITS OWN
+  # process launch, which already happened before bench.sh ever runs).
+  local mode
+  mode="$(python3 "$HERE/lib/charon_cost.py" mode 2>/dev/null || echo global)"
+  if [ "$mode" = "session" ]; then
+    echo "(cost attribution: SESSION-isolated - immune to other tabs on this gateway)"
+  else
+    echo "(cost attribution: GLOBAL gateway counter - a concurrent fleet tab on the"
+    echo " same gateway during this run will pollute cost_usd; set CHARON_BENCH_SESSION_ID"
+    echo " + wire opencode.json's X-Charon-Session header BEFORE this opencode tab starts"
+    echo " for isolated per-session cost instead)"
+  fi
+}
+
 current_section() {
   # first section in the fixed S0..S6 queue not yet finalized for $model;
   # prints "" if every section is finalized (run complete).
@@ -161,6 +183,7 @@ do_start() {
   echo "########################################################################"
   echo "# ANNOUNCE: running this benchmark AS model = $model"
   echo "########################################################################"
+  cost_mode_notice
   local sec; sec="$(current_section "$model")"
   if [ -z "$sec" ]; then
     echo "All 7 sections (S0-S6) already finalized for $model - printing the tier chart."
@@ -216,14 +239,14 @@ do_grade() {
   else
     tier="$(section_tier "$section")"
   fi
-  # Gateway-attributed spend (SR-5b): grade_state.py `record` diffs Charon's
-  # own cumulative `cost_usd` (GET /charon/status) between this section's
-  # `init` and now (lib/charon_cost.py). "-" only if the gateway wasn't
-  # reachable/discoverable at either snapshot - never a guess. NOTE: this is a
-  # GLOBAL gateway counter, not per-session - a concurrent fleet tab hitting
-  # the same gateway during this section would pollute the delta (no
-  # per-session cost exists in Charon yet); correct for the intended
-  # one-dedicated-tab bench.sh workflow.
+  # Gateway-attributed spend (SR-5b / SESSION-COST): grade_state.py `record`
+  # diffs Charon's cumulative `cost_usd` between this section's `init` and
+  # now (lib/charon_cost.py) - per-SESSION (isolated from concurrent traffic
+  # under any other id) when CHARON_BENCH_SESSION_ID is wired, else the
+  # original GLOBAL gateway counter (a concurrent fleet tab on the same
+  # gateway during this section pollutes the delta - see cost_mode_notice
+  # above, announced once at `start`). "-" only if the gateway wasn't
+  # reachable/discoverable at either snapshot - never a guess.
   local cost_usd; cost_usd="$(jget "$record" cost_usd)"
 
   bash "$SCORECARD" append "$TODAY" bench "$section" "$wclass" "$tier" "$model" "$verdict" "$gate" "$final_score" "$time_s" "$cost_usd" "$corrections" "$note"
