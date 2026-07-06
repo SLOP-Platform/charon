@@ -1,9 +1,10 @@
 # model-scorecard.tsv — per-model x per-work-class performance ledger (build-rig only)
 # TSV, tab-separated, one row per reviewed unit. Columns (in order):
-# date	source	ref	work_class	tier	model	verdict	gate	score	note
+# date	source	ref	work_class	tier	model	verdict	gate	score	time_s	cost_usd	corrections	note
 # date=YYYY-MM-DD; source=live|bench; work_class={money-path,routing,ci-infra,refactor,bugfix,tests,greenfield-feature,docs}
-# tier=0-4 or - ; verdict=MERGE|FIXES|BLOCK ; gate=pass|fail|- ; score=0-100 (bench) or - (live) ; note has NO tabs
-2026-07-05	live	#5 strip-reasoning-content	routing	-	glm-5.2	MERGE	pass	-	clean; test captures forwarded body
-2026-07-05	live	#6 sr6-auto-cost-rank	routing	-	glm-5.2	BLOCK	pass	-	feature inert; tests dodged models.json path
-2026-07-05	live	#17 balance-drain	money-path	-	deepseek-v4-pro	MERGE	pass	-	correct in module-only scope; persistence gap noted for wiring
-2026-07-05	live	SR-6-deepseek-redo	routing	-	deepseek-v4-pro	BLOCK	pass	-	wrote correct fix AND real add_model-path tests but left ALL uncommitted (operational, NOT a code/test dodge); needed nudge/no visible progress; confabulated false commit history when asked (invented qui-gon-jinn session)
+# tier=0-4 or - ; verdict=MERGE|FIXES|BLOCK ; gate=pass|fail|- ; score=0-100 (bench) or - (live)
+# time_s=wall-clock seconds or - ; cost_usd=gateway-attributed request cost or - ; corrections=correction/iteration rounds or - ; note has NO tabs
+2026-07-05	live	#5 strip-reasoning-content	routing	-	glm-5.2	MERGE	pass	-	-	-	-	clean; test captures forwarded body
+2026-07-05	live	#6 sr6-auto-cost-rank	routing	-	glm-5.2	BLOCK	pass	-	-	-	-	feature inert; tests dodged models.json path
+2026-07-05	live	#17 balance-drain	money-path	-	deepseek-v4-pro	MERGE	pass	-	-	-	-	correct in module-only scope; persistence gap noted for wiring
+2026-07-05	live	SR-6-deepseek-redo	routing	-	deepseek-v4-pro	BLOCK	pass	-	-	-	-	wrote correct fix AND real add_model-path tests but left ALL uncommitted (operational, NOT a code/test dodge); needed nudge/no visible progress; confabulated false commit history when asked (invented qui-gon-jinn session)

@@ -258,10 +258,10 @@ A benchmark run appends `bench` rows to `fleet/state/model-scorecard.tsv` — id
 live-review rows, so tiering reads one store:
 
 ```
-date        source  ref   work_class          tier  model          verdict  gate  score  note
-2026-07-05  bench   S2    routing             2     glm-5.2        FIXES    pass  50     real-path proof failed; test dodged models.json (#6 signature)
-2026-07-05  bench   S4    refactor            3     deepseek-v4-pro MERGE   pass  100    isolated namespaced-id bug; test discriminates; suite green
-2026-07-05  bench   S6    frontend            2     glm-5.2        FIXES    pass  75     builds+renders but static; failed mutated-fixture real-data proof
+date        source  ref   work_class          tier  model          verdict  gate  score  time_s  cost_usd  corrections  note
+2026-07-05  bench   S2    routing             2     glm-5.2        FIXES    pass  50     612     0.0084    2            real-path proof failed; test dodged models.json (#6 signature)
+2026-07-05  bench   S4    refactor            3     deepseek-v4-pro MERGE   pass  100    701     0.0119    1            isolated namespaced-id bug; test discriminates; suite green
+2026-07-05  bench   S6    frontend            2     glm-5.2        FIXES    pass  75     540     0.0071    3            builds+renders but static; failed mutated-fixture real-data proof
 ```
 
 Column mapping:
@@ -280,9 +280,55 @@ Column mapping:
 - `gate` = `pass|fail` from the section's gate check (pytest/actionlint/smoke); `-` if section has
   no gate.
 - `score` = the 0–100 rubric score (live rows carry `-` here; bench rows always carry a number).
+- `time_s`, `cost_usd`, `corrections` = the **efficiency triple** — see §5a. Live rows carry `-`
+  for all three unless a future live-review flow starts capturing them too.
 - `note` = one line, no tabs.
 
 One row per (model, section). A full calibration run = 7 rows/model (S0–S6).
+
+---
+
+## 5a. Efficiency metrics — capture, cap, and effect on score
+
+Score alone answers "did it clear the bar." The efficiency triple answers "how much did clearing
+it cost" — a model that ties on score but takes 3x longer, 3x the corrections, or 3x the tokens
+is a *worse* tiering candidate even at equal score. **All three are AUTO-captured by the runner —
+never hand-entered.** A human does not time a stopwatch or eyeball a token count; if a value can't
+be captured automatically for a given run, the cell is `-`, not a guess.
+
+- **`time_s`** — wall-clock seconds for the section, measured by the runner itself (start
+  timestamp when the fixture/prompt is handed to the model, end timestamp when the model's
+  attempt is ready for grading). This is **free** — the runner already brackets each section to
+  enforce the per-section time-box (see TICKET-BENCHMARK-HARNESS.md §5 "Fast-to-run"), so
+  `time_s` is just that same clock's elapsed value, recorded rather than discarded. No
+  self-reporting by the model.
+- **`corrections`** — count of correction/iteration rounds the model needed within the section:
+  each time the model's attempt fails a checkable gate (tests red, build fails, grader partial
+  check fails) and the model is given another pass to fix it before the section's final grade,
+  that's one correction round. The runner counts these as they happen (it already knows when it
+  re-prompts after a failed intermediate check); this is not a subjective judgment call.
+  **CAP: 3 correction rounds per section.** A run that needs a 4th round is cut off — the section
+  is graded on whatever state exists at the cap, `corrections` is recorded as the literal count
+  (may report `3+` if the cap forced a stop before convergence), and the **rubric score is capped
+  at the section's "partial credit" band** for that section (i.e. the run cannot land in the
+  section's top band once it has blown the correction cap, even if the final diff would otherwise
+  qualify) — repeated flailing to a correct answer is not equivalent to reaching it directly, and
+  an uncapped model could otherwise game score by brute-force retrying. This also prevents an
+  unresponsive/looping model from hanging a many-models run indefinitely, same rationale as the
+  wall-clock time-box.
+- **`cost_usd`** — attributed from the gateway's own per-request cost tracking (SR-5b already
+  computes `cost_usd` per request at the proxy). **Best-effort:** populated only when the section
+  is driven through a flow that can attribute gateway usage back to this specific benchmark call
+  (e.g. a headless driver hitting the gateway directly, or a manual opencode-tab run configured to
+  tag/attribute its requests to the section). When the driving flow can't make that attribution
+  (e.g. an ungated manual paste with no request tagging), the cell is `-` — never estimated or
+  backfilled with a guess. No new cost-accounting logic is invented here; this column only
+  surfaces a number the gateway is already computing.
+
+Aggregate reads (`model-scorecard.sh render`) report the **mean** of each efficiency column per
+model across rows where that column has data, alongside the existing merge/block and bench-score
+pivots — so the scorecard is genuinely multi-axis: score tells you *if* a model clears the bar,
+the efficiency triple tells you *how expensively*.
 
 ---
 

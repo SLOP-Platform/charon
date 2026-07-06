@@ -25,9 +25,11 @@ row_count() {
 }
 
 cmd_append() {
-  [ $# -ge 9 ] || die "append needs: <date> <source> <ref> <work_class> <tier> <model> <verdict> <gate> <score> <note...>"
+  [ $# -ge 12 ] || die "append needs: <date> <source> <ref> <work_class> <tier> <model> <verdict> <gate> <score> <time_s> <cost_usd> <corrections> <note...>"
   local date="$1" source="$2" ref="$3" wclass="$4" tier="$5" model="$6" verdict="$7" gate="$8" score="$9"
   shift 9
+  local time_s="$1" cost_usd="$2" corrections="$3"
+  shift 3
   local note="$*"
   [ -n "$note" ] || note="-"
   case "$note" in *"$TAB"*) die "note must not contain tabs";; esac
@@ -38,9 +40,13 @@ cmd_append() {
   in_set "$gate"    $VALID_GATE    || die "gate must be one of: $VALID_GATE"
   case "$tier" in 0|1|2|3|4|-) ;; *) die "tier must be 0-4 or -";; esac
   case "$score" in -) ;; ''|*[!0-9]*) die "score must be 0-100 or -";; *) [ "$score" -ge 0 ] && [ "$score" -le 100 ] || die "score 0-100";; esac
+  case "$time_s" in -) ;; ''|*[!0-9.]*) die "time_s must be a non-negative number of seconds or -";; esac
+  case "$cost_usd" in -) ;; ''|*[!0-9.]*) die "cost_usd must be a non-negative number or -";; esac
+  case "$corrections" in -) ;; ''|*[!0-9]*) die "corrections must be a non-negative integer or -";; esac
   [ -f "$TSV" ] || die "ledger not found: $TSV"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$date" "$source" "$ref" "$wclass" "$tier" "$model" "$verdict" "$gate" "$score" "$note" >> "$TSV"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$date" "$source" "$ref" "$wclass" "$tier" "$model" "$verdict" "$gate" "$score" \
+    "$time_s" "$cost_usd" "$corrections" "$note" >> "$TSV"
   echo "appended: $model / $wclass / $verdict (rows now $(row_count))"
 }
 
@@ -48,7 +54,7 @@ cmd_render() {
   [ -f "$TSV" ] || die "ledger not found: $TSV"
   awk -F'\t' '
     !/^#/ && NF>0 {
-      m=$6; wc=$4; v=$7; src=$2; tier=$5; sc=$9
+      m=$6; wc=$4; v=$7; src=$2; tier=$5; sc=$9; ts=$10; cu=$11; co=$12
       key=m SUBSEP wc
       n[key]++
       if(!(key in seen)){ seen[key]=1; order[++ok]=key }
@@ -59,6 +65,10 @@ cmd_render() {
         tsum[tk]+=sc; tn[tk]++
         if(!(tk in tseen)){ tseen[tk]=1; torder[++tk_n]=tk }
       }
+      if(!(m in eseen)){ eseen[m]=1; eorder[++en]=m }
+      if(ts ~ /^[0-9.]+$/){ tssum[m]+=ts; tsn[m]++ }
+      if(cu ~ /^[0-9.]+$/){ cusum[m]+=cu; cun[m]++ }
+      if(co ~ /^[0-9]+$/){ cosum[m]+=co; con[m]++ }
     }
     END{
       printf "MODEL-SCORECARD  (per model x work_class)\n"
@@ -76,6 +86,18 @@ cmd_render() {
         for(i=1;i<=tk_n;i++){
           k=torder[i]; split(k,a,SUBSEP)
           printf "%-16s %4s %3d %8.1f\n",a[1],a[2],tn[k],tsum[k]/tn[k]
+        }
+      }
+      if(en>0){
+        printf "\nEFFICIENCY mean  (per model, rows with data only; \"-\" = no data)\n"
+        printf "%-16s %9s %10s %11s\n","model","mean_s","mean_$","mean_corr"
+        printf "%-16s %9s %10s %11s\n","-----","------","------","---------"
+        for(i=1;i<=en;i++){
+          m=eorder[i]
+          mt=(tsn[m]?sprintf("%9.1f",tssum[m]/tsn[m]):sprintf("%9s","-"))
+          mc=(cun[m]?sprintf("%10.4f",cusum[m]/cun[m]):sprintf("%10s","-"))
+          mo=(con[m]?sprintf("%11.1f",cosum[m]/con[m]):sprintf("%11s","-"))
+          printf "%-16s %s %s %s\n",m,mt,mc,mo
         }
       }
     }' "$TSV"
