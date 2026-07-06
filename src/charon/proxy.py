@@ -249,6 +249,14 @@ class GatewayProxy:
         self._usage = Usage()
         self._delta_seen = Usage()
         self._model_pricing = model_pricing or {}
+        # Per-session cumulative usage (SESSION-COST), keyed by the caller-supplied
+        # ``X-Charon-Session`` id (proxy_server.py). Purely additive bookkeeping
+        # alongside ``_usage`` — never read for routing/billing decisions, so this
+        # is read-only cost EXPOSURE, not a billing change. A session id that never
+        # appears simply never gets an entry (unbounded only in the number of
+        # distinct session ids a caller chooses to use — the benchmark/CLI mint one
+        # per run, not per request).
+        self._session_usage: dict[str, Usage] = {}
         # The proxy server is THREADED — concurrent agent calls race on this
         # state. A lock keeps usage summation and the exhausted set atomic.
         self._lock = threading.Lock()
@@ -386,10 +394,18 @@ class GatewayProxy:
         sees the whole old or whole new dict, never a torn view."""
         self._model_pricing = model_pricing or {}
 
-    def record(self, obs: ProxyObservation, *, count_usage: bool = True) -> None:
+    def record(self, obs: ProxyObservation, *, count_usage: bool = True,
+              session: str | None = None) -> None:
         """Fold a classified observation into proxy state (atomically). Exclusion is
         always recorded on failover; usage is folded only when ``count_usage`` (the
-        attempt was actually served to the client — ADR-0005 R10a)."""
+        attempt was actually served to the client — ADR-0005 R10a).
+
+        ``session`` (SESSION-COST) optionally also folds the same usage into a
+        per-session bucket, isolated from both the global counter and every other
+        session id — so concurrent gateway traffic tagged with a different session
+        id (or untagged, ``session=None``) never pollutes this one's cumulative
+        cost. Purely additive: the global counter's behavior is unchanged whether
+        or not ``session`` is given."""
         with self._lock:
             if obs.failover:
                 # record under the requested model — the router excludes by model id.
@@ -402,6 +418,14 @@ class GatewayProxy:
                     cost_usd=self._usage.cost_usd + u.cost_usd,
                     latency_ms=self._usage.latency_ms + u.latency_ms,
                 )
+                if session is not None:
+                    prev = self._session_usage.get(session, Usage())
+                    self._session_usage[session] = Usage(
+                        tokens_in=prev.tokens_in + u.tokens_in,
+                        tokens_out=prev.tokens_out + u.tokens_out,
+                        cost_usd=prev.cost_usd + u.cost_usd,
+                        latency_ms=prev.latency_ms + u.latency_ms,
+                    )
 
     def is_exhausted(self, model: str) -> bool:
         with self._lock:
@@ -416,6 +440,15 @@ class GatewayProxy:
     def cumulative_usage(self) -> Usage:
         with self._lock:
             return self._usage
+
+    def session_usage(self, session: str) -> Usage:
+        """Cumulative ``Usage`` folded under one session id (SESSION-COST) — isolated
+        from the global counter and from every other session id, so a benchmark run
+        (or any caller) can read exactly its own attributable spend even while other
+        traffic hits the same gateway. An unrecognized/never-seen session id returns
+        a zero ``Usage`` (never raises)."""
+        with self._lock:
+            return self._session_usage.get(session, Usage())
 
     def take_delta(self) -> Usage:
         """Atomically return usage since the last call (so a backend can attribute

@@ -662,6 +662,69 @@ def test_proxy_preserves_tool_calls_when_stripping() -> None:
         up.shutdown()
 
 
+def _post_with_session(url: str, payload: dict, session: str | None):
+    headers = {"Content-Type": "application/json"}
+    if session is not None:
+        headers["X-Charon-Session"] = session
+    req = urllib.request.Request(
+        url, data=json.dumps(payload).encode(), headers=headers, method="POST")
+    resp = urllib.request.urlopen(req, timeout=10)
+    return resp.status, json.loads(resp.read())
+
+
+def test_session_cost_isolated_across_sessions_and_from_global() -> None:
+    """SESSION-COST: a caller-supplied ``X-Charon-Session`` header attributes cost
+    to a private per-session bucket that concurrent traffic under a DIFFERENT (or
+    absent) session id can never pollute — the gap the benchmark hit reading the
+    gateway-global ``usage.cost_usd`` while other traffic shared the same gateway.
+    The global counter keeps summing everything, unchanged."""
+    upstream = _Threaded(("127.0.0.1", 0), _MockUpstream)
+    threading.Thread(target=upstream.serve_forever, daemon=True).start()
+    up_host, up_port = upstream.server_address[0], upstream.server_address[1]
+
+    proxy = GatewayProxyServer(upstream_base=f"http://{up_host}:{up_port}",
+                               api_key="secret-key", model_ids=["kimi-k2.7-code"])
+    proxy.serve_in_thread()
+    try:
+        # session "a" served twice ($0.01 each), session "b" once, and one
+        # request with NO session header at all (must not land in either bucket).
+        _post_with_session(proxy.url + "/v1/chat/completions",
+                          {"model": "kimi-k2.7-code"}, "a")
+        _post_with_session(proxy.url + "/v1/chat/completions",
+                          {"model": "kimi-k2.7-code"}, "b")
+        _post_with_session(proxy.url + "/v1/chat/completions",
+                          {"model": "kimi-k2.7-code"}, "a")
+        _post_with_session(proxy.url + "/v1/chat/completions",
+                          {"model": "kimi-k2.7-code"}, None)
+
+        usage_a = proxy.observer.session_usage("a")
+        usage_b = proxy.observer.session_usage("b")
+        assert round(usage_a.cost_usd, 6) == 0.02
+        assert round(usage_b.cost_usd, 6) == 0.01
+        # an unseen session id is zero, never an error / never another session's total
+        assert proxy.observer.session_usage("never-seen").cost_usd == 0.0
+        # global cumulative keeps summing EVERYTHING (4 requests × $0.01), unaffected
+        # by session tracking — a pure read-only addition, not a billing change.
+        assert round(proxy.observer.cumulative_usage().cost_usd, 6) == 0.04
+
+        # the read-only GET /charon/cost?session=<id> surface agrees with the
+        # in-process reader, and omitting ?session= falls back to the global total.
+        with urllib.request.urlopen(proxy.url + "/charon/cost?session=a", timeout=10) as r:
+            body = json.loads(r.read())
+        assert body == {"session": "a", "tokens_in": 22, "tokens_out": 14,
+                        "cost_usd": 0.02}
+        with urllib.request.urlopen(proxy.url + "/charon/cost?session=b", timeout=10) as r:
+            body_b = json.loads(r.read())
+        assert body_b["cost_usd"] == 0.01
+        with urllib.request.urlopen(proxy.url + "/charon/cost", timeout=10) as r:
+            body_global = json.loads(r.read())
+        assert body_global["session"] is None
+        assert body_global["cost_usd"] == 0.04
+    finally:
+        proxy.shutdown()
+        upstream.shutdown()
+
+
 def test_proxy_forwards_normal_body_unchanged() -> None:
     """#5: a body with no output-only fields is forwarded verbatim."""
     _SEEN_MESSAGES.clear()
