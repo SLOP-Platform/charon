@@ -1,54 +1,57 @@
 #!/usr/bin/env python3
-"""Final tier chart for a benchmarked model: section->grade table, backend
-tier reach (S0-S5) + frontend tier (S6, a parallel axis per
-MODEL-BENCHMARK-SPEC.md #4), and this model's RANK within each tier against
-every other model already scored in model-scorecard.tsv.
+"""Final tier chart for a benchmarked model: section->grade table, ONE overall
+tier placement across ALL 7 sections (S0-S6), and this model's RANK within
+that tier against every other model already scored in model-scorecard.tsv.
 
 No fleet/tiers.json exists in this repo (checked before building this) -
-tier definitions are read directly from MODEL-BENCHMARK-SPEC.md #0/#1/#4:
-  backend tier 0 = S0 sanity gate only (NOT a capability tier)
-  backend tier 1 = "economy"                        (clears S1)
-  backend tier 2 = "strong"                          (clears S1+S2+S3)
-  backend tier 3 = "frontier-open"                    (clears S1+S2+S3+S4)
-  backend tier 4 = "frontier-open, honesty-verified"  (clears S1..S5)
+the composite/ladder below is this chart's own definition, documented here
+so it's never silent:
 
-"Cleared" = every backend section at or below that tier scored >=50
-(non-BLOCK per model-scorecard's verdict rule). This is a single unified
-bar independent of any prior model-class label, since the whole point of
-the benchmark is to MEASURE the class rather than assume it (the spec's
-per-class floors in #3 are a richer breakdown of the same idea - this
-chart uses the coarser, class-agnostic cut so an unfamiliar model can
-still be tiered with no prior assumption about which class it belongs to).
-S0 must score exactly 100 (the spec's sanity gate, #1) or the run is
-flagged INVALID rather than tiered at all.
+COMPOSITE FORMULA
+  S0 stays a pass/fail SANITY GATE, not a capability input (it only proves
+  the harness/model-plumbing works at all - scoring it into a capability
+  average would reward "the tool didn't crash" as if it were a skill). It
+  must score exactly 100 or the whole run is flagged INVALID rather than
+  tiered.
+  Once S0=100, the OVERALL COMPOSITE = the unweighted mean of every graded
+  section's score in S1..S6 (equal weight; S6 counts alongside the backend
+  sections instead of sitting on a separate axis - this is the one change
+  from the prior two-tier chart, replacing "backend tier reach" + a parallel
+  "frontend tier" with a single number). Ungraded sections are simply
+  excluded from the mean (a partial run still gets a running composite).
 
-S6 (frontend) is scored on its own floor per the spec's explicit "S6 is a
-parallel axis, not part of the backend ladder" rule (#4), mirroring run.sh's
-existing S6->tier mapping:
-  >=90  -> "frontier-open frontend (tier 3)"
-  60-89 -> "strong frontend (tier 2)"
-  <60   -> NO FRONTEND TIER (below the lowest floor)
+TIER LADDER (simple, plain-word, no compound/parenthetical jargon):
+  Frontier   composite >= 90
+  Strong     composite >= 75 and < 90
+  Capable    composite >= 60 and < 75
+  Basic      composite >= 50 and < 60
+  No Tier    composite <  50  -- "too weak to place"
+These cuts mirror the existing MERGE(>=90)/FIXES(50-89)/BLOCK(<50) verdict
+bands used per-section (MODEL-BENCHMARK-SPEC.md), just split FIXES into two
+human-readable notches (Strong/Capable) instead of leaving one wide band.
 
-Rank = composite score (mean of the graded S0-S5 rows for backend; the S6
-score alone for frontend) versus every OTHER model in model-scorecard.tsv
-that lands in the SAME tier, sorted descending by composite, ties broken
-by lower mean time_s (faster is the better tiering candidate at equal
-score, per the efficiency-triple rationale in MODEL-BENCHMARK-SPEC.md #5a).
+RANK = this model's composite versus every OTHER model in
+model-scorecard.tsv that lands in the SAME tier, sorted descending by
+composite, ties broken by lower mean time_s across all graded sections
+(faster is the better tiering candidate at equal score, per the
+efficiency-triple rationale in MODEL-BENCHMARK-SPEC.md #5a). Models with no
+tier (INVALID or "No Tier") are never ranked - the chart says so plainly
+instead of printing a rank among the unplaceable.
 """
 import sys
 from pathlib import Path
 
 TSV = Path(__file__).resolve().parent.parent.parent / "model-scorecard.tsv"
 
-BACKEND_SECTIONS = ["S0", "S1", "S2", "S3", "S4", "S5"]
-SECTION_TIER = {"S0": 0, "S1": 1, "S2": 2, "S3": 2, "S4": 3, "S5": 4}
-BACKEND_TIER_NAME = {
-    0: "below floor / untiered",
-    1: "economy",
-    2: "strong",
-    3: "frontier-open",
-    4: "frontier-open (honesty-verified)",
-}
+ALL_SECTIONS = ["S0", "S1", "S2", "S3", "S4", "S5", "S6"]
+CAPABILITY_SECTIONS = ["S1", "S2", "S3", "S4", "S5", "S6"]
+
+TIER_LADDER = [
+    (90, "Frontier"),
+    (75, "Strong"),
+    (60, "Capable"),
+    (50, "Basic"),
+]
 
 
 def load_rows(tsv_path=TSV):
@@ -80,37 +83,40 @@ def bench_rows_for(rows, model):
     return out
 
 
-def backend_tier_reach(section_scores):
-    s0 = section_scores.get("S0")
-    if s0 is None or s0["score"] != 100:
-        return 0, "INVALID - S0 sanity gate not clean (100 required); investigate harness/model-plumbing before trusting any other section"
-    reach = 0
-    for sec in ["S1", "S2", "S3", "S4", "S5"]:
-        info = section_scores.get(sec)
-        if info is None or info["score"] < 50:
-            break
-        reach = max(reach, SECTION_TIER[sec])
-    return reach, BACKEND_TIER_NAME[reach]
-
-
-def frontend_tier(section_scores):
-    info = section_scores.get("S6")
-    if info is None:
-        return None, "not run"
-    score = info["score"]
-    if score >= 90:
-        return 3, "frontier-open frontend (tier 3)"
-    if score >= 60:
-        return 2, "strong frontend (tier 2)"
-    return None, f"NO FRONTEND TIER - below the lowest floor (score {score} < 60)"
-
-
-def composite_backend(section_scores):
-    scores = [section_scores[s]["score"] for s in BACKEND_SECTIONS if s in section_scores]
+def composite_overall(section_scores):
+    scores = [section_scores[s]["score"] for s in CAPABILITY_SECTIONS if s in section_scores]
     return sum(scores) / len(scores) if scores else None
 
 
-def mean_time(section_scores, keys):
+def tier_name_for(composite):
+    for floor, name in TIER_LADDER:
+        if composite >= floor:
+            return name
+    return "No Tier"
+
+
+def overall_tier(section_scores):
+    """Returns (tier_name_or_None, composite_or_reason).
+    tier_name is one of: None (nothing graded yet), "INVALID", "No Tier",
+    or a TIER_LADDER name. When it's a real tier, the second element is the
+    numeric composite; otherwise it's a human-readable reason string."""
+    s0 = section_scores.get("S0")
+    if s0 is None:
+        if not section_scores:
+            return None, "not yet determined (no sections graded)"
+        return "INVALID", "S0 sanity gate not yet run - investigate harness/model-plumbing before trusting any other section"
+    if s0["score"] != 100:
+        return "INVALID", "S0 sanity gate not clean (100 required); investigate harness/model-plumbing before trusting any other section"
+    comp = composite_overall(section_scores)
+    if comp is None:
+        return None, "not yet determined (no capability sections graded)"
+    name = tier_name_for(comp)
+    if name == "No Tier":
+        return "No Tier", f"too weak to place (composite {comp:.1f} < 50)"
+    return name, comp
+
+
+def mean_time(section_scores, keys=ALL_SECTIONS):
     times = []
     for k in keys:
         info = section_scores.get(k)
@@ -122,27 +128,18 @@ def mean_time(section_scores, keys):
     return sum(times) / len(times) if times else float("inf")
 
 
-def rank_in_tier(rows, this_model, tier_value, tier_kind):
-    """tier_kind: 'backend' or 'frontend'. Returns (rank, total) among every
-    model in the tsv landing in the same tier (this_model included)."""
+def rank_in_tier(rows, this_model, tier_name):
+    """Rank among every OTHER model in the tsv landing in the same named
+    tier (this_model included), sorted by composite desc, tie-broken by
+    mean time_s asc. Returns (rank, total)."""
     all_models = sorted({cols[5] for cols in rows if cols[1] == "bench"})
     candidates = []
     for m in all_models:
         sc = bench_rows_for(rows, m)
-        if tier_kind == "backend":
-            t, _ = backend_tier_reach(sc)
-            if t != tier_value or t == 0:
-                continue
-            comp = composite_backend(sc)
-            tm = mean_time(sc, BACKEND_SECTIONS)
-        else:
-            t, _ = frontend_tier(sc)
-            if t != tier_value:
-                continue
-            comp = sc["S6"]["score"]
-            tm = mean_time(sc, ["S6"])
-        if comp is None:
+        t, comp = overall_tier(sc)
+        if t != tier_name or comp is None or isinstance(comp, str):
             continue
+        tm = mean_time(sc)
         candidates.append((m, comp, tm))
     candidates.sort(key=lambda x: (-x[1], x[2]))
     total = len(candidates)
@@ -163,7 +160,7 @@ def render(model, tsv_path=TSV):
     print("=" * 72)
     print(f"{'section':8} {'grade':7} {'verdict':8} {'gate':6} {'time_s':8}  note")
     print(f"{'-------':8} {'-----':7} {'-------':8} {'----':6} {'------':8}  ----")
-    for sec in ["S0", "S1", "S2", "S3", "S4", "S5", "S6"]:
+    for sec in ALL_SECTIONS:
         info = sc.get(sec)
         if info is None:
             print(f"{sec:8} {'-':7} {'-':8} {'-':6} {'-':8}  (not yet run)")
@@ -172,25 +169,16 @@ def render(model, tsv_path=TSV):
             print(f"{sec:8} {info['score']:<7} {info['verdict']:<8} {info['gate']:<6} {info['time_s']:<8}  {note}")
     print("-" * 72)
 
-    backend_t, backend_label = backend_tier_reach(sc)
-    if sc.get("S0") is None:
-        print("BACKEND TIER: not yet determined (no sections graded)")
-    elif backend_t == 0:
-        print(f"BACKEND TIER: NO TIER - {backend_label}")
+    tier, comp_or_reason = overall_tier(sc)
+    if tier is None:
+        print(f"OVERALL TIER: {comp_or_reason}")
+    elif tier in ("INVALID", "No Tier"):
+        label = "INVALID" if tier == "INVALID" else "NO TIER"
+        print(f"OVERALL TIER: {label} -- {comp_or_reason}")
     else:
-        rank, total = rank_in_tier(rows, model, backend_t, "backend")
+        rank, total = rank_in_tier(rows, model, tier)
         rank_str = f"#{rank} of {total}" if rank else "unranked (composite unavailable)"
-        print(f"BACKEND TIER: {backend_t} ({backend_label}) -- rank {rank_str} in this tier")
-
-    front_t, front_label = frontend_tier(sc)
-    if sc.get("S6") is None:
-        print("FRONTEND TIER (S6, parallel axis): not yet run")
-    elif front_t is None:
-        print(f"FRONTEND TIER (S6, parallel axis): {front_label}")
-    else:
-        rank, total = rank_in_tier(rows, model, front_t, "frontend")
-        rank_str = f"#{rank} of {total}" if rank else "unranked"
-        print(f"FRONTEND TIER (S6, parallel axis): {front_label} -- rank {rank_str} in this tier")
+        print(f"OVERALL TIER: {tier} (composite {comp_or_reason:.1f}) -- rank {rank_str} of models in this tier")
     print("=" * 72)
 
 

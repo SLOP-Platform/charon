@@ -32,11 +32,14 @@ does not ship with the Charon product.
   backend-tier) shared by both drivers below, so they can never drift.
 - `lib/detect_model.py` — auto-detects the model the CURRENT opencode
   session is running as (see "Running a model" below for the method).
-- `lib/tier_chart.py` — computes the section→grade table + backend/frontend
-  tier reach + intra-tier rank printed at the end of a `bench.sh` run.
+- `lib/tier_chart.py` — computes the section→grade table + ONE overall tier
+  (across all 7 sections) + intra-tier rank printed at the end of a
+  `bench.sh` run.
 - `bench.sh` — **the runner** (single in-session, one-paste driver — see
   below). `run.sh`, `run-many.sh` — superseded/legacy manual drivers, kept
   for scripted bulk-provisioning; see their own file headers.
+- `RUN-BENCHMARK.md` — durable self-drive instructions so kicking off a full
+  run is a one-liner: `read this and execute: <absolute path>`.
 
 ## Running a model — one paste, all 7 sections, auto-tiered
 
@@ -46,24 +49,21 @@ there the agent (running AS the selected model — it IS the thing being
 benchmarked) drives itself through every section with no further input from
 the operator.
 
-**Paste this into the opencode tab right after `/model`:**
+**The one-liner kickoff** — after `/model`, paste this into the opencode tab
+(the full self-drive prompt lives in the durable file below, so this is all
+the operator ever has to type):
 
 ```
-You are being benchmarked. In THIS session, run: fleet/benchmark/bench.sh start
-Read its output (it announces which model it thinks you are, plus the first
-section's prompt and worktree path). Implement that section's task yourself,
-directly in the printed worktree, using your own tools. When you're done,
-run: fleet/benchmark/bench.sh grade
-If it says a correction round failed, fix the same worktree and run
-bench.sh grade again. Once it reports the section's FINAL score, it will
-automatically print the next section's prompt+worktree if any remain, or a
-tier chart with your rank if all 7 sections (S0-S6) are complete. Keep
-looping (implement -> bench.sh grade) through every section without asking
-me anything in between, and show me the final tier chart when it appears.
+read this and execute: /home/stack/charon-private/fleet/benchmark/RUN-BENCHMARK.md
 ```
 
 That's the operator's entire manual action for a full 7-section calibration
-run — no typing the model name (auto-detected), no per-section shuttling.
+run — no typing the model name (auto-detected), no per-section shuttling,
+no re-pasting the driving instructions each time (they're durable in
+`RUN-BENCHMARK.md`, an absolute path so it works regardless of the opencode
+session's cwd). See that file for the exact instructions the agent follows
+(run `bench.sh start`, implement, `bench.sh grade`, loop, show the final
+tier chart).
 
 **Model detection** (`lib/detect_model.py`): reads
 `~/.local/share/opencode/opencode.db` (SQLite, read-only) — every opencode
@@ -88,17 +88,36 @@ path — see its header for full docs):
 - `bench.sh status` — where the current run is, no side effects.
 - `bench.sh chart [<model>]` — (re-)print the tier chart standalone.
 
-The **tier chart** printed at the end shows a section→grade table, this
-model's **BACKEND TIER** (0-4, highest tier reached with every section at or
-below it scoring ≥50 and S0=100 sanity-clean — "NO TIER" if S0 fails), and
-its **FRONTEND TIER** (S6, scored as its own parallel axis per
-`MODEL-BENCHMARK-SPEC.md` §4: tier 3 at ≥90, tier 2 at 60-89, no frontend
-tier below that) — each with this model's **rank** (`#N of M`) against every
-other model already in `model-scorecard.tsv` that landed in the same tier,
-by composite score (mean section score, tie-broken by lower mean `time_s`).
-No `fleet/tiers.json` exists in this repo — the tier names/cuts come
-straight from the spec's own §0/§1/§4, documented in `lib/tier_chart.py`'s
-module docstring.
+The **tier chart** printed at the end shows a section→grade table plus ONE
+**OVERALL TIER** computed across all 7 sections (S0-S6 together, no separate
+backend/frontend axes) and this model's **rank** (`#N of M`) against every
+other model already in `model-scorecard.tsv` that landed in the same tier.
+
+- S0 stays a pass/fail sanity gate (must score exactly 100, else the whole
+  run is **INVALID** — investigate the harness/model-plumbing before
+  trusting any other section).
+- Once S0 is clean, the **composite** = the unweighted mean of every graded
+  section's score in S1..S6.
+- That composite maps onto a simple, plain-word ladder — no compound or
+  parenthetical jargon:
+
+  | Tier | Composite |
+  |---|---|
+  | Frontier | ≥ 90 |
+  | Strong | 75-89 |
+  | Capable | 60-74 |
+  | Basic | 50-59 |
+  | **No Tier** | < 50 — too weak to place |
+
+- Rank is by composite score against every other model in the same tier,
+  ties broken by lower mean `time_s` across all graded sections. `INVALID`
+  and `No Tier` runs are never ranked — the chart says so plainly instead.
+
+No `fleet/tiers.json` exists in this repo — the formula/ladder above is this
+chart's own definition, documented in full in `lib/tier_chart.py`'s module
+docstring (including why it replaced the old two-axis backend-tier/
+frontend-tier chart: S6 now counts as just another equally-weighted
+capability section instead of a parallel axis).
 
 Same auto-scoring guarantees as before: a `grade` call that comes back
 `gate=fail` doesn't append anything — fix the same worktree and re-run
