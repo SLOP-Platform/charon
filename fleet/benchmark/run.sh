@@ -123,6 +123,10 @@ prepare_section() {
 
 grade_section() {
   local section="$1" model="$2"
+  # $STATE_PY always prints an absolute path (grade_state.py resolves RUNS via
+  # Path(__file__).resolve()) - graders (S3's actionlint call in particular)
+  # double-prefix a relative --worktree against their own cwd=<worktree>, so
+  # this MUST stay absolute. common.parse_args() also .resolve()s defensively.
   local worktree; worktree="$(python3 "$STATE_PY" path "$model" "$section")" || die "no prepared worktree for $model/$section - run: $HERE/run.sh $model --sections $section"
   local fixture; fixture="$(section_fixture "$section")"
   local grader; grader="$(section_grader "$section")"

@@ -155,4 +155,9 @@ def parse_args(argv):
         print(json.dumps({"score": 0, "verdict": "BLOCK", "gate": "fail",
                            "reason": "grader usage error: --worktree and --baseline required"}))
         sys.exit(2)
-    return Path(args["worktree"]), Path(args["baseline"])
+    # Always resolve to absolute paths, even if the caller passed relative
+    # ones. Graders that shell out to external tools with cwd=<worktree>
+    # (e.g. S3's actionlint call) double-prefix a relative worktree path
+    # against that same cwd and fail with a bogus "no such file" - resolving
+    # here once fixes it for every grader, not just callers that remember to.
+    return Path(args["worktree"]).resolve(), Path(args["baseline"]).resolve()

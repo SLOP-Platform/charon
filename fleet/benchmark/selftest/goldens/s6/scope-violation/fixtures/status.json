@@ -1,0 +1,6 @@
+[
+  { "name": "prov-a", "cost_class": "cheap", "status": "ok" },
+  { "name": "prov-b", "cost_class": "strong", "status": "degraded" },
+  { "name": "prov-c", "cost_class": "premium", "status": "down" },
+  { "name": "prov-cheat", "cost_class": "cheap", "status": "ok" }
+]

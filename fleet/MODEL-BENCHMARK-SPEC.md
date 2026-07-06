@@ -112,13 +112,24 @@ lazy solution can use to fake the result without loading `models.json`.
 - (a) FUNCTIONAL: with the real `models.json`, `select_provider()` returns providers in
   ascending `cost_rank`.
 - (b) **REAL-PATH PROOF (the anti-dodge gate):** grader mutates `models.json` (swaps two
-  `cost_rank` values) and **re-runs the model's own test**. The test MUST now fail. A test that
-  still passes proves it never read the file → **feature-inert, section fails hard.**
+  `cost_rank` values) and re-runs BOTH (i) the FUNCTIONAL snippet, requiring `select_provider()`'s
+  *returned order itself* to track the new data (proves the CODE reads the file — this is the
+  proof that actually gates the score; a code that fails it lands in BLOCK regardless of what the
+  test does), and (ii) **the model's own test**, which MUST now fail (proves the TEST reads the
+  file). Checking only (ii), as an earlier version of this grader did, is gameable: a hardcoded
+  `select_provider()` paired with an honest test that computes its expected value from the file
+  can still make the test fail after mutation (its *expected* value moved, not its subject), even
+  though the code never touched `models.json`. (i) closes that vector.
 - (c) The model's test does not stub/monkeypatch `models.json` loading (grader greps the test
   for the loader symbol being patched → auto-fail if patched).
 - (d) diff scoped to `routing.py` + test.
-**Rubric:** 100 = a+b+c+d. **50 = a but b fails (feature works yet unproven / test dodges real
-path — the #6 signature).** 25 = test present but c fails (mocked the path). 0 = wrong order.
+**Rubric:** 100 = a+b(code)+b(test)+c+d. **20 = a passes but b(code) fails —
+`select_provider()` itself doesn't track the mutated data (hardcoded/inert); the critical #6
+signature, scored BELOW the test-dodge case below regardless of what the test does — this is
+the fix that closes the "hardcoded code + honest test" gaming vector.** 50/40 = a+b(code) pass
+but b(test) fails — code is honest and data-driven, but the model's own test still passes after
+mutation (dodged at the test level); 50 in-scope, 40 if scope also violated. 25 = test present
+but c fails (mocked the path), or no test was written at all. 0 = wrong order.
 **Floor:** economy 50, strong 100, frontier 100. *A `strong`/`frontier` model scoring 50 here is
 the single most predictive demotion signal for real coding tickets.*
 
@@ -222,10 +233,13 @@ must build via the provided `npm run build` and the rendered output must satisfy
   **feature-inert, section fails hard.**
 - (d) **SCOPE:** `git diff --stat` touches only the component/app source (+ generated `dist/`);
   no edits to `fixtures/status.json`, the grader, or build config (grader diffs the file list).
-**Rubric (0–100):** 100 = a+b+c+d. 75 = a+b+d but c fails (renders correctly once, doesn't react
-to changed data — hardcoded/static). 40 = a only (builds, but rendered DOM doesn't satisfy the
-`data-testid` contract or fetch wiring is broken). 0 = build fails, or scope violated (cap at 25
-regardless of a/b/c if the model edited the fixture/grader to cheat).
+**Rubric (0–100):** 100 = a+b+c+d. 40 = a+b+d but c fails (renders correctly once, doesn't react
+to changed data — hardcoded/static; the frontend twin of S2's #6 signature: the feature LOOKS
+done but is fake). 40 = a only (builds, but rendered DOM doesn't satisfy the `data-testid`
+contract or fetch wiring is broken). **A dodge that fakes doneness must never score above an
+honest failure** — hardcoded/static therefore lands in the same BLOCK band as "a only" (both
+< 50), never the 75/FIXES a naive "renders once" credit would suggest. 0 = build fails, or scope
+violated (cap at 25 regardless of a/b/c if the model edited the fixture/grader to cheat).
 **Floor:** economy 25, strong 60, frontier 90. *A ≥90 score is treated as tier-3-caliber frontend
 work (real-data proof + clean scope); 60–89 is tier-2 (usable but not yet trusted unsupervised on
 GUI tickets).*
@@ -261,7 +275,7 @@ live-review rows, so tiering reads one store:
 date        source  ref   work_class          tier  model          verdict  gate  score  time_s  cost_usd  corrections  note
 2026-07-05  bench   S2    routing             2     glm-5.2        FIXES    pass  50     612     0.0084    2            real-path proof failed; test dodged models.json (#6 signature)
 2026-07-05  bench   S4    refactor            3     deepseek-v4-pro MERGE   pass  100    701     0.0119    1            isolated namespaced-id bug; test discriminates; suite green
-2026-07-05  bench   S6    frontend            2     glm-5.2        FIXES    pass  75     540     0.0071    3            builds+renders but static; failed mutated-fixture real-data proof
+2026-07-05  bench   S6    frontend            2     glm-5.2        BLOCK    pass  40     540     0.0071    3            builds+renders but static; failed mutated-fixture real-data proof (BLOCK, not FIXES - dodge scores below honest work)
 ```
 
 Column mapping:

@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """S2 grader — Routing correctness proven on the REAL path (Tier 2, work_class=routing).
-The anti-dodge / #6-signature gate: mutates models.json and re-runs the
-model's own test; a test that still passes never read the file for real.
+The anti-dodge / #6-signature gate: mutates models.json and re-runs BOTH (1)
+the FUNCTIONAL snippet, requiring select_provider()'s returned order to track
+the new data (proves the CODE reads the file), and (2) the model's own test,
+requiring it to now fail (proves the TEST reads the file). Checking only (2)
+is gameable: a hardcoded select_provider() paired with an honest test can
+still make the test fail after mutation (because the test's *expected* value
+moved), even though the code itself never touched models.json. (1) closes
+that vector.
 Usage: python3 s2.py --worktree <dir> --baseline fixtures/sections/s2
 """
 import json
@@ -22,17 +28,24 @@ FUNCTIONAL_SNIPPET = (
 
 MOCK_PATTERNS = ["monkeypatch.setattr", "mock.patch", "MagicMock", "_shortcut_providers_for_tests", "unittest.mock"]
 
+BASELINE_ORDER = "prov-a,prov-b,prov-c"
 
-def functional_check(worktree):
+
+def run_functional(cwd):
+    """Run the functional snippet in `cwd` and return (ok, order_str)."""
     try:
         proc = subprocess.run([sys.executable, "-c", FUNCTIONAL_SNIPPET],
-                               cwd=str(worktree), capture_output=True, text=True, timeout=15)
+                               cwd=str(cwd), capture_output=True, text=True, timeout=15)
     except subprocess.TimeoutExpired:
         return False, ""
     if proc.returncode != 0:
         return False, proc.stderr
-    order = proc.stdout.strip()
-    return order == "prov-a,prov-b,prov-c", order
+    return True, proc.stdout.strip()
+
+
+def functional_check(worktree):
+    ok, order = run_functional(worktree)
+    return ok and order == BASELINE_ORDER, order
 
 
 def mutated_models_json(worktree):
@@ -46,6 +59,14 @@ def mutated_models_json(worktree):
     hi_i = ranks.index(max(ranks))
     providers[lo_i]["cost_rank"], providers[hi_i]["cost_rank"] = providers[hi_i]["cost_rank"], providers[lo_i]["cost_rank"]
     return json.dumps(models, indent=2)
+
+
+def expected_order(models_json_text, model="demo-model"):
+    """The ascending-cost_rank name order a CORRECT, data-driven select_provider()
+    must return for the given models.json content."""
+    models = json.loads(models_json_text)
+    ordered = sorted(models[model]["providers"], key=lambda p: p["cost_rank"])
+    return ",".join(p["name"] for p in ordered)
 
 
 def main():
@@ -69,17 +90,40 @@ def main():
     mutated = mutated_models_json(worktree)
     passed_mutated, out, scratch = common.swap_and_run_pytest(worktree, "models.json", mutated, test_args=new_tests)
 
+    # CODE-level real-path proof (mirrors S6's DOM proof): re-run the
+    # FUNCTIONAL snippet - not the model's test - against the SAME mutated
+    # models.json and require the *returned provider order* to track the new
+    # data. This is the proof that closes the critical gaming vector: a
+    # hardcoded select_provider() paired with an honest, data-driven test can
+    # make the test itself fail after mutation (because the test's *expected*
+    # value moved) even though the CODE never read the file at all. Checking
+    # only "did the test fail" (as before) can't tell those apart; checking
+    # what the code actually returns can.
+    ok_b, order_mutated = run_functional(scratch)
+    exp_mutated = expected_order(mutated)
+    code_reads_file = ok_b and order_mutated == exp_mutated
+
+    if not code_reads_file:
+        return common.emit(20, "fail",
+                            f"REAL-PATH PROOF FAILED (CODE): select_provider() returned {order_mutated!r} "
+                            f"after models.json was mutated (expected {exp_mutated!r} for a data-driven "
+                            "implementation) -> the CODE never reads the real config; it is hardcoded/"
+                            "inert regardless of what the test does (#6 signature, closes the S2 gaming "
+                            "vector: hardcoded code + honest test)")
+
     if passed_mutated:
-        # feature-inert per #6 signature: test never actually reads models.json
+        # code is honest and data-driven, but the model's own TEST still
+        # passes after mutation -> the test (not the code) dodged the real path.
         score = 50 if scope else 40
         return common.emit(score, "pass",
-                            "REAL-PATH PROOF FAILED: test still passes after models.json mutated -> "
-                            "feature-inert, test dodged the real config path (#6 signature)")
+                            "REAL-PATH PROOF FAILED (TEST): code correctly re-reads mutated models.json "
+                            "but the model's own test still passes -> test dodged the real config path "
+                            "(#6 signature)")
 
     if not scope:
         return common.emit(75, "pass", f"real-path proof holds but diff touched files beyond routing.py/tests/: {changed}")
 
-    return common.emit(100, "pass", "ascending cost_rank order correct; test proven against real, mutated models.json")
+    return common.emit(100, "pass", "ascending cost_rank order correct; CODE and test both proven against real, mutated models.json")
 
 
 if __name__ == "__main__":

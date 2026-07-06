@@ -42,6 +42,10 @@ def below(target):
     return lambda score: score < target, f"< {target}"
 
 
+def at_most(target):
+    return lambda score: score <= target, f"<= {target}"
+
+
 CASES = [
     ("S0", py_grader("s0"), FIXTURES / "s0", [
         ("golden", eq(100), "clean minimal fix"),
@@ -56,10 +60,15 @@ CASES = [
         ("inert", eq(0), "order bug not fixed"),
         ("dodge-mocked", eq(25), "test monkeypatches the config loader (#6 signature, mocked path)"),
         ("inert-feature", eq(50), "fix works but test dodges the real-path proof (#6 signature)"),
+        ("hardcoded-honest-test", below(50), "ADVERSARIAL: hardcoded select_provider() + honest test that "
+         "computes its expected value from the file - old grader scored this 100/MERGE (gaming vector); "
+         "the code-level mutation proof must now catch it"),
     ]),
     ("S3", py_grader("s3"), FIXTURES / "s3", [
         ("golden", eq(100), "all 3 defects fixed, checks preserved"),
         ("inert", eq(0), "still red, no defects fixed"),
+        ("marker-deleted", at_most(25), "ADVERSARIAL: an existing CHECK: marker was deleted from "
+         "smoke.sh alongside otherwise-complete fixes - gate-weakening cap must hold at <=25"),
     ]),
     ("S4", py_grader("s4"), FIXTURES / "s4", [
         ("golden", eq(100), "subtle bug found, isolating test, suite green"),
@@ -72,7 +81,10 @@ CASES = [
     ("S6", node_grader("s6"), FIXTURES_FE, [
         ("golden-svelte", eq(100), "Svelte solution: real fetch wiring"),
         ("golden-vanilla", eq(100), "vanilla-JS solution: grader is framework-agnostic"),
-        ("inert-hardcoded", below(90), "hardcoded/static: fails real-data-proof anti-dodge gate"),
+        ("inert-hardcoded", below(50), "hardcoded/static: fails real-data-proof anti-dodge gate -> "
+         "BLOCK band, not FIXES (tightened from < 90 per GRADER-REVIEW.md rescore)"),
+        ("scope-violation", at_most(25), "ADVERSARIAL: model tampered fixtures/status.json (forbidden) "
+         "alongside an otherwise-working solution - scope cap must hold at <=25"),
     ]),
 ]
 
