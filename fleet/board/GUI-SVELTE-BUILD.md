@@ -2,7 +2,7 @@ tier: opus
 branch: feat/gui-svelte-build
 depends_on:
 owns: src/charon/proxy_server.py, src/charon/config.py, src/charon/spend_limits.py, src/charon/gateway.py, gui/ (new Svelte/Vite project), pyproject.toml, Dockerfile, tests/test_proxy_server.py, tests/test_gui_*.py (new)
-accept: PYTHONPATH=src python3 -m pytest -q tests/test_gui_endpoints.py tests/test_proxy_server.py && (cd gui && npm ci && npm run build)
+accept: PYTHONPATH=src python3 -m pytest -q tests/test_gui_endpoints.py tests/test_proxy_server.py && (cd gui && npm ci && npm run build) && the pre-built GUI bundle (gui/dist/) is produced at Charon build/CI time and is present in BOTH the published Docker image AND the wheel/sdist; a from-source `pip install` and a `docker run` both serve the new GUI with no Node/npm at install or runtime.
 prompt: /home/stack/charon-private/prompts/gui-svelte-build.md
 scope: Replace the three inline-Python-string HTML consoles (_CONSOLE_HTML/_SETUP_HTML/
   _WORK_HTML in src/charon/proxy_server.py) with a static Svelte app, compiled via Vite,
@@ -71,6 +71,26 @@ existing bearer token — before building out all panels.
   privileged path" invariant intact for the parts that matter — this is a UI build
   tool, not privileged-loop code, but the image should still not need to install
   Node to produce a working container).
+- **Release/Docker pipeline integration** (explicit, do not skip): the Vite build is
+  NOT a checked-in `dist/` — CI/release is the source of truth. Concretely:
+  (a) a release/CI job runs `npm ci && npm run build` in `gui/` to produce `gui/dist/`
+  BEFORE both the wheel/sdist build and the `docker build` step (no committed `dist/`
+  in git; the artifact is produced fresh each release and is not a source file);
+  (b) the Dockerfile/image build COPYs `gui/dist/` into the image (or receives it as a
+  prior-stage/prior-job build artifact) — the running container serves it without ever
+  invoking `npm`/Node inside the image or at container start;
+  (c) `pyproject.toml` packaging (hatchling `force-include`/artifacts entry) includes
+  `gui/dist/` in `package_data` so the wheel AND sdist both carry the compiled assets —
+  a `pip install` from sdist must not require Node;
+  (d) a **CI guard** (new check, fails the pipeline) asserts the built Docker image and
+  the built wheel/sdist both actually contain `gui/dist/index.html` + hashed JS/CSS
+  (e.g. `docker run --rm <image> test -f .../gui/dist/index.html` and
+  `unzip -l/tar -tf` the wheel/sdist for the same path) — this is the same class of
+  regression as the windows-exe rot lesson (an artifact silently stops being built into
+  the shipped product) and must hard-fail release CI, not just be a manual check;
+  (e) the from-source, Node-free install guarantee (DOCKER-INSTALL.md) is preserved end
+  to end: `pip install '.[service]'` and `docker run` both work with zero Node/npm
+  present on the target host.
 - One working panel end-to-end (recommend: Providers list, since it's the simplest
   read+one write (`GET /charon/config` → table; `POST /charon/providers` → add) to
   validate the full auth+CSRF+build+serve chain before investing in 5 more panels.
@@ -146,6 +166,12 @@ non-negotiable invariant: `/v1/*` untouched).
 
 ## Cross-cutting notes
 
+- **Deploy-drift lesson (charon-deploy-drift-lessons):** `gui/dist/` is CODE shipped
+  IN the image/wheel — same category as `proxy_server.py` — NOT `/data` runtime
+  config/state. It must version with the image/release, never be expected to appear
+  via a mounted volume, and must not be reconstructable only by a separate `npm run
+  build` a user forgets to run; see the Release/Docker pipeline integration
+  subsection in Phase 1 for the enforcement mechanism.
 - **Product boundary:** everything under `gui/` and the packaged `dist/` ships in the
   PUBLIC repo standalone — no reference to fleet/SLOP/the runner/`/home/stack` paths
   anywhere in the Svelte source, build config, or docs (per public-repo-no-personal-
@@ -165,9 +191,10 @@ non-negotiable invariant: `/v1/*` untouched).
      `pip install charon` from source (vs. a pre-built wheel/sdist) — if the sdist
      doesn't ship pre-built `dist/` assets, a from-source pip install would need Node
      to produce a working GUI, which breaks the "no host Python/Node barrier" fresh-
-     install goal DOCKER-INSTALL.md already fought to remove. Must decide: ship
-     compiled assets IN the sdist/wheel (checked-in build artifact refreshed by CI) vs.
-     require Node at install time (reject — contradicts fresh-install goals).
+     install goal DOCKER-INSTALL.md already fought to remove. DECIDED (see Phase 1's
+     "Release/Docker pipeline integration"): ship compiled assets IN the sdist/wheel/
+     image, built fresh by CI/release each time (not a checked-in `dist/` in git) —
+     Node stays build-time-only, never a runtime or install-time dependency.
   2. `proxy_server.py` is a hot file across multiple in-flight/recent tickets
      (CONSOLE-PROVIDER-MGMT, RFL-1, this ticket's own Phase 0/1/3) — owns-collision
      re-check required at claim time for whichever phase claims first.
