@@ -71,14 +71,15 @@ def load_rows(tsv_path=TSV):
 def bench_rows_for(rows, model):
     out = {}
     for cols in rows:
-        _date, source, ref, _wc, _tier, m, verdict, gate, score, time_s, _cost, _corr, note = cols[:13]
+        _date, source, ref, wclass, _tier, m, verdict, gate, score, time_s, cost, corr, note = cols[:13]
         if source != "bench" or m != model:
             continue
         if score == "-":
             continue
         out[ref] = {
             "score": int(score), "verdict": verdict, "gate": gate,
-            "time_s": time_s, "note": note,
+            "skill": wclass, "time_s": time_s, "cost_usd": cost,
+            "corrections": corr, "note": note,
         }
     return out
 
@@ -151,23 +152,60 @@ def rank_in_tier(rows, this_model, tier_name):
     return rank, total
 
 
+def _sum_numeric(section_scores, key):
+    """Sum a numeric column across graded sections. Returns (total, n_with_data)."""
+    total = 0.0
+    n = 0
+    for info in section_scores.values():
+        v = info.get(key)
+        if v in (None, "-", ""):
+            continue
+        try:
+            total += float(v)
+            n += 1
+        except ValueError:
+            pass
+    return total, n
+
+
+def _fmt_total(total, n, fmt=".1f"):
+    if n == 0:
+        return "-"
+    if fmt == "d":
+        return format(int(round(total)), "d")
+    return format(total, fmt)
+
+
 def render(model, tsv_path=TSV):
     rows = load_rows(tsv_path)
     sc = bench_rows_for(rows, model)
 
-    print("=" * 72)
+    print("=" * 78)
     print(f"MODEL-BENCHMARK TIER CHART -- {model}")
-    print("=" * 72)
-    print(f"{'section':8} {'grade':7} {'verdict':8} {'gate':6} {'time_s':8}  note")
-    print(f"{'-------':8} {'-----':7} {'-------':8} {'----':6} {'------':8}  ----")
+    print("=" * 78)
+    # section | skill | grade | time_s | cost_usd | corrections (all read
+    # straight from the model's appended bench rows, never recomputed).
+    hdr = f"{'section':8} {'skill':18} {'grade':6} {'time_s':8} {'cost_usd':9} {'corr':5}"
+    print(hdr)
+    print(f"{'-------':8} {'-----':18} {'-----':6} {'------':8} {'--------':9} {'----':5}")
     for sec in ALL_SECTIONS:
         info = sc.get(sec)
         if info is None:
-            print(f"{sec:8} {'-':7} {'-':8} {'-':6} {'-':8}  (not yet run)")
+            print(f"{sec:8} {'-':18} {'-':6} {'-':8} {'-':9} {'-':5}")
         else:
-            note = info["note"][:60]
-            print(f"{sec:8} {info['score']:<7} {info['verdict']:<8} {info['gate']:<6} {info['time_s']:<8}  {note}")
-    print("-" * 72)
+            skill = info["skill"][:18]
+            print(f"{sec:8} {skill:18} {info['score']:<6} {info['time_s']:<8} {info['cost_usd']:<9} {info['corrections']:<5}")
+    print("-" * 78)
+
+    # TOTALS across all graded sections (summed from the bench rows above).
+    corr_total, corr_n = _sum_numeric(sc, "corrections")
+    time_total, time_n = _sum_numeric(sc, "time_s")
+    cost_total, cost_n = _sum_numeric(sc, "cost_usd")
+    print(f"{'TOTALS':8} {'':18} {'':6} "
+          f"{_fmt_total(time_total, time_n):<8} "
+          f"{_fmt_total(cost_total, cost_n, fmt='.4f'):<9} "
+          f"{_fmt_total(corr_total, corr_n, fmt='d'):<5}")
+    print("-" * 78)
 
     tier, comp_or_reason = overall_tier(sc)
     if tier is None:
@@ -179,7 +217,7 @@ def render(model, tsv_path=TSV):
         rank, total = rank_in_tier(rows, model, tier)
         rank_str = f"#{rank} of {total}" if rank else "unranked (composite unavailable)"
         print(f"OVERALL TIER: {tier} (composite {comp_or_reason:.1f}) -- rank {rank_str} of models in this tier")
-    print("=" * 72)
+    print("=" * 78)
 
 
 if __name__ == "__main__":
