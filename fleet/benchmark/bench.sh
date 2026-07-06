@@ -216,7 +216,15 @@ do_grade() {
   else
     tier="$(section_tier "$section")"
   fi
-  local cost_usd="-"   # best-effort only; populated when a gateway-attributed driving flow exists (SR-5b) - never estimated
+  # Gateway-attributed spend (SR-5b): grade_state.py `record` diffs Charon's
+  # own cumulative `cost_usd` (GET /charon/status) between this section's
+  # `init` and now (lib/charon_cost.py). "-" only if the gateway wasn't
+  # reachable/discoverable at either snapshot - never a guess. NOTE: this is a
+  # GLOBAL gateway counter, not per-session - a concurrent fleet tab hitting
+  # the same gateway during this section would pollute the delta (no
+  # per-session cost exists in Charon yet); correct for the intended
+  # one-dedicated-tab bench.sh workflow.
+  local cost_usd; cost_usd="$(jget "$record" cost_usd)"
 
   bash "$SCORECARD" append "$TODAY" bench "$section" "$wclass" "$tier" "$model" "$verdict" "$gate" "$final_score" "$time_s" "$cost_usd" "$corrections" "$note"
   echo "SECTION $section / $model: FINAL score=$final_score verdict=$verdict time_s=$time_s corrections=$corrections -> appended to model-scorecard.tsv"

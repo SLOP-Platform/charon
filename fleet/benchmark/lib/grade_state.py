@@ -14,6 +14,8 @@ import sys
 import time
 from pathlib import Path
 
+import charon_cost
+
 RUNS = Path(__file__).resolve().parent.parent / "runs"
 CORRECTIONS_CAP = 3
 
@@ -46,6 +48,10 @@ def cmd_init(model, section, timebox_sec):
         "model": model, "section": section,
         "start_ts": time.time(), "timebox_sec": float(timebox_sec),
         "attempts": 0, "finalized": False, "worktree": str(worktree),
+        # cumulative gateway cost_usd (SR-5b) at section start, or None if the
+        # gateway isn't reachable/discoverable - `record` diffs against this to
+        # attribute the section's spend (best-effort, never estimated).
+        "cost_start_usd": charon_cost.snapshot_cost_usd(),
     }
     save(model, section, meta)
     print(str(worktree))
@@ -94,11 +100,19 @@ def cmd_record(model, section, score, gate):
             final_score = score
         meta["attempts"] = attempts_after
 
+    # Attribute this section's gateway spend (SR-5b, MODEL-BENCHMARK-SPEC.md
+    # Sec 5a): diff the gateway's cumulative cost_usd now against the snapshot
+    # `init` took. "-" (never a guess) if either snapshot is missing or the
+    # counter went backwards (e.g. gateway restarted mid-section).
+    cost_usd = charon_cost.delta_str(
+        meta.get("cost_start_usd"), charon_cost.snapshot_cost_usd())
+
     if finalize:
         meta["finalized"] = True
         meta["final_score"] = final_score
         meta["final_time_s"] = round(elapsed, 1)
         meta["final_corrections"] = corrections
+        meta["final_cost_usd"] = cost_usd
     save(model, section, meta)
 
     print(json.dumps({
@@ -107,6 +121,7 @@ def cmd_record(model, section, score, gate):
         "final_score": final_score,
         "time_s": round(elapsed, 1),
         "timed_out": timed_out,
+        "cost_usd": cost_usd,
     }))
 
 
