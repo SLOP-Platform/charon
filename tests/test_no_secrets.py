@@ -71,6 +71,19 @@ def gateway_with_secrets(monkeypatch, tmp_path, mock_upstream):
     api_key = "sk-test-api-key-0123456789abcdef"
     token = "gateway-token-secret"
 
+    # POST /charon/models/import (see _POST_ENDPOINTS) drives
+    # make_setup_handler's "models/import" action, which calls
+    # providers.list_models() unconditionally — a REAL network GET against
+    # the provider's live API (e.g. https://openrouter.ai/api/v1/models)
+    # with no API key. That made this "no secrets leak" test intermittently
+    # fail on a network hiccup/DNS stall instead of testing anything about
+    # secrets. Stub it so the endpoint is exercised hermetically; the
+    # secret-leak assertion still holds over whatever response is returned.
+    monkeypatch.setattr(
+        "charon.providers.list_models",
+        lambda name, overrides=None, *, api_key=None, timeout=20.0: [],
+    )
+
     cfg = GatewayConfig(
         host="127.0.0.1",
         port=0,
