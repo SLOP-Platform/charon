@@ -54,6 +54,11 @@ jobs:
       - name: type
         run: mypy src/charon
       - name: tests
+        # Job-scoped tmp root (see ci.yml) — the shared 4-LOM runner has no
+        # per-job /tmp isolation, so a concurrent ci.yml gate run can otherwise
+        # rm_rf this run's live pytest basetemp mid-suite.
+        env:
+          PYTEST_DEBUG_TEMPROOT: ${{ runner.temp }}
         run: pytest -q
 
   image-smoke:
