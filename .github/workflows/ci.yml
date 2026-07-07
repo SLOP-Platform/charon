@@ -38,6 +38,15 @@ jobs:
         run: python3 -m charon.cli gate
 
       - name: tests
+        # Root pytest's tmp dirs under the job-scoped runner temp (cleaned per-job
+        # by Actions) instead of the host-wide /tmp/pytest-of-<user>. On the
+        # persistent shared self-hosted 4-LOM runner, /tmp is NOT job-isolated —
+        # a concurrent workflow run (e.g. this ci.yml gate racing release.yml's
+        # gate on a tag push) shares the same pytest-of-stack numbering/cleanup
+        # and can rm_rf a sibling run's still-live basetemp mid-suite, which
+        # cascades into every subsequent test ERRORing at fixture SETUP.
+        env:
+          PYTEST_DEBUG_TEMPROOT: ${{ runner.temp }}
         run: pytest -q
 
       - name: render review-log (verify all fragments are readable)
