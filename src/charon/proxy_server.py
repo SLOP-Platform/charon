@@ -1010,6 +1010,7 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         model_pricing: dict[str, dict] | None = None,
         max_body_bytes: int = 10 * 1024 * 1024,
         default_cooldown: float = 60.0,
+        max_cooldown_s: float = 120.0,
         failover_log_path: str | None = None,
         failover_on_downgrade: bool = False,
         guardrails: Guardrails | None = None,
@@ -1053,6 +1054,12 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         self.pools = pools or {}
         self.max_body_bytes = max_body_bytes
         self.default_cooldown = default_cooldown
+        # Ceiling on any single cooldown, including a provider-reported Retry-After
+        # (cooldown-anchor-demotion red): an upstream that returns an extreme backoff
+        # (observed ~3420s / 57min) must never sideline a provider — anchor or not —
+        # for tens of minutes. set_cooldown() clamps to this; the default-60s no-
+        # Retry-After path is unaffected (60 < 120).
+        self.max_cooldown_s = max_cooldown_s
         self.failover_log_path = failover_log_path
         # Operator toggle (SR-2): on a GENUINE silent downgrade, fail over to the next
         # provider to try for the asked model instead of serving the downgrade. The
@@ -1122,18 +1129,28 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
     def order_by_cooldown(self, chain: list[UpstreamRoute]) -> list[UpstreamRoute]:
         """Try providers NOT in active cooldown first; keep cooled ones as a
-        last resort so a stale cooldown never permanently blocks a request (R7)."""
+        last resort so a stale cooldown never permanently blocks a request (R7).
+        Within the cooled bucket, order by soonest-to-recover first (ascending
+        remaining cooldown) — cooldown-anchor-demotion red: among several cooled
+        providers, prefer the one closest to coming back rather than an arbitrary
+        (insertion) order."""
         now = time.monotonic()
         with self._cooldown_lock:
             fresh = [r for r in chain if self._cooldown.get(r.upstream_base, 0.0) <= now]
             cooled = [r for r in chain if self._cooldown.get(r.upstream_base, 0.0) > now]
+            cooled.sort(key=lambda r: self._cooldown.get(r.upstream_base, 0.0))
         return fresh + cooled
 
     def set_cooldown(self, route: UpstreamRoute, retry_after: int | None) -> None:
         """Mark a provider out-of-capacity until ``Retry-After`` (or a default),
         keyed by provider (upstream_base) — a 429 is account-level, so all of that
-        provider's models are skipped, not just the one (R10c)."""
+        provider's models are skipped, not just the one (R10c). The Retry-After-
+        derived duration is clamped to ``max_cooldown_s`` (cooldown-anchor-demotion
+        red): upstreams occasionally report extreme backoffs (observed ~3420s /
+        57min) that would otherwise sideline a provider — anchor or not — for far
+        longer than a transient rate limit warrants."""
         secs = float(retry_after) if (retry_after and retry_after > 0) else self.default_cooldown
+        secs = min(secs, self.max_cooldown_s)
         with self._cooldown_lock:
             self._cooldown[route.upstream_base] = time.monotonic() + secs
 

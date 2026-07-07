@@ -11,6 +11,7 @@ import http.server
 import json
 import socketserver
 import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -281,6 +282,63 @@ def test_402_and_404_also_fail_over():
             gw.shutdown()
             a.shutdown()
             b.shutdown()
+
+
+def test_set_cooldown_clamps_huge_retry_after():
+    # cooldown-anchor-demotion red: an upstream-reported Retry-After of ~3420s
+    # (~57min, the observed real-world value that sidelined the anchor) must be
+    # clamped to max_cooldown_s, not honored verbatim.
+    gw = GatewayProxyServer(max_cooldown_s=120.0)
+    try:
+        route = UpstreamRoute("http://127.0.0.1:1", "k")
+        gw.set_cooldown(route, 3420)
+        remaining = gw._cooldown[route.upstream_base] - time.monotonic()
+        assert 0 < remaining <= 120.0
+    finally:
+        gw.server_close()
+
+
+def test_set_cooldown_default_unaffected_by_clamp():
+    # No Retry-After header → falls back to default_cooldown (60s), which is
+    # below the default max_cooldown_s (120s) — the clamp must be a no-op here.
+    gw = GatewayProxyServer()
+    try:
+        route = UpstreamRoute("http://127.0.0.1:1", "k")
+        gw.set_cooldown(route, None)
+        remaining = gw._cooldown[route.upstream_base] - time.monotonic()
+        assert 55 < remaining <= 60.0
+    finally:
+        gw.server_close()
+
+
+def test_order_by_cooldown_orders_cooled_bucket_by_remaining_time():
+    # cooldown-anchor-demotion red (fix 2): among cooled providers, the one
+    # closest to recovering should be preferred, not left in arbitrary order.
+    gw = GatewayProxyServer()
+    try:
+        soon = UpstreamRoute("http://127.0.0.1:1", "k1")   # short remaining cooldown
+        later = UpstreamRoute("http://127.0.0.1:2", "k2")  # long remaining cooldown
+        gw.set_cooldown(later, 100)
+        gw.set_cooldown(soon, 5)
+        ordered = gw.order_by_cooldown([later, soon])  # deliberately reverse input order
+        assert [r.upstream_base for r in ordered] == [soon.upstream_base, later.upstream_base]
+    finally:
+        gw.server_close()
+
+
+def test_order_by_cooldown_fresh_before_cooled_no_regression():
+    # No regression to the existing fresh-before-cooled bucketing (R7): a fresh
+    # (never cooled) provider still always sorts ahead of any cooled provider,
+    # regardless of the new within-bucket ordering.
+    gw = GatewayProxyServer()
+    try:
+        fresh = UpstreamRoute("http://127.0.0.1:1", "k1")
+        cooled = UpstreamRoute("http://127.0.0.1:2", "k2")
+        gw.set_cooldown(cooled, 30)
+        ordered = gw.order_by_cooldown([cooled, fresh])  # cooled listed first in input
+        assert [r.upstream_base for r in ordered] == [fresh.upstream_base, cooled.upstream_base]
+    finally:
+        gw.server_close()
 
 
 def test_whole_pool_exhausted_synthesizes_terminal():
