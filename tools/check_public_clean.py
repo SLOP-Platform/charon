@@ -26,7 +26,17 @@ _WAIVER_RE = re.compile(r'public-clean:\s*allow\b')
 _EXCEPTIONS_PATH = Path("tools/.public-clean-exceptions.json")
 
 
-def _load_exceptions(config_path: Path | None = None) -> dict[str, set[int]]:
+def _load_exceptions(config_path: Path | None = None) -> dict[str, set[str]]:
+    """Load the exceptions config.
+
+    Exemptions are keyed by exact line CONTENT (not line number) so an
+    unrelated insertion/deletion elsewhere in the file can never silently
+    shift a waiver onto the wrong line (which would either un-mask a real
+    leak or mask a brand-new one). If the exempted content is edited or
+    removed, the exemption simply stops matching and the line is
+    re-evaluated against the patterns like any other — fail-safe, not
+    fail-silent.
+    """
     if config_path is None:
         config_path = _EXCEPTIONS_PATH
     if not config_path.exists():
@@ -35,7 +45,7 @@ def _load_exceptions(config_path: Path | None = None) -> dict[str, set[int]]:
     return {fp: set(lines) for fp, lines in data.items()}
 
 
-def check_file(path: Path, exceptions: dict[str, set[int]] | None = None) -> list[str]:
+def check_file(path: Path, exceptions: dict[str, set[str]] | None = None) -> list[str]:
     if exceptions is None:
         exceptions = {}
     violations: list[str] = []
@@ -46,7 +56,7 @@ def check_file(path: Path, exceptions: dict[str, set[int]] | None = None) -> lis
     except (OSError, UnicodeDecodeError):
         return violations
     for lineno, line in enumerate(content.split("\n"), start=1):
-        if lineno in exempt:
+        if line in exempt:
             continue
         if _WAIVER_RE.search(line):
             continue
@@ -57,7 +67,7 @@ def check_file(path: Path, exceptions: dict[str, set[int]] | None = None) -> lis
     return violations
 
 
-def check_paths(paths: list[Path], exceptions: dict[str, set[int]] | None = None) -> list[str]:
+def check_paths(paths: list[Path], exceptions: dict[str, set[str]] | None = None) -> list[str]:
     all_v: list[str] = []
     for p in paths:
         all_v.extend(check_file(p, exceptions))
@@ -74,7 +84,18 @@ def _tracked_files() -> list[str]:
 def main() -> int:
     exceptions = _load_exceptions()
     all_v: list[str] = []
+    exceptions_rel = str(_EXCEPTIONS_PATH)
     for rel in sorted(_tracked_files()):
+        if rel == exceptions_rel:
+            # The exceptions ledger itself necessarily restates the exact,
+            # already-elsewhere-exempted line content it waives (that's the
+            # whole point of content-based matching — see _load_exceptions).
+            # None of that text is a *new* disclosure: it is verbatim what
+            # was already reviewed and allowed at its original location.
+            # Scanning the ledger against itself would just re-flag its own
+            # bookkeeping, so it is excluded — the same way a detect-secrets
+            # baseline file is excluded from its own secret scan.
+            continue
         all_v.extend(check_file(Path(rel), exceptions))
     if all_v:
         print("PUBLIC-CLEAN VIOLATION — personal/internal info found:", file=sys.stderr)

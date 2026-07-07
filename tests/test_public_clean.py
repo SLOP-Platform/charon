@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tools.check_public_clean import _PATTERNS, check_file, check_paths
+from tools.check_public_clean import (
+    _EXCEPTIONS_PATH,
+    _PATTERNS,
+    _load_exceptions,
+    check_file,
+    check_paths,
+)
 
 
 def test_flags_internal_ip(tmp_path: Path) -> None:
@@ -134,13 +140,21 @@ def test_waiver_keyword_allow_is_required(tmp_path: Path) -> None:
 
 
 # ── exception config ──────────────────────────────────────────────────────────
+#
+# Exemptions are keyed by exact line CONTENT, not line number. A future
+# insertion/deletion elsewhere in the file shifts line numbers but not line
+# content, so the waiver keeps tracking the line it was written for instead
+# of silently sliding onto a neighboring line (which could un-mask a real
+# leak or mask a new one). If the exempted content itself changes, the
+# exemption simply stops matching and the check re-evaluates that line
+# normally — fail-safe, not fail-silent.
 
 
 def test_exception_config_suppresses_violation(tmp_path: Path) -> None:
     f = tmp_path / "exempt.json"
     rel = str(f)
     f.write_text('{"rig": "charon-private"}\n')
-    v = check_file(f, {rel: {1}})
+    v = check_file(f, {rel: {'{"rig": "charon-private"}'}})  # public-clean: allow — test fixture
     assert len(v) == 0
 
 
@@ -148,8 +162,47 @@ def test_exception_config_only_suppresses_specific_lines(tmp_path: Path) -> None
     f = tmp_path / "partial.json"
     rel = str(f)
     f.write_text('"ok": true\n"bad": "10.0.0.1"\n')
-    v = check_file(f, {rel: {1}})
+    v = check_file(f, {rel: {'"ok": true'}})
     assert len(v) == 1
+
+
+def test_exception_content_no_longer_present_stops_suppressing(tmp_path: Path) -> None:
+    """If the file's line content drifts away from what the exemption
+    recorded (e.g. someone edits the surrounding comment), the exemption
+    must NOT keep suppressing whatever now occupies that line — content
+    drift re-exposes the line to normal checking instead of silently
+    carrying the old waiver forward."""
+    f = tmp_path / "drifted.json"
+    rel = str(f)
+    f.write_text('{"rig": "charon-private"}\n')
+    # exemption was written for different content than what's now on the line
+    v = check_file(f, {rel: {'{"rig": "some-other-value"}'}})
+    assert len(v) == 1
+
+
+def test_shipped_exceptions_match_tracked_file_content() -> None:
+    """Shape-assertion / drift guard: every entry in
+    tools/.public-clean-exceptions.json must be an exact line still present
+    verbatim in its target file. If a file was edited and the exempted line
+    moved, was reworded, or was deleted, this fails loudly and names the
+    offending file — instead of the exemption quietly doing nothing (content
+    match: line no longer exempt) or, worse, quietly matching an unrelated
+    new line that happens to have identical text elsewhere in a *different*
+    exceptions entry never being noticed as stale."""
+    exceptions = _load_exceptions()
+    assert exceptions, "expected the shipped exceptions file to be non-empty"
+    problems: list[str] = []
+    for fp, contents in exceptions.items():
+        p = Path(fp)
+        if not p.exists():
+            problems.append(f"{fp}: file referenced in {_EXCEPTIONS_PATH} no longer exists")
+            continue
+        file_lines = set(p.read_text().split("\n"))
+        for c in contents:
+            if c not in file_lines:
+                problems.append(f"{fp}: exempted line no longer found verbatim: {c[:80]!r}")
+    msg = "stale public-clean exceptions (re-author or remove):\n" + "\n".join(problems)
+    assert not problems, msg
 
 
 # ── binary / unreadable ───────────────────────────────────────────────────────

@@ -19,7 +19,13 @@ line also contains `public-clean: allow` (any comment syntax). GitHub action pin
 commit SHAs in CI workflows use this waiver.
 
 **Exception config:** `tools/.public-clean-exceptions.json` maps file paths to
-line-number sets for content that cannot host an inline waiver (e.g. JSON).
+sets of exact line CONTENT (not line numbers) for content that cannot host an
+inline waiver (e.g. JSON). Content-keying means an unrelated insertion/deletion
+elsewhere in the file never shifts a waiver onto the wrong line; if the
+exempted content itself is edited, the exemption stops matching and the line
+is re-evaluated normally (fail-safe, not fail-silent). A regression test
+(`test_shipped_exceptions_match_tracked_file_content`) asserts every shipped
+entry is still verbatim-present, catching stale/drifted exemptions early.
 
 **Tests** (`tests/test_public_clean.py`, 20 tests):
 - Each pattern category has a positive detection test
