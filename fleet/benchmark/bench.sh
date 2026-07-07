@@ -102,7 +102,17 @@ section_finalized() {
 }
 
 section_in_progress() {
-  [ -f "$HERE/runs/$1/$2/meta.json" ]
+  # bench-run-collision (P1): a bare file-existence check used to treat ANY
+  # existing, non-finalized meta.json as "resume this" - including one that
+  # was abandoned hours/days ago (its start_ts long past the section's own
+  # timebox). grade_state.py's `is_active` instead only reports true while
+  # the section is still within its CURRENT round's timebox - stale state
+  # falls through to prepare_section's fresh-`init` path below instead of
+  # being silently resumed with a poisoned clock. See lib/grade_state.py
+  # module docstring for the full incident writeup.
+  [ -f "$HERE/runs/$1/$2/meta.json" ] || return 1
+  local active; active="$(python3 "$STATE_PY" is_active "$1" "$2")"
+  [ "$active" = "true" ]
 }
 
 cost_mode_notice() {
@@ -124,6 +134,43 @@ cost_mode_notice() {
     echo " same gateway during this run will pollute cost_usd; set CHARON_BENCH_SESSION_ID"
     echo " + wire opencode.json's X-Charon-Session header BEFORE this opencode tab starts"
     echo " for isolated per-session cost instead)"
+  fi
+}
+
+refuse_if_stale_fallback() {
+  # bench-run-collision RESIDUAL (fleet/reds.tsv; harness-hardening
+  # adversarial review must-fix #2) - FAIL-CLOSED half of the fix, called
+  # ONLY from do_grade's/do_status's own no-`--model` branch, AFTER each has
+  # already resolved $model from $MODEL_STATE in its own pre-existing style
+  # (so do_status's original soft "no active run" message for a MISSING
+  # pointer FILE is untouched by this - it only runs once there IS a model
+  # name to check).
+  #
+  # $MODEL_STATE is a single pointer GLOBAL across every concurrent bench.sh
+  # tab/process on this box - a DIFFERENT tab's `start` can silently
+  # overwrite it between THIS caller's own `start` and this call, so an
+  # LLM that forgets `--model` can resolve to the WRONG model entirely (the
+  # exact mechanism that once misattributed a kimi-k2.6 grade to
+  # deepseek-v4-pro). grade_state.py's `record` now independently refuses to
+  # finalize a score against STALE state too (defense in depth - see its own
+  # bench-run-collision-residual comment) - this is the earlier, cheaper
+  # shell-level half of the same fix: fail fast with a clear message BEFORE
+  # even running the grader, whenever the fallback resolves to a section
+  # whose on-disk state isn't genuinely ACTIVE right now. A caller who
+  # passes --model explicitly never calls this function at all - unaffected.
+  local subcmd="$1" model="$2"
+  local section; section="$(current_section "$model")"
+  [ -z "$section" ] && return 0  # run already complete for this model - nothing to poison
+  local active
+  active="$(python3 "$STATE_PY" is_active "$model" "$section" 2>/dev/null || echo false)"
+  if [ "$active" != "true" ]; then
+    die "refusing $subcmd without --model: the shared pointer ($MODEL_STATE) currently
+resolves to model=$model section=$section, but that section's on-disk state is STALE
+(not an actively in-flight run) - this is exactly how a kimi-k2.6 run once got
+misattributed to deepseek-v4-pro (a DIFFERENT concurrent bench.sh tab's \`start\`
+overwrote this shared pointer in between - see fleet/reds.tsv bench-run-collision).
+Re-run with the EXACT model id from YOUR OWN start's ANNOUNCE line:
+  $HERE/bench.sh $subcmd --model <your-id>"
   fi
 }
 
@@ -151,7 +198,18 @@ prepare_section() {
     echo "=================================================================="
     echo "SECTION $section  (model=$model, RESUMING an in-progress correction round - worktree untouched)"
   else
-    worktree="$(python3 "$STATE_PY" init "$model" "$section" "$timebox")"
+    # bench-run-collision: was there stale/abandoned state here already (not
+    # active per section_in_progress above, but on disk)? Surface that to
+    # the operator/agent instead of silently discarding it.
+    local had_stale_meta=false
+    [ -f "$HERE/runs/$model/$section/meta.json" ] && had_stale_meta=true
+    # BENCH_GUARD_ACTIVE_RUN=1: opt bench.sh into grade_state.py's
+    # active-run guard (last-line TOCTOU defense - see its module docstring)
+    # since bench.sh's own resume/fresh decision was JUST made above via
+    # is_active; run.sh/run-many.sh deliberately don't set this, keeping
+    # their existing always-reset PREPARE-mode contract unchanged.
+    worktree="$(BENCH_GUARD_ACTIVE_RUN=1 python3 "$STATE_PY" init "$model" "$section" "$timebox")" \
+      || die "could not initialize state for $model/$section - see error above (likely an active-run collision; another process may be using this model/section right now)"
     rm -rf "$worktree"
     mkdir -p "$worktree"
     # copy the fixture, never node_modules/dist/pycache - the model/grader
@@ -160,6 +218,13 @@ prepare_section() {
       | ( cd "$worktree" && tar xf - )
     echo "=================================================================="
     echo "SECTION $section  (model=$model, work_class=$(section_work_class "$section"), time-box=${timebox}s)"
+    if [ "$had_stale_meta" = true ]; then
+      echo "NOTE: a prior state dir existed for $model/$section but was STALE"
+      echo "(past its own timebox with no active run extending it) - discarded,"
+      echo "starting FRESH with a new start_ts. If that prior run already"
+      echo "produced a scorecard row, review it manually (see fleet/reds.tsv"
+      echo "bench-run-collision)."
+    fi
   fi
   echo "------------------------------------------------------------------"
   cat "$HERE/prompts/$(echo "$section" | tr 'A-Z' 'a-z').txt"
@@ -194,8 +259,28 @@ do_start() {
 }
 
 do_grade() {
-  [ -f "$MODEL_STATE" ] || die "no active run - start one with: $HERE/bench.sh start"
-  local model; model="$(cat "$MODEL_STATE")"
+  # bench-run-collision (P1): resolving "which model am I" purely from the
+  # single shared $MODEL_STATE file (last writer wins, GLOBAL across every
+  # concurrent bench.sh tab/process on this box) is exactly how a kimi-k2.6
+  # run's `grade` call once got silently misattributed to deepseek-v4-pro -
+  # a DIFFERENT tab's `start` overwrote $MODEL_STATE in between. `--model`
+  # (mirroring `start`'s own override) lets the agent pass back the EXACT
+  # string it was told at start's ANNOUNCE banner (a self-report it already
+  # has in its own conversation - no re-detection, no shared file, no
+  # ambiguity), which is now what RUN-BENCHMARK.md instructs every run to
+  # do. $MODEL_STATE remains the fallback for the legacy single-tab/manual
+  # flow when no override is given - unchanged for that case, just no
+  # longer the ONLY option.
+  local override=""
+  if [ "${1:-}" = "--model" ]; then override="${2:-}"; fi
+  local model
+  if [ -n "$override" ]; then
+    model="$override"
+  else
+    [ -f "$MODEL_STATE" ] || die "no active run - start one with: $HERE/bench.sh start (or pass --model <id> explicitly - recommended whenever more than one bench.sh tab may be active concurrently)"
+    model="$(cat "$MODEL_STATE")"
+    refuse_if_stale_fallback grade "$model"
+  fi
   local section; section="$(current_section "$model")"
   if [ -z "$section" ]; then
     echo "run already complete for $model:"
@@ -208,6 +293,14 @@ do_grade() {
   fixture="$(section_fixture "$section")"
   grader="$(section_grader "$section")"
 
+  # bench-premature-grade (P2): the model's own worktree file-write(s) can
+  # still be flushing to disk in the instant right after it announces "done"
+  # and invokes `grade` - grading that split second too early produced a
+  # false-low score (observed: S5 scored 60, true settled state was 100).
+  # Block until the worktree's newest file mtime has been stable (no writes)
+  # for a few seconds - see lib/sections.sh `wait_for_worktree_stable`.
+  wait_for_worktree_stable "$worktree"
+
   local grader_out
   grader_out="$($grader --worktree "$worktree" --baseline "$fixture")" || die "grader crashed: $grader_out"
   local score gate reason
@@ -216,7 +309,14 @@ do_grade() {
   reason="$(jget "$grader_out" reason | tr '\t' ' ')"
 
   local record finalize corrections final_score time_s timed_out
-  record="$(python3 "$STATE_PY" record "$model" "$section" "$score" "$gate")"
+  # bench-run-collision RESIDUAL, defense in depth: grade_state.py's `record`
+  # can now itself refuse (prints {"error": ...}, exit 1) when this section's
+  # state is STALE - surface that cleanly instead of letting `set -e` abort
+  # the whole script with no message (the `if` form below is exempt from
+  # errexit, unlike a bare `var="$(...)"` assignment).
+  if ! record="$(python3 "$STATE_PY" record "$model" "$section" "$score" "$gate")"; then
+    die "$(jget "$record" error 2>/dev/null || echo "$record")"
+  fi
   finalize="$(jget "$record" finalize)"
   corrections="$(jget "$record" corrections)"
   final_score="$(jget "$record" final_score)"
@@ -248,8 +348,20 @@ do_grade() {
   # above, announced once at `start`). "-" only if the gateway wasn't
   # reachable/discoverable at either snapshot - never a guess.
   local cost_usd; cost_usd="$(jget "$record" cost_usd)"
+  # TOKEN-CAPTURE: same delta the gateway reports alongside cost_usd (SEC 5a
+  # weights tokens highest per BENCHMARK-V2-DESIGN.md) - grade_state.py
+  # `record` now diffs tokens_in/tokens_out the same way it already diffs
+  # cost_usd above. "-" only if the gateway didn't report them at either
+  # snapshot (older gateway/provider) - never a guess. Passed to
+  # model-scorecard.sh via env var (not a new positional arg - `append`'s
+  # trailing `note` is variadic and already swallows the rest of argv; see
+  # model-scorecard.sh's cmd_append comment for why).
+  local tokens_in tokens_out
+  tokens_in="$(jget "$record" tokens_in)"
+  tokens_out="$(jget "$record" tokens_out)"
 
-  bash "$SCORECARD" append "$TODAY" bench "$section" "$wclass" "$tier" "$model" "$verdict" "$gate" "$final_score" "$time_s" "$cost_usd" "$corrections" "$note"
+  CHARON_SCORECARD_TOKENS_IN="$tokens_in" CHARON_SCORECARD_TOKENS_OUT="$tokens_out" \
+    bash "$SCORECARD" append "$TODAY" bench "$section" "$wclass" "$tier" "$model" "$verdict" "$gate" "$final_score" "$time_s" "$cost_usd" "$corrections" "$note"
   echo "SECTION $section / $model: FINAL score=$final_score verdict=$verdict time_s=$time_s corrections=$corrections -> appended to model-scorecard.tsv"
 
   local next; next="$(current_section "$model")"
@@ -267,8 +379,16 @@ do_grade() {
 }
 
 do_status() {
-  [ -f "$MODEL_STATE" ] || { echo "no active run"; return; }
-  local model; model="$(cat "$MODEL_STATE")"
+  local override=""
+  if [ "${1:-}" = "--model" ]; then override="${2:-}"; fi
+  local model
+  if [ -n "$override" ]; then
+    model="$override"
+  else
+    [ -f "$MODEL_STATE" ] || { echo "no active run"; return; }
+    model="$(cat "$MODEL_STATE")"
+    refuse_if_stale_fallback status "$model"
+  fi
   local sec; sec="$(current_section "$model")"
   echo "model=$model  current_section=${sec:-<none - run complete>}"
 }
@@ -286,7 +406,7 @@ main() {
     grade)  shift; do_grade "$@" ;;
     status) shift; do_status "$@" ;;
     chart)  shift; do_chart "$@" ;;
-    *) die "usage: bench.sh {start [--model <id>] | grade | status | chart [<model>]}" ;;
+    *) die "usage: bench.sh {start [--model <id>] | grade [--model <id>] | status [--model <id>] | chart [<model>]}" ;;
   esac
 }
 

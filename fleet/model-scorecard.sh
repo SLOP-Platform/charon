@@ -10,7 +10,14 @@ MARK="$HERE/state/last-scorecard-review"
 TODAY="$(date +%F)"
 TAB=$'\t'
 
-VALID_SOURCE="live bench"
+# bench2 = BENCHMARK-V2-DESIGN.md's tokens-in-scope efficiency-scored
+# harness rows (source tag only - the scoring math itself lives entirely
+# in benchmark/lib/{efficiency,close_season,tier_chart}.py, none of it
+# here). A bench2 row uses the EXACT same 15-column shape as a bench row
+# (tokens_in/tokens_out at cols 14/15, same as any post-TOKEN-CAPTURE
+# bench row) - only the `source` value differs, so cmd_append needed no
+# other change to accept it.
+VALID_SOURCE="live bench bench2"
 VALID_CLASS="money-path routing ci-infra refactor bugfix tests greenfield-feature docs frontend"
 VALID_VERDICT="MERGE FIXES BLOCK"
 VALID_GATE="pass fail -"
@@ -43,10 +50,26 @@ cmd_append() {
   case "$time_s" in -) ;; ''|*[!0-9.]*) die "time_s must be a non-negative number of seconds or -";; esac
   case "$cost_usd" in -) ;; ''|*[!0-9.]*) die "cost_usd must be a non-negative number or -";; esac
   case "$corrections" in -) ;; ''|*[!0-9]*) die "corrections must be a non-negative integer or -";; esac
+  # TOKEN-CAPTURE: tokens_in/tokens_out, when the caller has them, ride along
+  # in optional env vars set right before invoking `append` (see
+  # benchmark/bench.sh) rather than as new positional args - `note` above is
+  # variadic ("$*", already consumed every remaining arg above), so there is
+  # no positional slot left after it for more required args without an
+  # incompatible reshuffle. Appended as NEW TRAILING COLUMNS (14, 15) so
+  # every existing reader keeps working unchanged on both legacy 13-column
+  # rows already in the ledger and these new 15-column ones: tier_chart.py's
+  # `load_rows`/`bench_rows_for` only ever unpack `cols[:13]`, and
+  # `cmd_render` below only ever addresses $1-$12. Defaults to "-" (never
+  # guessed) for any caller that doesn't set them - e.g. one written before
+  # this change, or a provider/response that doesn't report tokens.
+  local tokens_in="${CHARON_SCORECARD_TOKENS_IN:--}"
+  local tokens_out="${CHARON_SCORECARD_TOKENS_OUT:--}"
+  case "$tokens_in" in -) ;; ''|*[!0-9]*) die "tokens_in must be a non-negative integer or -";; esac
+  case "$tokens_out" in -) ;; ''|*[!0-9]*) die "tokens_out must be a non-negative integer or -";; esac
   [ -f "$TSV" ] || die "ledger not found: $TSV"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$date" "$source" "$ref" "$wclass" "$tier" "$model" "$verdict" "$gate" "$score" \
-    "$time_s" "$cost_usd" "$corrections" "$note" >> "$TSV"
+    "$time_s" "$cost_usd" "$corrections" "$note" "$tokens_in" "$tokens_out" >> "$TSV"
   echo "appended: $model / $wclass / $verdict (rows now $(row_count))"
 }
 

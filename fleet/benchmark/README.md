@@ -82,11 +82,37 @@ rejected in favor of the DB.
 path — see its header for full docs):
 - `bench.sh start [--model <id>]` — detect + announce the model, prepare
   the next un-finalized section in the fixed S0..S6 queue.
-- `bench.sh grade` — grade whatever is currently in flight, auto-append the
-  row, then automatically prepare the next section (or print the final
-  tier chart if that was S6).
-- `bench.sh status` — where the current run is, no side effects.
-- `bench.sh chart [<model>]` — (re-)print the tier chart standalone.
+- `bench.sh grade [--model <id>]` — grade whatever is currently in flight,
+  auto-append the row, then automatically prepare the next section (or
+  print the final tier chart if that was S6). **Always pass `--model <id>`
+  (the id `start` announced) when more than one bench.sh tab may be
+  active on this box** — without it, the model is read from a single
+  on-disk pointer shared by every concurrent tab, which a DIFFERENT tab's
+  `start` can silently overwrite (`bench-run-collision`, fleet/reds.tsv);
+  `RUN-BENCHMARK.md` always uses the explicit form.
+- `bench.sh status [--model <id>]` — where the current run is, no side
+  effects.
+- `bench.sh chart [<model>]` — (re-)print the tier chart standalone. This
+  is the ONLY place the chart is rendered (`lib/tier_chart.py`) — never
+  hand-render/re-type a copy of it.
+
+**Run isolation / staleness**: each section's on-disk state
+(`runs/<model>/<section>/meta.json`) now tracks whether it's still
+genuinely active (within its own current correction round's timebox) or
+stale/abandoned; `bench.sh` only resumes state that `lib/grade_state.py`'s
+`is_active` reports as active, otherwise it reinitializes fresh (new
+worktree, new `start_ts`) instead of silently inheriting a poisoned clock
+from an abandoned run. `init`/`record` also hold a short non-blocking
+`flock` on the state dir as a last-line defense against a genuinely
+simultaneous double invocation. See `lib/grade_state.py`'s module
+docstring for the full incident writeup.
+
+**Grading is gated on worktree mtime-stability** (`bench-premature-grade`,
+fleet/reds.tsv): `bench.sh grade`/`run.sh --grade` both wait
+(`lib/sections.sh` `wait_for_worktree_stable`) until the worktree's newest
+file mtime has been unchanged for a few seconds before invoking the grader,
+so a model's own in-flight file-write doesn't get graded a split second
+too early.
 
 The **tier chart** printed at the end shows a section→grade table plus ONE
 **OVERALL TIER** computed across all 7 sections (S0-S6 together, no separate

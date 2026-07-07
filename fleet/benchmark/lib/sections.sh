@@ -65,3 +65,50 @@ verdict_from_score() {
   local s="$1"
   if [ "$s" -ge 90 ]; then echo MERGE; elif [ "$s" -ge 50 ]; then echo FIXES; else echo BLOCK; fi
 }
+
+# WORKTREE MTIME-STABILITY GATE (bench-premature-grade, P2, fleet/reds.tsv):
+# the model's own file-write(s) in its worktree can still be flushing to
+# disk in the instant right after it announces "done" and invokes `grade` -
+# grading against a not-yet-fully-settled worktree produces a false-low
+# score (observed: kimi-k2.6/S5 and glm-5.2/S5 both scored 60, true settled
+# state re-graded 100 ~37s later). Block the grader until the worktree's
+# own newest file mtime has been STABLE (no writes) for
+# BENCH_MTIME_STABLE_SEC seconds, capped at BENCH_MTIME_MAX_WAIT_SEC total
+# wait so a worktree that's *continuously* touched (e.g. a leftover
+# build/watch process) can't hang the run forever - it grades anyway past
+# the cap, with a clear stderr warning. Shared by bench.sh and run.sh (both
+# grade against the same on-disk worktrees) so neither can independently
+# drift out of sync on this gate.
+wait_for_worktree_stable() {
+  local worktree="$1"
+  # Default bumped 12s -> 20s (harness-hardening adversarial review,
+  # fleet/scratch/harness-hardening-review.md, defer item #2): the observed
+  # premature-grade gap that motivated this gate was ~37s of manual re-grade
+  # delay, not a proven write-burst length, but 12s left more headroom than
+  # warranted against a lone late flush arriving after a >12s quiet gap.
+  # Still fully env-overridable (BENCH_MTIME_STABLE_SEC) and still capped by
+  # BENCH_MTIME_MAX_WAIT_SEC (unchanged) so a continuously-touched worktree
+  # still can't hang the run forever.
+  local stable_for="${BENCH_MTIME_STABLE_SEC:-20}"
+  local max_wait="${BENCH_MTIME_MAX_WAIT_SEC:-60}"
+  local waited=0 newest now_epoch age remaining
+  while :; do
+    newest="$(find "$worktree" -type f -printf '%T@\n' 2>/dev/null | sort -rn | head -1)"
+    if [ -z "$newest" ]; then
+      return 0  # empty/missing worktree - nothing to wait on
+    fi
+    now_epoch="$(date +%s)"
+    age=$(( now_epoch - ${newest%.*} ))
+    if [ "$age" -ge "$stable_for" ]; then
+      return 0
+    fi
+    if [ "$waited" -ge "$max_wait" ]; then
+      echo "(worktree mtime still within ${stable_for}s of a write after ${max_wait}s of waiting - grading anyway; a background process may still be touching files in $worktree)" >&2
+      return 0
+    fi
+    remaining=$(( stable_for - age ))
+    if [ "$remaining" -lt 1 ]; then remaining=1; fi
+    sleep "$remaining"
+    waited=$(( waited + remaining ))
+  done
+}

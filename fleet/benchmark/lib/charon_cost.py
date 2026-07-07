@@ -161,11 +161,20 @@ def cost_attribution_method() -> str:
     return "session" if session_id() else "global"
 
 
-def snapshot_cost_usd() -> float | None:
-    """Read the gateway's CURRENT cumulative ``cost_usd`` - per-session
-    (isolated, SESSION-COST) when ``session_id()`` resolves one, else the
-    original GLOBAL cumulative counter (SR-5b). ``None`` on any failure -
-    never raises, never estimates."""
+def snapshot_usage() -> dict | None:
+    """TOKEN-CAPTURE: like ``snapshot_cost_usd()`` but returns the FULL usage
+    dict the gateway reports in the SAME response/snapshot instead of just
+    ``cost_usd`` - ``{"cost_usd": float|None, "tokens_in": int|None,
+    "tokens_out": int|None}`` - so token counts can be captured at exactly
+    the point cost already is, with zero extra network round-trips.
+
+    ``None`` on any failure - identical contract to ``snapshot_cost_usd()``
+    (no config, no network, bad auth, endpoint missing/unreachable). A
+    present-but-token-less response (older gateway, or a provider that
+    doesn't report ``tokens_in``/``tokens_out``) is NOT a failure: this still
+    returns a dict, just with ``None`` for whichever field is missing/
+    non-numeric - never guessed, never crashes. ``snapshot_cost_usd()`` below
+    is now a thin wrapper over this so the two can never drift apart."""
     auth = gateway_auth()
     if auth is None:
         return None
@@ -179,20 +188,37 @@ def snapshot_cost_usd() -> float | None:
             url, headers={"Authorization": f"Bearer {token}"})
         with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:
             body = json.loads(resp.read())
-    except Exception:  # noqa: BLE001 - best-effort: any failure -> "-" upstream
+    except Exception:  # noqa: BLE001 - best-effort: any failure -> None upstream
         return None
-    if sid:  # GET /charon/cost body: {"session","tokens_in","tokens_out","cost_usd"}
-        try:
-            return float(body["cost_usd"])
-        except (KeyError, TypeError, ValueError):
-            return None
-    usage = body.get("usage")
+    # GET /charon/cost body is already flat: {"session","tokens_in",
+    # "tokens_out","cost_usd"}. GET /charon/status nests it under "usage".
+    usage = body if sid else body.get("usage")
     if not isinstance(usage, dict):
         return None
-    try:
-        return float(usage["cost_usd"])
-    except (KeyError, TypeError, ValueError):
+
+    def _num(key: str, cast):
+        try:
+            return cast(usage[key])
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    return {
+        "cost_usd": _num("cost_usd", float),
+        "tokens_in": _num("tokens_in", int),
+        "tokens_out": _num("tokens_out", int),
+    }
+
+
+def snapshot_cost_usd() -> float | None:
+    """Read the gateway's CURRENT cumulative ``cost_usd`` - per-session
+    (isolated, SESSION-COST) when ``session_id()`` resolves one, else the
+    original GLOBAL cumulative counter (SR-5b). ``None`` on any failure -
+    never raises, never estimates. Unchanged return type/semantics from
+    before TOKEN-CAPTURE; now implemented via ``snapshot_usage()``."""
+    usage = snapshot_usage()
+    if usage is None:
         return None
+    return usage.get("cost_usd")
 
 
 def delta_str(start: float | None, end: float | None) -> str:
@@ -203,6 +229,23 @@ def delta_str(start: float | None, end: float | None) -> str:
     if start is None or end is None or end < start:
         return "-"
     return f"{end - start:.6f}"
+
+
+def int_delta_str(start: int | None, end: int | None) -> str:
+    """TOKEN-CAPTURE: like ``delta_str()`` but for a cumulative INTEGER
+    counter (``tokens_in``/``tokens_out``) instead of a float cost - same
+    ``"-"`` semantics (missing/non-numeric snapshot, or the counter went
+    backwards, e.g. a gateway restart mid-section -> ``"-"``, never a guess).
+    """
+    if start is None or end is None:
+        return "-"
+    try:
+        s, e = int(start), int(end)
+    except (TypeError, ValueError):
+        return "-"
+    if e < s:
+        return "-"
+    return str(e - s)
 
 
 def main() -> None:

@@ -92,6 +92,10 @@ grade_section() {
   local fixture; fixture="$(section_fixture "$section")"
   local grader; grader="$(section_grader "$section")"
 
+  # bench-premature-grade (P2): same worktree-mtime-stability gate as
+  # bench.sh - see lib/sections.sh `wait_for_worktree_stable`.
+  wait_for_worktree_stable "$worktree"
+
   local grader_out
   grader_out="$($grader --worktree "$worktree" --baseline "$fixture")" || die "grader crashed: $grader_out"
   local score gate reason
@@ -100,7 +104,14 @@ grade_section() {
   reason="$(echo "$grader_out" | python3 -c 'import json,sys; print(json.load(sys.stdin)["reason"])' | tr '\t' ' ')"
 
   local record
-  record="$(python3 "$STATE_PY" record "$model" "$section" "$score" "$gate")"
+  # bench-run-collision RESIDUAL, defense in depth (see grade_state.py's
+  # cmd_record comment): `record` now refuses (JSON {"error": ...}, exit 1)
+  # when this section's state is STALE, instead of silently finalizing a
+  # poisoned score=0 row - surface that cleanly rather than letting `set -e`
+  # abort with no message.
+  if ! record="$(python3 "$STATE_PY" record "$model" "$section" "$score" "$gate")"; then
+    die "grade_state.py record refused for $model/$section: $record"
+  fi
   local finalize corrections final_score time_s timed_out
   finalize="$(echo "$record" | python3 -c 'import json,sys; print(json.load(sys.stdin)["finalize"])')"
   corrections="$(echo "$record" | python3 -c 'import json,sys; print(json.load(sys.stdin)["corrections"])')"
