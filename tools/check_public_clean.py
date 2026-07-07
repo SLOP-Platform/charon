@@ -10,6 +10,12 @@ from pathlib import Path
 
 _PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r'10\.\d+\.\d+\.\d+'), 'internal IP (10.0.0.0/8)'),
+    (re.compile(r'10\.0\.1\.\d+'), 'coordinator LAN subnet (10.0.1.0/24)'),   # named, explicit;
+        # redundant with the generic 10.x pattern above by design (defense in depth: this
+        # survives even if the generic pattern is ever narrowed/refactored, because it names
+        # the coordinator's actual subnet directly rather than relying on a broad bucket)
+    (re.compile(r'192\.168\.\d+\.\d+'), 'internal IP (192.168.0.0/16)'),
+    (re.compile(r'172\.(1[6-9]|2\d|3[01])\.\d+\.\d+'), 'internal IP (172.16.0.0/12)'),
     (re.compile(r'\b4-?lom\b', re.IGNORECASE), 'hostname "4-lom"'),
     (re.compile(r'\bcharon-?vm\b', re.IGNORECASE), 'hostname "charon-vm"'),
     (re.compile(r'/home/stack'), 'home path "/home/stack"'),

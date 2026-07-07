@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tools.check_public_clean import check_file, check_paths
+from tools.check_public_clean import _PATTERNS, check_file, check_paths
 
 
 def test_flags_internal_ip(tmp_path: Path) -> None:
@@ -11,6 +11,38 @@ def test_flags_internal_ip(tmp_path: Path) -> None:
     v = check_file(f)
     assert len(v) == 1
     assert "internal IP" in v[0]
+
+
+def test_coordinator_subnet_pattern_named_and_matches(tmp_path: Path) -> None:
+    """10.0.1.x is already caught by the generic 10.0.0.0/8 pattern (which wins
+    the first-match break in check_file — verified below), so the dedicated
+    'coordinator LAN subnet' pattern is tested directly against _PATTERNS
+    rather than via check_file's reported description string."""
+    named = [desc for _, desc in _PATTERNS if "coordinator LAN subnet" in desc]
+    assert named, "expected a named coordinator-subnet pattern in _PATTERNS"
+    pat = next(p for p, desc in _PATTERNS if desc == named[0])
+    assert pat.search("10.0.1.42")
+    # confirm it is genuinely flagged end-to-end (via whichever pattern wins)
+    f = tmp_path / "coord.py"
+    f.write_text('host = "10.0.1.42"\n')
+    v = check_file(f)
+    assert len(v) == 1
+
+
+def test_flags_internal_ip_192_range(tmp_path: Path) -> None:
+    f = tmp_path / "bad192.py"
+    f.write_text('host = "192.168.1.5"\n')
+    v = check_file(f)
+    assert len(v) == 1
+    assert "192.168.0.0/16" in v[0]
+
+
+def test_flags_internal_ip_172_range(tmp_path: Path) -> None:
+    f = tmp_path / "bad172.py"
+    f.write_text('host = "172.20.3.4"\n')
+    v = check_file(f)
+    assert len(v) == 1
+    assert "172.16.0.0/12" in v[0]
 
 
 def test_flags_hostname_4_lom(tmp_path: Path) -> None:
