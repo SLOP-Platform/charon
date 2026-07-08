@@ -70,6 +70,26 @@ between two-or-more differing models -> bench.sh asks the AGENT to
 self-report its own model name (it already knows this from its own
 conversation) and re-invoke explicitly with `--model <id>` instead of
 guessing.
+
+MODEL-ID-NORMALIZE (fleet ticket): opencode's `session.model` JSON `id`
+field is sometimes provider-namespaced (e.g. `charon/glm-5.2` when the
+session is routed through the `charon` opencode provider) rather than the
+bare curated id (`glm-5.2`) the rest of the harness (model-scorecard.tsv,
+runs/<id>/, tier_chart.py's cross-model ranking) keys everything on. Left
+unnormalized, this silently fragments ONE model into TWO scorecard
+identities (`glm-5.2` and `charon/glm-5.2`), splitting its history and
+corrupting tier/rank comparisons. `normalize_model_id()` below mirrors
+charon's own `proxy.py::_normalize_model_id` EXACTLY (rsplit on the final
+`/` segment; a bare id with no `/` is returned unchanged) so opencode's
+provider-namespaced form collapses to the same bare id charon itself
+normalizes to. Applied here, at the single earliest point the raw id is
+read out of the DB, so every caller downstream (detect()'s own
+ambiguity-dedup, bench.sh's ANNOUNCE banner, its runs/<id>/ path
+construction, and the scorecard `model` column) sees only the normalized
+form without having to normalize again itself. bench.sh's `--model`
+override path does not flow through this module, so it re-normalizes via
+this SAME function (see bench.sh's `normalize_model_id` shell helper) -
+never a re-implementation of the rsplit logic.
 """
 import json
 import os
@@ -81,6 +101,17 @@ DB_PATH = os.path.expanduser("~/.local/share/opencode/opencode.db")
 STALENESS_SEC = 900  # 15 min - operator just ran /model + pasted; must be fresh
 CANDIDATE_LIMIT = 50  # rows to scan looking for the staleness cutoff; plenty
                        # for any realistic number of concurrently-open tabs
+
+
+def normalize_model_id(model_id):
+    """Mirror charon's src/charon/proxy.py::_normalize_model_id EXACTLY:
+    take the FINAL '/'-delimited path segment. A bare id with no '/' is
+    returned unchanged (no-op). Falsy input passes through unchanged (the
+    caller decides what to do with None/"" - this never fabricates a value).
+    See the MODEL-ID-NORMALIZE module note above for why this exists."""
+    if not model_id:
+        return model_id
+    return model_id.rsplit("/", 1)[-1]
 
 
 class Ambiguous(Exception):
@@ -121,7 +152,7 @@ def detect(staleness=STALENESS_SEC):
             data = json.loads(model_json)
         except (TypeError, ValueError):
             continue
-        model_id = data.get("id")
+        model_id = normalize_model_id(data.get("id"))
         if model_id:
             candidates.append((model_id, age_s))
 

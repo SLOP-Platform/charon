@@ -286,7 +286,15 @@ def part7_bench_sh_fallback_fail_closed() -> None:
         (bench_dir / "runs").mkdir()
         for name in ("bench.sh", "run.sh"):
             shutil.copy(BENCH_DIR / name, bench_dir / name)
-        for name in ("sections.sh", "grade_state.py", "charon_cost.py"):
+        # detect_model.py: MODEL-ID-NORMALIZE (fleet ticket) - bench.sh's
+        # own `normalize_model_id` shell helper shells out to this module's
+        # `normalize_model_id()` for every `--model` override (not just
+        # auto-detect), so it is now a genuine runtime dependency of
+        # `bench.sh status --model <id>` below, not just of the no-override
+        # auto-detect path - the scratch lib/ must mirror that or the
+        # override call fails with ModuleNotFoundError before ever reaching
+        # the STALE-fallback logic this test actually exercises.
+        for name in ("sections.sh", "grade_state.py", "charon_cost.py", "detect_model.py"):
             shutil.copy(LIB_DIR / name, lib_dir / name)
         os.chmod(bench_dir / "bench.sh", 0o755)
 

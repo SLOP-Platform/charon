@@ -82,6 +82,28 @@ jget() {
   python3 -c 'import json,sys; print(json.loads(sys.argv[1])[sys.argv[2]])' "$1" "$2"
 }
 
+normalize_model_id() {
+  # MODEL-ID-NORMALIZE (fleet ticket): lib/detect_model.py's own auto-detect
+  # path normalizes at its single earliest point (see that file's module
+  # docstring), but any model id bench.sh itself accepts directly - a
+  # `--model` override to start/grade/status/reset, or a positional arg to
+  # `chart` - bypasses that module entirely, so it must be normalized here
+  # too. Rather than reimplementing the rsplit-final-segment logic in bash
+  # (risking drift from charon's own proxy.py::_normalize_model_id), this
+  # shells out to lib/detect_model.py's normalize_model_id() - the SAME
+  # function auto-detect uses - so there is exactly one implementation of
+  # the normalization rule in this whole repo. No-op on a bare id (no '/'),
+  # and on empty input (prints "").
+  local id="${1:-}"
+  [ -z "$id" ] && { echo ""; return; }
+  python3 -c '
+import os, sys
+sys.path.insert(0, os.path.dirname(sys.argv[1]))
+from detect_model import normalize_model_id as _norm
+print(_norm(sys.argv[2]))
+' "$DETECT_PY" "$id"
+}
+
 detect_model() {
   # bench-model-misdetect (P1, fleet/reds.tsv): auto-detect used to trust
   # the single most-recently-*touched* opencode session system-wide, which
@@ -97,6 +119,7 @@ detect_model() {
   # path and is what RUN-BENCHMARK.md now recommends by default.
   local override="$1"
   if [ -n "$override" ]; then
+    override="$(normalize_model_id "$override")"
     echo "$override"
     echo "(model: explicit --model override)" >&2
     return
@@ -311,13 +334,13 @@ do_grade() {
   # flow when no override is given - unchanged for that case, just no
   # longer the ONLY option.
   local override=""
-  if [ "${1:-}" = "--model" ]; then override="${2:-}"; fi
+  if [ "${1:-}" = "--model" ]; then override="$(normalize_model_id "${2:-}")"; fi
   local model
   if [ -n "$override" ]; then
     model="$override"
   else
     [ -f "$MODEL_STATE" ] || die "no active run - start one with: $HERE/bench.sh start (or pass --model <id> explicitly - recommended whenever more than one bench.sh tab may be active concurrently)"
-    model="$(cat "$MODEL_STATE")"
+    model="$(normalize_model_id "$(cat "$MODEL_STATE")")"
     refuse_if_stale_fallback grade "$model"
   fi
   local section; section="$(current_section "$model")"
@@ -419,13 +442,13 @@ do_grade() {
 
 do_status() {
   local override=""
-  if [ "${1:-}" = "--model" ]; then override="${2:-}"; fi
+  if [ "${1:-}" = "--model" ]; then override="$(normalize_model_id "${2:-}")"; fi
   local model
   if [ -n "$override" ]; then
     model="$override"
   else
     [ -f "$MODEL_STATE" ] || { echo "no active run"; return; }
-    model="$(cat "$MODEL_STATE")"
+    model="$(normalize_model_id "$(cat "$MODEL_STATE")")"
     refuse_if_stale_fallback status "$model"
   fi
   local sec; sec="$(current_section "$model")"
@@ -434,7 +457,8 @@ do_status() {
 
 do_chart() {
   local model="${1:-}"
-  if [ -z "$model" ] && [ -f "$MODEL_STATE" ]; then model="$(cat "$MODEL_STATE")"; fi
+  [ -n "$model" ] && model="$(normalize_model_id "$model")"
+  if [ -z "$model" ] && [ -f "$MODEL_STATE" ]; then model="$(normalize_model_id "$(cat "$MODEL_STATE")")"; fi
   [ -n "$model" ] || die "usage: bench.sh chart <model>  (or run 'bench.sh start' first)"
   python3 "$CHART_PY" "$model"
 }
@@ -452,7 +476,7 @@ do_reset() {
   local model="" force=false
   while [ $# -gt 0 ]; do
     case "$1" in
-      --model) model="${2:-}"; shift 2 ;;
+      --model) model="$(normalize_model_id "${2:-}")"; shift 2 ;;
       --force) force=true; shift ;;
       *) die "usage: bench.sh reset --model <id> [--force]" ;;
     esac
