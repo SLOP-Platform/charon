@@ -1,0 +1,50 @@
+# FROZEN synthetic fixture for capability/selftest.py (#14 review, should-fix #2:
+# fleet/scratch/ticket-assign-review.md Q4a). Hand-designed, NOT derived from the
+# live fleet/model-scorecard.tsv (which is append-only and was mid-benchmark-run
+# when this was written) — do not append live rows here; this file's whole point
+# is to stay stable while the live scorecard keeps growing.
+#
+# Same 13-column shape ScorecardGradesProvider._load() parses:
+#   date  source  ref  work_class  tier  model  verdict  gate  score  time_s  cost_usd  corrections  note
+#
+# Model ids reuse real charon/src/charon/model_catalog.py entries (glm-5.2=med,
+# claude-opus-4-8=high, claude-haiku-4.5=low, claude-sonnet-5=med, gpt-5.5=high,
+# kimi-k2.6=med) on purpose, so get_tier_hint() resolves real tiers and the
+# tier-exclusion path is exercisable without faking the catalog. hy3-preview-or
+# is deliberately NOT in the catalog (tier_hint=None), matching the real
+# benchmark-only-id gap get_tier_hint()'s docstring calls out.
+#
+# Coverage designed in:
+#   - routing: glm-5.2 n=3 (2 MERGE + 1 real BLOCK) vs kimi-k2.6 n=1 lucky MERGE
+#     -> the small-N-over-trust inversion case (must-fix #1).
+#   - ci-infra: exactly one clean-MERGE model among FIXES competitors.
+#   - money-path: hy3-preview-or is the only BLOCK verdict.
+#   - refactor / bugfix: independent distinct winners (differentiation proof).
+#   - frontend: claude-opus-4-8 + glm-5.2 have DIRECT data; claude-sonnet-5 does
+#     not (its only data is under "tests") -> generalist-fallback-vs-direct
+#     de-prioritization case (should-fix #3).
+#   - tests: claude-sonnet-5 n=5 (4 MERGE + 1 FIXES) -> a high-n, NOT
+#     LOW_CONFIDENCE case, for contrast against the n=1/n=3 low-n cases above.
+#   - greenfield-feature: intentionally NO rows for anyone -> pure
+#     generalist-fallback path (should-fix #2's fallback coverage ask).
+2026-01-01	ticket	FIX-001	routing	T1	glm-5.2	MERGE	-	-	120	-	0	fixture: routing merge 1/3
+2026-01-02	ticket	FIX-002	routing	T1	glm-5.2	MERGE	-	-	140	-	0	fixture: routing merge 2/3
+2026-01-03	ticket	FIX-003	routing	T1	glm-5.2	BLOCK	-	-	90	-	1	fixture: routing REAL block 3/3
+2026-01-04	ticket	FIX-004	routing	T1	kimi-k2.6	MERGE	-	-	110	-	0	fixture: routing lucky n=1 merge
+2026-01-05	ticket	FIX-005	ci-infra	T1	glm-5.2	MERGE	-	-	95	-	0	fixture: ci-infra only clean merge
+2026-01-06	ticket	FIX-006	ci-infra	T1	kimi-k2.6	FIXES	-	-	130	-	1	fixture: ci-infra fixes not merge
+2026-01-07	ticket	FIX-007	ci-infra	T1	claude-opus-4-8	FIXES	-	-	100	-	1	fixture: ci-infra fixes not merge
+2026-01-08	ticket	FIX-008	money-path	T1	hy3-preview-or	BLOCK	-	-	150	-	2	fixture: money-path only block
+2026-01-09	ticket	FIX-009	money-path	T1	glm-5.2	MERGE	-	-	100	-	0	fixture: money-path clean merge
+2026-01-10	ticket	FIX-010	money-path	T1	claude-opus-4-8	MERGE	-	-	105	-	0	fixture: money-path clean merge
+2026-01-11	ticket	FIX-011	refactor	T1	claude-haiku-4.5	MERGE	-	-	80	-	0	fixture: refactor winner
+2026-01-12	ticket	FIX-012	refactor	T1	kimi-k2.6	FIXES	-	-	120	-	1	fixture: refactor fixes
+2026-01-13	ticket	FIX-013	bugfix	T1	gpt-5.5	MERGE	-	-	90	-	0	fixture: bugfix winner
+2026-01-14	ticket	FIX-014	bugfix	T1	kimi-k2.6	BLOCK	-	-	140	-	2	fixture: bugfix block
+2026-01-15	ticket	FIX-015	frontend	T1	claude-opus-4-8	MERGE	-	-	100	-	0	fixture: frontend direct merge
+2026-01-16	ticket	FIX-016	frontend	T1	glm-5.2	FIXES	-	-	110	-	1	fixture: frontend direct fixes
+2026-01-17	ticket	FIX-017	tests	T1	claude-sonnet-5	MERGE	-	-	70	-	0	fixture: tests high-n 1/5
+2026-01-18	ticket	FIX-018	tests	T1	claude-sonnet-5	MERGE	-	-	72	-	0	fixture: tests high-n 2/5
+2026-01-19	ticket	FIX-019	tests	T1	claude-sonnet-5	MERGE	-	-	68	-	0	fixture: tests high-n 3/5
+2026-01-20	ticket	FIX-020	tests	T1	claude-sonnet-5	MERGE	-	-	75	-	0	fixture: tests high-n 4/5
+2026-01-21	ticket	FIX-021	tests	T1	claude-sonnet-5	FIXES	-	-	85	-	1	fixture: tests high-n 5/5 (fixes)

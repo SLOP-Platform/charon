@@ -1,4 +1,5 @@
 tier: strong
+work_class: greenfield-feature
 branch: feat/obs-capture
 depends_on:
 owns: src/charon/adapters/acp.py, src/charon/ports/backend.py, src/charon/adapters/mock.py, src/charon/coordinator.py, src/charon/decompose.py, tests/test_acp_capture.py

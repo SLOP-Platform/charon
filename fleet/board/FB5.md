@@ -1,4 +1,5 @@
 tier: sonnet
+work_class: ci-infra
 branch: feat/ci-hardening
 depends_on: FB6
 owns: .github/workflows/ci.yml, .github/workflows/heavy.yml, .github/workflows/release.yml, .github/workflows/windows-exe.yml, pyproject.toml

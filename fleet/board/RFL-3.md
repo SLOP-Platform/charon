@@ -1,4 +1,5 @@
 tier: strong
+work_class: routing
 branch: feat/rfl-3-image-routing
 depends_on: RFL-1
 real-dep: RFL-1 build (single-owner file src/charon/proxy_server.py) — proxy_server.py is the

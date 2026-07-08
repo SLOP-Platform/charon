@@ -1,4 +1,5 @@
 tier: frontier
+work_class: docs
 branch: docs/ds-plan-review
 depends_on:
 owns:

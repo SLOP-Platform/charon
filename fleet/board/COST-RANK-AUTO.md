@@ -1,4 +1,5 @@
 tier: strong
+work_class: money-path
 branch: feat/cost-rank-auto
 depends_on: SR-5b, DRAIN-ROUTING
 real-dep: SR-5b (cost_input/cost_output pricing must be captured and real). DRAIN-ROUTING

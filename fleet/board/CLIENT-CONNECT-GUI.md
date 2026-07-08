@@ -1,4 +1,5 @@
 tier: strong
+work_class: greenfield-feature
 branch: feat/client-connect-gui
 depends_on:
 owns: src/charon/connect.py, tests/test_connect_gui.py

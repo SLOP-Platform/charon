@@ -1,4 +1,5 @@
 tier: sonnet
+work_class: docs
 branch: feat/docs-two-mode
 depends_on:
 owns: README.md, docs/getting-started.md

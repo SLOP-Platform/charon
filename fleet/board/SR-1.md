@@ -1,4 +1,5 @@
 tier: strong
+work_class: money-path
 branch: feat/sr-1-namespace-downgrade-fix
 depends_on:
 owns: src/charon/proxy.py, tests/test_proxy_downgrade.py

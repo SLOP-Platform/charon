@@ -1,4 +1,5 @@
 tier: frontier
+work_class: greenfield-feature
 branch: feat/prod-install-bootstrap
 depends_on:
 owns: install.sh, src/charon/cli.py, src/charon/doctor.py, README.md, docs/

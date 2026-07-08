@@ -1,4 +1,5 @@
 tier: strong
+work_class: ci-infra
 branch: feat/dtc-arch-boundary
 depends_on:
 owns: tools/check_arch.py, tests/test_check_arch.py

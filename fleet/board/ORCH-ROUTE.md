@@ -1,4 +1,5 @@
 tier: frontier
+work_class: routing
 branch: feat/orch-route
 depends_on: CWD-CONFIG
 owns: src/charon/api.py, src/charon/ports/agent_launch.py, tests/test_agent_launch_routing.py

@@ -5,6 +5,24 @@
 **Base branch/worktree:** `<branch>` at `<worktree-path>` (an isolated worktree — do NOT
 work in the shared main tree `/home/stack/code/charon`)
 
+## IF THIS BRIEF CREATES/UPDATES A `board/<TICKET-ID>.md` TICKET (required field)
+Every LIVE board ticket (any `board/*.md`, i.e. not `.md.parked`) MUST carry a
+`work_class:` line — one line, right after `tier:`, matching the existing metadata style
+(`tier:`, `branch:`, `depends_on:`, `owns:`, `prompt:`). `validate_board.sh` HARD-FAILs any
+ticket missing it or using a value outside the taxonomy. It is the auto-resolve source
+`capability/assign.py` reads instead of requiring `--work-class` on the CLI. Pick exactly
+one (single source of truth: `capability/grades.py`'s `WORK_CLASSES` + `GENERALIST`):
+`money-path, routing, ci-infra, refactor, bugfix, tests, greenfield-feature, docs,
+frontend, generalist`. Example:
+```
+tier: strong
+work_class: bugfix
+branch: feat/fix-thing
+depends_on:
+owns: src/charon/thing.py, tests/test_thing.py
+prompt: /home/stack/charon-private/prompts/fix-thing.md
+```
+
 ## FIRST ACTS (mandatory — worktree isolation + bridge coordination)
 1. `cd <worktree-path>` (create it off latest `origin/master` if it doesn't exist yet).
 2. `git fetch origin && git merge origin/master` — rebase onto current master. Resolve

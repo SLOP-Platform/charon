@@ -1,4 +1,5 @@
 tier: sonnet
+work_class: greenfield-feature
 branch: feat/cli-tier
 depends_on: TIER-1
 owns: src/charon/cli.py, tests/test_cli_tier.py

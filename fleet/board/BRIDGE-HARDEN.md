@@ -1,4 +1,5 @@
 tier: strong
+work_class: refactor
 branch: feat/bridge-harden
 depends_on:
 owns: ~/.config/opencode/session-bridge/server.py, ~/.config/opencode/opencode.json, AGENTS.md, /home/stack/charon-private/fleet/BRIDGE-IMPROVEMENT-PLAN.md

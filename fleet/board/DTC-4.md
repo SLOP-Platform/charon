@@ -1,4 +1,5 @@
 tier: strong
+work_class: ci-infra
 branch: feat/dtc-charon-gate
 depends_on: DTC-1
 owns: src/charon/cli.py, tools/check_boundary.py, tools/check_version.py, .github/workflows/ci.yml

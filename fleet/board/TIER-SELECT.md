@@ -1,4 +1,5 @@
 tier: strong
+work_class: greenfield-feature
 branch: feat/tier-select-catalog
 depends_on: SR-8
 real-dep: SR-8 build — TIER-SELECT edits src/charon/proxy_server.py (the web `/charon/setup`

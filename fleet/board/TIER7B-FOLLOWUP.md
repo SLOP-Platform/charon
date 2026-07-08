@@ -1,4 +1,5 @@
 tier: sonnet
+work_class: tests
 branch: feat/tier7b-followup
 depends_on:
 owns: tests/test_tier_lifecycle.py, src/charon/api.py

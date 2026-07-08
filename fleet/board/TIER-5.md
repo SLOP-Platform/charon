@@ -1,4 +1,5 @@
 tier: opus
+work_class: ci-infra
 branch: feat/fleet-tier-claim
 depends_on: TIER-3
 owns: /home/stack/charon-private/fleet/claim.sh

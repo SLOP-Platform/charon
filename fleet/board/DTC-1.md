@@ -1,4 +1,5 @@
 tier: strong
+work_class: ci-infra
 branch: feat/gate-registry
 depends_on:
 owns: tools/gates.json, tools/check_gate_registry.py

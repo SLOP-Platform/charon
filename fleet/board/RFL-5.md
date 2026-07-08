@@ -1,4 +1,5 @@
 tier: frontier
+work_class: greenfield-feature
 branch: feat/rfl-5-context-compaction
 depends_on:
 owns: src/charon/context_shaper.py, tests/test_context_shaper.py

@@ -1,4 +1,5 @@
 tier: strong
+work_class: greenfield-feature
 branch: feat/model-discovery
 depends_on: DS-PLAN-REVIEW
 owns: src/charon/config.py, src/charon/providers.py, src/charon/gateway.py, src/charon/proxy_server.py, src/charon/api.py, src/charon/cli.py, tests/test_gateway.py

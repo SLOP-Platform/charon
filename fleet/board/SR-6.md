@@ -1,4 +1,5 @@
 tier: frontier
+work_class: greenfield-feature
 branch: feat/sr-6-anthropic-prompt-cache
 depends_on: SR-2, INC-401-FAILOVER
 real-dep: SR-2 build (single-owner file proxy_server.py) — SR-6 edits proxy_server.py which SR-2 also

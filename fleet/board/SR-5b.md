@@ -1,4 +1,5 @@
 tier: strong
+work_class: money-path
 branch: feat/sr-5b-cost-usd-wire
 depends_on: SR-5, SR-2, TIER-SELECT
 real-dep: SR-5 build — SR-5 CAPTURES per-token pricing into the model registry; SR-5b CONSUMES it

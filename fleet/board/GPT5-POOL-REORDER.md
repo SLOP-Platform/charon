@@ -1,4 +1,5 @@
 tier: economy
+work_class: routing
 branch: feat/gpt-5-pool-reorder
 depends_on: INC-401-FAILOVER
 real-dep: INC-401-FAILOVER (the 401 fix must land first so reordering doesn't just

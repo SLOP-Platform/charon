@@ -1,4 +1,5 @@
 tier: sonnet
+work_class: bugfix
 branch: feat/worktree-add-force
 depends_on:
 owns: src/charon/gitutil.py, tests/test_gitutil_worktree.py

@@ -1,4 +1,5 @@
 tier: frontier
+work_class: frontend
 branch: feat/console-provider-mgmt
 depends_on:
 owns: src/charon/proxy_server.py, src/charon/config.py, src/charon/gateway.py, tests/test_console_provider_mgmt.py

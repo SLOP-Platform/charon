@@ -1,4 +1,5 @@
 tier: strong
+work_class: money-path
 branch: feat/sr-2-serve-downgrade-stream-cache
 depends_on: SR-1
 real-dep: SR-1 build — SR-2 reworks the SAME classify()/failover-loop decision SR-1 corrects; the

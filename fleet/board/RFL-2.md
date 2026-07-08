@@ -1,4 +1,5 @@
 tier: strong
+work_class: frontend
 branch: feat/rfl-2-chat-playground
 depends_on: RFL-3
 real-dep: RFL-3 build (single-owner file src/charon/proxy_server.py) — proxy_server.py is the

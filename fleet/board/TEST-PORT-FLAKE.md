@@ -1,4 +1,5 @@
 tier: sonnet
+work_class: tests
 branch: feat/test-ephemeral-ports
 depends_on:
 owns: tests/test_gateway.py, tests/test_gateway_tiers.py

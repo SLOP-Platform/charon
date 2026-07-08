@@ -1,4 +1,5 @@
 tier: strong
+work_class: greenfield-feature
 branch: feat/rfl-1-quota-tracking
 depends_on: SR-13
 real-dep: SR-13 build (single-owner file src/charon/proxy_server.py) — proxy_server.py has a strict

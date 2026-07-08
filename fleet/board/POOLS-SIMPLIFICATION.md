@@ -1,4 +1,5 @@
 tier: economy
+work_class: refactor
 branch: feat/pools-simplification
 depends_on: DRAIN-ROUTING, COST-RANK-AUTO
 real-dep: DRAIN-ROUTING + COST-RANK-AUTO (the default draw-down chain must exist before

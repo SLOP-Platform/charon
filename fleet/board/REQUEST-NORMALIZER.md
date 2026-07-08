@@ -1,4 +1,5 @@
 tier: strong
+work_class: bugfix
 branch: feat/request-normalizer
 depends_on: INC-401-FAILOVER
 real-dep: INC-401-FAILOVER (the failover loop must correctly advance on non-DeepSeek

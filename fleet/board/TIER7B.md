@@ -1,4 +1,5 @@
 tier: opus
+work_class: greenfield-feature
 branch: feat/tier-phase-b-multitier
 depends_on: HARD1
 real-dep: HARD1 regression-guard test (tests/test_run_task_routing.py) must land FIRST so the routing invariant is guarded before the Phase-B multitier change reworks it — a true build/correctness prereq, not merge-order. Owns are disjoint by design (guard test vs router/api/acp/failover); the dep is JUSTIFIED, not assumed.

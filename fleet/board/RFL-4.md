@@ -1,4 +1,5 @@
 tier: strong
+work_class: frontend
 branch: feat/rfl-4-limit-editor
 depends_on: RFL-2, RFL-1
 real-dep: RFL-2 build (single-owner file src/charon/proxy_server.py) — proxy_server.py is the

@@ -1,4 +1,5 @@
 tier: opus
+work_class: ci-infra
 branch: feat/docker-install
 depends_on:
 owns: Dockerfile, docker-compose.yml, .dockerignore, docs/docker.md, .env.example, README.md

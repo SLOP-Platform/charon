@@ -1,4 +1,5 @@
 tier: economy
+work_class: docs
 branch: feat/fragility-tickets
 depends_on:
 owns: /home/stack/charon-private/fleet/board/

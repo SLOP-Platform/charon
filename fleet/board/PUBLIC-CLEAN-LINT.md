@@ -1,4 +1,5 @@
 tier: strong
+work_class: ci-infra
 branch: feat/public-clean-lint
 depends_on:
 owns: tools/check_public_clean.py, tools/check_boundary.py, tests/test_public_clean.py

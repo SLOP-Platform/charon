@@ -1,4 +1,5 @@
 tier: opus
+work_class: greenfield-feature
 branch: feat/client-connect
 depends_on:
 owns: src/charon/cli.py, src/charon/connect.py, tests/test_connect.py

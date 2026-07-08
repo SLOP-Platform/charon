@@ -1,4 +1,5 @@
 tier: strong
+work_class: routing
 branch: feat/global-fallback-provider
 depends_on:
 owns: src/charon/gateway.py, src/charon/config.py, src/charon/proxy_server.py

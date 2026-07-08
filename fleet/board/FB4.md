@@ -1,4 +1,5 @@
 tier: opus
+work_class: bugfix
 branch: feat/fix-engine-concurrency
 depends_on:
 owns: engine/claim.py, engine/scheduler.py, tests/test_claim.py, tests/test_scheduler.py

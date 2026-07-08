@@ -1,4 +1,5 @@
 tier: strong
+work_class: money-path
 branch: feat/sr-5-pricing-cost-visibility
 depends_on:
 owns: src/charon/config.py, src/charon/discover.py, src/charon/providers.py

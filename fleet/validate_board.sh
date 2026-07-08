@@ -50,6 +50,7 @@ for f in sorted(glob.glob(os.path.join(board, "*.md"))):
         "branch": field(f, "branch"),
         "deps": [d.strip() for d in field(f, "depends_on").split(",") if d.strip()],
         "owns": [o.strip() for o in field(f, "owns").split(",") if o.strip()],
+        "work_class": field(f, "work_class"),
         "just": just,
         "depbuild": depbuild,
     }
@@ -66,6 +67,26 @@ for t, d in tickets.items():
     for dep in d["deps"]:
         if dep.lower() not in ids:
             red.append(f"bad-dep: {t} depends_on '{dep}' (no such ticket)")
+
+# 2b. work_class required + valid (capability/assign.py's auto-resolve source; see D&S
+# standing rule precedent below — same "every LIVE ticket must self-document" discipline,
+# same not-scanned-so-exempt treatment for .md.parked via the "*.md" glob above).
+sys.path.insert(0, os.path.join(fleet, "capability"))
+try:
+    from grades import WORK_CLASSES, GENERALIST  # type: ignore
+    _VALID_WORK_CLASSES = set(WORK_CLASSES) | {GENERALIST}
+except Exception as e:
+    _VALID_WORK_CLASSES = None
+    red.append(f"work-class-check-failed: could not import capability/grades.py — {e}")
+if _VALID_WORK_CLASSES is not None:
+    for t, d in tickets.items():
+        wc = d["work_class"]
+        if not wc:
+            red.append(f"work-class-missing: {t} has no 'work_class:' field "
+                       f"(required — one of: {', '.join(sorted(_VALID_WORK_CLASSES))})")
+        elif wc not in _VALID_WORK_CLASSES:
+            red.append(f"work-class-invalid: {t} work_class '{wc}' is not one of "
+                       f"{', '.join(sorted(_VALID_WORK_CLASSES))}")
 
 # 3. duplicate branches
 seen = {}
@@ -181,6 +202,26 @@ for t, d in tickets.items():
 if any(d["deps"] for d in tickets.values()):
     wci.append("semantic: prompt-intent contradiction / hidden coupling is NOT machine-checked "
                "— eyeball overlapping or dep-linked tickets by hand.")
+
+# 6. Uncommitted work — no session left dirty tracked files on disk.
+# Modified tracked files in src/ = a session exited without committing.
+# Untracked files (??) are OK — they belong to the active session.
+import subprocess
+charon_repo = "/home/stack/code/charon"
+try:
+    result = subprocess.run(
+        ["git", "-C", charon_repo, "status", "--porcelain", "--", "src/"],
+        capture_output=True, text=True, timeout=10
+    )
+    for line in result.stdout.strip().split("\n"):
+        if not line:
+            continue
+        status = line[:2]
+        path = line[3:].strip()
+        if status.strip() in ("M", "MM", "MD", " D", "D "):
+            red.append(f"uncommitted-work: dirty tracked file '{path}' — a session exited without committing. Commit or stash before launching.")
+except Exception as e:
+    red.append(f"uncommitted-check-failed: could not run git status — {e}")
 
 print("== validate_board ==")
 for i in info:  print(f"  INFO {i}")

@@ -1,4 +1,5 @@
 tier: strong
+work_class: greenfield-feature
 branch: feat/sr-8-dead-module-decision
 depends_on: SR-2, SR-6, SR-7
 real-dep: SR-2 build (single-owner file proxy_server.py) — shared-file sequencing on proxy_server.py.

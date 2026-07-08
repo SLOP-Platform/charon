@@ -1,4 +1,5 @@
 tier: frontier
+work_class: frontend
 branch: feat/obs-ui
 depends_on:
 owns: src/charon/proxy_server.py, src/charon/console_work.py, tests/test_console_work.py

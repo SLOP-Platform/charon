@@ -1,4 +1,5 @@
 tier: sonnet
+work_class: refactor
 branch: feat/review-log-fragments
 depends_on:
 owns: docs/REVIEW-LOG.md, docs/review-log/*, tools/render_review_log.py, tests/test_render_review_log.py

@@ -1,4 +1,5 @@
 tier: opus
+work_class: bugfix
 branch: feat/setup-ux-a
 depends_on:
 owns: src/charon/cli.py, tests/test_setup_ux.py

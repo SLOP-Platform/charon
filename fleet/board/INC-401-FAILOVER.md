@@ -1,4 +1,5 @@
 tier: strong
+work_class: bugfix
 branch: feat/inc-401-failover
 depends_on:
 owns: src/charon/proxy.py, src/charon/proxy_server.py, tests/test_proxy.py

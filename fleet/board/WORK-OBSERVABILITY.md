@@ -1,4 +1,5 @@
 tier: opus
+work_class: greenfield-feature
 branch: feat/work-observability
 depends_on: CLIENT-CONNECT
 real-dep: CLIENT-CONNECT owns cli.py which this ticket also owns — overlapping owns, must land after it (sequencing, not merge-order-only).

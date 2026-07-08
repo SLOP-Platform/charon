@@ -1,4 +1,5 @@
 tier: strong
+work_class: bugfix
 branch: feat/setup-key-ux
 depends_on:
 owns: src/charon/cli.py, tests/test_setup_key.py

@@ -1,4 +1,5 @@
 tier: strong
+work_class: tests
 branch: feat/dtc-test-patterns
 depends_on:
 owns: tools/check_test_patterns.py, tests/test_check_test_patterns.py

@@ -1,4 +1,5 @@
 tier: strong
+work_class: money-path
 branch: feat/sr-7-spend-cap-hardening
 depends_on: SR-2, SR-6, SR-5
 real-dep: SR-2 build (single-owner file proxy_server.py) — shared-file sequencing on proxy_server.py.

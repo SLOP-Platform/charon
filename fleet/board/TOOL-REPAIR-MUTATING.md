@@ -1,4 +1,5 @@
 tier: economy
+work_class: bugfix
 branch: feat/tool-repair-mutating-gate
 depends_on:
 owns: src/charon/tool_repair.py, tests/test_tool_repair.py

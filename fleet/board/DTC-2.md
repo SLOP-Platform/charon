@@ -1,4 +1,5 @@
 tier: strong
+work_class: tests
 branch: feat/dtc-shared-http
 depends_on:
 owns: tests/conftest.py, tests/test_shared_http.py

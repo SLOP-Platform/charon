@@ -1,4 +1,5 @@
 tier: opus
+work_class: frontend
 branch: feat/gui-svelte-build
 depends_on:
 owns: src/charon/proxy_server.py, src/charon/config.py, src/charon/spend_limits.py, src/charon/gateway.py, gui/ (new Svelte/Vite project), pyproject.toml, Dockerfile, tests/test_proxy_server.py, tests/test_gui_*.py (new)

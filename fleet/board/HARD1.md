@@ -1,4 +1,5 @@
 tier: sonnet
+work_class: tests
 branch: feat/run-task-routing-test
 depends_on:
 owns: tests/test_run_task_routing.py

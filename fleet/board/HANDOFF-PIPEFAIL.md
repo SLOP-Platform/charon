@@ -1,4 +1,5 @@
 tier: economy
+work_class: bugfix
 branch: feat/handoff-pipefail
 depends_on:
 owns: /home/stack/charon-private/fleet/handoff.sh

@@ -1,4 +1,5 @@
 tier: sonnet
+work_class: bugfix
 branch: feat/secret-scan-envvar-fp
 depends_on:
 owns: .gitleaks.toml, tests/test_land_secret_allowlist.py

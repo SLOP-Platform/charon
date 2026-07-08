@@ -1,4 +1,5 @@
 tier: opus
+work_class: greenfield-feature
 branch: feat/work-bearings-workpath
 depends_on: WORK-LAND-PR
 real-dep: WORK-LAND-PR owns cli.py and introduces the _ReviewingRunner this ticket must modify (overlapping owns + must build on LAND-PR's runner) — a true build prereq, not merge-order.

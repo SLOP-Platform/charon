@@ -1,4 +1,5 @@
 tier: economy
+work_class: bugfix
 branch: feat/sr-3-cache-correctness-stats
 depends_on:
 owns: src/charon/cache.py, tests/test_cache.py

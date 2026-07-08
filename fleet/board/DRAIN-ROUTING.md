@@ -1,4 +1,5 @@
 tier: frontier
+work_class: money-path
 branch: feat/drain-routing
 depends_on: SR-5b, INC-401-FAILOVER
 real-dep: SR-5b build (cost_usd is real and merged to master — DRAIN's auto-decrement

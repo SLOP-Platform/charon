@@ -1,4 +1,5 @@
 tier: economy
+work_class: docs
 branch: feat/sr-4-smart-routing-doc-fix
 depends_on:
 owns: /home/stack/charon-private/fleet/SMART-ROUTING.md

@@ -1,4 +1,5 @@
 tier: sonnet
+work_class: ci-infra
 branch: feat/release-smoke-fix
 depends_on:
 owns: .github/workflows/release.yml

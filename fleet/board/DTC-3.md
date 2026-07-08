@@ -1,4 +1,5 @@
 tier: strong
+work_class: tests
 branch: feat/dtc-meta-tests
 depends_on: DTC-2
 owns: tests/test_no_secrets.py, tests/test_auth_meta.py

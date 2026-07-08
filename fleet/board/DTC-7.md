@@ -1,4 +1,5 @@
 tier: strong
+work_class: ci-infra
 branch: feat/dtc-security-scan
 depends_on:
 owns: tools/check_security.py, tests/test_check_security.py
