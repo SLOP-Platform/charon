@@ -5,17 +5,50 @@ METHOD CHOSEN (primary): read opencode's own local session-state store,
 ``~/.local/share/opencode/opencode.db`` (SQLite), read-only. Every opencode
 session persists a `model` column on its `session` row (JSON
 `{"providerID": ..., "id": <model-id>}`), updated live the moment the
-operator runs `/model` in that tab. We take the single MOST-RECENTLY-UPDATED
-session system-wide. This is reliable for the target UX specifically
-*because* of the workflow it's built for: the operator runs `/model` and
-then IMMEDIATELY pastes the bench kickoff into that SAME tab, so that tab's
-session row is, by construction, the freshest one in the whole DB at the
-moment this script runs (it executes from inside a bash-tool call made BY
-that tab, an instant after the paste). A staleness guard (default 900s)
-refuses to trust a row that isn't fresh, rather than silently reporting an
-unrelated idle tab's model.
+operator runs `/model` in that tab. The original version of this script took
+the single MOST-RECENTLY-UPDATED session system-wide, reasoning that the
+operator runs `/model` and then IMMEDIATELY pastes the bench kickoff into
+that SAME tab, so that tab's session row would, by construction, be the
+freshest one in the whole DB at the moment this script runs.
 
-ALTERNATIVES INVESTIGATED AND REJECTED:
+BENCH-MODEL-MISDETECT (P1, fleet/reds.tsv) - why "take rank 1" is WRONG:
+`session.time_updated` bumps on ANY session activity, not only a `/model`
+switch (every message/tool-call touches the row). In this rig's normal
+multi-tab operating mode (manager session + several concurrent droid/bench
+tabs), some OTHER, entirely unrelated tab is very likely to be more
+recently *touched* than the operator's own freshly-`/model`-picked bench
+tab, even many minutes after the real pick - that other tab's `model`
+column reflects whatever it was set to ages ago, not anything the operator
+just chose. Confirmed incident: operator exited opencode, restarted,
+`/model` -> glm-5.2, ran the bench - but the freshest row belonged to a
+DIFFERENT, concurrently-active tab still sitting on hy3-preview-or from a
+prior session (restored/continued, so its row kept getting touched without
+a fresh `/model` call). `detect()` announced hy3-preview-or, saw it already
+fully finalized, and silently SKIPPED the run - no error, no benchmark.
+
+FIX: never trust rank-1 alone. Collect every session with a `model` set
+that was updated within the staleness window, and look at the DISTINCT set
+of model ids among them:
+  - 0 candidates  -> nothing fresh enough; caller falls back (unchanged).
+  - 1 distinct id -> unambiguous even if several tabs/sessions share it;
+                     return it (this is the common single-tab case, and the
+                     fast path stays exactly as reliable as before).
+  - 2+ distinct ids -> AMBIGUOUS: more than one tab set a DIFFERENT model
+                     within the window, so "most recent" cannot be trusted
+                     to mean "the one the operator just picked". Refuse to
+                     guess (raises `Ambiguous`, exit code 2) rather than
+                     silently reporting whichever one happened to be
+                     touched last - exactly the bench-model-misdetect
+                     failure mode. The caller MUST pass `--model` instead.
+This directly implements "if there are multiple recently-updated sessions
+or any ambiguity, REFUSE to guess" rather than trying to out-guess the
+ambiguity with a narrower time window - a narrower window does not help
+here (the wrong candidate above was touched at age ~0s, i.e. it would win
+under ANY window short of excluding it entirely), so ambiguity detection
+across the existing window is the actual fix, not a smaller staleness
+constant.
+
+ALTERNATIVES INVESTIGATED AND REJECTED (unchanged from the original design):
 - ``~/.local/state/opencode/model.json`` ("recent" list) is GLOBAL across
   every open tab and is only updated at the instant of a `/model` switch -
   it goes stale/wrong the moment a *different* tab switches models after
@@ -31,10 +64,11 @@ ALTERNATIVES INVESTIGATED AND REJECTED:
   `sqlite3`, no network, sub-10ms. Cheapest option that is also reliable.
 
 FALLBACK (per the build ticket, and what bench.sh does when this prints
-nothing / exits 1): the DB is missing, locked, or has no session fresher
-than the staleness guard (e.g. a brand-new machine, or the operator waited
-too long between `/model` and pasting) -> bench.sh asks the AGENT to
-self-report its own model name as the announced first step instead of
+nothing / exits 1, OR reports ambiguity / exits 2): the DB is missing,
+locked, has no session fresher than the staleness guard, or is ambiguous
+between two-or-more differing models -> bench.sh asks the AGENT to
+self-report its own model name (it already knows this from its own
+conversation) and re-invoke explicitly with `--model <id>` instead of
 guessing.
 """
 import json
@@ -45,6 +79,17 @@ import time
 
 DB_PATH = os.path.expanduser("~/.local/share/opencode/opencode.db")
 STALENESS_SEC = 900  # 15 min - operator just ran /model + pasted; must be fresh
+CANDIDATE_LIMIT = 50  # rows to scan looking for the staleness cutoff; plenty
+                       # for any realistic number of concurrently-open tabs
+
+
+class Ambiguous(Exception):
+    """Raised when 2+ DISTINCT models were set within the staleness window -
+    see BENCH-MODEL-MISDETECT above for why this must not be guessed."""
+
+    def __init__(self, candidates):
+        self.candidates = candidates  # sorted list of distinct model ids
+        super().__init__(f"ambiguous: {candidates}")
 
 
 def detect(staleness=STALENESS_SEC):
@@ -55,35 +100,57 @@ def detect(staleness=STALENESS_SEC):
         cur = con.cursor()
         cur.execute(
             "SELECT model, time_updated FROM session "
-            "WHERE model IS NOT NULL ORDER BY time_updated DESC LIMIT 1"
+            "WHERE model IS NOT NULL ORDER BY time_updated DESC LIMIT ?",
+            (CANDIDATE_LIMIT,),
         )
-        row = cur.fetchone()
+        rows = cur.fetchall()
     finally:
         con.close()
-    if not row:
+    if not rows:
         return None
-    model_json, time_updated = row
-    age_s = time.time() - (time_updated / 1000.0)
-    if age_s > staleness or age_s < 0:
+
+    now = time.time()
+    candidates = []  # (model_id, age_s) for every row inside the window
+    for model_json, time_updated in rows:
+        age_s = now - (time_updated / 1000.0)
+        if age_s > staleness or age_s < 0:
+            # rows are ORDER BY time_updated DESC, so once one row falls
+            # outside the window every subsequent row does too - stop.
+            break
+        try:
+            data = json.loads(model_json)
+        except (TypeError, ValueError):
+            continue
+        model_id = data.get("id")
+        if model_id:
+            candidates.append((model_id, age_s))
+
+    if not candidates:
         return None
-    try:
-        data = json.loads(model_json)
-    except (TypeError, ValueError):
-        return None
-    model_id = data.get("id")
-    if not model_id:
-        return None
+
+    distinct = sorted({model_id for model_id, _ in candidates})
+    if len(distinct) > 1:
+        raise Ambiguous(distinct)
+
+    model_id, age_s = candidates[0]  # freshest row (rows were DESC-ordered)
     return model_id, age_s
 
 
 def main():
     try:
         result = detect()
+    except Ambiguous as amb:
+        # Distinct exit code so bench.sh can tell "ambiguous, don't guess"
+        # apart from "nothing fresh found" and give a specific message.
+        print(json.dumps({"error": "ambiguous", "candidates": amb.candidates}))
+        sys.exit(2)
     except Exception:
         result = None
+
     if result is None:
         print("", end="")
         sys.exit(1)
+
     model_id, age_s = result
     print(json.dumps({"model": model_id, "age_s": round(age_s, 1)}))
 

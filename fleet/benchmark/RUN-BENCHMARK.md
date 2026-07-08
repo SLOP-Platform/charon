@@ -10,17 +10,42 @@ read this and execute: /home/stack/charon-private/fleet/benchmark/RUN-BENCHMARK.
 Everything below is what that agent (you — running AS the model being
 benchmarked) then does, with no further input from the operator.
 
+**RECOMMENDED: pass `--model <id>` explicitly on `start` too** — you already
+know your own model id from the `/model` the operator just ran (it's the
+model you ARE). Auto-detect (`start` with no `--model`) reads
+`~/.local/share/opencode/opencode.db` for the most-recently-updated
+opencode session, which can misdetect whenever ANY other opencode tab is
+concurrently active — most likely right after an opencode restart (a
+restored prior session can look "freshest") or whenever more than one tab
+is open at once (this rig's normal mode). See `bench-model-misdetect`,
+`fleet/reds.tsv`, for the confirmed incident: auto-detect announced the
+WRONG model, saw it already finalized, and silently skipped the run with no
+error. `lib/detect_model.py` now refuses to guess when it sees this
+ambiguity (fail loud instead of silently wrong) — but `--model` sidesteps
+the whole class of failure and is always reliable:
+
+```
+/home/stack/charon-private/fleet/benchmark/bench.sh start --model <the model you ARE>
+```
+
 ## Instructions
 
 You are being benchmarked. Drive the harness at
 `/home/stack/charon-private/fleet/benchmark/bench.sh` end to end:
 
-1. Run: `/home/stack/charon-private/fleet/benchmark/bench.sh start`
+1. Run: `/home/stack/charon-private/fleet/benchmark/bench.sh start --model <your-model-id>`
+   (use plain `bench.sh start` with no `--model` only if you don't yet know
+   your own model id — but VERIFY the result, see below).
    Read its output — it announces which model it thinks you are (the
-   `ANNOUNCE: running this benchmark AS model = <id>` line), plus the first
-   section's task prompt and worktree path. **Remember that exact `<id>`
-   string for the rest of this run** — you'll pass it back explicitly on
-   every subsequent step (see the note on concurrent tabs below).
+   `ANNOUNCE: running this benchmark AS model = <id>` line, followed by a
+   `STOP - VERIFY` block). **Before implementing anything, confirm `<id>`
+   really is the model YOU just picked with `/model` in THIS tab.** If it is
+   NOT (auto-detect guessed wrong, or refused with an "AMBIGUOUS" error),
+   stop and re-run with the explicit override:
+   `bench.sh start --model <your-model-id>`.
+   **Remember that exact `<id>` string for the rest of this run** — you'll
+   pass it back explicitly on every subsequent step (see the note on
+   concurrent tabs below).
 2. Implement that section's task yourself, directly in the printed
    worktree, using your own tools. Do not touch any other worktree or file
    outside the one printed.
@@ -52,7 +77,18 @@ You are being benchmarked. Drive the harness at
    reprint it for any reason, run
    `bench.sh chart <id>` — never hand-render your own copy.
 
-Do not hand-type the model name for `start` (auto-detected from the
-opencode session), and do not shuttle between sections yourself — `bench.sh`
-drives the queue. See `README.md` in this directory for the full subcommand
-reference, the composite/tier-ladder formula, and the legacy manual flow.
+You already know the model name (it's the one you ARE, from `/model`) — pass
+it via `--model` on every step per above rather than relying on auto-detect.
+Do not shuttle between sections yourself — `bench.sh` drives the queue
+automatically once each section is graded.
+
+**Re-running a model that's already fully finalized** (e.g. moving it to v2
+scoring): `bench.sh start`/`grade` treat 7/7 finalized sections as "run
+complete" and just print the tier chart — they will NOT overwrite finalized
+data. To force a clean re-run, the OPERATOR (not the agent, mid-loop) runs
+`bench.sh reset --model <id>` first, which backs up then clears that one
+model's state, then restarts the kickoff above. See `README.md` for the
+`reset` subcommand's exact guarantees.
+
+See `README.md` in this directory for the full subcommand reference, the
+composite/tier-ladder formula, and the legacy manual flow.

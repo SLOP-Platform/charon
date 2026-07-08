@@ -43,6 +43,15 @@
 #       any run state - this is what `grade` calls at the natural end of a
 #       run, and what the self-test uses to verify tiering/ranking.
 #
+#   bench.sh reset --model <id> [--force]
+#       Operator-facing (not part of the agent's own S0..S6 loop): backs up
+#       then clears ONLY <id>'s runs/<id>/ state and its rows in
+#       model-scorecard.tsv, so a model whose 7 sections are already
+#       finalized can be re-benchmarked cleanly (e.g. moving it to v2
+#       scoring). Refuses if that model has a genuinely active in-flight
+#       section unless --force is given. Never touches any other model's
+#       data. See fleet/reds.tsv bench-model-misdetect.
+#
 # Legacy note: run.sh / run-many.sh (manual multi-step, explicit
 # per-section/per-model shuttling) are SUPERSEDED by this file for the
 # interactive one-model flow - see their own headers. They still share the
@@ -55,6 +64,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BENCH_DIR="$HERE"
 FLEET_DIR="$(cd "$HERE/.." && pwd)"
 SCORECARD="$FLEET_DIR/model-scorecard.sh"
+SCORECARD_TSV="$FLEET_DIR/model-scorecard.tsv"
 STATE_PY="$HERE/lib/grade_state.py"
 DETECT_PY="$HERE/lib/detect_model.py"
 CHART_PY="$HERE/lib/tier_chart.py"
@@ -73,20 +83,42 @@ jget() {
 }
 
 detect_model() {
+  # bench-model-misdetect (P1, fleet/reds.tsv): auto-detect used to trust
+  # the single most-recently-*touched* opencode session system-wide, which
+  # silently misreports whenever some OTHER, unrelated concurrent tab was
+  # touched more recently than the operator's own freshly-`/model`-picked
+  # bench tab (very common in this rig's normal multi-tab operating mode -
+  # session.time_updated bumps on ANY activity, not just /model). Confirmed
+  # incident: announced hy3-preview-or instead of the operator's actual
+  # glm-5.2 pick, saw hy3 already finalized, and silently SKIPPED the run.
+  # lib/detect_model.py now REFUSES (exit 2) instead of guessing whenever
+  # 2+ DIFFERENT models were set within its staleness window - see that
+  # file's module docstring. `--model` remains the always-reliable explicit
+  # path and is what RUN-BENCHMARK.md now recommends by default.
   local override="$1"
   if [ -n "$override" ]; then
     echo "$override"
     echo "(model: explicit --model override)" >&2
     return
   fi
-  local out
-  if out="$(python3 "$DETECT_PY" 2>/dev/null)" && [ -n "$out" ]; then
+  local out rc=0
+  out="$(python3 "$DETECT_PY" 2>/dev/null)" || rc=$?
+  if [ "$rc" -eq 0 ] && [ -n "$out" ]; then
     local model age
     model="$(jget "$out" model)"
     age="$(jget "$out" age_s)"
     echo "$model"
     echo "(model: auto-detected from the opencode session DB - most-recently-updated session, ${age}s since its last /model switch; see lib/detect_model.py for why this method was chosen)" >&2
     return
+  fi
+  if [ "$rc" -eq 2 ] && [ -n "$out" ]; then
+    local candidates; candidates="$(python3 -c 'import json,sys; print(", ".join(json.loads(sys.argv[1])["candidates"]))' "$out" 2>/dev/null || echo "$out")"
+    die "refusing to auto-detect: AMBIGUOUS - more than one opencode tab set a DIFFERENT model
+within the last 15 min ($candidates) - this is exactly the bench-model-misdetect incident
+(fleet/reds.tsv): a concurrently-active OTHER tab can be touched more recently than YOUR
+tab's own /model pick, so 'most recent' cannot be trusted here. Reply with your OWN model
+name (self-report it - you already know it from your own /model selection), then run:
+  $HERE/bench.sh start --model <your-model-id>"
   fi
   die "could not auto-detect the current model (no opencode session in ~/.local/share/opencode/opencode.db updated in the last 15 min).
 FALLBACK: reply with your OWN model name (self-report it), then run:
@@ -247,6 +279,13 @@ do_start() {
   echo "$model" > "$MODEL_STATE"
   echo "########################################################################"
   echo "# ANNOUNCE: running this benchmark AS model = $model"
+  echo "#"
+  echo "# STOP - VERIFY before implementing anything: does '$model' match the"
+  echo "# model YOU just picked with /model in THIS tab? If not (e.g. right"
+  echo "# after an opencode restart, or with multiple tabs open), Ctrl-C and"
+  echo "# re-run explicitly instead of trusting auto-detect:"
+  echo "#   $HERE/bench.sh start --model <your-model-id>"
+  echo "# See fleet/reds.tsv bench-model-misdetect for the incident this guards."
   echo "########################################################################"
   cost_mode_notice
   local sec; sec="$(current_section "$model")"
@@ -400,13 +439,98 @@ do_chart() {
   python3 "$CHART_PY" "$model"
 }
 
+do_reset() {
+  # bench-model-misdetect (P1, fleet/reds.tsv) STEP 3: the harness had no
+  # clean way to re-run a model whose 7 sections were ALREADY finalized
+  # (e.g. moving a model to v2 scoring) short of hand-editing
+  # runs/<model>/ and model-scorecard.tsv - this is that path. BACKS UP
+  # first (never a bare delete), touches ONLY the one named model's state
+  # (runs/<model>/ + its rows in model-scorecard.tsv, matched by the exact
+  # `model` column value - col 6), and refuses on an ACTIVELY in-flight
+  # section for that model unless --force is given, so it can't stomp a
+  # bench that's genuinely mid-run right now.
+  local model="" force=false
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --model) model="${2:-}"; shift 2 ;;
+      --force) force=true; shift ;;
+      *) die "usage: bench.sh reset --model <id> [--force]" ;;
+    esac
+  done
+  [ -n "$model" ] || die "usage: bench.sh reset --model <id> [--force]
+Backs up then clears ONLY <id>'s runs/<id>/ state and its rows in
+model-scorecard.tsv, so the next 'bench.sh start --model <id>' begins a
+clean S0..S6 run (e.g. to move a model to v2 scoring). Never touches any
+other model's data."
+  # model becomes a path component below (runs/$model/...) - keep it to a
+  # safe charset so this can never be tricked into a path-traversal rm -rf.
+  case "$model" in
+    *[!A-Za-z0-9._-]*|""|.|..)
+      die "refusing reset: model id '$model' has characters outside [A-Za-z0-9._-] - not safe to use as a path component" ;;
+  esac
+
+  if [ "$force" != true ]; then
+    for s in "${ALL_SECTIONS[@]}"; do
+      [ -f "$HERE/runs/$model/$s/meta.json" ] || continue
+      local active; active="$(python3 "$STATE_PY" is_active "$model" "$s" 2>/dev/null || echo false)"
+      if [ "$active" = "true" ]; then
+        die "refusing reset: $model/$s has an ACTIVE in-flight run (within its own
+timebox right now) - let it finish/fail out first, or pass --force to override
+(NOT recommended while a bench may genuinely be running)."
+      fi
+    done
+  fi
+
+  local ts; ts="$(date +%Y%m%dT%H%M%S)"
+  local backup_dir="$HERE/runs/.reset-backups/${model}-${ts}"
+  mkdir -p "$backup_dir"
+
+  if [ -d "$HERE/runs/$model" ]; then
+    cp -a "$HERE/runs/$model" "$backup_dir/runs"
+    rm -rf "$HERE/runs/$model"
+    echo "backed up runs/$model/ -> $backup_dir/runs, then cleared it"
+  else
+    echo "no existing runs/$model/ to clear (nothing to back up there)"
+  fi
+
+  if [ -f "$SCORECARD_TSV" ]; then
+    cp -a "$SCORECARD_TSV" "$backup_dir/model-scorecard.tsv.bak"
+    local before after removed
+    before="$(awk -F'\t' '!/^#/ && NF>0' "$SCORECARD_TSV" | wc -l)"
+    # Only strip this model's BENCH-sourced rows (source=bench|bench2) - a
+    # `live` row is real production usage signal, not re-runnable harness
+    # output, and must survive a bench reset untouched.
+    awk -F'\t' -v m="$model" 'BEGIN{OFS="\t"}
+      /^#/ || NF==0 {print; next}
+      $6 == m && ($2 == "bench" || $2 == "bench2") {next}
+      {print}' \
+      "$SCORECARD_TSV" > "$backup_dir/model-scorecard.tsv.new"
+    after="$(awk -F'\t' '!/^#/ && NF>0' "$backup_dir/model-scorecard.tsv.new" | wc -l)"
+    removed=$((before - after))
+    mv "$backup_dir/model-scorecard.tsv.new" "$SCORECARD_TSV"
+    echo "backed up model-scorecard.tsv -> $backup_dir/model-scorecard.tsv.bak, removed $removed bench-sourced row(s) for model=$model (any 'live' rows for this model were kept)"
+  else
+    echo "no $SCORECARD_TSV found - nothing to strip there"
+  fi
+
+  if [ -f "$MODEL_STATE" ] && [ "$(cat "$MODEL_STATE")" = "$model" ]; then
+    rm -f "$MODEL_STATE"
+    echo "cleared shared runs/.current_model pointer (it pointed at $model)"
+  fi
+
+  echo "reset complete for model=$model."
+  echo "backup: $backup_dir"
+  echo "next: $HERE/bench.sh start --model $model    # begins a clean S0..S6 run"
+}
+
 main() {
   case "${1:-}" in
     start)  shift; do_start "$@" ;;
     grade)  shift; do_grade "$@" ;;
     status) shift; do_status "$@" ;;
     chart)  shift; do_chart "$@" ;;
-    *) die "usage: bench.sh {start [--model <id>] | grade [--model <id>] | status [--model <id>] | chart [<model>]}" ;;
+    reset)  shift; do_reset "$@" ;;
+    *) die "usage: bench.sh {start [--model <id>] | grade [--model <id>] | status [--model <id>] | chart [<model>] | reset --model <id> [--force]}" ;;
   esac
 }
 
