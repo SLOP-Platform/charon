@@ -12,6 +12,8 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .netutil import BROWSER_UA  # shared browser-like UA (P5 — Cloudflare 1010)
+
 
 @dataclass
 class TierRecommendation:
@@ -106,7 +108,7 @@ def _ask_model(model_id: str, base_url: str, api_key: str,
     }).encode()
     try:
         req = urllib.request.Request(raw_base + "/chat/completions", data=body, method="POST")
-        req.add_header("User-Agent", "charon-proxy/0.1")
+        req.add_header("User-Agent", BROWSER_UA)
         req.add_header("Content-Type", "application/json")
         req.add_header("Authorization", "Bearer " + api_key)
         opener = urllib.request.build_opener(_NoRedirect())

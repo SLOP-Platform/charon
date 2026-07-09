@@ -14,6 +14,7 @@ import urllib.request
 from pathlib import Path
 
 from . import config, providers, secrets
+from .netutil import BROWSER_UA  # shared browser-like UA (P5 — Cloudflare 1010)
 
 _COST_MAP_FILE = "cost_map.json"
 
@@ -33,7 +34,7 @@ def discover_provider(base_url: str, api_key: str | None,
         url = base_url.rstrip("/") + "/v1/models"
 
     req = urllib.request.Request(url, method="GET")
-    req.add_header("User-Agent", "charon-proxy/0.1")
+    req.add_header("User-Agent", BROWSER_UA)
     if api_key:
         req.add_header("Authorization", "Bearer " + api_key)
 
@@ -253,7 +254,7 @@ _ALIAS_FILE = "model_aliases.json"
 def discover_openrouter(timeout: float = 10) -> list[dict] | None:
     """Fetch the OpenRouter model catalogue (no auth needed)."""
     req = urllib.request.Request(_OPENROUTER_API, method="GET")
-    req.add_header("User-Agent", "charon-proxy/0.1")
+    req.add_header("User-Agent", BROWSER_UA)
     try:
         resp = urllib.request.urlopen(req, timeout=timeout)
         raw = resp.read()

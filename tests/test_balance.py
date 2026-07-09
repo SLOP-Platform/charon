@@ -331,3 +331,43 @@ class TestThreadSafety:
         assert not errors
         assert bt.remaining("opencode-zen") >= 0.0
         assert bt.remaining("opencode-zen") <= 100.0
+
+
+class TestPollerBrowserUA:
+    """P5: every balance poller must send the shared browser-like UA so a
+    Cloudflare-fronted balance endpoint (error 1010 → 403) does not silently
+    corrupt the drain signal. The UA must be the ONE shared constant, never the
+    old non-browser ``charon-proxy/0.1`` and never a library default."""
+
+    def _captured_ua(self, poll_fn, base, key):
+        body = json.dumps({}).encode()
+        mock = MagicMock()
+        mock.read.return_value = body
+        with patch("urllib.request.build_opener") as bo:
+            bo.return_value.open.return_value = mock
+            poll_fn(base, key, 20.0)
+            req = bo.return_value.open.call_args[0][0]
+        # urllib normalizes header keys to title-case with the rest lowercased
+        return req.get_header("User-agent")
+
+    def test_deepseek_poller_sends_shared_browser_ua(self):
+        from charon.netutil import BROWSER_UA
+
+        ua = self._captured_ua(_poll_deepseek, "https://api.deepseek.com/v1", "sk-x")
+        assert ua == BROWSER_UA
+        assert ua != "charon-proxy/0.1"
+        assert not ua.lower().startswith("python-urllib")
+
+    def test_openrouter_poller_sends_shared_browser_ua(self):
+        from charon.netutil import BROWSER_UA
+
+        ua = self._captured_ua(_poll_openrouter, "https://openrouter.ai/api/v1", "sk-x")
+        assert ua == BROWSER_UA
+        assert ua != "charon-proxy/0.1"
+
+    def test_nanogpt_poller_sends_shared_browser_ua(self):
+        from charon.netutil import BROWSER_UA
+
+        ua = self._captured_ua(_poll_nanogpt, "https://nano-gpt.com/api/v1", "sk-x")
+        assert ua == BROWSER_UA
+        assert ua != "charon-proxy/0.1"

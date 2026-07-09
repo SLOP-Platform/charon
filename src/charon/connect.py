@@ -36,6 +36,7 @@ from pathlib import Path
 
 from . import providers
 from .api import _invocation_name
+from .netutil import BROWSER_UA  # shared browser-like UA (P5 — Cloudflare 1010)
 
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = 8080
@@ -58,7 +59,7 @@ def discover_models(host: str, port: int, token: str | None, *,
     transport/HTTP error so the caller can fail closed without writing config."""
     url = f"http://{host}:{port}/v1/models"
     req = urllib.request.Request(url, method="GET")
-    req.add_header("User-Agent", "charon-connect/0.1")
+    req.add_header("User-Agent", BROWSER_UA)
     if token:
         req.add_header("Authorization", "Bearer " + token)
     opener = urllib.request.build_opener(providers._NoRedirect())

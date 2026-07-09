@@ -26,6 +26,8 @@ from collections.abc import Callable
 from threading import Lock
 from typing import Any
 
+from .netutil import BROWSER_UA  # shared browser-like UA (P5 — Cloudflare 1010)
+
 # ---------------------------------------------------------------------------
 # Balance poll adapters — pure functions that take (base_url, api_key) and
 # return remaining USD (float) or None when the provider doesn't expose one.
@@ -38,7 +40,7 @@ def _poll_deepseek(base_url: str, api_key: str, timeout: float) -> float | None:
 
     url = base_url.rstrip("/") + "/user/balance"
     req = urllib.request.Request(url, method="GET")
-    req.add_header("User-Agent", "charon-proxy/0.1")
+    req.add_header("User-Agent", BROWSER_UA)
     req.add_header("Authorization", "Bearer " + api_key)
     try:
         resp = urllib.request.build_opener(
@@ -67,7 +69,7 @@ def _poll_openrouter(base_url: str, api_key: str, timeout: float) -> float | Non
 
     url = base_url.rstrip("/") + "/credits"
     req = urllib.request.Request(url, method="GET")
-    req.add_header("User-Agent", "charon-proxy/0.1")
+    req.add_header("User-Agent", BROWSER_UA)
     req.add_header("Authorization", "Bearer " + api_key)
     try:
         resp = urllib.request.build_opener(
@@ -97,7 +99,7 @@ def _poll_nanogpt(base_url: str, api_key: str, timeout: float) -> float | None:
     url = base_url.rstrip("/") + "/api/check-balance"
     body = json.dumps({}).encode()
     req = urllib.request.Request(url, data=body, method="POST")
-    req.add_header("User-Agent", "charon-proxy/0.1")
+    req.add_header("User-Agent", BROWSER_UA)
     req.add_header("Content-Type", "application/json")
     req.add_header("Authorization", "Bearer " + api_key)
     try:

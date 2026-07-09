@@ -30,7 +30,7 @@ from urllib.parse import parse_qs, urlsplit
 from .cache import SemanticCache
 from .consensus import ConsensusRouter
 from .guardrails import Guardrails
-from .netutil import is_loopback
+from .netutil import BROWSER_UA, is_loopback
 from .observability import Observability
 from .policy_router import PolicyRouter
 from .proxy import GatewayProxy, _normalize_model_id
@@ -68,7 +68,10 @@ class UpstreamRoute:
 
 _SKIP_HEADERS = {"host", "authorization", "content-length", "connection",
                  "accept-encoding", "proxy-authorization"}
-_DEFAULT_UA = "charon-proxy/0.1"
+# Browser-like (P5): a non-browser default trips Cloudflare 1010 (→403) on
+# CF-fronted providers (groq/cerebras/together). Shared with balance.py + probes
+# via the single BROWSER_UA constant so it can never drift.
+_DEFAULT_UA = BROWSER_UA
 # Library-default UAs upstream bot-protection bans (Cloudflare 1010); normalize
 # these to the proxy's own identity so an internal urllib caller isn't blocked.
 _BANNED_UA_PREFIXES = ("python-urllib", "python-requests")
@@ -482,8 +485,14 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
 
     def _send_resp_headers(self, status: int, ctype: str, provider: str | None,
                            failovers: list[dict], downgrade: bool,
-                           cache_status: str | None = None) -> None:
-        """Send status + Content-Type + the failover-visibility headers (ADR D3)."""
+                           cache_status: str | None = None,
+                           retry_after: int | None = None) -> None:
+        """Send status + Content-Type + the failover-visibility headers (ADR D3).
+
+        ``retry_after`` (P1): when truthy and > 0, emit a bounded ``Retry-After``
+        so the GATEWAY owns retry cadence on a transient exhaustion (a dual-402
+        can never become a client's runaway ~8h exponential backoff). Callers that
+        omit it keep byte-identical headers to before."""
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         if provider:
@@ -496,6 +505,8 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
             self.send_header("X-Charon-Downgrade", "served a different model than requested")
         if cache_status:  # real header — must precede end_headers (never in the body)
             self.send_header("X-Cache-Status", cache_status)
+        if retry_after and retry_after > 0:  # P1: bounded gateway-owned retry cadence
+            self.send_header("Retry-After", str(int(retry_after)))
         self._maybe_set_token_cookie()
         self.end_headers()
 
@@ -823,8 +834,9 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                             # real upstream error transparently — nothing was failed over.)
                             failovers.append({"provider": route.label, "status": status,
                                               "reason": obs.note or "exhausted"})
-                            self._send_resp_headers(503, "application/json", route.label,
-                                                    failovers, False)
+                            self._send_resp_headers(
+                                503, "application/json", route.label, failovers, False,
+                                retry_after=srv.retry_after_hint(ordered))
                             self._write(json.dumps({"error": {
                                 "message": "all providers exhausted",
                                 "type": "all_providers_exhausted",
@@ -835,7 +847,14 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                             return
                     # a single-upstream exhaustion, OR a 400/401/403 client/auth error we
                     # must NOT fail over (R6) — relay the real upstream response as-is.
-                    self._send_resp_headers(status, ctype, route.label, failovers, False)
+                    # P1: re-bound a raw upstream Retry-After to <= max_cooldown_s on a
+                    # transient exhaustion (402/429/503); a 400/401/403 client/auth error
+                    # is not retry-worthy → no Retry-After.
+                    relay_retry_after = (
+                        min(obs.retry_after or srv.default_cooldown, srv.max_cooldown_s)
+                        if status in (402, 429, 503) else None)
+                    self._send_resp_headers(status, ctype, route.label, failovers, False,
+                                            retry_after=relay_retry_after)
                     self._write(body_bytes)
                     srv.note_request(requested, route.label, status, 0.0, failovers)
                     return
@@ -1140,6 +1159,21 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
             cooled = [r for r in chain if self._cooldown.get(r.upstream_base, 0.0) > now]
             cooled.sort(key=lambda r: self._cooldown.get(r.upstream_base, 0.0))
         return fresh + cooled
+
+    def retry_after_hint(self, chain: list[UpstreamRoute]) -> int:
+        """Seconds until the soonest member of ``chain`` recovers — a bounded
+        ``Retry-After`` for the terminal 503 (P1). Reads the same ``_cooldown``
+        map as ``order_by_cooldown`` (under the same lock): the soonest remaining
+        cooldown among cooled members, falling back to ``default_cooldown`` when
+        none is cooled, clamped to ``[1, max_cooldown_s]``. No routing/spend
+        effect — purely a header hint."""
+        now = time.monotonic()
+        with self._cooldown_lock:
+            remaining = [self._cooldown[r.upstream_base] - now
+                         for r in chain
+                         if self._cooldown.get(r.upstream_base, 0.0) > now]
+        soonest = min(remaining) if remaining else self.default_cooldown
+        return int(max(1.0, min(soonest, self.max_cooldown_s)))
 
     def set_cooldown(self, route: UpstreamRoute, retry_after: int | None) -> None:
         """Mark a provider out-of-capacity until ``Retry-After`` (or a default),

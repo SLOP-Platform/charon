@@ -120,9 +120,14 @@ def test_proxy_normalizes_banned_user_agent() -> None:
         _post_ua("Python-urllib/3.12")           # library default → normalized
         _post_ua("opencode/1.17.10")              # real agent UA → forwarded as-is
         _post_ua(None)                            # urllib still injects a default
-        assert _SEEN_UA[0] == "charon-proxy/0.1"
+        # library-default UA → normalized to the browser-like default (P5): NOT the
+        # old non-browser "charon-proxy/0.1" (Cloudflare 1010), NOT python-urllib.
+        assert not _SEEN_UA[0].lower().startswith("python-urllib")
+        assert _SEEN_UA[0] != "charon-proxy/0.1"
+        assert _SEEN_UA[0].startswith("Mozilla/")
         assert _SEEN_UA[1] == "opencode/1.17.10"
         assert not _SEEN_UA[2].lower().startswith("python-urllib")
+        assert _SEEN_UA[2].startswith("Mozilla/")
     finally:
         proxy.shutdown()
         upstream.shutdown()
@@ -793,3 +798,165 @@ def test_proxy_forwards_normal_body_unchanged() -> None:
         proxy.shutdown()
         up.shutdown()
 
+
+
+# ── P1: bounded Retry-After on terminal 503 / 402·429·503 relays ────────────
+
+def _post_capture(url: str, payload: dict):
+    """POST and return (status, headers, raw_bytes) even for a non-2xx — needed
+    to inspect the Retry-After header on a 503/402/429/4xx response."""
+    req = urllib.request.Request(
+        url, data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        resp = urllib.request.urlopen(req, timeout=10)
+        return resp.status, dict(resp.headers), resp.read()
+    except urllib.error.HTTPError as exc:  # type: ignore[name-defined]
+        return exc.code, dict(exc.headers), exc.read()
+
+
+class _PaymentRequiredUpstream(http.server.BaseHTTPRequestHandler):
+    """Always 402 (out of balance) — the dual-402 exhaustion case."""
+    calls = 0
+
+    def log_message(self, *a) -> None:
+        pass
+
+    def do_POST(self) -> None:
+        type(self).calls += 1
+        length = int(self.headers.get("Content-Length") or 0)
+        self.rfile.read(length)
+        payload = json.dumps({"error": {"message": "insufficient balance"}}).encode()
+        self.send_response(402)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+
+class _RateLimitHugeRetryUpstream(http.server.BaseHTTPRequestHandler):
+    """Single upstream 429 advertising an extreme Retry-After (3420s ≈ 57min) —
+    the gateway must re-bound it to <= max_cooldown_s before relaying."""
+
+    def log_message(self, *a) -> None:
+        pass
+
+    def do_POST(self) -> None:
+        length = int(self.headers.get("Content-Length") or 0)
+        self.rfile.read(length)
+        payload = json.dumps({"error": {"message": "rate limited"}}).encode()
+        self.send_response(429)
+        self.send_header("Retry-After", "3420")
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+
+class _ClientErrorUpstream(http.server.BaseHTTPRequestHandler):
+    """Relays a client/auth error whose code is encoded in the requested model
+    (``err400``/``err401``/``err403``) — these must NOT carry a Retry-After."""
+
+    def log_message(self, *a) -> None:
+        pass
+
+    def do_POST(self) -> None:
+        length = int(self.headers.get("Content-Length") or 0)
+        body = json.loads(self.rfile.read(length) or b"{}")
+        code = int(str(body.get("model", "err400")).replace("err", ""))
+        payload = json.dumps({"error": {"message": "client error"}}).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+
+def test_dual_402_terminal_503_carries_bounded_retry_after() -> None:
+    """P1: a pool whose members all 402 → terminal 503 must carry a
+    gateway-owned, integer, bounded Retry-After (1 ≤ v ≤ 120 = max_cooldown_s) so
+    a Retry-After-respecting client never falls into its own ~8h backoff."""
+    a, base_a = _spawn(_PaymentRequiredUpstream)
+    b, base_b = _spawn(_PaymentRequiredUpstream)
+    proxy = GatewayProxyServer(pools={
+        "gpt-5.4": [UpstreamRoute(base_a, "ka"), UpstreamRoute(base_b, "kb")],
+    })
+    proxy.serve_in_thread()
+    try:
+        status, headers, raw = _post_capture(
+            proxy.url + "/v1/chat/completions", {"model": "gpt-5.4"})
+        assert status == 503
+        assert json.loads(raw)["error"]["type"] == "all_providers_exhausted"
+        ra = headers.get("Retry-After")
+        assert ra is not None, "terminal 503 must carry a Retry-After"
+        assert ra == str(int(ra))          # integer-valued
+        assert 1 <= int(ra) <= 120         # bounded to max_cooldown_s
+    finally:
+        proxy.shutdown()
+        a.shutdown()
+        b.shutdown()
+
+
+def test_single_upstream_429_retry_after_is_clamped() -> None:
+    """P1: a single-upstream 429 whose upstream Retry-After is 3420 is relayed
+    with the header clamped to <= 120 (max_cooldown_s) — the gateway never lets a
+    provider's extreme backoff stall the client."""
+    up, base = _spawn(_RateLimitHugeRetryUpstream)
+    proxy = GatewayProxyServer(upstream_base=base, api_key="k")
+    proxy.serve_in_thread()
+    try:
+        status, headers, _ = _post_capture(
+            proxy.url + "/v1/chat/completions", {"model": "anything"})
+        assert status == 429
+        ra = headers.get("Retry-After")
+        assert ra is not None
+        assert int(ra) <= 120
+        assert int(ra) >= 1
+    finally:
+        proxy.shutdown()
+        up.shutdown()
+
+
+def test_client_error_relay_has_no_retry_after() -> None:
+    """P1: a 400/401/403 relay is a client/auth error — retrying does not help,
+    so NO Retry-After header is emitted."""
+    up, base = _spawn(_ClientErrorUpstream)
+    proxy = GatewayProxyServer(upstream_base=base, api_key="k")
+    proxy.serve_in_thread()
+    try:
+        for code in ("err400", "err401", "err403"):
+            status, headers, _ = _post_capture(
+                proxy.url + "/v1/chat/completions", {"model": code})
+            assert status == int(code.replace("err", ""))
+            assert "Retry-After" not in headers, f"{code} must not carry Retry-After"
+    finally:
+        proxy.shutdown()
+        up.shutdown()
+
+
+def test_serve_path_default_ua_is_browser_like() -> None:
+    """P5: with no client UA, the upstream request carries the shared browser-like
+    default (not the old non-browser 'charon-proxy/0.1', not python-urllib) so a
+    Cloudflare-fronted provider (groq/cerebras/together) is not 1010-blocked."""
+    upstream = _Threaded(("127.0.0.1", 0), _MockUpstream)
+    threading.Thread(target=upstream.serve_forever, daemon=True).start()
+    up_host, up_port = upstream.server_address[0], upstream.server_address[1]
+    proxy = GatewayProxyServer(upstream_base=f"http://{up_host}:{up_port}", api_key="k")
+    proxy.serve_in_thread()
+    try:
+        _SEEN_UA.clear()
+        # no User-Agent header supplied → serve-path falls back to _DEFAULT_UA
+        req = urllib.request.Request(
+            proxy.url + "/v1/chat/completions",
+            data=json.dumps({"model": "kimi-k2.7-code"}).encode(),
+            headers={"Content-Type": "application/json"}, method="POST")
+        # strip urllib's own default so the proxy sees the absent-UA path
+        req.add_unredirected_header("User-Agent", "python-urllib/3.12")
+        urllib.request.urlopen(req, timeout=10).read()
+        seen = _SEEN_UA[-1]
+        assert seen != "charon-proxy/0.1"
+        assert not seen.lower().startswith("python-urllib")
+        assert seen.startswith("Mozilla/")
+    finally:
+        proxy.shutdown()
+        upstream.shutdown()
