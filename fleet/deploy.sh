@@ -28,8 +28,14 @@ REMOTE_REPO="${CHARON_DEPLOY_REPO:-/home/stack/charon}"
 IMAGE_REPO="${CHARON_DEPLOY_IMAGE:-ghcr.io/slop-platform/charon}"
 CONTAINER="${CHARON_DEPLOY_CONTAINER:-charon-gateway-1}"
 SERVICE="${CHARON_DEPLOY_SERVICE:-gateway}"
+# 50 pools live as of 2026-07-09 cline-wire — the +1 grok-4.3 frontier pool add left
+# the total at 50 (mimo-v2.5 wiring was reverted, net zero on the 5 pre-existing
+# cheap-first pools). Bump this if the live pool set intentionally grows/shrinks.
 EXPECTED_POOL_COUNT="${CHARON_DEPLOY_POOL_COUNT:-50}"
-REQUIRED_KEY_ENVS="${CHARON_DEPLOY_REQUIRED_KEYS:-NANOGPT_API_KEY,GROQ_API_KEY,CEREBRAS_API_KEY,MISTRAL_API_KEY,TOGETHER_API_KEY,OPENROUTER_API_KEY,NEURALWATT_API_KEY,DEEPSEEK_API_KEY,OPENCODE_ZEN_KEY}"
+# CLINE_PASS_API_KEY is now load-bearing: cline-pass is the cheap-first (drain-first)
+# leg on 5 pools (glm-5.2, kimi-k2.6, deepseek-v4-pro/-flash, minimax-m3-free), so a
+# missing key would silently drop cheap-first routing to spill. Guard it like the rest.
+REQUIRED_KEY_ENVS="${CHARON_DEPLOY_REQUIRED_KEYS:-NANOGPT_API_KEY,GROQ_API_KEY,CEREBRAS_API_KEY,MISTRAL_API_KEY,TOGETHER_API_KEY,OPENROUTER_API_KEY,NEURALWATT_API_KEY,DEEPSEEK_API_KEY,OPENCODE_ZEN_KEY,CLINE_PASS_API_KEY}"
 
 if [ ! -r "$SSH_KEY" ]; then
   echo "deploy: ssh key not readable: $SSH_KEY" >&2
@@ -178,8 +184,12 @@ for line in open(sys.argv[1], encoding='utf-8', errors='replace'):
         break
 PY
 )"
-  [ "$provider" = "nanogpt" ] || fail "deepseek-v4-pro provider changed: expected nanogpt, got '${provider:-missing}'"
-  log "deepseek-v4-pro provider remains nanogpt"
+  # 2026-07-09 cline-wire: cline-pass is now the cheap-first (drain-first) leg on the
+  # deepseek-v4-pro pool (order: cline,ng,ds,or). nanogpt/deepseek/openrouter remain
+  # BELOW it as spill/backstop. A fresh (uncached) probe must therefore route to
+  # cline-pass; getting nanogpt back means the cheap-first leg silently dropped.
+  [ "$provider" = "cline-pass" ] || fail "deepseek-v4-pro provider changed: expected cline-pass (cheap-first leg), got '${provider:-missing}'"
+  log "deepseek-v4-pro provider remains cline-pass (nanogpt/ds/or spill below)"
 }
 
 verify_all() {
