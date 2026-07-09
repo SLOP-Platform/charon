@@ -183,10 +183,14 @@ def part2_scorecard_sh() -> None:
         if len(rows) == 2:
             cols1 = rows[0].split("\t")
             cols2 = rows[1].split("\t")
-            check(len(cols1) == 15, f"legacy-call row should still get 15 cols (tokens default '-'), got {len(cols1)}: {cols1}")
-            check(cols1[-2:] == ["-", "-"], f"legacy-call row tokens should default to '-','-', got {cols1[-2:]}")
-            check(len(cols2) == 15, f"with-tokens row should have 15 cols, got {len(cols2)}: {cols2}")
-            check(cols2[-2:] == ["1200", "340"], f"with-tokens row should end in 1200,340 got {cols2[-2:]}")
+            # PROVISIONAL-vs-ACTIVE (#20) added a 16th trailing `stage` column,
+            # written the same optional-env-var way tokens_in/out are and
+            # defaulting to `active` — so a modern append now emits 16 cols and
+            # tokens_in/out sit at [-3:-1], with stage at [-1].
+            check(len(cols1) == 16, f"legacy-call row should get 16 cols (tokens default '-', stage default active), got {len(cols1)}: {cols1}")
+            check(cols1[-3:] == ["-", "-", "active"], f"legacy-call row should default tokens to '-','-' and stage to 'active', got {cols1[-3:]}")
+            check(len(cols2) == 16, f"with-tokens row should have 16 cols, got {len(cols2)}: {cols2}")
+            check(cols2[-3:] == ["1200", "340", "active"], f"with-tokens row should end in 1200,340,active got {cols2[-3:]}")
 
         # (3) hand-write a genuine legacy 13-column row (as if it predates
         # this fix entirely - no trailing tokens columns at all) and confirm

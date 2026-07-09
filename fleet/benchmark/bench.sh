@@ -74,6 +74,22 @@ TODAY="$(date +%F)"
 source "$HERE/lib/sections.sh"
 
 MODEL_STATE="$HERE/runs/.current_model"
+UNITS_TSV="$HERE/units.tsv"
+
+unit_stage() {
+  # PROVISIONAL-vs-ACTIVE (#20 BENCH-PROVISIONAL-SCORING): look this unit's
+  # current stage up in units.tsv (unit_id==section here). The stage is passed
+  # to model-scorecard.sh append via CHARON_SCORECARD_STAGE so a provisional
+  # unit's rows are COLLECTED but excluded from live grades until promote.py
+  # flips it. Defaults to `active` (never guesses provisional) for any unit not
+  # yet registered, so an unregistered/legacy section keeps counting exactly as
+  # before. See benchmark/promote.py + benchmark/units.tsv.
+  local uid="$1"
+  [ -f "$UNITS_TSV" ] || { echo active; return; }
+  awk -F'\t' -v u="$uid" '
+    !/^#/ && $1!="unit_id" && $1==u { print $3; f=1; exit }
+    END { if(!f) print "active" }' "$UNITS_TSV"
+}
 
 jget() {
   # jget <json-string> <key> - tiny helper so every field read below goes
@@ -422,7 +438,11 @@ do_grade() {
   tokens_in="$(jget "$record" tokens_in)"
   tokens_out="$(jget "$record" tokens_out)"
 
+  # PROVISIONAL-vs-ACTIVE (#20): tag the row with this unit's current stage so
+  # a not-yet-promoted section/red is collected but kept out of live grades.
+  local stage; stage="$(unit_stage "$section")"
   CHARON_SCORECARD_TOKENS_IN="$tokens_in" CHARON_SCORECARD_TOKENS_OUT="$tokens_out" \
+  CHARON_SCORECARD_STAGE="$stage" \
     bash "$SCORECARD" append "$TODAY" bench "$section" "$wclass" "$tier" "$model" "$verdict" "$gate" "$final_score" "$time_s" "$cost_usd" "$corrections" "$note"
   echo "SECTION $section / $model: FINAL score=$final_score verdict=$verdict time_s=$time_s corrections=$corrections -> appended to model-scorecard.tsv"
 

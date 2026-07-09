@@ -64,3 +64,10 @@
 2026-01-23	bench2	S5-01	routing	T1	glm-5.2	BLOCK	-	60	90	-	0	fixture: SYNTHETIC bench2 row - MUST be excluded from glm-5.2/routing grade
 2026-01-24	bench	S3-02	bugfix	T1	synth-only-model	MERGE	-	100	110	-	0	fixture: bench-ONLY model - grade() must be None (only synthetic evidence)
 2026-01-25	bench2	S4-01	tests	T1	synth-only-model	MERGE	-	100	115	-	0	fixture: bench-ONLY model - grade() must be None (only synthetic evidence)
+# PROVISIONAL-vs-ACTIVE (#20): a 16-column row whose stage (col 16) is
+# `provisional`. It is source=live (a REAL outcome) AND for glm-5.2/routing, so
+# it passes the source allow-list and would raise that grade to n=4 (merge=3,
+# block=1) IF the stage filter were reverted. The grade must stay n=3 — proving
+# the stage gate excludes it ORTHOGONALLY to the source gate. Columns 14/15 are
+# tokens_in/out ("-"); column 16 is the new stage field.
+2026-01-26	live	FIX-PROV	routing	T1	glm-5.2	MERGE	-	-	100	-	0	fixture: PROVISIONAL live row - MUST be excluded until promoted	-	-	provisional

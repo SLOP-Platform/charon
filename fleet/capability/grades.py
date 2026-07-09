@@ -125,6 +125,29 @@ _MERGE, _BLOCK = "MERGE", "BLOCK"
 # capability tier position anymore.
 _REAL_OUTCOME_SOURCES = frozenset({"live"})
 
+# ---------------------------------------------------------------------------
+# PROVISIONAL-vs-ACTIVE staging (BENCH-PROVISIONAL-SCORING, #20 — design of
+# record: fleet/scratch/pivot-implementation-plan.md §2, §8 Q4). A test unit
+# (a benchmark section OR a replayed red) is `provisional` while it collects
+# data but has NOT yet proven it discriminates, and `active` once
+# benchmark/promote.py's gate flips it. Its stage rides on each ledger row as
+# a NEW 16th trailing column (`stage`), following the exact backward-compat
+# pattern tokens_in/out (cols 14/15) use — a row with FEWER than 16 columns
+# (every legacy 13- or 15-column row already in the ledger) defaults to
+# `active`, so no historical grade shifts.
+#
+# `stage` is ORTHOGONAL to `source`: `source` = provenance (is this a real
+# outcome?), `stage` = trust (has this unit proven it discriminates?). A row
+# counts toward a capability grade ONLY when BOTH hold — `source` in
+# `_REAL_OUTCOME_SOURCES` AND `stage == active`. This preserves the
+# fail-closed property #20 exists to protect: a provisional row is COLLECTED
+# in the ledger but EXCLUDED from every active grade/tier/assign pick until
+# promoted, so adding reds-replay (#25) or harder sections (#17) can never
+# silently move the live ranking before the promotion gate says they earned
+# it. Analysis/promotion tooling opts back in via `include_provisional=True`.
+_ACTIVE_STAGE = "active"
+_PROVISIONAL_STAGE = "provisional"
+
 
 @dataclass
 class Grade:
@@ -187,6 +210,12 @@ class ScorecardGradesProvider(GradesProvider):
     therefore has no capability grade (grade() returns None), which is the
     intended demotion, not a regression.
 
+    PROVISIONAL-vs-ACTIVE (#20): admission is ALSO gated on the row's `stage`
+    (16th column) — only `stage == active` rows count; a provisional row (an
+    unpromoted unit's data) is collected but excluded, orthogonally to the
+    source allow-list. See `_ACTIVE_STAGE` / `_rows_for(include_provisional=)`
+    and benchmark/promote.py (the gate that flips a unit provisional->active).
+
     Score formula: a confidence-aware, Wilson-bound spread (see module-level
     `_wilson_bound`/MIN_N docs) — merge's lower bound minus block's upper
     bound, NOT the raw `merge_pct - block_pct` this replaced. A verdict of
@@ -214,30 +243,48 @@ class ScorecardGradesProvider(GradesProvider):
                 continue
             (date, source, ref, wclass, tier, model, verdict, gate, score,
              time_s, cost_usd, corrections, note, *_rest) = cols
+            # PROVISIONAL-vs-ACTIVE (#20): `stage` is the 16th trailing column
+            # (_rest = cols[13:] == [tokens_in, tokens_out, stage, ...]). Any
+            # row with < 16 columns — every legacy 13/15-col row — defaults to
+            # `active` so no historical grade shifts. An empty stage cell also
+            # defaults to active (fail-open ONLY on the legacy axis; the trust
+            # gate itself stays fail-closed — an explicit `provisional` value is
+            # the only thing that excludes a row here).
+            stage = _rest[2].strip() if len(_rest) >= 3 and _rest[2].strip() else _ACTIVE_STAGE
             self._rows.append({
                 "date": date, "source": source, "ref": ref, "work_class": wclass,
                 "tier": tier, "model": model, "verdict": verdict, "gate": gate,
                 "score": score, "time_s": time_s, "cost_usd": cost_usd,
-                "corrections": corrections, "note": note,
+                "corrections": corrections, "note": note, "stage": stage,
             })
 
     def all_models(self) -> list[str]:
         return sorted({r["model"] for r in self._rows})
 
     def _rows_for(self, model: str, work_class: str | None,
-                  real_only: bool = True) -> list[dict]:
+                  real_only: bool = True,
+                  include_provisional: bool = False) -> list[dict]:
         """Rows for a (model, work_class) — REAL-OUTCOME actuals ONLY by
         default (ALLOW-LIST: source in _REAL_OUTCOME_SOURCES). Synthetic
         S0–S6 bench/bench2 rows AND any provisional/unknown source are excluded
         from the grade per the real-outcomes pivot (see _REAL_OUTCOME_SOURCES
         above — fail-closed); pass real_only=False only for smoke/diagnostic
         tooling that explicitly wants every row. work_class is None to
-        aggregate across every class (the generalist bucket)."""
+        aggregate across every class (the generalist bucket).
+
+        PROVISIONAL-vs-ACTIVE (#20): by default only `stage == active` rows
+        count — a provisional row (a not-yet-promoted unit's data) is collected
+        in the ledger but EXCLUDED here, orthogonally to the source allow-list
+        (BOTH gates must pass). Promotion tooling / analysis pass
+        include_provisional=True to see provisional rows too; the live grade
+        path never does, so an unpromoted unit provably cannot move a grade."""
         out = []
         for r in self._rows:
             if r["model"] != model:
                 continue
             if real_only and r["source"] not in _REAL_OUTCOME_SOURCES:
+                continue
+            if not include_provisional and r["stage"] != _ACTIVE_STAGE:
                 continue
             if work_class is not None and r["work_class"] != work_class:
                 continue

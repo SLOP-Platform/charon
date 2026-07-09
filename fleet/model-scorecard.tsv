@@ -4,6 +4,9 @@
 # date=YYYY-MM-DD; source=live|bench; work_class={money-path,routing,ci-infra,refactor,bugfix,tests,greenfield-feature,docs,frontend}
 # tier=0-4 or - ; verdict=MERGE|FIXES|BLOCK ; gate=pass|fail|- ; score=0-100 (bench) or - (live)
 # time_s=wall-clock seconds or - ; cost_usd=gateway-attributed request cost or - ; corrections=correction/iteration rounds or - ; note has NO tabs
+# OPTIONAL TRAILING COLS (backward-compatible; a row with fewer is read with defaults):
+#   14 tokens_in  15 tokens_out  (TOKEN-CAPTURE; default '-')
+#   16 stage=provisional|active  (BENCH-PROVISIONAL-SCORING #20; default 'active'; provisional rows are collected but excluded from live grades until benchmark/promote.py flips the unit)
 2026-07-05	live	#5 strip-reasoning-content	routing	-	glm-5.2	MERGE	pass	-	-	-	-	clean; test captures forwarded body
 2026-07-05	live	#6 sr6-auto-cost-rank	routing	-	glm-5.2	BLOCK	pass	-	-	-	-	feature inert; tests dodged models.json path
 2026-07-05	live	#17 balance-drain	money-path	-	deepseek-v4-pro	MERGE	pass	-	-	-	-	correct in module-only scope; persistence gap noted for wiring
