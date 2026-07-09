@@ -22,7 +22,7 @@ while [ $# -gt 0 ]; do case "$1" in
   --wait)     WAIT_MIN="${2:?--wait needs minutes}"; shift 2;;
   --retries)  RETRIES="${2:?--retries needs a count}"; shift 2;;
   --patience) PATIENCE="${2:?--patience needs a cycle count}"; shift 2;;
-  opus|sonnet|haiku|low|med|high) TIER="$1"; shift;;       # arg allowlist widened: canonical + legacy
+  frontier|strong|economy|opus|sonnet|haiku|low|med|high) TIER="$1"; shift;;       # arg allowlist: canonical (frontier/strong/economy) + legacy
   *) usage;;
 esac; done
 [ -n "$TIER" ] || usage
