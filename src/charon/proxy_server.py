@@ -42,6 +42,7 @@ from .session_affinity import SessionAffinity
 from .speculative_execution import SpeculativeExecutor
 from .spend_limits import SpendLimiter
 from .virtual_keys import VirtualKeyManager
+from . import console_router
 
 # Facade re-exports (decompose): keep the public import surface resolving
 # unchanged from charon.proxy_server for the test suite and callers.
@@ -274,115 +275,8 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
             if qt and qt[0]:
                 self._set_token_cookie = srv.token
 
-        # Aggregated model list (gateway mode). Served locally — never forwarded —
-        # and field-allowlisted to ids only (no key_env/upstream_base leak, ADR R4).
-        # Pool virtual IDs (e.g. auto, tier names) are EXCLUDED — they are internal
-        # routing concepts, not real models (MODEL-DISCOVERY).
-        path_only = urlsplit(self.path).path.rstrip("/")
-        if (self.command == "GET" and srv.model_ids is not None
-                and path_only in ("/v1/models", "/models")):
-            # Exclude pool virtual IDs that are NOT also concrete models
-            # (a model named "auto" or "low" is a real model, not a pool).
-            pool_only = set(srv.pools.keys()) - set(srv.routes.keys())
-            exposed = [m for m in srv.model_ids if m not in pool_only]
-            entries: list[dict] = []
-            for m in exposed:
-                entry: dict = {"id": m, "object": "model", "owned_by": "charon"}
-                meta = srv.model_meta.get(m, {})
-                for k in ("context_window", "max_tokens", "reasoning", "vision", "audio"):
-                    if k in meta:
-                        entry[k] = meta[k]
-                entries.append(entry)
-            self._json(200, {"object": "list", "data": entries})
-            return
-
-        # Gateway console + status (P4) — gateway mode only, token-gated above.
-        if self.command == "GET" and srv.model_ids is not None:
-            if path_only == "/charon/status":
-                self._json(200, srv.status_snapshot())
-                return
-            # Read-only per-session cost exposure (SESSION-COST): a caller that
-            # tags its own requests with X-Charon-Session can read back exactly its
-            # own cumulative cost, isolated from concurrent gateway traffic tagged
-            # with a different (or no) session id. No session= -> the global
-            # cumulative counter (same numbers as /charon/status's "usage"), so
-            # this endpoint degrades gracefully for a caller that never adopted
-            # sessions. Never a billing change — read-only view over existing
-            # cost_usd bookkeeping.
-            if path_only == "/charon/cost":
-                qs = parse_qs(urlsplit(self.path).query)
-                session_vals = qs.get("session") or []
-                session_q: str | None = session_vals[0] if session_vals else None
-                u = (srv.observer.session_usage(session_q) if session_q
-                     else srv.observer.cumulative_usage())
-                self._json(200, {"session": session_q, "tokens_in": u.tokens_in,
-                                 "tokens_out": u.tokens_out,
-                                 "cost_usd": round(u.cost_usd, 6)})
-                return
-            if path_only in ("", "/charon"):
-                self._html(_CONSOLE_HTML)
-                return
-
-        # Web setup (read-WRITE) — only when a setup handler is wired (gateway mode,
-        # token-gated above). A CSRF/Origin guard backs the token gate on writes.
-        if srv.setup_handler is not None and srv.model_ids is not None:
-            if self.command == "GET" and path_only == "/charon/setup":
-                self._html(_SETUP_HTML)
-                return
-            if self.command == "GET" and path_only == "/charon/config":
-                status, obj = srv.setup_handler("summary", {})
-                self._json(status, obj)
-                return
-            if self.command == "POST" and path_only in (
-                    "/charon/providers", "/charon/models", "/charon/models/import",
-                    "/charon/pools", "/charon/tiers", "/charon/fallback",
-                    "/charon/enable", "/charon/disable", "/charon/remove"):
-                host = self.headers.get("Host", "")
-                origin = self.headers.get("Origin")
-                if origin and urlsplit(origin).netloc != host:  # CSRF: cross-origin write
-                    self._json(403, {"error": {"message": "cross-origin write refused"}})
-                    return
-                sfs = self.headers.get("Sec-Fetch-Site")
-                if sfs and sfs not in ("same-origin", "none"):
-                    self._json(403, {"error": {"message": "cross-site write refused"}})
-                    return
-                length = int(self.headers.get("Content-Length") or 0)
-                if length > srv.max_body_bytes:
-                    self._json(413, {"error": {"message": "request body too large"}})
-                    return
-                raw = self.rfile.read(length) if length else b""
-                try:
-                    payload = json.loads(raw) if raw else {}
-                except Exception:  # noqa: BLE001
-                    self._json(400, {"error": {"message": "invalid JSON"}})
-                    return
-                if not isinstance(payload, dict):
-                    self._json(400, {"error": {"message": "expected a JSON object"}})
-                    return
-                try:
-                    status, obj = srv.setup_handler(path_only[len("/charon/"):], payload)
-                except ValueError as exc:
-                    self._json(400, {"error": {"message": str(exc)}})  # validation msg only
-                    return
-                except Exception:
-                    self._json(400, {"error": {"message": "setup write failed"}})  # no path leak
-                    return
-                self._json(status, obj)
-                return
-
-        # Work/board panel (P5, WORK-OBSERVABILITY follow-on) — read-only,
-        # token-gated above. /charon/work returns HTML; add ?json=1 for raw JSON.
-        if self.command == "GET" and path_only == "/charon/work":
-            from . import console_work
-            try:
-                runs = console_work.gather_runs()
-            except Exception:  # noqa: BLE001
-                runs = []
-            qs = parse_qs(urlsplit(self.path).query)
-            if qs.get("json") == ["1"]:
-                self._json(200, {"runs": runs})
-            else:
-                self._html(_WORK_HTML)
+        # Control-plane dispatch (console/setup/discovery); True = fully served.
+        if console_router.try_handle_control_plane(self, srv):
             return
 
         # Read the client request (size-capped — memory-DoS guard on an exposed bind).
