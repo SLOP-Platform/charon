@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from .proxy import _normalize_model_id
 
-if TYPE_CHECKING:  # annotation-only; runtime import would be circular via proxy_server
+if TYPE_CHECKING:  # annotation-only; a runtime import would re-form the proxy_server cycle
     from .proxy_server import GatewayProxyServer
 
 

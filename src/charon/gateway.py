@@ -69,6 +69,11 @@ class GatewayConfig:
     # discarded attempt visibly, count_usage=True) instead of serving it once. Default
     # False keeps the double-bill leak fixed (serve the downgrade, billed once).
     failover_on_downgrade: bool = False
+    # Operator toggle (SR-6, default ON): inject one Anthropic prompt-cache breakpoint
+    # into the outbound body for Anthropic-wire upstreams (a quality-free input-cost
+    # saving). OFF → the body is forwarded byte-identical; OpenAI-wire routes are never
+    # touched either way. Plumbed identically to failover_on_downgrade.
+    anthropic_prompt_cache: bool = True
     # ── optional B1 gateway modules (None = feature disabled) ────────
     semantic_cache: SemanticCache | None = None
     response_normalizer: ResponseNormalizer | None = None
@@ -95,18 +100,21 @@ def _route_from_spec(spec: dict, providers_cfg: dict) -> UpstreamRoute | None:
         base: str | None = preset.base_url
         key_env = spec.get("key_env") or preset.key_env
         strip_v1: bool | None = preset.strip_v1
+        wire = str(spec.get("wire") or preset.wire)  # per-model override wins
     else:
         base = spec.get("upstream_base")
         if not base:
             return None
         key_env = spec.get("key_env")
         strip_v1 = spec.get("strip_v1")  # explicit only; else server default
+        wire = str(spec.get("wire") or providers.WIRE_OPENAI)
     return UpstreamRoute(
         upstream_base=str(base),
         api_key=os.environ.get(key_env) if key_env else None,
         upstream_model=spec.get("upstream_model"),
         provider=prov,
         strip_v1=strip_v1,
+        wire=wire,
     )
 
 
@@ -195,6 +203,7 @@ def load_config(
     cfg_port: int = _DEFAULT_PORT
     cfg_token: str | None = None
     cfg_failover_on_downgrade: bool = False
+    cfg_anthropic_prompt_cache: bool = True
     registry: dict = {}
     pool_map: dict = {}
     providers_cfg: dict = {}
@@ -206,6 +215,8 @@ def load_config(
         cfg_port = int(gw.get("port", cfg_port))
         cfg_token = gw.get("token")
         cfg_failover_on_downgrade = bool(gw.get("failover_on_downgrade", False))
+        cfg_anthropic_prompt_cache = bool(
+            gw.get(providers.ANTHROPIC_PROMPT_CACHE_KEY, True))
         registry = data.get("models") or {}
         pool_map = data.get("pools") or {}  # virtual id → ordered [model id]
         providers_cfg = data.get("providers") or {}  # preset overrides (P3)
@@ -226,6 +237,8 @@ def load_config(
                 if isinstance(gw_file, dict):
                     cfg_failover_on_downgrade = bool(
                         gw_file.get("failover_on_downgrade", False))
+                    cfg_anthropic_prompt_cache = bool(
+                        gw_file.get(providers.ANTHROPIC_PROMPT_CACHE_KEY, True))
             except (OSError, json.JSONDecodeError):
                 pass
 
@@ -289,6 +302,7 @@ def load_config(
         model_meta=model_meta,
         model_pricing=model_pricing,
         failover_on_downgrade=cfg_failover_on_downgrade,
+        anthropic_prompt_cache=cfg_anthropic_prompt_cache,
         semantic_cache=_module_inst("cache", state_dir),
         response_normalizer=_module_inst("normalizer", state_dir),
         guardrails=_module_inst("guardrails", state_dir),
@@ -409,6 +423,7 @@ def build_server(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> 
         token=cfg.token, model_ids=cfg.model_ids, model_meta=cfg.model_meta,
         model_pricing=cfg.model_pricing,
         failover_on_downgrade=cfg.failover_on_downgrade,
+        anthropic_prompt_cache=cfg.anthropic_prompt_cache,
         semantic_cache=cfg.semantic_cache,
         response_normalizer=cfg.response_normalizer,
         guardrails=cfg.guardrails,
