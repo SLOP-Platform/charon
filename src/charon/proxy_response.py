@@ -7,8 +7,12 @@ _extract and _pre_flight_estimate for the unchanged public import surface.
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
 from .proxy import _normalize_model_id
+
+if TYPE_CHECKING:  # annotation-only; a runtime import would re-form the proxy_server cycle
+    from .proxy_server import GatewayProxyServer
 
 
 def _extract(raw: bytes, content_type: str) -> dict:

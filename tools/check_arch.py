@@ -107,6 +107,30 @@ def _collect_docstring_ids(tree: ast.AST) -> set[int]:
     return ids
 
 
+def _is_type_checking_test(test: ast.expr) -> bool:
+    """True if *test* is ``TYPE_CHECKING`` or ``typing.TYPE_CHECKING``."""
+    if isinstance(test, ast.Name):
+        return test.id == "TYPE_CHECKING"
+    if isinstance(test, ast.Attribute):
+        return test.attr == "TYPE_CHECKING"
+    return False
+
+
+def _collect_type_checking_import_ids(tree: ast.AST) -> set[int]:
+    """Collect ``id()`` of every Import/ImportFrom node guarded by an
+    ``if TYPE_CHECKING:`` block. These execute only under a type checker, never at
+    runtime, so they can never form a real (runtime) import cycle and must be
+    excluded from the import graph (only the guarded body — not its ``else``)."""
+    ids: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.If) and _is_type_checking_test(node.test):
+            for stmt in node.body:
+                for sub in ast.walk(stmt):
+                    if isinstance(sub, (ast.Import, ast.ImportFrom)):
+                        ids.add(id(sub))
+    return ids
+
+
 # ── check 1: engine → forbidden imports ────────────────────────────────────
 
 
@@ -211,8 +235,13 @@ def _build_import_graph(src_root: Path) -> dict[str, set[str]]:
             continue
         tree = ast.parse(py_file.read_text(), filename=str(py_file))
         pkg = _pkg_of(py_file)
+        # TYPE_CHECKING-guarded imports run only under a type checker, never at
+        # runtime, so they cannot cause a real import cycle — exclude them.
+        tc_ids = _collect_type_checking_import_ids(tree)
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
+                if id(node) in tc_ids:
+                    continue
                 for alias in node.names:
                     head = alias.name.split(".")[0]
                     if head not in _STDLIB_TOPS and head != "charon":
@@ -220,6 +249,8 @@ def _build_import_graph(src_root: Path) -> dict[str, set[str]]:
                     if alias.name == "charon" or alias.name.startswith("charon."):
                         graph[mod].add(alias.name)
             elif isinstance(node, ast.ImportFrom):
+                if id(node) in tc_ids:
+                    continue
                 target: str | None = None
                 if node.level and node.level > 0:
                     target = _resolve_relative(pkg, node.level, node.module)

@@ -24,6 +24,7 @@ import time
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlsplit
 
+from . import console_router, forwarder
 from .cache import SemanticCache
 from .consensus import ConsensusRouter
 from .guardrails import Guardrails
@@ -31,6 +32,11 @@ from .netutil import is_loopback
 from .observability import Observability
 from .policy_router import PolicyRouter
 from .proxy import GatewayProxy
+
+# Facade re-exports (decompose): keep the public import surface resolving
+# unchanged from charon.proxy_server for the test suite and callers.
+from .proxy_console_assets import _CONSOLE_HTML, _SETUP_HTML, _WORK_HTML
+from .proxy_response import _extract, _pre_flight_estimate
 from .quality_scorer import QualityScorer
 from .request_inspector import RequestInspector
 from .response_normalizer import ResponseNormalizer
@@ -38,13 +44,19 @@ from .session_affinity import SessionAffinity
 from .speculative_execution import SpeculativeExecutor
 from .spend_limits import SpendLimiter
 from .virtual_keys import VirtualKeyManager
-from . import console_router
-from . import forwarder
 
-# Facade re-exports (decompose): keep the public import surface resolving
-# unchanged from charon.proxy_server for the test suite and callers.
-from .proxy_console_assets import _CONSOLE_HTML, _SETUP_HTML, _WORK_HTML
-from .proxy_response import _extract, _pre_flight_estimate
+# Public import surface re-exported from this facade (decompose). Declaring the
+# re-exports in __all__ marks them as intentionally re-exported (clears F401) and
+# keeps ``charon.proxy_server`` resolving these names for the test suite/callers.
+__all__ = [
+    "GatewayProxyServer",
+    "UpstreamRoute",
+    "_CONSOLE_HTML",
+    "_SETUP_HTML",
+    "_WORK_HTML",
+    "_extract",
+    "_pre_flight_estimate",
+]
 
 
 @dataclass(frozen=True)
