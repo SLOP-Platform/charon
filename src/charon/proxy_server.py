@@ -33,7 +33,7 @@ from .guardrails import Guardrails
 from .netutil import BROWSER_UA, is_loopback
 from .observability import Observability
 from .policy_router import PolicyRouter
-from .proxy import GatewayProxy, _normalize_model_id
+from .proxy import GatewayProxy
 from .quality_scorer import QualityScorer
 from .request_inspector import RequestInspector
 from .request_normalizer import normalize_messages as _normalize_request_messages
@@ -46,6 +46,7 @@ from .virtual_keys import VirtualKeyManager
 # Facade re-exports (decompose): keep the public import surface resolving
 # unchanged from charon.proxy_server for the test suite and callers.
 from .proxy_console_assets import _CONSOLE_HTML, _SETUP_HTML, _WORK_HTML
+from .proxy_response import _extract, _pre_flight_estimate
 
 
 @dataclass(frozen=True)
@@ -83,68 +84,6 @@ _BANNED_UA_PREFIXES = ("python-urllib", "python-requests")
 # silent-downgrade check before committing a stream); bounds memory on a stream
 # that never carries a model field.
 _STREAM_HEAD_CAP = 65536
-
-
-def _extract(raw: bytes, content_type: str) -> dict:
-    """Pull a ``{model, usage}`` view out of an upstream response — JSON for a
-    normal completion, or the SSE ``data:`` chunks for a streamed one (agents like
-    OpenCode stream). Returns {} if nothing parseable."""
-    text = raw.decode("utf-8", "replace")
-    if "text/event-stream" in content_type or text.lstrip().startswith("data:"):
-        model = ""
-        usage = None
-        for line in text.splitlines():
-            line = line.strip()
-            if not line.startswith("data:"):
-                continue
-            payload = line[len("data:"):].strip()
-            if payload in ("", "[DONE]"):
-                continue
-            try:
-                obj = json.loads(payload)
-            except Exception:  # noqa: BLE001
-                continue
-            model = model or obj.get("model", "")
-            if obj.get("usage"):
-                usage = obj["usage"]  # final SSE chunk carries usage (include_usage)
-        out: dict = {}
-        if model:
-            out["model"] = model
-        if usage:
-            out["usage"] = usage
-        return out
-    try:
-        return json.loads(text)
-    except Exception:  # noqa: BLE001
-        return {}
-
-
-def _pre_flight_estimate(model: str, est_tokens: int,
-                         srv: GatewayProxyServer) -> float:
-    """Compute the pre-flight spend estimate for ``model`` from its stored per-token
-    pricing. Falls back to a nominal floor when pricing is unknown."""
-    pricing = _pre_flight_pricing(model, srv)
-    ci = pricing.get("cost_input")
-    co = pricing.get("cost_output")
-    if ci is not None and co is not None:
-        rate = max(float(ci), float(co), 0.0000001)
-        return est_tokens * rate
-    return est_tokens * 0.0000015
-
-
-def _pre_flight_pricing(model: str, srv: GatewayProxyServer) -> dict:
-    """Resolve a model's pricing entry with the same normalization the proxy's
-    ``_lookup_pricing`` uses — exact id first, then a normalized final-segment
-    match — so a namespaced id (e.g. ``deepseek/deepseek-v4-pro``) doesn't silently
-    fall through to the nominal floor (parity with the cost_usd path, SR-5b)."""
-    exact = srv.model_pricing.get(model)
-    if exact is not None:
-        return exact
-    cleaned = _normalize_model_id(model)
-    for known_id, entry in srv.model_pricing.items():
-        if _normalize_model_id(known_id) == cleaned:
-            return entry
-    return {}
 
 
 class _ProxyHandler(http.server.BaseHTTPRequestHandler):
