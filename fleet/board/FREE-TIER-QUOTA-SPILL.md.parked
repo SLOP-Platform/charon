@@ -27,6 +27,18 @@ scope: The mechanism behind [use-free-tiers-to-their-limits] + the Cline→Feath
   pools-redesign capability engine (#14) and the P3 resource-availability work. Design/spec first, then
   implement. Suggested agent: strong tier for spec; frontier for the gateway-sort/failover integration
   (the spill's interaction with cost_class ordering + cooldown is design-sensitive).
+  SMART SWITCH-TIMING (operator, 2026-07-08 — a REQUIREMENT, not just spill-on-error): the spill must be
+  smart about WHEN to switch, not merely reactive to a 402. Net rule: switch at the LEAST-DISRUPTIVE
+  BOUNDARY that still avoids running dry, driven by usage-remaining + task/session boundaries.
+  (a) PREFER TASK BOUNDARIES — not mid-task (mid-task swaps carry context but can shift style even between
+  equivalents). (b) PREDICT exhaustion from METER-MODEL-PROVIDER's usage/quota-remaining signal — do NOT
+  wait for the hard 402. (c) RIDE IT OUT: if a low leg has enough headroom to finish the current task (or
+  session), keep using it and switch at task end — or even session end if usage is low-but-sufficient;
+  don't switch early just because a leg is getting low. (d) NEVER run dry mid-task: if predicted usage
+  won't finish the task, switch at task START / last safe boundary instead. The forecast comes from
+  METER-MODEL-PROVIDER (the sensor); the leg-swap is the PFF-P2 cross-model substitution (this ticket is
+  the actuator). See POOLS-REDESIGN-ADR-v2.md "quality-equivalent, drain-ordered tier redundancy" for the
+  matching tier-redundancy requirement this timing rule serves.
   D&S: depends_on COST-RANK-AUTO (cost_class enum must exist first); sequence AFTER the failover/cost
   cluster (PROXY-FAILOVER-FIX, DRAIN-ROUTING, COST-RANK-AUTO) since it shares gateway.py; concurrency —
   shares gateway.py with that cluster, so NOT parallel-safe with them; disjoint from the bridge/bench work.
