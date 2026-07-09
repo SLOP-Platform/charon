@@ -259,3 +259,56 @@ async function load(){
   document.getElementById('cfg').innerHTML=h;}
 load();
 </script></body></html>"""
+
+
+# Friendly session-login page for the /charon/* console (SR-13, AUTH-GUI-DESIGN
+# Option C). A single "gateway token" field — paste the token you already have
+# ONCE (into a box, never the URL); the server exchanges it for a signed, HttpOnly
+# session cookie. NO external assets (zero egress). ``{error}`` is a server-filled,
+# pre-escaped notice block (empty on the first render); it is the ONLY interpolated
+# region and never carries a secret value.
+_LOGIN_TEMPLATE = """<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Charon — sign in</title><style>
+body{{font:14px system-ui,sans-serif;margin:0;background:#0b0e14;color:#cdd6f4;
+ display:flex;min-height:100vh;align-items:center;justify-content:center}}
+.card{{background:#11141c;border:1px solid #313244;border-radius:8px;
+ padding:1.6rem 1.8rem;width:min(92vw,22rem)}}
+h1{{font-size:1.15rem;margin:0 0 .2rem;color:#89b4fa}}
+p.sub{{margin:.1rem 0 1.1rem;color:#6c7086;font-size:.85rem}}
+label{{display:block;font-size:.8rem;color:#a6adc8;margin-bottom:.3rem}}
+input{{width:100%;box-sizing:border-box;padding:.55rem .6rem;border-radius:5px;
+ border:1px solid #313244;background:#0b0e14;color:#cdd6f4;font:inherit}}
+button{{margin-top:1rem;width:100%;padding:.55rem;border:0;border-radius:5px;
+ background:#89b4fa;color:#11111b;font:inherit;font-weight:600;cursor:pointer}}
+.err{{background:#3a1720;border:1px solid #f38ba8;color:#f38ba8;border-radius:5px;
+ padding:.5rem .6rem;margin-bottom:1rem;font-size:.85rem}}
+.hint{{margin-top:1.1rem;color:#6c7086;font-size:.78rem;line-height:1.4}}
+code{{background:#1e1e2e;padding:.1rem .3rem;border-radius:3px;color:#cdd6f4}}
+</style></head><body>
+<div class=card>
+<h1>Charon Gateway</h1>
+<p class=sub>Sign in to the console</p>
+{error}
+<form method="POST" action="/charon/login" autocomplete="off">
+<label for="token">Gateway token</label>
+<input id="token" name="token" type="password" autofocus
+ placeholder="paste your gateway token">
+<button type="submit">Sign in</button>
+</form>
+<p class=hint>This is the same token your apps use as the API key. On the host you
+can run <code>charon login</code> to get a one-click sign-in link instead.</p>
+</div></body></html>"""
+
+# No-error render — kept as a stable module constant (import surface).
+_LOGIN_HTML = _LOGIN_TEMPLATE.format(error="")
+
+
+def render_login(error: str | None = None) -> str:
+    """The login page, optionally with an error notice. ``error`` is escaped here;
+    callers pass a fixed, non-secret string (e.g. "Invalid token")."""
+    if not error:
+        return _LOGIN_HTML
+    safe = (error.replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;").replace('"', "&quot;").replace("'", "&#39;"))
+    return _LOGIN_TEMPLATE.format(error=f'<div class=err>{safe}</div>')

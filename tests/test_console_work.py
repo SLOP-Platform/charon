@@ -171,7 +171,10 @@ class TestWorkEndpoint:
             if charon_link.exists():
                 charon_link.unlink()
 
-    def test_work_endpoint_unauthenticated_returns_401(self) -> None:
+    def test_work_endpoint_unauthenticated_redirects_to_login(self) -> None:
+        # SR-13: an unauthenticated browser GET to a /charon GUI route no longer
+        # returns raw 401 JSON — it 302-redirects to the friendly login page. The
+        # _get helper follows the redirect, so we land on the login form (200 HTML).
         proxy = GatewayProxyServer(
             upstream_base="http://127.0.0.1:1/v1",
             token="secret-token",
@@ -181,9 +184,10 @@ class TestWorkEndpoint:
         proxy.serve_in_thread()
         try:
             status, body = self._get(proxy.url + "/charon/work")
-            assert status == 401
-            assert isinstance(body, dict)
-            assert "missing" in body["error"]["message"].lower()
+            assert status == 200
+            assert isinstance(body, str)
+            assert 'action="/charon/login"' in body
+            assert "Sign in" in body
         finally:
             proxy.shutdown()
 

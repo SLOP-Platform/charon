@@ -650,6 +650,49 @@ def _cmd_connect(args: argparse.Namespace) -> int:
     )
 
 
+def _cmd_login(args: argparse.Namespace) -> int:
+    """`charon login` — print a click-once, pre-authed console URL. One click sets a
+    durable signed session cookie and 302s to /charon, stripping the token from the
+    address bar (SR-13). The token is read from your stored secrets — never typed."""
+    from . import secrets
+    secrets.apply_to_env()  # let a stored CHARON_GATEWAY_TOKEN resolve like elsewhere
+    token = args.token or os.environ.get("CHARON_GATEWAY_TOKEN") or None
+    host = args.host or "127.0.0.1"
+    port = args.port or 8080
+    base = f"http://{host}:{port}"
+    if token:
+        # The token rides in the URL for exactly one hop; the server swaps it for a
+        # session cookie and redirects to a clean /charon.
+        from urllib.parse import quote
+        url = f"{base}/charon?token={quote(token, safe='')}"
+    else:
+        # Ungated (loopback, no token) — the console is open; no token needed.
+        url = f"{base}/charon"
+        print("note: no gateway token set — the console is open on loopback.",
+              file=sys.stderr)
+    print(url)
+    if args.open:
+        import webbrowser
+        webbrowser.open(url)
+    return 0
+
+
+def _cmd_logout(args: argparse.Namespace) -> int:
+    """`charon logout --all` — rotate CHARON_SESSION_KEY, invalidating every existing
+    console session cookie (deliberate revoke-all). Restart the gateway to load the
+    new key. Does NOT touch the gateway token, so /v1/* clients are unaffected."""
+    from . import secrets
+    if not args.all:
+        print("logout is per-browser (clear the site's cookies) — to invalidate ALL "
+              "console sessions server-side, run: charon logout --all", file=sys.stderr)
+        return 0
+    import secrets as _stdlib_secrets
+    secrets.set_secret("CHARON_SESSION_KEY", _stdlib_secrets.token_hex(32))
+    print("rotated CHARON_SESSION_KEY — all console sessions invalidated. "
+          "Restart the gateway to apply.")
+    return 0
+
+
 def _cmd_doctor(args: argparse.Namespace) -> int:
     from .config import load_sandbox_policy
     from .fence import AutonomyPolicy
@@ -1953,6 +1996,25 @@ def build_parser() -> argparse.ArgumentParser:
                     help="also delete secrets.json (your stored API keys)")
     rs.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     rs.set_defaults(func=_cmd_reset)
+
+    li = sub.add_parser(
+        "login",
+        help="Print a click-once, pre-authed URL to the /charon web console")
+    li.add_argument("--host", default=None, help="gateway host (default 127.0.0.1)")
+    li.add_argument("--port", type=int, default=None,
+                    help="gateway port (default 8080)")
+    li.add_argument("--token", default=None,
+                    help="gateway token (default: your stored CHARON_GATEWAY_TOKEN)")
+    li.add_argument("--open", action="store_true",
+                    help="also open the URL in your default browser")
+    li.set_defaults(func=_cmd_login)
+
+    lo = sub.add_parser(
+        "logout",
+        help="Invalidate console sessions (--all rotates the session key)")
+    lo.add_argument("--all", action="store_true",
+                    help="rotate CHARON_SESSION_KEY — invalidate ALL console sessions")
+    lo.set_defaults(func=_cmd_logout)
 
     v = sub.add_parser("version", help="Show the Charon version")
     v.set_defaults(func=lambda a: (print(__version__), 0)[1])

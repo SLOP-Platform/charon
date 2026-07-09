@@ -75,8 +75,13 @@ def test_web_setup_requires_token(monkeypatch, tmp_path):
                                  setup_dir=tmp_path)
     server.serve_in_thread()
     try:
-        # no token → 401 on read
-        assert _req(server.url + "/charon/setup")[0] == 401
+        # SR-13: no creds → the setup page 302s to the friendly login page (a
+        # browser sees a login form, not raw 401 JSON). _req follows the redirect,
+        # so we land on the login page — NOT the setup page.
+        st, body, _ = _req(server.url + "/charon/setup")
+        assert st == 200
+        assert 'action="/charon/login"' in body
+        assert "Charon Setup" not in body
     finally:
         server.shutdown()
 

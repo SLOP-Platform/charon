@@ -8,10 +8,67 @@ called through the passed handler instance. No logic change.
 """
 from __future__ import annotations
 
+import hmac
 import json
 from urllib.parse import parse_qs, urlsplit
 
-from .proxy_console_assets import _CONSOLE_HTML, _SETUP_HTML, _WORK_HTML
+from .proxy_console_assets import _CONSOLE_HTML, _SETUP_HTML, _WORK_HTML, render_login
+
+
+def try_handle_public_gui(handler, srv) -> bool:
+    """Serve the PUBLIC (no-auth) console routes — the friendly login page, the
+    login POST that exchanges the token for a signed session cookie, and logout
+    (SR-13). Runs BEFORE the auth gate. Returns True when fully served here.
+
+    ``/v1/*`` is never touched: only the exact ``/charon/login`` and
+    ``/charon/logout`` paths match, and the login POST mints a session cookie that
+    authorizes ``/charon/*`` ONLY."""
+    path_only = urlsplit(handler.path).path.rstrip("/")
+    if path_only not in ("/charon/login", "/charon/logout"):
+        return False
+
+    if path_only == "/charon/logout":
+        # Clear the session and bounce to the login page (GET or POST).
+        handler._clear_session()
+        handler._redirect("/charon/login")
+        return True
+
+    # /charon/login
+    if handler.command == "GET":
+        handler._html(render_login())
+        return True
+
+    if handler.command == "POST":
+        # Same CSRF/Origin + DNS-rebinding posture as every other /charon write.
+        host = handler.headers.get("Host", "")
+        origin = handler.headers.get("Origin")
+        if origin and urlsplit(origin).netloc != host:  # cross-origin write
+            handler._json(403, {"error": {"message": "cross-origin write refused"}})
+            return True
+        sfs = handler.headers.get("Sec-Fetch-Site")
+        if sfs and sfs not in ("same-origin", "none"):
+            handler._json(403, {"error": {"message": "cross-site write refused"}})
+            return True
+        length = int(handler.headers.get("Content-Length") or 0)
+        if length > srv.max_body_bytes:
+            handler._json(413, {"error": {"message": "request body too large"}})
+            return True
+        raw = handler.rfile.read(length) if length else b""
+        fields = parse_qs(raw.decode("utf-8", "replace"), keep_blank_values=True)
+        submitted = (fields.get("token") or [""])[0]
+        # Constant-time compare against the gateway token (an ungated None-token
+        # console accepts any submit). No early return leaks token validity.
+        ok = (srv.token is None) or (
+            bool(submitted) and hmac.compare_digest(submitted, srv.token))
+        if ok:
+            handler._issue_session(srv)
+            handler._redirect("/charon")
+        else:
+            # Re-render the form with a fixed, non-secret error; NO cookie set.
+            handler._html(render_login("Invalid token — try again."))
+        return True
+
+    return False
 
 
 def try_handle_control_plane(handler, srv) -> bool:
