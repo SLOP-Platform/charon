@@ -32,6 +32,10 @@ esac; done
 # gateway — it's a name lookup, no Anthropic↔OpenAI shim. `|| MODEL="$TIER"` keeps half-migrated
 # setups working: legacy opus/sonnet/haiku still launch unchanged when tiers.json is absent.
 MODEL="$(charon tier resolve "$TIER" --executor anthropic 2>/dev/null)" || MODEL="$TIER"
+# Fallback map when charon can't resolve (e.g. not on PYTHONPATH): canonical tier -> Claude model,
+# so a canonical name never reaches `claude -p --model` as an invalid literal. Legacy opus/sonnet/haiku
+# are already valid model names and pass through untouched.
+case "$MODEL" in frontier) MODEL=opus;; strong) MODEL=sonnet;; economy) MODEL=haiku;; esac
 DROID="$TIER-$$"; current=""; empties=0
 # Release the in-flight claim if the tab is Ctrl-C'd / killed (no stuck tickets).
 cleanup(){ if [ -n "${current:-}" ] && [ ! -e "$FLEET/state/submitted/$current" ]; then
