@@ -52,3 +52,33 @@ operator-approved before changing the harness.
 ## Deferred (NOT ticketed, by decision) — see docs/DECISIONS.md
 D005 WorkerBackend port (until a non-ACP worker); D015 verified isolation (promote as the
 safety pair for auto-land/Phase-2 per D016).
+
+## Release + redeploy runbook (durable steps — salvaged 2026-07-08 from REDEPLOY-PLAN.md)
+The version-specific REDEPLOY-PLAN snapshot (v0.3.3→v0.3.4) was archived; these are the
+version-independent steps that recur every release.
+
+**Config/secrets live ON the named `/data` volume, not in the image.** The remote
+`docker-compose.yml` mounts `charon-config:/data` (external volume `charon_charon-config`);
+`/data/pools.json` + `/data/secrets.json` persist across image swaps. A normal `compose up -d`
+never touches `/data` content — never bake config/secrets into the image (see memory
+`charon-deploy-drift-lessons`).
+
+**Release path:** bump `pyproject.toml` `version` on `master` → commit → push → `git tag vX.Y.Z`
+on the bump commit → `git push origin vX.Y.Z` (tag push alone triggers `release.yml`; no GitHub
+Release object needed). CI runs `gate` (lint/type/tests/boundary/version-consistency) →
+`image-smoke` (build+smoke) → `publish` (`ghcr.io/slop-platform/charon:vX.Y.Z` + attestation).
+The `derive version` step HARD-FAILS if the pushed tag ≠ `pyproject` version, so the bump and
+the tag must be the same commit's state. Confirm all three jobs green before touching the box.
+
+**Deploy:** only after CI is green, `bash /home/stack/charon-private/fleet/deploy.sh vX.Y.Z` on
+4-LOM. `deploy.sh` verifies preflight (pool count, keys present, deepseek-v4-pro provider), then
+`backup_data()` tars the `/data` volume to `.charon-deploy-backups/` (chmod 600) BEFORE arming
+`trap rollback ERR`, pulls the tag, `compose up -d gateway`, and `verify_all` (wait_healthy via
+the image's built-in HEALTHCHECK + pool-count-unchanged + keys-present + deepseek provider
+unchanged). On ANY post-arm error it auto-rolls back: pull previous tag, wipe+restore `/data`
+from the backup, bring up the old tag, re-verify, re-raise. Named-volume mount means the
+backup/restore machinery only fires on the rollback path.
+
+**Zero-delta dry run (optional confidence):** `bash deploy.sh vX.Y.Z` against the *currently
+running* tag exercises the full backup/verify/rollback mechanics with zero version change before
+the real jump. Note `verify_deepseek_provider` makes one real billed nanogpt call per invocation.

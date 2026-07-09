@@ -69,6 +69,12 @@ mechanical, prefer the mechanism (hook / gate / launcher flag) over recall.
 
 - Drive Charon to release-ready for any fresh-install user (SLOP first); favor preflight / general-intake / product-leak-audit / docs. `[charon-production-readiness-mindset]`
 
+## 8. MERGE/BUILD DISCIPLINE (2026-07-09 lessons)
+
+- Merge gate = the FULL CI gate (ruff + mypy + `PYTHONPATH=src python3 -m charon.cli gate`), NEVER pytest-alone. A decompose merge passed pytest but was CI-red this session — pytest-green is not merge-green. `[merge-gate-is-full-ci-not-pytest]`
+- Every build/fix MUST add a test that FAILS on revert (exercises the change). Green tests hid 6 real defects this session; a test that still passes when the change is reverted proves nothing. `[tests-must-fail-on-revert]`
+- Money-path / security / core changes get an INDEPENDENT adversarial review before merge — not the builder's self-report. Self-reports lie; review the branch diff. `[independent-review-before-merge-on-critical]`
+
 ---
 
 *Bracketed refs point to the originating manager-memory note. Once this doc is

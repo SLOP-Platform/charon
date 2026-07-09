@@ -1,3 +1,11 @@
+> ANNOTATED 2026-07-08 — SMOKE-TEST ONLY, SUPERSEDED AS RANKER. The synthetic S0–S6 composite
+> this spec defines was BUILT + run (TICKET-BENCHMARK-HARNESS) and is now DEMOTED to a smoke-test
+> by the confirmed real-outcomes pivot (see BENCHMARK-VALIDITY-REVIEW.md + BENCH-REGROUND-LIVE /
+> BENCH-OOB-GRADING / BENCH-REDS-REPLAY). It no longer feeds model ranking or tier position.
+> KEPT as a record — SALVAGED value that lives on: the §0 work-class taxonomy and the **S6
+> frontend fixture** (the only frontend capability signal we have) feed the pivot's live-outcomes
+> grading. Do not delete these two.
+
 # MODEL-BENCHMARK-SPEC — tiered capability benchmark for fleet coding models
 
 Status: DESIGN (spec only — not built, not run). Owner: fleet manager.

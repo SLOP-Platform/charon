@@ -1,0 +1,27 @@
+tier: strong
+work_class: infra
+branch: feat/test-exercises-change-guard
+depends_on:
+owns: .git/hooks/pre-push, scripts/gate-hook.sh, .github/workflows/ci.yml
+accept: "cd <repo> && bash scripts/gate-hook.sh  # exits non-zero on a CI-red tree (ruff/mypy/charon.cli gate). Human sign-off: (a) a deliberately CI-red commit is BLOCKED by the pre-merge/pre-push hook; (b) reverting a shipped fix makes its guard test FAIL (fail-on-revert / mutation-style check surfaces the un-exercised change)."
+prompt:
+scope: "Mechanize the 2026-07-09 merge/build lessons so the two failure modes cannot recur.
+  (a) PRE-MERGE / PRE-PUSH HOOK: run the FULL CI gate (ruff + mypy + `PYTHONPATH=src python3 -m
+  charon.cli gate`) as a pre-push (and/or pre-merge) hook so a CI-red merge is impossible locally —
+  pytest-green is not merge-green. (b) TESTS-EXERCISE-THE-CHANGE: add a mechanism ensuring every
+  build/fix ships a test that FAILS on revert — a fail-on-revert assertion in review, or a
+  lightweight mutation-style check in CI that reverts the diff hunk and confirms at least one test
+  goes red. Green tests hid SIX real defects this session; a test that still passes with the change
+  reverted proves nothing.
+  Reference defects (all in scratch/*-review.md): bench-reground (bench-reground-review.md),
+  #16 aggregate-N (bench-aggn-review.md), decompose-red-CI (decompose-review.md — passed pytest,
+  CI-red), SR-13-auth-leak (sr13-review.md).
+  RIG-ONLY where it touches fleet tooling; the product-repo half (charon pre-push hook + CI
+  mutation check) ships in the Charon product. Keep the two halves cleanly separated per the
+  product-vs-build-rig boundary.
+  D&S: depends_on EMPTY — pure guard infra, no build prereqs. Independently landable; sequence
+  the hook (a) before the mutation-check (b) since (a) is near-zero-build and closes the CI-red
+  hole immediately."
+note: PARKED — staged so no droid claims ahead of manager gating. Derived from the 2026-07-09
+  merge/build lessons (MANAGER-OPERATING-RULES.md §8). Flag for manager: confirm scope split
+  product-half vs rig-half before activating; (a) can ship standalone as a fast win.
