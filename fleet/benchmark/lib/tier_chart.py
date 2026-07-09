@@ -107,6 +107,65 @@ TIER_LADDER = [
 # example 4.7c.
 COMPOSITE_EFF_CAP = 2.0
 
+# AGGREGATE-N (BENCH-AGGREGATE-N, #16 — design of record:
+# fleet/scratch/pivot-implementation-plan.md §5). The synthetic S0–S6
+# bench score is not test-retest reliable at N=1 (validity review §4/§5:
+# glm-5.2 scored S3 100->75, S5 100->60 ACROSS repeat runs), yet
+# bench_rows_for() previously kept only the LAST row per section
+# (dict last-wins) and tiered off that single number. It now AGGREGATES all
+# active bench rows sharing a section ref into mean ± noise band over N runs
+# (see `_score_stats`), and a composite gap SMALLER than the combined band
+# renders as a TIE, not a rank (`_composites_tie`). Reuses the same 95%
+# two-sided z capability/grades.py's Wilson bounds use.
+_AGG_Z = 1.959963985
+
+
+def _score_stats(values):
+    """(mean, sample_stddev, ci_half_width) over N repeat-run scores — LOCKSTEP
+    with capability/grades.py::_score_stats (kept a local copy so this module
+    keeps no import across the benchmark<->capability package boundary, the
+    same duplication discipline season_for_date() documents above). Returns
+    (None,None,None) for 0 runs; (mean,None,None) for 1 run (one sample carries
+    no run-to-run noise estimate — band left unmeasured, never faked as 0)."""
+    n = len(values)
+    if n == 0:
+        return None, None, None
+    m = sum(values) / n
+    if n < 2:
+        return m, None, None
+    var = sum((v - m) ** 2 for v in values) / (n - 1)
+    sd = var ** 0.5
+    return m, sd, _AGG_Z * sd / (n ** 0.5)
+
+
+def _composites_tie(score_a, band_a, score_b, band_b):
+    """#16: TIE (not a rank) when the gap is within the combined noise band —
+    LOCKSTEP with capability/grades.py::scores_tie. A None band (<2 runs,
+    unmeasurable) contributes 0."""
+    return abs(score_a - score_b) <= ((band_a or 0.0) + (band_b or 0.0))
+
+
+def composite_band(section_scores):
+    """#16: propagate each section's per-mean CI half-width to the OVERALL
+    composite (which is the unweighted mean of the section means). With the
+    composite = (1/k)·Σ mean_i, its standard error² = (1/k²)·Σ stderr_i²
+    (stderr_i = band_i / z), so the composite band = z·√(that). A section with
+    <2 runs has no measurable band and contributes 0. Returns None if no
+    capability section is graded yet."""
+    stderr_sq = []
+    k = 0
+    for s in CAPABILITY_SECTIONS:
+        info = section_scores.get(s)
+        if info is None:
+            continue
+        k += 1
+        band = info.get("score_band")
+        if band:
+            stderr_sq.append((band / _AGG_Z) ** 2)
+    if k == 0:
+        return None
+    return _AGG_Z * ((sum(stderr_sq) / (k * k)) ** 0.5)
+
 # REAL-OUTCOMES PIVOT (BENCH-REGROUND-LIVE, pivot A2 — design of record:
 # fleet/scratch/pivot-implementation-plan.md §0/§1/§7; driving verdict:
 # fleet/BENCHMARK-VALIDITY-REVIEW.md). The synthetic S0–S6 composite/tier this
@@ -152,7 +211,17 @@ def _stage(cols):
 
 
 def bench_rows_for(rows, model):
-    out = {}
+    """AGGREGATE-N (#16): all ACTIVE source=bench rows sharing a section ref are
+    now aggregated (mean ± noise band over N runs), NOT collapsed to the last
+    row (the old dict last-wins, which trusted one run like a stable average —
+    the exact N=1 unreliability the validity review flagged). `score` carries
+    the aggregate MEAN (so composite_overall/render read it unchanged), plus
+    new keys `score_n`/`score_mean`/`score_stddev`/`score_band`/`score_values`
+    publish the smoothing signal. The non-score display fields (time/cost/
+    corrections/verdict/gate/note) keep the LAST run's value — same shape older
+    readers (token_capture_selftest part3) assert on; only the score gained a
+    band."""
+    buckets = {}
     for cols in rows:
         # PROVISIONAL-vs-ACTIVE (#20): a provisional unit's rows are COLLECTED
         # but excluded from the (smoke) composite/tier — same trust gate the
@@ -165,10 +234,22 @@ def bench_rows_for(rows, model):
             continue
         if score == "-":
             continue
+        b = buckets.setdefault(ref, {"scores": []})
+        b["scores"].append(int(score))
+        # last-run wins for the display/efficiency fields (unchanged behavior)
+        b.update({"skill": wclass, "verdict": verdict, "gate": gate,
+                  "time_s": time_s, "cost_usd": cost, "corrections": corr, "note": note})
+    out = {}
+    for ref, b in buckets.items():
+        scores = b["scores"]
+        mean_s, sd, band = _score_stats(scores)
         out[ref] = {
-            "score": int(score), "verdict": verdict, "gate": gate,
-            "skill": wclass, "time_s": time_s, "cost_usd": cost,
-            "corrections": corr, "note": note,
+            "score": mean_s,          # AGGREGATE MEAN over N runs (was single last row)
+            "score_mean": mean_s, "score_stddev": sd, "score_band": band,
+            "score_n": len(scores), "score_values": list(scores),
+            "verdict": b["verdict"], "gate": b["gate"], "skill": b["skill"],
+            "time_s": b["time_s"], "cost_usd": b["cost_usd"],
+            "corrections": b["corrections"], "note": b["note"],
         }
     return out
 
@@ -219,13 +300,16 @@ def mean_time(section_scores, keys=ALL_SECTIONS):
 
 
 def _rank_in_tier_v1_internal(rows, this_model, tier_name):
-    """v1-only (source=="bench") per-tier rank, used internally by
-    render() below - UNCHANGED behavior from before v2 (renamed only; see
-    module docstring's BENCHMARK-V2 section for why this needed a new
-    name rather than being replaced in place). Rank among every OTHER
-    model in the tsv landing in the same named tier (this_model included),
-    sorted by composite desc, tie-broken by mean time_s asc. Returns
-    (rank, total)."""
+    """v1-only (source=="bench") per-tier rank, used internally by render().
+    Rank among every OTHER model in the tsv landing in the same named tier
+    (this_model included), sorted by composite desc, tie-broken by mean time_s
+    asc.
+
+    AGGREGATE-N (#16): ranking now uses COMPETITION ranks with statistical
+    ties — two adjacent models whose composite gap is within their COMBINED
+    noise band (`_composites_tie`) share a rank instead of being ordered on
+    noise (a sub-band gap is a tie, not a rank). Returns (rank, total, tied)
+    where `tied` is True iff this_model shares its rank with >=1 other model."""
     all_models = sorted({cols[5] for cols in rows if cols[1] == "bench"})
     candidates = []
     for m in all_models:
@@ -233,16 +317,28 @@ def _rank_in_tier_v1_internal(rows, this_model, tier_name):
         t, comp = overall_tier(sc)
         if t != tier_name or comp is None or isinstance(comp, str):
             continue
-        tm = mean_time(sc)
-        candidates.append((m, comp, tm))
-    candidates.sort(key=lambda x: (-x[1], x[2]))
+        candidates.append({"model": m, "composite": comp,
+                           "band": composite_band(sc) or 0.0, "tie_break": mean_time(sc)})
+    candidates.sort(key=lambda c: (-c["composite"], c["tie_break"]))
     total = len(candidates)
+    # competition ranking ("1,2,2,4") with a #16 tie = within the combined band
+    # of the immediately-higher candidate.
+    ranks = []
+    for i, c in enumerate(candidates):
+        if i == 0:
+            ranks.append(1)
+        else:
+            prev = candidates[i - 1]
+            ranks.append(ranks[-1] if _composites_tie(
+                c["composite"], c["band"], prev["composite"], prev["band"]) else i + 1)
     rank = None
-    for i, (m, _c, _t) in enumerate(candidates, start=1):
-        if m == this_model:
-            rank = i
+    tied = False
+    for i, c in enumerate(candidates):
+        if c["model"] == this_model:
+            rank = ranks[i]
+            tied = ranks.count(ranks[i]) > 1
             break
-    return rank, total
+    return rank, total, tied
 
 
 # --------------------------------------------------------------------------
@@ -414,16 +510,23 @@ def render(model, tsv_path=TSV):
     print("=" * 78)
     # section | skill | grade | time_s | cost_usd | corrections (all read
     # straight from the model's appended bench rows, never recomputed).
-    hdr = f"{'section':8} {'skill':18} {'grade':6} {'time_s':8} {'cost_usd':9} {'corr':5}"
+    # AGGREGATE-N (#16): `grade` is now the MEAN over N runs; the added `runs`
+    # and `±band` columns publish the smoothing signal per section so a
+    # single-run number is never read as a stable multi-run average.
+    hdr = f"{'section':8} {'skill':18} {'grade':6} {'runs':5} {'±band':7} {'time_s':8} {'cost_usd':9} {'corr':5}"
     print(hdr)
-    print(f"{'-------':8} {'-----':18} {'-----':6} {'------':8} {'--------':9} {'----':5}")
+    print(f"{'-------':8} {'-----':18} {'-----':6} {'----':5} {'-----':7} {'------':8} {'--------':9} {'----':5}")
     for sec in ALL_SECTIONS:
         info = sc.get(sec)
         if info is None:
-            print(f"{sec:8} {'-':18} {'-':6} {'-':8} {'-':9} {'-':5}")
+            print(f"{sec:8} {'-':18} {'-':6} {'-':5} {'-':7} {'-':8} {'-':9} {'-':5}")
         else:
             skill = info["skill"][:18]
-            print(f"{sec:8} {skill:18} {info['score']:<6} {info['time_s']:<8} {info['cost_usd']:<9} {info['corrections']:<5}")
+            grade_str = f"{info['score']:.0f}" if info["score"] is not None else "-"
+            band = info.get("score_band")
+            band_str = f"±{band:.0f}" if band is not None else "n<2"
+            print(f"{sec:8} {skill:18} {grade_str:<6} {info['score_n']:<5} {band_str:<7} "
+                  f"{info['time_s']:<8} {info['cost_usd']:<9} {info['corrections']:<5}")
     print("-" * 78)
 
     # TOTALS across all graded sections (summed from the bench rows above).
@@ -445,10 +548,15 @@ def render(model, tsv_path=TSV):
         label = "INVALID" if tier == "INVALID" else "NO TIER"
         print(f"SMOKE COMPOSITE (synthetic; NOT a capability tier): {label} -- {comp_or_reason}")
     else:
-        rank, total = _rank_in_tier_v1_internal(rows, model, tier)
+        rank, total, tied = _rank_in_tier_v1_internal(rows, model, tier)
         rank_str = f"#{rank} of {total}" if rank else "unranked (composite unavailable)"
+        if tied:
+            # AGGREGATE-N (#16): a sub-band composite gap is a TIE, not a rank.
+            rank_str += " (TIE — composite gap within the noise band; not a rank)"
+        cband = composite_band(sc)
+        band_str = f" ±{cband:.1f}" if cband is not None else ""
         print(f"SMOKE COMPOSITE (synthetic; NOT a capability tier): {tier} "
-              f"(composite {comp_or_reason:.1f}) -- smoke-rank {rank_str} among smoke-charted models")
+              f"(composite {comp_or_reason:.1f}{band_str}) -- smoke-rank {rank_str} among smoke-charted models")
     print("(capability grade/tier: see capability/grades.py — source=live actuals)")
     print("=" * 78)
 

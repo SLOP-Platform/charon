@@ -81,6 +81,55 @@ def _wilson_bound(successes: int, n: int, upper: bool, z: float = _WILSON_Z) -> 
     bound = (center + margin) if upper else (center - margin)
     return 100.0 * max(0.0, min(1.0, bound / denom))
 
+
+# ---------------------------------------------------------------------------
+# AGGREGATE-N (BENCH-AGGREGATE-N, #16 — design of record:
+# fleet/scratch/pivot-implementation-plan.md §5, §8 Q5). The ledger is
+# append-only and multi-row-capable, so a (model, work_class) already has N
+# rows — but the numeric `score` column was only ever surfaced as a bare
+# `mean` with NO noise band (grade() below), so a single-run number was
+# trusted the same as a 3-run average. The validity review (§4/§5) proved
+# that is not test-retest reliable: glm-5.2 scored S3 100->75 and S5 100->60
+# ACROSS repeat runs. `_score_stats` publishes the smoothing signal — mean,
+# sample stddev, and a 95% CI half-width (the "noise band") over the N runs —
+# so a consumer can treat a gap SMALLER than the band as a TIE, not a rank
+# (see `scores_tie`). Reuses `_WILSON_Z` (the same 95% two-sided z the
+# merge/block Wilson bounds use) rather than inventing a second z for this
+# sibling aggregate. A band needs >=2 runs to estimate run-to-run noise at
+# all; with <2 runs stddev/band are None (honestly "unmeasurable from one
+# sample"), never a fabricated 0.
+# ---------------------------------------------------------------------------
+def _score_stats(values: list[int]) -> tuple[float | None, float | None, float | None]:
+    """(mean, sample_stddev, ci_half_width) over the numeric scores of N
+    repeat runs. Returns (None, None, None) for zero runs; for a single run
+    returns (mean, None, None) — one sample carries no run-to-run noise
+    estimate, so the band is left unmeasured rather than faked as 0."""
+    n = len(values)
+    if n == 0:
+        return None, None, None
+    m = sum(values) / n
+    if n < 2:
+        return m, None, None
+    var = sum((v - m) ** 2 for v in values) / (n - 1)   # sample (Bessel) variance
+    sd = math.sqrt(var)
+    band = _WILSON_Z * sd / math.sqrt(n)                 # 95% CI half-width on the mean
+    return m, sd, band
+
+
+def scores_tie(score_a: float, band_a: float | None,
+               score_b: float, band_b: float | None) -> bool:
+    """#16: two aggregate scores are a TIE (not a rank) when the gap between
+    them is within their COMBINED noise band — |a-b| <= band_a + band_b. A
+    None band (fewer than 2 runs, so noise is unmeasurable) contributes 0: we
+    never invent a band we could not measure, so an un-repeated score can only
+    tie another via the OTHER model's measured band. tier_chart.py keeps a
+    lockstep copy of this exact formula for the composite rank (it must not
+    import across the capability<->benchmark package boundary, the same
+    duplication discipline season_for_date() already documents there)."""
+    ba = band_a or 0.0
+    bb = band_b or 0.0
+    return abs(score_a - score_b) <= (ba + bb)
+
 # Single source of truth = model-scorecard.sh's VALID_CLASS (line ~21). Duplicated
 # here (stdlib TSV reader, no shared JSON schema between bash and this module) —
 # MUST be kept in lockstep, same discipline tier_chart.py documents for its own
@@ -169,12 +218,27 @@ class Grade:
     mean_cost_usd: float | None
     mean_time_s: float | None
     corrections_total: int
+    # AGGREGATE-N (#16): the noise band on the numeric bench-score aggregate,
+    # over `bench_score_n` repeat runs. stddev/band are None when <2 runs
+    # carry a numeric score (unmeasurable from one sample — see _score_stats).
+    # For real-outcome `source=live` rows whose `score` column is '-' these
+    # stay None/0, which is correct: the pivot demoted the synthetic bench
+    # score, so the band is only populated when a real-outcome source ever
+    # carries a numeric score. Exposed so a consumer can call scores_tie().
+    bench_score_stddev: float | None = None
+    bench_score_band: float | None = None
+    bench_score_n: int = 0
 
     def summary(self) -> str:
         base = (f"{self.model}: n={self.n} merge={self.merge_pct:.0f}% "
                 f"block={self.block_pct:.0f}% score={self.score:.0f}")
         if self.low_confidence:
             base += f" [LOW-CONFIDENCE: n<{MIN_N}]"
+        if self.mean_bench_score is not None and self.bench_score_band is not None:
+            # AGGREGATE-N (#16): show the mean WITH its noise band so a single
+            # lucky run is never read as if it were a stable multi-run average.
+            base += (f" bench={self.mean_bench_score:.0f}±{self.bench_score_band:.0f}"
+                     f" (N={self.bench_score_n} runs)")
         if self.fallback_used:
             base += f" (no {self.requested_work_class} data — generalist fallback)"
         if self.mean_cost_usd is not None:
@@ -329,15 +393,23 @@ class ScorecardGradesProvider(GradesProvider):
         times = [float(r["time_s"]) for r in rows if _is_float(r["time_s"])]
         corr_total = sum(int(r["corrections"]) for r in rows if r["corrections"].isdigit())
 
+        # AGGREGATE-N (#16): smooth the numeric bench-score aggregate over its N
+        # repeat runs and publish the noise band, instead of a bare mean that
+        # trusted a single run like a multi-run average.
+        mean_bench, bench_sd, bench_band = _score_stats(bench_scores)
+
         return Grade(
             model=model, requested_work_class=requested, used_work_class=used,
             fallback_used=fallback, n=n, merge=merge, block=block, fixes=fixes,
             merge_pct=merge_pct, block_pct=block_pct, score=score,
             low_confidence=low_confidence,
-            mean_bench_score=mean(bench_scores) if bench_scores else None,
+            mean_bench_score=mean_bench,
             mean_cost_usd=mean(costs) if costs else None,
             mean_time_s=mean(times) if times else None,
             corrections_total=corr_total,
+            bench_score_stddev=bench_sd,
+            bench_score_band=bench_band,
+            bench_score_n=len(bench_scores),
         )
 
 

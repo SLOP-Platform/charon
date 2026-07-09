@@ -55,6 +55,18 @@ DEFAULT_SEASONS_DIR = BENCH_DIR / "state" / "seasons"
 # works off `gate`/`note` instead (see docstring on `bench2_rows_from_tsv`).
 
 
+def _stage(cols) -> str:
+    """PROVISIONAL-vs-ACTIVE (#20): a row's stage is its 16th column; any row
+    with < 16 columns (every legacy 13/15-col row) reads `active`, and an empty
+    cell also reads active — only an explicit `provisional` value excludes a
+    row. LOCKSTEP with tier_chart.py::_stage (kept local, same stdlib-only
+    duplication discipline season_id_for_date() documents below) so a future
+    provisional bench2 row can never enter a season composite via this reader."""
+    if len(cols) >= 16 and cols[15].strip():
+        return cols[15].strip()
+    return "active"
+
+
 def season_id_for_date(date_str: str) -> str:
     """ISO calendar week id, e.g. "2026-W28" for 2026-07-06 - the same
     season-key SHAPE §7 already defines for section-set sampling. Reused
@@ -121,6 +133,13 @@ def bench2_rows_from_tsv(tsv_path=DEFAULT_TSV) -> list[dict]:
             continue
         cols = line.split("\t")
         if len(cols) < 13:
+            continue
+        # PROVISIONAL-vs-ACTIVE (#20 review): apply the SAME stage filter
+        # tier_chart.py::bench2_rows_for uses, so a future provisional bench2
+        # row can never enter a season composite through this read boundary
+        # (inert today — no provisional bench2 rows exist yet — closes the
+        # invariant so it can't silently regress).
+        if _stage(cols) != "active":
             continue
         date, source = cols[0], cols[1]
         if source != "bench2":
