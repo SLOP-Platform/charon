@@ -209,6 +209,27 @@ detect_health(){
   fi
 }
 
+# WCI high-contention-file advisory: a file owned by >= N tickets is a DECOMPOSE
+# CANDIDATE (collision metric -> refactor trigger). Informational; never fails preflight.
+# Delegates to wci-contention.sh (fleet/WCI-METHOD.md). Top line surfaced here; run the
+# script directly for the full owner lists.
+detect_wci_contention(){
+  local script="$HERE/wci-contention.sh"
+  [ -x "$script" ] || { echo "wci-contention: detector not found/executable at $script"; return 0; }
+  local out top
+  out="$(bash "$script" 2>/dev/null)"
+  if printf '%s\n' "$out" | grep -q 'DECOMPOSE CANDIDATE'; then
+    local n
+    n="$(printf '%s\n' "$out" | grep -c 'DECOMPOSE CANDIDATE')"
+    echo "DETECTED (unregistered): wci-contention — $n DECOMPOSE CANDIDATE file(s) (owned by >= 4 tickets)"
+    printf '%s\n' "$out" | grep 'DECOMPOSE CANDIDATE:' | head -5 | sed 's/^ */    /'
+    [ "$n" -gt 5 ] && echo "    +$((n-5)) more — run: fleet/wci-contention.sh"
+    echo "    -> run the WCI pass BEFORE opening tabs on a backlog (fleet/WCI-METHOD.md)"
+  else
+    echo "clean: wci-contention (no file owned by >= 4 tickets)"
+  fi
+}
+
 cmd_detect(){
   local full=0
   case "${1:-}" in --full) full=1;; esac
@@ -216,6 +237,7 @@ cmd_detect(){
   detect_untracked_drift
   detect_secret_scan
   detect_repo_drift
+  detect_wci_contention
   if [ $full -eq 1 ]; then
     detect_health
   else
