@@ -4,20 +4,25 @@ route: droid/product
 branch: fix/catalog-reconcile-gpt5
 depends_on:
 owns: src/charon/model_catalog.py
-accept: PYTHONPATH=src python3 -m pytest tests/test_model_catalog.py -v -q  # human sign-off: the catalog high-tier default and the live routing config name the SAME gpt-5.x id, with the chosen source-of-truth documented.
+accept: PYTHONPATH=src python3 -m pytest tests/test_model_catalog.py -v -q  # human sign-off: model_catalog.py's high-tier membership MATCHES live-served reality (no untested aspirational id asserted as default); tier membership-by-quality left to the real-outcomes signal (BENCH-REGROUND-LIVE / #25), not decided here.
 prompt: TBD (author before un-park — must add a '## Dependencies & sequence' section or the validator D&S check will RED on un-park).
-scope: FILE (decision #5, 2026-07-08). Reconcile the catalog/routing mismatch: src/charon/model_catalog.py
-  lists `gpt-5.5` as the high-tier entry (line ~48, tier_hint="high", "OpenAI direct") but the live
-  workhorse is `gpt-5.4`, routed via the nanogpt/openrouter provider config — NOT via the catalog.
-  So the product's declared high-tier default (gpt-5.5) and what actually serves traffic (gpt-5.4)
-  disagree.
-  ** OPEN QUESTION (resolve BEFORE editing): which is the intended default — gpt-5.4 or gpt-5.5?
-  Determine the SOURCE OF TRUTH first. Check git history of model_catalog.py + the live routing/provider
-  config intent (nanogpt/openrouter pools) to establish whether gpt-5.5 was aspirational/premature or
-  gpt-5.4 is a deliberate cost/availability choice. Do NOT blindly rename one to match the other. **
-  Once the intended default is established, make model_catalog.py and the routing config agree, and
-  document the decision. RIG note: the product must stay STANDALONE — reconcile within src/charon,
-  no rig import may leak in.
+scope: FILE (decision #5, 2026-07-08). RE-FRAMED — this is NOT a single-model pick. The operator does
+  NOT want to hand-pick one "best" high-tier model; the high tier should carry MULTIPLE TESTED options
+  (see directive "multiple tested options per tier"). So the work splits:
+  (a) IMMEDIATE reconcile (THIS ticket): make src/charon/model_catalog.py MATCH LIVE reality — the set of
+      models actually served/routable today — rather than assert an UNTESTED `gpt-5.5` high-tier entry
+      (line ~48, tier_hint="high", "OpenAI direct") that nothing actually serves. The live workhorse is
+      `gpt-5.4`, routed via the nanogpt/openrouter provider config — NOT via the catalog. Fix the catalog
+      so its declared high-tier membership reflects what genuinely serves traffic; drop/flag the
+      aspirational untested id. This is a factual-accuracy reconcile, not a quality judgment.
+  (b) DEFERRED (NOT decided here): "which model is best / which belongs in the high tier" is a RANKING
+      decision, deferred to the real-outcomes testing pivot (reds-replay / live actuals), not settled by
+      hand-picking in this ticket. Tier MEMBERSHIP-by-quality is graded downstream by real signal.
+  (c) Cross-reference the directive "multiple tested options per tier" — the high tier is a SET of tested
+      members, not a single default; this ticket only makes the catalog honest, it does not choose winners.
+  RIG note: the product must stay STANDALONE — reconcile within src/charon, no rig import may leak in.
+depends-on-signal: real-outcomes benchmark (BENCH-REGROUND-LIVE / #25) for tier membership — the "which
+  models belong in the high tier" ranking waits on the live-actuals/reds-replay signal, not this reconcile.
 note: PARKED — staged so no droid claims ahead of manager gating. Related to CATALOG-SYNC-DRIFT (#30):
   this is exactly the class of catalog/routing/config mismatch #30's drift detector should surface
   automatically. Coordinate at activation.
