@@ -19,6 +19,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from . import secrets
+from .netutil import BROWSER_UA
 
 
 class SandboxPolicy(enum.StrEnum):
@@ -439,7 +440,9 @@ def remove(kind: str, name: str) -> bool:
 
 
 _VALIDATE_TIMEOUT = 15.0
-_VALIDATE_UA = "charon-proxy/0.1"
+# Browser-like UA (P5): Cloudflare-fronted providers (groq/cerebras/together)
+# 403/"1010" a non-browser UA, wrongly failing key validation. Shared constant.
+_VALIDATE_UA = BROWSER_UA
 
 
 def validate_provider_key(name: str, base_url: str | None, api_key: str) -> dict:

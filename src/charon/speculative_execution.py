@@ -17,6 +17,8 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 
+from .netutil import BROWSER_UA
+
 logger = logging.getLogger(__name__)
 
 
@@ -114,6 +116,7 @@ class SpeculativeExecutor:
             except (json.JSONDecodeError, UnicodeDecodeError):
                 pass
         req = urllib.request.Request(url, data=data, method="POST")
+        req.add_header("User-Agent", BROWSER_UA)  # P5: avoid CF-1010 on provider POST
         req.add_header("Content-Type", content_type)
         if api_key:
             req.add_header("Authorization", f"Bearer {api_key}")

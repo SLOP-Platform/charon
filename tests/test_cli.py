@@ -151,3 +151,71 @@ def test_work_empty_plan_surfaces_review_reasons(tmp_path: Path, capsys) -> None
     assert rc == 2
     assert "no loadable units" not in err  # not the dead-end message
     assert "ticket-9" in err and "accept" in err
+
+
+# ------------------------------------------------- P5: outbound probe browser-UA
+
+
+def test_probe_key_sends_shared_browser_ua() -> None:
+    """P5: `charon` key probe must carry the shared browser-like UA so a Cloudflare-
+    fronted provider (error 1010 → 403) does not wrongly report a valid key INVALID."""
+    from unittest.mock import MagicMock, patch
+
+    from charon.netutil import BROWSER_UA
+
+    seen: list[str] = []
+
+    class _Resp:
+        status = 200
+
+        def read(self, *_a):
+            return b"{}"
+
+    def _fake_open(req, timeout=None):
+        seen.append(req.get_header("User-agent"))
+        return _Resp()
+
+    opener = MagicMock()
+    opener.open.side_effect = _fake_open
+
+    class Preset:
+        base_url = "https://api.groq.com/openai/v1"
+
+    with patch("urllib.request.build_opener", return_value=opener):
+        cli_mod._probe_key(Preset(), "sk-x")
+
+    assert seen
+    assert all(ua == BROWSER_UA for ua in seen)
+    assert all(ua != "charon-proxy/0.1" for ua in seen)
+    assert all(not (ua or "").lower().startswith("python-urllib") for ua in seen)
+
+
+def test_provider_test_sends_shared_browser_ua() -> None:
+    """P5: `charon providers test` base-resolve probe (GET /models, no creds) must
+    carry the shared browser-like UA so a CF-fronted base is not wrongly failed."""
+    from unittest.mock import MagicMock, patch
+
+    from charon.netutil import BROWSER_UA
+
+    seen: list[str] = []
+
+    class _Resp:
+        status = 200
+
+        def read(self, *_a):
+            return b"{}"
+
+    def _fake_open(req, timeout=None):
+        seen.append(req.get_header("User-agent"))
+        return _Resp()
+
+    opener = MagicMock()
+    opener.open.side_effect = _fake_open
+
+    with patch("charon.cli.urllib.request.build_opener", return_value=opener):
+        cli_mod._provider_test("groq", "https://api.groq.com/openai/v1")
+
+    assert seen
+    assert all(ua == BROWSER_UA for ua in seen)
+    assert all(ua != "charon-proxy/0.1" for ua in seen)
+    assert all(not (ua or "").lower().startswith("python-urllib") for ua in seen)

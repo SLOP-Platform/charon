@@ -21,6 +21,8 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from .netutil import BROWSER_UA
+
 # Cap the streamed bytes buffered while looking for the response ``model`` id.
 _STREAM_HEAD_CAP = 65536
 
@@ -96,6 +98,7 @@ class _RoutingHandler(http.server.BaseHTTPRequestHandler):
         req_data = json.dumps(body).encode()
         url = srv.upstream_base + "/chat/completions"
         req = urllib.request.Request(url, data=req_data, method="POST")
+        req.add_header("User-Agent", BROWSER_UA)  # P5: avoid CF-1010 on provider POST
         req.add_header("Content-Type", "application/json")
         if srv.api_key:
             req.add_header("Authorization", "Bearer " + srv.api_key)

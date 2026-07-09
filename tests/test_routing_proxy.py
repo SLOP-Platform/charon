@@ -34,6 +34,11 @@ def test_routing_proxy_forwards_request(mock_upstream, _post):
         assert resp["model"] == "deepseek-v4-pro"
         assert captured["model"] == "deepseek-v4-pro"  # mutated
         assert captured["auth"] == "Bearer sk-test-key"
+        # P5: upstream POST carries the shared browser-like UA (never urllib default).
+        from charon.netutil import BROWSER_UA
+        assert captured["ua"] == BROWSER_UA
+        assert captured["ua"] != "charon-proxy/0.1"
+        assert not (captured["ua"] or "").lower().startswith("python-urllib")
     finally:
         proxy.shutdown()
 
