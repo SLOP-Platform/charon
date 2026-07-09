@@ -12,7 +12,9 @@ integration test (mock upstream) and live via a real OpenCode-Go call.
 """
 from __future__ import annotations
 
+import base64
 import collections
+import hashlib
 import hmac
 import http.cookies
 import http.server
@@ -22,8 +24,9 @@ import socketserver
 import threading
 import time
 from dataclasses import dataclass
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
+from . import console_router, forwarder
 from .cache import SemanticCache
 from .consensus import ConsensusRouter
 from .guardrails import Guardrails
@@ -31,6 +34,16 @@ from .netutil import is_loopback
 from .observability import Observability
 from .policy_router import PolicyRouter
 from .proxy import GatewayProxy
+
+# Facade re-exports (decompose): keep the public import surface resolving
+# unchanged from charon.proxy_server for the test suite and callers.
+from .proxy_console_assets import (  # noqa: F401
+    _CONSOLE_HTML,
+    _LOGIN_HTML,
+    _SETUP_HTML,
+    _WORK_HTML,
+)
+from .proxy_response import _extract, _pre_flight_estimate  # noqa: F401
 from .quality_scorer import QualityScorer
 from .request_inspector import RequestInspector
 from .response_normalizer import ResponseNormalizer
@@ -38,13 +51,92 @@ from .session_affinity import SessionAffinity
 from .speculative_execution import SpeculativeExecutor
 from .spend_limits import SpendLimiter
 from .virtual_keys import VirtualKeyManager
-from . import console_router
-from . import forwarder
 
-# Facade re-exports (decompose): keep the public import surface resolving
-# unchanged from charon.proxy_server for the test suite and callers.
-from .proxy_console_assets import _CONSOLE_HTML, _SETUP_HTML, _WORK_HTML
-from .proxy_response import _extract, _pre_flight_estimate
+# ---- /charon session cookie (SR-13, AUTH-GUI-DESIGN Option C) ---------------
+# Opaque, signed, stdlib-only session that authorizes the /charon/* console ONLY.
+# The gateway token stays the byte-for-byte /v1/* Bearer credential; the session
+# cookie is an ADDITIONAL front door for the browser and is never accepted for
+# /v1/*. Signed with CHARON_SESSION_KEY (separate from the token — rotating the
+# token does NOT log the operator out).
+_SESSION_COOKIE = "charon_sess"
+_SESSION_TTL = 30 * 24 * 3600  # 2_592_000 — 30-day sliding lifetime
+
+
+def _b64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def _b64url_decode(s: str) -> bytes:
+    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
+
+def _sign_session(session_key: str, exp: int) -> str:
+    """``b64url(payload).b64url(HMAC_SHA256(key, b64url(payload)))``; the compact
+    payload is ``{"exp": <unix>, "v": 1}`` — no PII, no username."""
+    payload = _b64url(json.dumps({"exp": int(exp), "v": 1},
+                                 separators=(",", ":")).encode("utf-8"))
+    mac = hmac.new(session_key.encode("utf-8"), payload.encode("ascii"),
+                   hashlib.sha256).digest()
+    return f"{payload}.{_b64url(mac)}"
+
+
+def _verify_session(session_key: str, raw: str, *, now: float | None = None) -> int | None:
+    """Return the payload ``exp`` if ``raw`` is a valid, unexpired session for
+    ``session_key``; else None. Constant-time MAC compare (``hmac.compare_digest``)
+    over the presented signature — a tampered MAC or an expired ``exp`` is rejected."""
+    now = time.time() if now is None else now
+    parts = raw.split(".")
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        return None
+    payload, sig = parts
+    expected = _b64url(hmac.new(session_key.encode("utf-8"),
+                                payload.encode("ascii"), hashlib.sha256).digest())
+    if not hmac.compare_digest(sig, expected):
+        return None
+    try:
+        data = json.loads(_b64url_decode(payload))
+    except (ValueError, json.JSONDecodeError):
+        return None
+    exp = data.get("exp")
+    if not isinstance(exp, int) or exp < now:
+        return None
+    return exp
+
+
+def _resolve_session_key() -> str:
+    """Get-or-create the HMAC session-signing key: ``CHARON_SESSION_KEY`` env
+    override wins, else the value stored in ``secrets.json``, else generate one and
+    persist it 0600 (best effort, atomic — reuses the existing secrets writer).
+
+    NOTE: first-start generation properly belongs in the gateway/secrets bootstrap
+    (a coordinated follow-on per the SR-13 scope note). This lazy resolver keeps the
+    server self-contained and testable until then, and NEVER logs the key."""
+    import secrets as _stdlib_secrets
+
+    env = os.environ.get("CHARON_SESSION_KEY")
+    if env:
+        return env
+    from . import secrets as _store
+    stored = _store.load_secrets().get("CHARON_SESSION_KEY")
+    if stored:
+        return stored
+    key = _stdlib_secrets.token_hex(32)
+    try:
+        _store.set_secret("CHARON_SESSION_KEY", key)
+    except OSError:
+        pass
+    return key
+
+
+def _strip_token_from_path(path: str) -> str:
+    """Drop the ``token`` query param, preserving any others — used to 302 the raw
+    ``?token=`` link off the address bar/history after a TOFU cookie upgrade."""
+    parts = urlsplit(path)
+    kept = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
+            if k != "token"]
+    q = urlencode(kept)
+    base = parts.path or "/charon"
+    return base + ("?" + q if q else "")
 
 
 @dataclass(frozen=True)
@@ -87,18 +179,20 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self._maybe_set_token_cookie()
+        self._maybe_set_session_cookie()
         self.end_headers()
         try:
             self.wfile.write(data)
         except (BrokenPipeError, ConnectionResetError):
             pass
 
-    def _html(self, html: str) -> None:
+    def _html(self, html: str, status: int = 200) -> None:
         data = html.encode()
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         self._maybe_set_token_cookie()
+        self._maybe_set_session_cookie()
         self.end_headers()
         try:
             self.wfile.write(data)
@@ -125,12 +219,63 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
         return bool(presented) and hmac.compare_digest(presented, token)
 
     def _maybe_set_token_cookie(self) -> None:
-        """If this request authenticated via ``?token=``, set a short-lived cookie
-        so subsequent page loads don't need the token in the URL."""
+        """Legacy raw-token cookie hook. Superseded by the signed ``charon_sess``
+        session (SR-13) — nothing assigns ``_set_token_cookie`` anymore, so this is
+        inert; kept so the emit helpers keep a single call site during the one-
+        release window in which ``_authorized`` still accepts an old ``charon_token``."""
         v = getattr(self, '_set_token_cookie', None)
         if v:
             self.send_header("Set-Cookie",
                 f"charon_token={v}; Path=/; HttpOnly; SameSite=Lax; Max-Age=900")
+
+    # ---- /charon session cookie (SR-13) ---------------------------------
+
+    def _maybe_set_session_cookie(self) -> None:
+        """Emit a pending ``charon_sess`` Set-Cookie (issue or clear) queued by the
+        dispatch / login / logout paths."""
+        v = getattr(self, "_session_cookie_header", None)
+        if v:
+            self.send_header("Set-Cookie", v)
+
+    def _issue_session(self, srv: GatewayProxyServer) -> None:
+        """Queue a fresh signed ``charon_sess`` cookie (30-day sliding lifetime).
+        HttpOnly + SameSite=Lax; no ``Secure`` (plain http on the LAN would drop it —
+        documented tradeoff)."""
+        exp = int(time.time()) + _SESSION_TTL
+        val = _sign_session(srv.session_key(), exp)
+        self._session_cookie_header = (
+            f"{_SESSION_COOKIE}={val}; Path=/; HttpOnly; SameSite=Lax; "
+            f"Max-Age={_SESSION_TTL}")
+
+    def _clear_session(self) -> None:
+        """Queue a ``charon_sess`` deletion (logout)."""
+        self._session_cookie_header = (
+            f"{_SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0")
+
+    def _session_exp(self, srv: GatewayProxyServer) -> int | None:
+        """The ``exp`` of a valid ``charon_sess`` cookie on this request, else None.
+        Authorizes ``/charon/*`` ONLY — callers must never accept it for ``/v1/*``."""
+        jar = http.cookies.SimpleCookie()
+        try:
+            jar.load(self.headers.get("Cookie", ""))
+        except http.cookies.CookieError:
+            return None
+        c = jar.get(_SESSION_COOKIE)
+        if not c:
+            return None
+        return _verify_session(srv.session_key(), c.value)
+
+    def _valid_session(self, srv: GatewayProxyServer) -> bool:
+        return self._session_exp(srv) is not None
+
+    def _redirect(self, location: str, status: int = 302) -> None:
+        """A tiny 302 that still emits any pending session cookie (login/logout/TOFU)."""
+        self.send_response(status)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self._maybe_set_token_cookie()
+        self._maybe_set_session_cookie()
+        self.end_headers()
 
     # ---- helpers ---------------------------------------------------------
 
@@ -180,6 +325,7 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
         if retry_after and retry_after > 0:  # P1: bounded gateway-owned retry cadence
             self.send_header("Retry-After", str(int(retry_after)))
         self._maybe_set_token_cookie()
+        self._maybe_set_session_cookie()
         self.end_headers()
 
     def _handle(self) -> None:
@@ -194,19 +340,46 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 self._json(403, {"error": {"message": "host not allowed"}})
                 return
 
-        # Token gate (gateway mode). Default ``token=None`` keeps the bare proxy
-        # open — exactly its prior behavior; a set token requires it on every call.
-        if srv.token is not None and not self._authorized(srv.token):
-            self._json(401, {"error": {"message": "missing or invalid bearer token"}})
+        # Surface-aware auth (SR-13). ``/charon/*`` is the browser console; ``/v1/*``
+        # is the machine API. The gateway token authorizes BOTH exactly as before; a
+        # signed ``charon_sess`` cookie authorizes ``/charon/*`` ONLY — ``/v1/*`` stays
+        # byte-for-byte token-only, so opencode / ACP / LAN clients never see a change.
+        path_only = urlsplit(self.path).path.rstrip("/")
+        is_gui = path_only in ("", "/charon") or path_only.startswith("/charon/")
+
+        # Public /charon routes (login page + login POST + logout) must be reachable
+        # WITHOUT credentials — they run before the gate and self-serve.
+        if console_router.try_handle_public_gui(self, srv):
             return
 
-        # If auth was via ?token= query param, set a short-lived cookie so
-        # subsequent page loads don't need the token in the URL.
-        if srv.token is not None:
+        authed_by_token = srv.token is None or self._authorized(srv.token)
+        authed_by_session = (
+            not authed_by_token and is_gui and self._valid_session(srv))
+        if not (authed_by_token or authed_by_session):
+            if is_gui and self.command == "GET":
+                # A browser hitting the console gets a login page, not raw 401 JSON.
+                self._redirect("/charon/login")
+            else:
+                self._json(401,
+                           {"error": {"message": "missing or invalid bearer token"}})
+            return
+
+        # TOFU upgrade: a browser that arrived on a /charon page via ?token= is handed
+        # a durable session cookie and 302'd to the same page WITHOUT the token — one
+        # hop strips the secret from the address bar/history (replaces the old raw-
+        # token cookie). Machine ``/v1/*`` clients (Bearer header, no ?token=) are
+        # untouched.
+        if is_gui and self.command == "GET" and srv.token is not None:
             qs = parse_qs(urlsplit(self.path).query)
-            qt = qs.get("token")
-            if qt and qt[0]:
-                self._set_token_cookie = srv.token
+            if qs.get("token", [""])[0]:
+                self._issue_session(srv)
+                self._redirect(_strip_token_from_path(self.path))
+                return
+
+        # Sliding refresh: re-issue the session on each authorized console request so
+        # an active operator's cookie keeps extending toward a fresh 30-day horizon.
+        if authed_by_session:
+            self._issue_session(srv)
 
         # Control-plane dispatch (console/setup/discovery); True = fully served.
         if console_router.try_handle_control_plane(self, srv):
@@ -237,6 +410,7 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         fwd_timeout: float = 180.0,
         strip_v1: bool = True,
         token: str | None = None,
+        session_key: str | None = None,
         model_ids: list[str] | None = None,
         pools: dict[str, list[UpstreamRoute]] | None = None,
         model_meta: dict[str, dict] | None = None,
@@ -274,6 +448,11 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         # Gateway mode (ADR-0005 P1): a bearer token (None = open) and the
         # agent-facing model ids to serve at /v1/models (None = don't intercept).
         self.token = token
+        # HMAC key that signs /charon session cookies (SR-13). Separate from the
+        # gateway token — rotating the token does NOT invalidate console sessions.
+        # None → resolved lazily on first use (env → secrets.json → generate+persist),
+        # so construction never touches the filesystem (tests pass an explicit key).
+        self._session_key = session_key
         self.model_ids = model_ids
         # Per-model metadata surfaced in /v1/models (context_window, max_tokens,
         # reasoning, vision, audio) — optional, never carries secrets.
@@ -320,6 +499,15 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         # (status, dict). None (default) keeps the console READ-ONLY. The gateway wires
         # this only for the user-config-dir flow; it writes config + reloads routes.
         self.setup_handler = None
+
+    def session_key(self) -> str:
+        """The HMAC key that signs ``/charon`` session cookies (SR-13). Resolved
+        lazily and cached: an explicit key (tests) wins, else
+        ``CHARON_SESSION_KEY`` env, else the stored value, else a generated key
+        persisted 0600. Never logged; never forwarded upstream."""
+        if self._session_key is None:
+            self._session_key = _resolve_session_key()
+        return self._session_key
 
     def route_for(self, model: str) -> UpstreamRoute | None:
         """Which upstream serves ``model``: an explicit route, else the single
