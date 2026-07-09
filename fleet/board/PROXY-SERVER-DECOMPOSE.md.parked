@@ -1,0 +1,44 @@
+tier: frontier
+work_class: refactor
+branch: refactor/proxy-server-decompose
+depends_on: PROXY-FAILOVER-FIX
+real-dep: PROXY-FAILOVER-FIX (PFF Phase-1 holds src/charon/proxy_server.py — a header/outbound-only
+  bleed-stopper diff that must land FIRST on the current file; the decompose then rebases PFF's small
+  diff after PFF merges. Both own proxy_server.py => a real single-owner-file build/sequencing prereq,
+  a hard sequence, not merge-order-only.)
+owns: src/charon/proxy_server.py, src/charon/proxy_console_assets.py, src/charon/proxy_response.py, src/charon/console_router.py, src/charon/forwarder.py, tests/test_check_arch.py
+accept: PYTHONPATH=src python3 -m pytest -q  # full suite green after EACH staged move commit
+prompt: /home/stack/charon-private/prompts/proxy-server-decompose.md
+scope: Decompose the 1229-line money-path god-file src/charon/proxy_server.py into 4 new modules
+  behind a slim facade, so the 9 post-dedup proxy_server.py tickets stop serializing on one file and
+  split into 2 parallel module-lanes (routing ‖ console). See fleet/scratch/proxy-decomposition-analysis.md
+  (§2 seams, §3 owns-map, §4 blast-radius). Behavior-preserving verbatim moves ONLY — NO logic change
+  in any move commit. The 4-module split (per §2/§3):
+    1. proxy_console_assets.py  <- seam A (HTML string constants _CONSOLE_HTML/_WORK_HTML/_SETUP_HTML,
+       ~lines 83-332, ~250 lines pure static data).
+    2. proxy_response.py        <- seam B (_extract, _pre_flight_estimate, _pre_flight_pricing,
+       ~lines 335-394, module-level pure functions).
+    3. console_router.py        <- seam E control-plane (first half of _handle: loopback guard, token
+       gate, /v1/models, /charon/status|cost, console HTML, /charon/setup + config POST-writes/CSRF,
+       /charon/work; ~lines 551-686). Exposes try_handle_control_plane(handler, srv) -> bool.
+    4. forwarder.py             <- seam F data-plane failover loop (second half of _handle, ~688-982)
+       + seam D request build (_build_upstream_req, ~502-549). Exposes forward_with_failover(handler,
+       srv, ...). HIGH-RISK step (SR-1/SR-2/DTC scar tissue) — adversarial review HERE.
+  KEEP on proxy_server.py: GatewayProxyServer (seam G, routing state + _cooldown + _cooldown_lock —
+  unsplit; forwarder calls through srv, never re-implements locking) + the _ProxyHandler shell and
+  shared emit/auth helpers (seam C: _json/_html/_authorized/_maybe_set_token_cookie/_write/_drain/
+  _send_resp_headers). _handle collapses to: loopback/token gate -> if console_router.try_handle_
+  control_plane(): return -> forwarder.forward_with_failover().
+  FACADE (mandatory): proxy_server.py re-exports the public surface so all 13 importing test files stay
+  green with zero import edits: GatewayProxyServer, UpstreamRoute, _CONSOLE_HTML, _SETUP_HTML, _extract,
+  _pre_flight_estimate (also _WORK_HTML). ARCH: add ALL 4 new modules to _ENGINE_FORBIDDEN in
+  tests/test_check_arch.py (or the engine-import guard weakens — required, not optional).
+  STAGING: 4 behavior-preserving verbatim-move commits, hardest last — assets -> response ->
+  console_router -> forwarder; the FULL suite (PYTHONPATH=src python3 -m pytest -q) green after EACH
+  commit; no logic change may ride along in a move commit. After the move, rebase PFF Phase-1's small
+  diff (trivial). Product must ship STANDALONE — no fleet/SLOP/rig dependency may leak in.
+note: PARKED. Land PFF Phase-1 first (bleed-stopper on the current file), THEN this decompose, THEN
+  the 2 parallel lanes (Wave C). PFF Phase-2 (money-path cross-tier substitution) lands AFTER decompose,
+  into forwarder.py. D&S: single-owner-file hard sequence vs PROXY-FAILOVER-FIX (both own proxy_server.py);
+  confirm no other proxy_server.py ticket is in-flight at activation. Un-park checklist: (1) prompt exists
+  at prompts/proxy-server-decompose.md (authored 2026-07-08); (2) validate_board.sh GREEN; (3) PFF merged.

@@ -1,3 +1,11 @@
+> VERIFIED + TRIMMED 2026-07-08. Primary deliverable (Retry-After ≤120s clamp + cooled-bucket
+>   ordering) CONFIRMED LANDED via f3a73f2 (v0.3.6): max_cooldown_s=120.0 (proxy_server.py:1013/1062),
+>   clamp `min(secs, self.max_cooldown_s)` (proxy_server.py:1153), cooled bucket sorted by soonest-
+>   to-recover (order_by_cooldown, proxy_server.py:1130-1142). NOTE: the clamp/ordering landed in
+>   proxy_server.py (routing state on GatewayProxyServer), NOT proxy.py. RESIDUAL kept: a proxy.py
+>   edge-case audit only (Retry-After parsing lives in proxy.py). Scope TRIMMED to that residual
+>   below. Stays PARKED. owns kept = proxy.py (per D&S flag: disjoint-check vs any in-flight
+>   proxy.py wave before un-parking).
 tier: sonnet
 work_class: bugfix
 branch: fix/cooldown-fix3
@@ -5,10 +13,11 @@ depends_on:
 owns: src/charon/proxy.py, tests/test_proxy_downgrade.py
 accept: PYTHONPATH=src python3 -m pytest tests/test_proxy_downgrade.py -v -q  # + human sign-off on any newly-found cooldown edge case
 prompt: /home/stack/charon-private/prompts/cooldown-fix3.md
-scope: #12 (P2). Cooldown fix-3 — follow-on to the deployed clamp (f3a73f2 / v0.3.6: clamp Retry-After
-  <=120s + order cooled bucket by remaining time). Audit for remaining edge cases (e.g. missing/garbage
-  Retry-After, negative/overflow values, all-cooled pools, interaction with DRAIN pre-flight skip) and
-  fix any found; ticket-or-fix, do not dismiss as pre-existing.
+scope: #12 (P2). Cooldown fix-3 — RESIDUAL-ONLY (primary clamp+ordering already landed via
+  f3a73f2 / v0.3.6, verified 2026-07-08). Remaining work = a proxy.py edge-case audit of the
+  Retry-After parse path: missing/garbage Retry-After, negative/overflow values, all-cooled pools,
+  and interaction with DRAIN pre-flight skip. Fix any found; ticket-or-fix, do not dismiss as
+  pre-existing. If the audit surfaces nothing actionable, CLOSE this ticket.
   ** PRODUCT-BOUNDARY FLAG: BUILD touches the Charon PRODUCT (src/charon/proxy.py). Keep the product
   STANDALONE — no rig dependency may leak in. **
   D&S: depends_on EMPTY. Confirm owns disjoint vs any in-flight proxy.py wave (DRAIN-ROUTING, RFL-*,

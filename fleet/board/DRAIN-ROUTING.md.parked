@@ -2,7 +2,10 @@ tier: frontier
 rebase-after: PROXY-FAILOVER-FIX (parked 2026-07-08 to let the Phase-1 failover fix land solo on proxy_server.py; un-park + rebase on top after it merges)
 work_class: money-path
 branch: feat/drain-routing
-depends_on: SR-5b, INC-401-FAILOVER
+depends_on: SR-5b
+# dep-pruned 2026-07-08: removed INC-401-FAILOVER — CLOSED/superseded by 307652d (verified);
+#   the 401-misclassification fix + all_providers_exhausted synth already landed on master,
+#   so this prereq is satisfied. real-dep note below retained as historical rationale (moot).
 real-dep: SR-5b build (cost_usd is real and merged to master — DRAIN's auto-decrement
   mechanism depends on cost_usd being computed and recorded).
 real-dep: INC-401-FAILOVER (the 401 misclassification must be fixed first, or DRAIN's

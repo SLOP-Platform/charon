@@ -1,3 +1,8 @@
+> DEFERRED 2026-07-08 (operator): inline console ships now via SR-13/RFL-2/RFL-4; Svelte SPA
+>   revisited later. Contradicts those inline tickets (WCI rule #1 — the Svelte rewrite deletes/
+>   rebuilds any inline-HTML console feature they add) — do NOT build until re-prioritized.
+>   Stays PARKED. If later prioritized, GUI-SVELTE Phase-0/1 lands FIRST and RFL-2/RFL-4 are
+>   rebuilt as Svelte panels rather than inline HTML.
 tier: opus
 rebase-after: PROXY-FAILOVER-FIX (parked 2026-07-08 to let the Phase-1 failover fix land solo on proxy_server.py; un-park + rebase on top after it merges)
 work_class: frontend

@@ -1,3 +1,7 @@
+> FOLD into SR-6 (Phase 2); revisit-trigger unmet, stays parked. 2026-07-08: not an
+>   independent active unit — it is SR-6's Phase 2 (grows SR-6's translate.py + edits the
+>   money-path dispatch), coupled by construction. REVISIT-TRIGGER below (OpenAI-format
+>   client needs an Anthropic-only provider) is UNMET. Remains PARKED; do NOT launch.
 tier: frontier
 branch: feat/sr-6-phase2-openai-anthropic-translation
 depends_on: SR-6

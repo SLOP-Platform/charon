@@ -1,3 +1,12 @@
+> CLOSED 2026-07-08 — superseded by 307652d (verified). BOTH parts landed:
+>   (1) 401 classification patterns in src/charon/proxy.py:74-75 (_UNSUPPORTED_BODY_PATTERNS:
+>       "not supported" / "no such model" / "model not found" / "unknown model" + more;
+>       driven by _is_unsupported_model over _UNSUPPORTED_STATUSES {400,401,422} → fails over).
+>   (2) all_providers_exhausted synth in src/charon/proxy_server.py:830 (terminal 502-style
+>       synthesized response instead of relaying the last raw upstream error).
+>   Stale line refs (:751-756) confirmed obsolete. Dep now SATISFIED — removed from the
+>   depends_on of DRAIN-ROUTING and SR-6 (2026-07-08). Closed via done-marker
+>   state/done/INC-401-FAILOVER (board done convention: live .md + marker).
 tier: strong
 rebase-after: PROXY-FAILOVER-FIX (parked 2026-07-08 to let the Phase-1 failover fix land solo on proxy_server.py; un-park + rebase on top after it merges)
 work_class: bugfix

@@ -1,7 +1,12 @@
 tier: strong
 branch: feat/first-run-ux-polish
 depends_on:
-owns: src/charon/cli.py, src/charon/proxy_server.py, src/charon/gateway.py, src/charon/connect.py
+owns: src/charon/cli.py, src/charon/gateway.py, src/charon/connect.py
+# owns-edited 2026-07-08: DROPPED src/charon/proxy_server.py — its only two proxy_server.py
+#   items already shipped (item 9 Setup link: setupLink ~:95-107; item 10 token cookie:
+#   _maybe_set_token_cookie ~:452-458 / cookie set ~:569-575). UX-POLISH therefore leaves
+#   the proxy_server.py contention set entirely. Remaining items live in cli.py/gateway.py/
+#   connect.py + docs. Stays PARKED (collector). Provisional owns per activation checklist.
 prompt: /home/stack/charon-private/fleet/prompts/ux-polish.md
 scope: PRODUCTION-READINESS. COLLECTOR ticket — a batch of small first-run / `charon setup`
   UX-polish nits surfaced during dogfooding, batched here so we DON'T spawn one ticket per nit.

@@ -2,7 +2,10 @@ tier: frontier
 rebase-after: PROXY-FAILOVER-FIX (parked 2026-07-08 to let the Phase-1 failover fix land solo on proxy_server.py; un-park + rebase on top after it merges)
 work_class: greenfield-feature
 branch: feat/sr-6-anthropic-prompt-cache
-depends_on: SR-2, INC-401-FAILOVER
+depends_on: SR-2
+# dep-pruned 2026-07-08: removed INC-401-FAILOVER — CLOSED/superseded by 307652d (verified);
+#   the P1 failover fix already landed on master, so SR-6 no longer sequences behind it.
+#   real-dep note below retained as historical rationale (moot).
 real-dep: SR-2 build (single-owner file proxy_server.py) — SR-6 edits proxy_server.py which SR-2 also
   owns; it must land AFTER SR-2 so the two never write the shared file concurrently. Overlapping
   owns => this is a real build/sequencing prereq.

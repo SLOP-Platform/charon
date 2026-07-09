@@ -1,3 +1,8 @@
+> RECONCILE before build: likely overlaps the RFL-* RelayFreeLLM port; trim to non-RFL
+>   transformative gaps OR confirm it subsumes RFL-* (don't build both). 2026-07-08: the
+>   RFL-1..RFL-5 tickets ARE the RelayFreeLLM feature port, and this ticket's header claims
+>   "Incorporates RelayFreeLLM's superior features" — scope must be reconciled at un-park so
+>   the same features are not built twice. Stays PARKED (also gated on BRIDGE-HARDEN).
 tier: frontier
 branch: feat/bridge-relay-features
 depends_on: BRIDGE-HARDEN
