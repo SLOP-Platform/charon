@@ -26,6 +26,7 @@ from typing import Any
 from . import __version__, api
 from .api import _invocation_name
 from .doctor import probe
+from .netutil import BROWSER_UA
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
@@ -392,7 +393,7 @@ def _probe_key(preset: object, api_key: str) -> str | None:
     }).encode()
     try:
         req = urllib.request.Request(raw_base + "/chat/completions", data=body, method="POST")
-        req.add_header("User-Agent", "charon-proxy/0.1")
+        req.add_header("User-Agent", BROWSER_UA)
         req.add_header("Content-Type", "application/json")
         req.add_header("Authorization", "Bearer " + api_key)
         resp = opener.open(req, timeout=15.0)
@@ -588,7 +589,7 @@ def _provider_test(name: str, base_url: str | None) -> int:
     url = preset.base_url.rstrip("/") + "/models"
     opener = urllib.request.build_opener(_NoRedirect())
     req = urllib.request.Request(url, method="GET")
-    req.add_header("User-Agent", "charon-proxy/0.1")  # NO Authorization header
+    req.add_header("User-Agent", BROWSER_UA)  # NO Authorization header
     try:
         resp = opener.open(req, timeout=20)
         print(f"{name}: base OK — HTTP {resp.status} from {url}")

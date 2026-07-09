@@ -307,6 +307,35 @@ def test_validate_provider_key_unreachable():
     assert result["valid"] is False
 
 
+def test_validate_provider_key_sends_shared_browser_ua():
+    """P5: onboarding probe must carry the shared browser-like UA so a Cloudflare-
+    fronted provider (groq/cerebras/together, error 1010 → 403) is not wrongly
+    reported INVALID. Never the old 'charon-proxy/0.1' / urllib default."""
+    from unittest.mock import MagicMock, patch
+
+    from charon.netutil import BROWSER_UA
+
+    seen: list[str] = []
+
+    class _Resp:
+        def read(self, *_a):
+            return b'{"data": []}'
+
+    def _fake_open(req, timeout=None):
+        seen.append(req.get_header("User-agent"))
+        return _Resp()
+
+    opener = MagicMock()
+    opener.open.side_effect = _fake_open
+    with patch("urllib.request.build_opener", return_value=opener):
+        config.validate_provider_key("groq", "https://api.groq.com/openai/v1", "sk-x")
+
+    assert seen  # both /models and /chat/completions probes ran
+    assert all(ua == BROWSER_UA for ua in seen)
+    assert all(ua != "charon-proxy/0.1" for ua in seen)
+    assert all(not (ua or "").lower().startswith("python-urllib") for ua in seen)
+
+
 # ---------------------------------------------------------- config.set_model_enabled
 
 

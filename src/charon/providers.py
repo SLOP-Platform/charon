@@ -20,6 +20,8 @@ import urllib.request
 from dataclasses import dataclass, replace
 from urllib.parse import urlsplit
 
+from .netutil import BROWSER_UA  # shared browser-like UA (P5 — Cloudflare 1010)
+
 
 @dataclass(frozen=True)
 class ProviderPreset:
@@ -222,7 +224,7 @@ def list_models(name: str, overrides: dict | None = None, *,
         raise ValueError(f"refusing link-local / metadata host {host!r}")
     url = base.rstrip("/") + "/models"
     req = urllib.request.Request(url, method="GET")
-    req.add_header("User-Agent", "charon-proxy/0.1")
+    req.add_header("User-Agent", BROWSER_UA)
     if api_key:
         req.add_header("Authorization", "Bearer " + api_key)
     opener = urllib.request.build_opener(_NoRedirect())

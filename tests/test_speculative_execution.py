@@ -32,6 +32,26 @@ def test_build_request_adds_auth_header() -> None:
     assert req.get_header("Authorization") == "Bearer sk-test"
 
 
+def test_build_request_sends_shared_browser_ua() -> None:
+    """P5: upstream POST must carry the shared browser-like UA so a Cloudflare-fronted
+    provider (error 1010 → 403) is not wrongly failed. Never urllib-default / charon-proxy."""
+    from charon.netutil import BROWSER_UA
+
+    se = SpeculativeExecutor(enabled=True)
+
+    class FakeRoute:
+        upstream_base = "https://api.example.com"
+        api_key = "sk-test"
+        strip_v1 = True
+        upstream_model = None
+
+    req = se._build_request(FakeRoute(), b'{"model":"gpt-4"}', "application/json")
+    ua = req.get_header("User-agent")
+    assert ua == BROWSER_UA
+    assert ua != "charon-proxy/0.1"
+    assert not (ua or "").lower().startswith("python-urllib")
+
+
 def test_build_request_rewrites_model() -> None:
     se = SpeculativeExecutor(enabled=True)
 

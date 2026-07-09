@@ -49,6 +49,7 @@ def mock_upstream():
             captured["model"] = body.get("model")
             captured["messages"] = body.get("messages")
             captured["auth"] = self.headers.get("Authorization")
+            captured["ua"] = self.headers.get("User-Agent")
 
             resp = json.dumps({
                 "id": "chatcmpl-1",
