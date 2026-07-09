@@ -549,6 +549,39 @@ def aggregate_n_checks() -> None:
             f"rank={rank_tm} total={total} tied={tied_tm}",
         )
 
+    # #16 review finding 1: NON-TRANSITIVE tie CHAINING must not collapse
+    # distinguishable models into one rank. Three same-tier ("Strong") models:
+    #   A composite 89, B 82, C 76 — each with a ±4.53 band (three S1 runs
+    #   symmetric ±4 => sd=4, band = z*4/sqrt(3) ≈ 4.526; only S1 graded so the
+    #   composite band equals it). Combined band ≈ 9.05, so:
+    #     A-B gap 7  <= 9.05  -> tie ;  B-C gap 6  <= 9.05 -> tie ;
+    #     A-C gap 13 >  9.05  -> NOT a tie.
+    # Ranking must anchor ties to the GROUP LEADER (A), not the neighbour, so C
+    # ranks BELOW the A/B group (ranks 1,1,3). The old neighbour-compare logic
+    # chained A~B~C into rank 1 for all three (C spuriously tied-#1 with A) — so
+    # this assertion FAILS on the pre-fix code and passes only with the fix.
+    with tempfile.TemporaryDirectory() as td:
+        tsv = Path(td) / "chain.tsv"
+        rows_txt = []
+        for model, s1runs in (("XA", (85, 89, 93)),   # mean 89, band ≈4.53
+                              ("XB", (78, 82, 86)),    # mean 82, band ≈4.53
+                              ("XC", (72, 76, 80))):    # mean 76, band ≈4.53
+            rows_txt.append(f"2026-04-01\tbench\tS0\ttests\t0\t{model}\tMERGE\tpass\t100\t5\t-\t0\ts0")
+            for i, sv in enumerate(s1runs):
+                rows_txt.append(f"2026-04-0{i + 2}\tbench\tS1\ttests\t1\t{model}\tFIXES\tfail\t{sv}\t5\t-\t0\ts1 run{i + 1}")
+        tsv.write_text("\n".join(rows_txt) + "\n")
+        rows = _tier_chart.load_rows(tsv)
+        rank_a, tot_a, tied_a = _tier_chart._rank_in_tier_v1_internal(rows, "XA", "Strong")
+        rank_b, _, _ = _tier_chart._rank_in_tier_v1_internal(rows, "XB", "Strong")
+        rank_c, tot_c, tied_c = _tier_chart._rank_in_tier_v1_internal(rows, "XC", "Strong")
+        check(
+            "non-transitive ties do NOT chain: with A~B and B~C but A NOT~C, the "
+            "weaker model C ranks BELOW the A/B group (rank 3, untied) rather than "
+            "collapsing to a spurious tied-#1 with A (fails on neighbour-compare)",
+            tot_c == 3 and rank_a == 1 and rank_b == 1 and rank_c == 3 and tied_c is False,
+            f"A(rank={rank_a},tied={tied_a}) B(rank={rank_b}) C(rank={rank_c},tied={tied_c}) total={tot_c}",
+        )
+
 
 def smoke_check_live_scorecard() -> None:
     """Non-asserting, tolerant smoke check against the LIVE, append-only

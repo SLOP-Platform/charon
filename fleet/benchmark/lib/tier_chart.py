@@ -322,15 +322,22 @@ def _rank_in_tier_v1_internal(rows, this_model, tier_name):
     candidates.sort(key=lambda c: (-c["composite"], c["tie_break"]))
     total = len(candidates)
     # competition ranking ("1,2,2,4") with a #16 tie = within the combined band
-    # of the immediately-higher candidate.
+    # of the current tie-GROUP LEADER (not the immediate neighbour). Statistical
+    # ties are non-transitive, so anchoring to the neighbour would CHAIN A~B~C
+    # into one rank even when A-C exceeds the combined band; anchoring to the
+    # group leader keeps a tie group from drifting past its own noise band.
     ranks = []
+    leader = None
     for i, c in enumerate(candidates):
         if i == 0:
             ranks.append(1)
+            leader = c
+        elif _composites_tie(c["composite"], c["band"],
+                             leader["composite"], leader["band"]):
+            ranks.append(ranks[-1])   # tie stays anchored to the group leader
         else:
-            prev = candidates[i - 1]
-            ranks.append(ranks[-1] if _composites_tie(
-                c["composite"], c["band"], prev["composite"], prev["band"]) else i + 1)
+            ranks.append(i + 1)       # new group starts
+            leader = c
     rank = None
     tied = False
     for i, c in enumerate(candidates):
