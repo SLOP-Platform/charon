@@ -1,0 +1,17 @@
+tier: sonnet
+work_class: docs
+branch: docs/board-reds-triage
+depends_on:
+owns:
+accept: human sign-off — each of the 5 pre-existing board reds is dispositioned (fix / ticket / accept-with-reason); none left silently red
+prompt: /home/stack/charon-private/prompts/board-reds-triage.md
+scope: #19 (P2). Triage the 5 pre-existing board reds flagged but not yet dispositioned. Per
+  never-ignore-preexisting-issues: fix, ticket, or explicitly accept-with-reason each — no silent red.
+  NOTE FOR MANAGER: `bash fleet/validate_board.sh` currently exits RED with exactly 5
+  owns-collision-LIVE issues (GUI-SVELTE-BUILD vs COST-RANK-AUTO/DRAIN-ROUTING/POOLS-SIMPLIFICATION/
+  INC-401-FAILOVER/RFL-2/RFL-3/RFL-4/SR-13/SR-6 on Dockerfile + config.py + gateway.py +
+  proxy_server.py). These are PRE-EXISTING (not introduced by this filing session) and may be exactly
+  the "5 board reds" #19 refers to — confirm and sequence GUI-SVELTE-BUILD against the colliding
+  waves (or split its owns) to clear them.
+  D&S: depends_on EMPTY. owns EMPTY.
+note: PARKED — staged so no droid claims ahead of manager gating. Triage/audit. See the validate_board.sh RED note above.

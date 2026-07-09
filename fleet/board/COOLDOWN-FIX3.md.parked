@@ -1,0 +1,17 @@
+tier: sonnet
+work_class: bugfix
+branch: fix/cooldown-fix3
+depends_on:
+owns: src/charon/proxy.py, tests/test_proxy_downgrade.py
+accept: PYTHONPATH=src python3 -m pytest tests/test_proxy_downgrade.py -v -q  # + human sign-off on any newly-found cooldown edge case
+prompt: /home/stack/charon-private/prompts/cooldown-fix3.md
+scope: #12 (P2). Cooldown fix-3 — follow-on to the deployed clamp (f3a73f2 / v0.3.6: clamp Retry-After
+  <=120s + order cooled bucket by remaining time). Audit for remaining edge cases (e.g. missing/garbage
+  Retry-After, negative/overflow values, all-cooled pools, interaction with DRAIN pre-flight skip) and
+  fix any found; ticket-or-fix, do not dismiss as pre-existing.
+  ** PRODUCT-BOUNDARY FLAG: BUILD touches the Charon PRODUCT (src/charon/proxy.py). Keep the product
+  STANDALONE — no rig dependency may leak in. **
+  D&S: depends_on EMPTY. Confirm owns disjoint vs any in-flight proxy.py wave (DRAIN-ROUTING, RFL-*,
+  SR-13 all own proxy.py/proxy_server.py) BEFORE un-parking — single-owner-file sequencing may be
+  required at activation.
+note: PARKED — staged so no droid claims ahead of manager gating. Build touches product code (see flag).

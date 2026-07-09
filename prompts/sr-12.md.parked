@@ -1,0 +1,54 @@
+# SR-12 — re-add `opencode-zen` as a built-in provider preset
+
+## Dependencies & sequence
+**depends_on: SR-5 — lands AFTER SR-5.** SR-5 (pricing / cost visibility) is the single owner of
+`src/charon/providers.py` and is currently LIVE on a DeepSeek session. SR-12 also edits
+`providers.py`, so the two owns OVERLAP on that file — SR-12 must land strictly after SR-5 to avoid
+a concurrent write to the same single-owner file. This is a real build/ordering prereq (shared-file
+sequencing), not merge-order: see the `real-dep: SR-5` marker on the board. Concurrency-safe once
+SR-5 is done — SR-12 then owns `providers.py` + `tests/test_providers.py` alone. Tier: economy
+(mechanical preset add, config-path only, no hot-path / engine change).
+
+## Shared context (grounding for a fresh session)
+The v0.2.0 IMAGE shipped `opencode-zen` as a built-in `ProviderPreset`
+(`https://opencode.ai/zen/v1`, `key_env=OPENCODE_ZEN_KEY`), but the v0.2.0-tag / v0.2.1 SOURCE
+dropped it — the preset table now only carries `opencode-go` (`https://opencode.ai/zen/go/v1`,
+the same `OPENCODE_ZEN_KEY`). A user `providers.json` referencing `opencode-zen` therefore
+crash-loops with `unknown provider 'opencode-zen'` UNLESS it carries a manual `base_url` override
+(the band-aid currently deployed on 4-LOM). Operator confirmed BOTH endpoints should be first-class
+built-ins: `opencode-zen` = the full OpenCode Zen catalog; `opencode-go` = the `/go` coding subset;
+they share the one `OPENCODE_ZEN_KEY`.
+
+## What to build
+1. Add an `opencode-zen` entry back to the provider presets in `src/charon/providers.py`:
+   - base_url: `https://opencode.ai/zen/v1`
+   - key_env: `OPENCODE_ZEN_KEY`
+   - note (roughly): "OpenCode Zen — full catalog; shares OPENCODE_ZEN_KEY with opencode-go
+     (the /go coding subset)."
+   So a config referencing `opencode-zen` no longer needs a `base_url` override — resolve works off
+   the built-in preset alone.
+2. **OPTIONAL (operator-decides — flag, do NOT assume):** also add a `neuralwatt` preset
+   (`https://api.neuralwatt.com/v1`, `key_env=NEURALWATT_API_KEY`), since the operator uses it.
+   Mark it OPTIONAL — it's a less-common custom provider; surface the choice for operator sign-off
+   rather than adding it silently.
+
+## Acceptance / tests
+- `charon providers list` shows `opencode-zen` as a built-in with `[key SET]` when
+  `OPENCODE_ZEN_KEY` is present in the environment.
+- `providers.resolve("opencode-zen", None)` (no override) succeeds and returns base_url
+  `https://opencode.ai/zen/v1` + key_env `OPENCODE_ZEN_KEY`.
+- A test in `tests/test_providers.py` asserts the `opencode-zen` preset exists with the right
+  base_url and key_env (and that `opencode-go` is still present alongside it).
+- No config `base_url` override is needed anymore for `opencode-zen`.
+- Full suite green: `PYTHONPATH=src python3 -m pytest -q`.
+
+## CONSTRAINTS
+- **Owns:** `src/charon/providers.py`, `tests/test_providers.py`. Touch nothing else.
+- Config-path only (preset table), never the hot request path. Provider/agent-agnostic;
+  product-clean. NEVER commit any secret key VALUE — only the base_url and the `key_env` NAME
+  (`OPENCODE_ZEN_KEY`), which are not secret.
+
+## accept
+```
+PYTHONPATH=src python3 -m pytest -q tests/test_providers.py && PYTHONPATH=src python3 -m pytest -q && ruff check src/charon/providers.py && mypy src/charon/providers.py
+```

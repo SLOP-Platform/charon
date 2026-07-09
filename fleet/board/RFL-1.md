@@ -1,7 +1,8 @@
 tier: strong
 work_class: greenfield-feature
 branch: feat/rfl-1-quota-tracking
-depends_on: SR-13
+depends_on:
+dep-pruned: SR-13 (removed 2026-07-08 — SR-13 parked for PROXY-FAILOVER-FIX; this ticket is DONE, so the proxy_server.py single-writer merge-order dep is already satisfied/historical. No restore needed on un-park.)
 real-dep: SR-13 build (single-owner file src/charon/proxy_server.py) — proxy_server.py has a strict
   single-writer chain (SR-2 -> SR-6 -> SR-7 -> SR-8 -> TIER-SELECT -> SR-5b -> SR-13). SR-13 is the
   current TAIL. RFL-1 adds a pre-flight quota check at the failover/selection call site in

@@ -1,0 +1,24 @@
+tier: strong
+work_class: tests
+branch: feat/bench-reds-replay
+depends_on: BENCH-OOB-GRADING, BENCH-PROVISIONAL-SCORING
+real-dep: BENCH-OOB-GRADING — the replayed red's check_cmd IS the grader and must run out-of-band
+  (never present in the agent-readable worktree/prompt), so it depends on #26's daemon existing.
+  BENCH-PROVISIONAL-SCORING — replayed reds land as `stage=provisional` until they prove they
+  discriminate, so #20's stage machine must exist first.
+owns: reds.tsv, benchmark/reds-replay.tsv, benchmark/reds_replay
+accept: human sign-off — >=1 replayed red runs end-to-end through the out-of-band daemon and records a provisional row with MERGE/BLOCK derived SOLELY from check_cmd exit status; the check_cmd never appears in the agent worktree/prompt; curation verifies check_cmd FAILS on the pre-fix snapshot before admitting the unit
+prompt: /home/stack/charon-private/prompts/bench-reds-replay.md
+scope: #25 (P1 — the PRIMARY valid ranking signal per the pivot). Replay real reds.tsv bugs as
+  benchmark tasks; the deterministic check_cmd is the grader. Real, self-refreshing, un-memorizable.
+  Core design point (reconstitution): existing check_cmds assert the ALREADY-FIXED origin/master, so
+  replaying a red as a TASK requires handing the model the PRE-FIX (red) state (parent of the fix SHA
+  in closed_by, e.g. f3a73f2^) + its check_cmd, and asking it to make check_cmd pass. Curation pass ->
+  benchmark/reds-replay.tsv (or a replayable=yes/no column on reds.tsv): admit only NON-`manual:`,
+  BEHAVIORAL-check-preferred (over bare `grep -q <string>`) reds with a recoverable pre-fix state.
+  Reuse existing worktree machinery — a replayed red is a unit kind=red fed to bench.sh start; the
+  #26 daemon runs its check_cmd against the snapshot. RIG-ONLY.
+  D&S: does NOT own bench.sh (consumed via the #26 daemon, sequenced after #26). PENDING operator
+  decision Q2 (retroactively snapshot all recoverable closed reds now vs forward-only) + Q3 (check_cmd
+  admissibility bar). Authoritative: scratch/pivot-implementation-plan.md §4 + §8 Q2/Q3.
+note: PARKED — staged so no droid claims ahead of manager gating.

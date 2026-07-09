@@ -1,0 +1,19 @@
+tier: strong
+work_class: docs
+branch: feat/coordinator-doctrine-rollout
+depends_on:
+owns: TBD-CONFIRM (rig injected-rules file + SLOP AGENTS.md — see note; no injected-rules file exists in the rig yet)
+accept: human sign-off — COORDINATOR-DOCTRINE-v2 rules are actually injected into fresh fleet-rig droid sessions and present in SLOP AGENTS.md; a fresh session demonstrably follows the doctrine (manager-watches-only, sub-session delegation, D&S standing rule, blast-radius lens).
+prompt: TBD (author before un-park — source content is fleet/COORDINATOR-DOCTRINE-v2.md; the prompt must add a '## Dependencies & sequence' section or the validator D&S check will RED on un-park).
+scope: FILE from the design-work-tracking audit (2026-07-08) — the known doctrine-v2 rollout gap.
+  COORDINATOR-DOCTRINE-v2.md is committed + operator-APPROVED, but its ROLLOUT is untracked.
+  Roll the doctrine out to its enforcement points: (a) the Charon fleet-rig injected-rules that
+  every droid session boots with, and (b) the SLOP (mediastack) AGENTS.md. This is what makes
+  the approved doctrine actually bind fresh sessions instead of living only as a design doc.
+  RIG/OPS-ONLY — never ships in the Charon product.
+note: PARKED (filed 2026-07-08). ROLLOUT TARGETS ARE TBD-CONFIRMED: no injected-rules file
+  currently exists in /home/stack/charon-private (searched — none found), and no AGENTS.md exists
+  in the rig. Before un-parking, CONFIRM with the operator: (1) the exact rig injected-rules
+  target (where fleet-droid.sh sessions read their standing rules), and (2) the SLOP AGENTS.md
+  path in the mediastack repo. Set owns to those confirmed paths at activation.
+source: COORDINATOR-DOCTRINE-v2.md (audit STEP-4(c) doctrine-v2 rollout gap).

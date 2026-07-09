@@ -1,0 +1,13 @@
+tier: sonnet
+work_class: docs
+branch: docs/workclass-backfill-review
+depends_on:
+owns:
+accept: human sign-off — the 4 low-confidence work_class backfills are each confirmed or corrected on their board tickets
+prompt: /home/stack/charon-private/prompts/workclass-backfill-review.md
+scope: #18 (P2). Review the 4 low-confidence work_class backfills applied to board tickets by the
+  #14/#15 assignment-engine build (ba0f9d5). For each, confirm the auto-assigned work_class matches
+  the ticket's real intent (valid enum: money-path, routing, ci-infra, refactor, bugfix, tests,
+  greenfield-feature, docs, frontend, generalist) or correct it. Owns no source — a metadata review.
+  D&S: depends_on EMPTY. owns EMPTY (no disjoint-owns dep to justify).
+note: PARKED — staged so no droid claims ahead of manager gating. Review/audit, not a build. Manager: identify WHICH 4 tickets carry the low-conf backfills (from ba0f9d5) at activation.

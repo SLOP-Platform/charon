@@ -1,0 +1,25 @@
+tier: economy
+rebase-after: PROXY-FAILOVER-FIX (parked 2026-07-08 — depends_on DRAIN-ROUTING + COST-RANK-AUTO which were parked to let the Phase-1 failover fix land solo; also owns config.py/gateway.py in that cluster. Un-park + rebase with DRAIN-ROUTING/COST-RANK-AUTO after the failover fix merges.)
+work_class: refactor
+branch: feat/pools-simplification
+depends_on: DRAIN-ROUTING, COST-RANK-AUTO
+real-dep: DRAIN-ROUTING + COST-RANK-AUTO (the default draw-down chain must exist before
+  pools can be reduced to sparse overrides — otherwise removing per-model pools leaves
+  no routing policy for those models).
+owns: src/charon/gateway.py, src/charon/config.py, tests/test_gateway.py, /data/pools.json (live 4-LOM)
+accept: PYTHONPATH=src python3 -m pytest tests/test_gateway.py -v -q
+prompt: /home/stack/charon-private/prompts/pools-simplification.md
+scope: Replace 50 hand-maintained per-model pools with sparse overrides + existing
+  tiers.json/fallback.json as default draw-down chain (sub-session recommendation, decision
+  #9). Keep explicit pools ONLY where routing policy differs from "exact model then default
+  fallback": auto, free-tier virtual IDs, deepseek-v4-pro (until request-normalizer lands),
+  gpt-5.5/gpt-5.4-pro (OpenRouter-first behavior for opencode terminal 400), pinned operator
+  IDs. Delete all other per-model pools. Migration: backup live /data/{models,pools,
+  providers,secrets}.json → land DRAIN + cost_rank first → shrink pools.json to sparse
+  overrides → verify route snapshots for critical IDs (auto, deepseek-v4-pro, gpt-5.5,
+  gpt-5.4-pro, all *-free, pinned Claude/Gemini/Kimi/GLM IDs) → deploy with pool-count
+  decrease expected → update deploy checks so they assert required route behavior, not
+  pool count == 50. Preserve client model-id passthrough + gpt-5.5-or-first /
+  reasoning_content overrides. Suggested agent: DeepSeek V4-Pro (strong tier) for the
+  code changes (gateway.py sort logic, config.py schema); this session (manager) for the
+  live 4-LOM migration. Split: build on strong, migrate as manager.

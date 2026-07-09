@@ -1,0 +1,20 @@
+tier: strong
+work_class: tests
+branch: feat/cap-probe-backlog
+depends_on: BENCH-PROVISIONAL-SCORING
+real-dep: BENCH-PROVISIONAL-SCORING — these are purpose-built capability probes that must land as
+  `stage=provisional` and collect data WITHOUT touching live grades until proven to discriminate; #20's
+  provisional-vs-active machine must exist first (the handoff explicitly blocks #21/#22/#23 on #20).
+owns: PROVISIONAL — benchmark/units.tsv, benchmark/probes (new)
+accept: human sign-off — each probe runs as a provisional unit and records rows excluded from live grades until promoted
+prompt: /home/stack/charon-private/prompts/cap-probe-backlog.md
+scope: #21 / #22 / #23 (P3 — BLOCKED BY #20). Provisional capability probes gated behind
+  BENCH-PROVISIONAL-SCORING. Filed as ONE consolidated ticket because the handoff (§3 P3) records only
+  "#21/#22/#23 blocked by #20" WITHOUT their individual intents (they were ephemeral session-bridge
+  board ids) — their distinct specs must be recovered from the operator / prior board before build.
+  ** PENDING operator final call — retire generic synthetic sections wholesale vs keep purpose-built
+  probes provisionally; DO NOT build until resolved. ** (applies to #22/#23 per the confirmed pivot).
+  D&S: depends_on BENCH-PROVISIONAL-SCORING. owns PROVISIONAL.
+note: PARKED — staged so no droid claims ahead of manager gating. NEEDS OPERATOR INPUT: (1) recover the
+  individual #21/#22/#23 intents; (2) the retire-vs-keep-provisionally call above. Manager may split
+  into three tickets once intents are recovered.

@@ -1,0 +1,14 @@
+tier: sonnet
+work_class: routing
+branch: fix/zen-drift-cleanup
+depends_on:
+owns: /data/pools.json, /data/models.json (live 4-LOM config, not src/)
+accept: human sign-off — no residual `-free-zen-model` / zen-family stragglers remain in live pools/models after the audit; back up /data first
+prompt: /home/stack/charon-private/prompts/zen-drift-cleanup.md
+scope: #29 (P2). `-free-zen-model` drift — residual cleanup after this session's full OpenCode Zen
+  removal (47 pools) + spark retirement. Audit live /data pools.json/models.json for stragglers
+  (dead `-free-zen-model` / zen-family entries) and remove via the setup API (POST /charon/pools,
+  /charon/remove — hot-reloads, no restart). ALWAYS back up /data first (off-host + in-container .bak).
+  Live-config audit, NOT a code change — manager/SSH task, do NOT delegate to a build droid.
+  D&S: depends_on EMPTY. owns is live config (/data), disjoint from src/ build tickets.
+note: PARKED — staged so no droid claims ahead of manager gating. Manager/SSH task (like GPT5-POOL-REORDER), not a droid build.

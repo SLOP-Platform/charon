@@ -1,0 +1,54 @@
+> CLOSED 2026-07-08 — shipped via WCI-FOLLOWON (semantic_proof.py built + merged under WCI-FOLLOWON, done). This design ticket was never built as itself; closing to clear the stale parked entry.
+
+tier: frontier
+branch: docs/wci-5-1-proof
+depends_on:
+owns:
+prompt: /home/stack/charon-private/prompts/dsgn-wci-proof.md
+scope: DESIGN/PROOF pass (manager design sub-session + adversarial review, NOT a droid build).
+  SPECIFY the §5.1 SEMANTIC-INDEPENDENCE PROOF — the contract for when two work units are
+  PROVABLY independent: import-graph reachability + shared-symbol + shared-config + test
+  co-failure signals, strictly STRONGER than disjoint `owns` (path-disjointness is
+  necessary-not-sufficient, B1). It must then go through an ADVERSARIAL review and be
+  operator-approved. Output = an approved proof *contract* (a design doc), NOT product src.
+  Workable NOW, in PARALLEL with ADR-0015 / WCI-MVP — it is INDEPENDENT of the MVP being built.
+  Its approved output is a PREREQUISITE for WCI-FOLLOWON (auto-slice / merge_after payoff per
+  the F1 invariant: the split is invented by the proof, never by the label). Per
+  DSGN-WCI-reshape.md §5.1 / §7.1.
+note: TYPE = design/proof-pass (NOT a droid code build). `branch:` docs/wci-5-1-proof is NOMINAL
+  — this produces a rig DESIGN DOC, not code, so no build-PR-to-master is opened. `owns:` is
+  EMPTY by design — the artifact is a RIG-INTERNAL design doc
+  (/home/stack/charon-private/fleet/DSGN-WCI-5-1-PROOF.md, or an expansion of
+  DSGN-WCI-reshape.md §5.1), NOT product src; a design pass owns no product file (matches the
+  DSGN-WRITEBACK precedent). `depends_on:` is EMPTY — this is WORKABLE NOW and runs in PARALLEL
+  with the ADR-0015 → WCI-MVP engine track; it does NOT need the MVP built. ACTIVE / claimable
+  by the manager design loop now.
+
+  SEQUENCE (recorded here + PROPOSED-SEQUENCE.md):
+  - NOW, in parallel: (engine track) ADR-0015 → WCI-MVP; (design track) DSGN-WCI-PROOF (§5.1,
+    independent).
+  - WCI-FOLLOWON: ONLY after WCI-MVP is landed AND DSGN-WCI-PROOF is approved — it needs BOTH.
+
+## NOTE — ACTIVE (design/proof pass); workable NOW, parallel with ADR-0015 / WCI-MVP
+
+This is a **DESIGN/PROOF pass**, run the same way `DSGN-WCI-reshape.md` was: a manager design
+sub-session drafts the contract, an **adversarial review** refutes it, then **operator
+sign-off**. Its output is an **approved proof contract** — a specification, not code.
+
+It is **INDEPENDENT of WCI-MVP being built** (`depends_on:` empty), so it runs in **parallel**
+with the ADR-0015 → WCI-MVP engine track right now. The §5.1 proof reasons about
+import/symbol/config/test coupling — it needs no in-flight engine code to be specified.
+
+Why it matters: per `DSGN-WCI-reshape.md` §5 (open question 1, "highest risk") and §7.1 (the
+F1 invariant), **nothing slices concurrently without this proof** — "the split is invented by
+the proof, never by the label." The proof must be STRICTLY STRONGER than disjoint `owns` (B1:
+path-disjointness proves nothing about imports/calls/shared state/config).
+
+Its approved output is a **prerequisite for `WCI-FOLLOWON`** (the auto-slice / `merge_after`
+concurrency payoff). WCI-FOLLOWON needs BOTH: WCI-MVP landed AND this proof approved.
+
+Activation / done checklist:
+1. Manager design sub-session drafts the §5.1 contract (signals + combine rule + conservative
+   default + how `claimable` consumes the certificate deterministically).
+2. Adversarial review (read-only, instructed to REFUTE) + synthesize.
+3. Operator sign-off → APPROVED proof contract.

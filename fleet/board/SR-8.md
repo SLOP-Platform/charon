@@ -1,7 +1,8 @@
 tier: strong
 work_class: greenfield-feature
 branch: feat/sr-8-dead-module-decision
-depends_on: SR-2, SR-6, SR-7
+depends_on: SR-2, SR-7
+dep-pruned: SR-6 (removed 2026-07-08 — SR-6 parked for PROXY-FAILOVER-FIX; this ticket is DONE, so the proxy_server.py single-writer merge-order dep is already satisfied/historical. No restore needed on un-park.)
 real-dep: SR-2 build (single-owner file proxy_server.py) — shared-file sequencing on proxy_server.py.
 real-dep: SR-6 build (single-owner file proxy_server.py) — shared-file sequencing on proxy_server.py.
 real-dep: SR-7 build (single-owner file proxy_server.py) — shared-file sequencing; SR-8 lands LAST in

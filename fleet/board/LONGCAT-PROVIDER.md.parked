@@ -1,0 +1,17 @@
+tier: strong
+work_class: greenfield-feature
+branch: feat/longcat-provider
+depends_on:
+owns: src/charon/providers.py, src/charon/config.py, tests/test_providers.py
+accept: human sign-off — LongCat-2.0 reachable via the gateway (200 on /v1/chat/completions) once the Meituan API key is provisioned
+prompt: /home/stack/charon-private/prompts/longcat-provider.md
+scope: #32 (P3 — BLOCKED ON SIGNUP). Add LongCat-2.0 (Meituan LongCat API Platform,
+  https://api.longcat.chat/openai, model id LongCat-2.0, OpenAI-compatible). Requires a NEW PROVIDER
+  INTEGRATION, not a catalog tweak. NOT on OpenRouter (0 matches for longcat/meituan) or HuggingFace
+  (weights-only, no inference provider). The openrouter/owl-alpha stealth-slot route was evaluated and
+  RETIRED as too fragile/unverifiable (scratch/longcat-availability.md). BLOCKER: needs a Meituan
+  LongCat API Platform signup + key (operator action) before any build.
+  ** PRODUCT-BOUNDARY FLAG: BUILD adds a provider to the Charon PRODUCT (src/charon/providers.py). Keep
+  the product STANDALONE. **
+  D&S: depends_on EMPTY (board), but HARD external blocker = operator signup/key. Do not activate until the key exists.
+note: PARKED — staged so no droid claims ahead of manager gating. Blocked on operator Meituan signup. Build touches product code (see flag).

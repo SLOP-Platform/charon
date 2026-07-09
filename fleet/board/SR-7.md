@@ -1,7 +1,8 @@
 tier: strong
 work_class: money-path
 branch: feat/sr-7-spend-cap-hardening
-depends_on: SR-2, SR-6, SR-5
+depends_on: SR-2, SR-5
+dep-pruned: SR-6 (removed 2026-07-08 — SR-6 parked for PROXY-FAILOVER-FIX; this ticket is DONE, so the proxy_server.py single-writer merge-order dep is already satisfied/historical. No restore needed on un-park.)
 real-dep: SR-2 build (single-owner file proxy_server.py) — shared-file sequencing on proxy_server.py.
 real-dep: SR-6 build (single-owner file proxy_server.py) — shared-file sequencing on proxy_server.py
   (SR-7 lands after SR-6 in the W3 chain).

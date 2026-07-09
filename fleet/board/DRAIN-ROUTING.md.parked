@@ -1,0 +1,38 @@
+tier: frontier
+rebase-after: PROXY-FAILOVER-FIX (parked 2026-07-08 to let the Phase-1 failover fix land solo on proxy_server.py; un-park + rebase on top after it merges)
+work_class: money-path
+branch: feat/drain-routing
+depends_on: SR-5b, INC-401-FAILOVER
+real-dep: SR-5b build (cost_usd is real and merged to master — DRAIN's auto-decrement
+  mechanism depends on cost_usd being computed and recorded).
+real-dep: INC-401-FAILOVER (the 401 misclassification must be fixed first, or DRAIN's
+  pre-flight skip will be undermined by the failover loop still relaying raw errors). This
+  was already stated in prose but missing from the machine-readable depends_on field
+  (board-validator-red audit 2026-07-05) — now encoded so the WCI/collision checks see it.
+owns: src/charon/proxy.py, src/charon/proxy_server.py, src/charon/gateway.py, src/charon/config.py, tests/test_proxy.py, tests/test_gateway.py
+accept: PYTHONPATH=src python3 -m pytest tests/test_proxy.py tests/test_gateway.py -v -q
+prompt: /home/stack/charon-private/prompts/drain-routing.md
+scope: Balance-aware "drain-before-move" routing. Two mechanisms (operator-approved
+  2026-07-04 decisions #1-2):
+  (a) Poll balance APIs where they exist: DeepSeek /user/balance, OpenRouter /credits,
+  NanoGPT /check-balance. Cache the result with a TTL (configurable, default 5 min).
+  (b) Operator-configured starting balance + auto-decrement via cost_usd for dashboard-only
+  providers (opencode-zen, Together, NeuralWatt — NO balance API). Store starting_balance
+  in providers.json; decrement by cost_usd on each successful response.
+  A positive draining balance gets top drain-priority; at ~0 it is demoted/excluded from
+  the pool. Operator decision #2: free daily tiers BEFORE prepaid drain balances (free-first,
+  then drain). Operator decision #29: NanoGPT stays primary unless a specific drain fast-path
+  applies. Operator decision #30: parked ticket to review whether drainable balances should
+  generally outrank NanoGPT later.
+  NeuralWatt fast-path (decision #24-27): HIGH PRIORITY — drain NeuralWatt's remaining 6kWh
+  limit before 2026-07-22, then PAYG. Implement as a narrow fast-path FIRST (decision #25),
+  then fold into broader DRAIN. May update production routing immediately after verification
+  (decision #27). OpenRouter included in same fast-path (decision #28-29) — treat as
+  prepaid/drainable ($10 deposit + 1000 free RPD).
+  This ticket is the direct fix for BUG 1 (pool ordering — all entries tie at cost_rank:1000,
+  stale list order wins) and BUG 2 (balance-aware routing would have detected opencode-zen
+  depletion before the request). Suggested agent: Claude Opus 4.8 (frontier tier) — WHY:
+  money-path routing logic with multiple provider-specific balance APIs, operator-policy
+  encoding (free-first-then-drain), and auto-decrement accounting. Getting the priority
+  chain right (free → drain-expiring → drain-prepaid → NanoGPT-primary → metered) requires
+  careful design judgement, not just mechanical implementation.

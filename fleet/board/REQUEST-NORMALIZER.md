@@ -1,7 +1,8 @@
 tier: strong
 work_class: bugfix
 branch: feat/request-normalizer
-depends_on: INC-401-FAILOVER
+depends_on:
+dep-pruned: INC-401-FAILOVER (removed 2026-07-08 — INC-401-FAILOVER parked for PROXY-FAILOVER-FIX; this ticket is DONE, so the proxy_server.py merge-order dep is already satisfied/historical. No restore needed on un-park.)
 real-dep: INC-401-FAILOVER (the failover loop must correctly advance on non-DeepSeek
   provider errors before cross-provider substitution is safe).
 owns: src/charon/proxy.py, src/charon/proxy_server.py, tests/test_proxy.py

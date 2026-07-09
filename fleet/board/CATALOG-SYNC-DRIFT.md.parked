@@ -1,0 +1,24 @@
+tier: strong
+work_class: greenfield-feature
+branch: feat/catalog-sync-drift
+depends_on:
+owns: PROVISIONAL — tools/catalog_sync.py (rig/tooling), src/charon/config.py (product catalog metadata target)
+accept: human sign-off — models.dev / provider /models -> Charon catalog metadata sync runs; a structural drift (new/removed/renamed model or changed pricing shape) is SURFACED, not silently applied
+prompt: /home/stack/charon-private/prompts/catalog-sync-drift.md
+scope: #30 (P2 — feeds #31). Catalog + pricing sync + drift detector. Mechanize models.dev / provider
+  /models -> Charon catalog metadata sync + structural-drift surfacing. NOTE relationship to
+  MODEL-DISCOVERY (the OUTBOUND /v1/models enrichment endpoint) — #30 is the INBOUND ingestion/sync +
+  drift side; distinct but adjacent, coordinate the catalog schema. Also relevant to COST-RANK-AUTO /
+  SR-5b: the "pricing injection point" (models.json has no cost_input/cost_output; populate via an
+  OpenRouter alias-fix or models.dev import) — confirm whether that pricing-capture build lives here or
+  in the SR-5/SR-5b chain and de-duplicate at activation.
+  ** PRODUCT-BOUNDARY FLAG: the sync/drift build likely READS/WRITES the product catalog
+  (src/charon/config.py / models.json). Keep the sync TOOL rig-side and the product STANDALONE — no rig
+  import may leak into src/charon; the product must consume a self-contained catalog artifact. **
+  STANDING RULE (decision #5, 2026-07-08): catalog / routing / config mismatches must ALWAYS be fixed
+  — never tolerated as "cosmetic." The drift detector's job is to SURFACE them AUTOMATICALLY (e.g. the
+  gpt-5.5-in-catalog vs gpt-5.4-live-workhorse mismatch tracked by CATALOG-RECONCILE-GPT5): the catalog,
+  the routing/provider config, and live serving must name the same ids, and any divergence must be
+  flagged by this detector rather than discovered by hand.
+  D&S: depends_on EMPTY. Blocks #31 (CATALOG-SEARCH-CURATE).
+note: PARKED — staged so no droid claims ahead of manager gating. owns PROVISIONAL; build touches product config (see flag). Manager: reconcile pricing-source overlap with SR-5b/COST-RANK-AUTO.

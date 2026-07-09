@@ -1,0 +1,54 @@
+# SR-6-Phase2 — full bidirectional OpenAI↔Anthropic translation (PARKED)
+
+## Status: PARKED (created 2026-07-04) — do NOT build
+This is the deferred, large-surface split-out of SR-6. It is parked (`.parked` suffix on both this
+prompt and its board file). Un-park ONLY when the revisit trigger fires (see below) and after an
+operator sign-off / fresh adversarial design gate — the blast radius here is high.
+
+## Dependencies & sequence
+**depends_on: SR-6 — lands AFTER SR-6 (Phase-1).** `real-dep: SR-6 build` — Phase-2 grows the NEW
+`src/charon/translate.py` module (which Phase-1 creates as a request-side enrichment helper) into the
+full bidirectional translator, and edits `proxy_server.py`'s dispatch. Both files are owned by SR-6, so
+the owns OVERLAP — Phase-2 must land strictly after SR-6 to avoid a concurrent write to the shared
+files. Same W3 proxy_server.py chain discipline as SR-6/SR-7/SR-8: only one owner in flight at a time.
+Tier: frontier (money-path dispatch + streaming).
+
+## WHAT (the deferred surface)
+Full **bidirectional** OpenAI↔Anthropic translation so an OpenAI-wire client can transparently reach an
+Anthropic-wire upstream (and vice versa):
+1. **Request-body translation** — OpenAI chat.completions body → Anthropic messages body (roles,
+   `system` extraction, tool/function-call schema remap, image/content-part remap) and the reverse.
+2. **Response-body translation** — non-streaming: Anthropic message response → OpenAI
+   chat.completion (choices, finish_reason, `usage` mapping incl. cache_read/creation tokens) and reverse.
+3. **SSE-stream event remap** (the hard part) — Anthropic `message_start` / `content_block_start` /
+   `content_block_delta` / `content_block_stop` / `message_delta` / `message_stop` events ⇄ OpenAI
+   `chat.completion.chunk` events: chunk reassembly, streamed tool-call deltas, incremental usage
+   accounting, and correct terminal `finish_reason`.
+
+## WHY PARKED
+Deferred until BOTH: (a) Phase-1 (SR-6) proves the Anthropic prompt-cache saving is actually worth
+banking; AND (b) there is real, demonstrated demand for cross-format routing. It is not worth the
+risk/effort to build speculatively — Phase-1 already banks the cost saving for the common case without
+this surface.
+
+## RISKS (why this is gated, not just deferred)
+- **HIGH blast radius on the money-path dispatch** — this sits directly on the request/response hot path
+  every billed call flows through.
+- **SSE/streaming translation is the hard part** — chunk reassembly, tool-call deltas, and usage
+  accounting are all easy to get subtly wrong.
+- **Breaks the transparent-proxy contract if done wrong** — a mistake here can break EVERY existing
+  OpenAI client pointed at the gateway, not just the new cross-format path. Any build MUST regression-
+  guard the untouched-passthrough behaviour for both wire formats.
+
+## REVISIT-TRIGGER
+Un-park when: **a user needs an OpenAI-format client to hit an Anthropic-only provider** (or the reverse)
+through the gateway. Until then it stays parked.
+
+## CONSTRAINTS (when eventually built)
+- **Owns:** `src/charon/translate.py`, `src/charon/proxy_server.py`. Provider/agent-agnostic; product-clean.
+- Must land after SR-6; must not break the transparent-proxy passthrough for either wire format.
+
+## accept (when eventually built)
+```
+PYTHONPATH=src python3 -m pytest -q tests/test_translate.py tests/test_proxy_server.py && PYTHONPATH=src python3 -m pytest -q && ruff check src/charon/translate.py src/charon/proxy_server.py && mypy src/charon/translate.py src/charon/proxy_server.py
+```

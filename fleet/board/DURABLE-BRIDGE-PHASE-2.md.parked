@@ -1,0 +1,22 @@
+tier: strong
+work_class: ci-infra
+branch: feat/durable-bridge-phase-2
+depends_on:
+owns: bridge/session-bridge/daemon.py, bridge/session-bridge/proxy.py, bridge/session-bridge/bridge-watch.sh, bridge/session-bridge/charon-bridge-renewer.service, /home/stack/code/charon/AGENTS.md
+accept: human sign-off — renewer does not immortalize a hard-crashed session (NB3); a Stop-hook miss is reaped within the stale window; status RPC + kill-switch work; non-destructive delivery + redeliver window behave per design-v3 §6/§7-AMEND; idempotency ledger dedupes.
+prompt: /home/stack/charon-private/fleet/DURABLE-BRIDGE-PHASE-2-BRIEF.md
+scope: FILE from the design-work-tracking audit (2026-07-08) — the highest-value tracking gap.
+  Durable cross-host session-bridge Phase 2 = push watcher + observability + wiring cleanup.
+  Phase 0-1 is BUILT and live in ~/.config/opencode/session-bridge/ (per DURABLE-BRIDGE-DESIGN-v3
+  + review-v3 BUILD GO-WITH-CONDITIONS). Phase 2 items (all named deferred in daemon.py docstring):
+  NB3 renewer-must-not-immortalize-a-hard-crashed-session, bridge-watch.sh, the renewer service,
+  SessionStart/Stop hook wiring, the status RPC, the kill-switch, and the AGENTS.md
+  heartbeat-retirement rewrite. Build-ready, review-passed, previously UNTRACKED on the board.
+  RIG-ONLY — the bridge is build-infra and never ships in the Charon product (the only Repo-B
+  touch is charon/AGENTS.md, already public-clean-guarded).
+note: PARKED (filed 2026-07-08). BEFORE un-parking: (1) confirm owns paths — the bridge lives at
+  ~/.config/opencode/session-bridge/ which is NOT a git repo, so the owns strings above are
+  collision-detection tokens only, re-confirm at activation; (2) the prompt points at
+  DURABLE-BRIDGE-PHASE-2-BRIEF.md, which must carry a '## Dependencies & sequence' section
+  before un-park or the validator D&S check will RED (add one if missing).
+source: DURABLE-BRIDGE-DESIGN-v3.md + DURABLE-BRIDGE-PHASE-2-BRIEF.md (audit disposition KEEP+ticket).

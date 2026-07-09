@@ -1,0 +1,14 @@
+tier: strong
+work_class: greenfield-feature
+branch: feat/catalog-search-curate
+depends_on: CATALOG-SYNC-DRIFT
+real-dep: CATALOG-SYNC-DRIFT — #31 searches/curates the synced catalog metadata; the sync + drift
+  pipeline (#30) must land first or there is no full, current catalog to search over.
+owns: PROVISIONAL — tools/catalog_curate.py
+accept: human sign-off — full-catalog search + curate workflow surfaces candidate models from the synced catalog for operator curation
+prompt: /home/stack/charon-private/prompts/catalog-search-curate.md
+scope: #31 (P2 — BLOCKED ON #30). Full-catalog search + curate: search the synced catalog (#30) and
+  provide an operator curation workflow to promote/retire models. Design after #30 lands so the search
+  index/schema matches the sync output.
+  D&S: depends_on CATALOG-SYNC-DRIFT (hard prereq). owns PROVISIONAL — set at activation.
+note: PARKED — staged so no droid claims ahead of manager gating. Blocked on #30.

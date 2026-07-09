@@ -2,7 +2,7 @@ tier: frontier
 branch: feat/tier-model-recommendations
 depends_on:
 owns: src/charon/cli.py, src/charon/recommend.py, src/charon/config.py   # recommend.py is a NEW module; PROVISIONAL — finalize at activation
-prompt: (authored on activation)
+prompt: /home/stack/charon-private/fleet/prompts/tier-recs.md
 scope: PRODUCTION-READINESS / setup-UX. A PHASED "tier model recommendations" feature for the
   `charon setup` wizard so a non-expert isn't stuck typing a model name blind. MOTIVATION:
   during `charon setup`, the "model served by X" prompt shows NO list and recommends nothing, so
