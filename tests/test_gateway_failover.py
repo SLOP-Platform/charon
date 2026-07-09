@@ -357,7 +357,11 @@ def test_whole_pool_exhausted_synthesizes_terminal():
         # every provider (both) is named in the tracked failover reasons
         assert len(body["error"]["failover_reasons"]) == 2
         assert hdrs["X-Charon-Failovers"] == "2"
-        assert hdrs["X-Charon-Failover-Reasons"].count("429") == 2
+        # Count only the STATUS field of each "provider=status" entry — not the
+        # raw substring, which an ephemeral port containing "429" (e.g.
+        # 127.0.0.1:42959) would inflate, making this assertion flaky.
+        reasons = hdrs["X-Charon-Failover-Reasons"].split("; ")
+        assert [r.split("=")[-1] for r in reasons].count("429") == 2
     finally:
         gw.shutdown()
         a.shutdown()
