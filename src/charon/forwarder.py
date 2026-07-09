@@ -15,7 +15,9 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
 
+from . import translate
 from .netutil import BROWSER_UA
+from .providers import WIRE_ANTHROPIC
 from .proxy_response import _extract, _pre_flight_estimate
 from .request_normalizer import normalize_messages as _normalize_request_messages
 from .response_normalizer import NormalizeMode
@@ -56,6 +58,13 @@ def _build_upstream_req(handler, srv, route: UpstreamRoute, orig_bj: dict,
         stripped = _normalize_request_messages(bj.get("messages"))
         if stripped is not None:
             bj["messages"] = stripped
+        # SR-6 Phase-1: for an Anthropic-wire upstream, inject one prompt-cache
+        # breakpoint so the stable tools+system prefix bills at the cache-read
+        # price. Per-attempt placement makes a failover to an OpenAI provider
+        # automatically untouched, and the branch is unreachable for OpenAI-wire
+        # routes (route.wire defaults "openai"). Flag OFF → byte-identical body.
+        if srv.anthropic_prompt_cache and route.wire == WIRE_ANTHROPIC:
+            bj = translate.enrich_anthropic_cache(bj)
         data: bytes | None = json.dumps(bj).encode()
     else:
         data = raw_body or None
