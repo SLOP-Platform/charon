@@ -250,6 +250,45 @@ def test_tampered_cookie_falls_back_to_login() -> None:
         srv.shutdown()
 
 
+# ---- integration: SR-13 F1 — session cookie can't reach the data plane ------
+
+def test_session_cookie_cannot_reach_forwarder_on_unknown_charon_path() -> None:
+    """SR-13 F1 regression: a session-cookie-only POST to an un-enumerated
+    ``/charon/*`` path carrying a chat-completions body must be rejected
+    (401/404) and must NEVER fall through to ``forward_with_failover`` — the
+    billed data plane. The server's only upstream is unreachable, so a request
+    that *did* reach the forwarder would surface as 502 "all upstreams
+    unreachable"; asserting the status is never 502 proves non-reach.
+
+    Before the fix, ``is_gui`` matched any ``/charon/`` prefix, the session
+    cookie authorized the request, and it fell through to the forwarder (502).
+    """
+    srv = _server()
+    try:
+        sess = _sign_session(KEY, int(time.time()) + 1000)
+        body = json.dumps({"model": "m1", "messages": [{"role": "user",
+                                                         "content": "spend my money"}]})
+        # (b) session cookie ONLY, no Bearer token → must never hit the forwarder.
+        st, _, _ = _req(srv, "/charon/spend", method="POST", body=body, headers={
+            "Cookie": f"charon_sess={sess}",
+            "Content-Type": "application/json",
+            "Content-Length": str(len(body)),
+        })
+        assert st in (401, 404), f"expected 401/404, got {st}"
+        assert st != 502, "session cookie reached the billed forwarder (F1 leak)"
+
+        # (a) even WITH a real Bearer token, an un-enumerated /charon/* path is not
+        # a data-plane target — it 404s rather than forwarding to a provider call.
+        st, _, _ = _req(srv, "/charon/spend", method="POST", body=body, headers={
+            "Authorization": f"Bearer {TOKEN}",
+            "Content-Type": "application/json",
+            "Content-Length": str(len(body)),
+        })
+        assert st == 404, f"unknown /charon/* should 404, got {st}"
+    finally:
+        srv.shutdown()
+
+
 # ---- integration: preserved guards -----------------------------------------
 
 def test_login_post_cross_origin_refused() -> None:

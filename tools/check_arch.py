@@ -201,6 +201,28 @@ def check_gateway_isolation(src_root: Path) -> list[str]:
 # ── check 3: circular imports ───────────────────────────────────────────────
 
 
+def _typecheck_guarded_imports(tree: ast.Module) -> set[int]:
+    """ids() of Import/ImportFrom nodes inside an ``if TYPE_CHECKING:`` block.
+
+    Such imports are never executed at runtime, so they can't form a runtime
+    import cycle — the graph (which models RUNTIME imports) must exclude them,
+    else an annotation-only forward reference is misreported as circular."""
+    guarded: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        test = node.test
+        is_tc = (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+            isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING")
+        if not is_tc:
+            continue
+        for stmt in node.body:  # only the True branch is TYPE_CHECKING-only
+            for sub in ast.walk(stmt):
+                if isinstance(sub, (ast.Import, ast.ImportFrom)):
+                    guarded.add(id(sub))
+    return guarded
+
+
 def _build_import_graph(src_root: Path) -> dict[str, set[str]]:
     """Build a directed graph: module → {imported modules} for all src/charon/**/*.py."""
     graph: dict[str, set[str]] = defaultdict(set)
@@ -211,7 +233,10 @@ def _build_import_graph(src_root: Path) -> dict[str, set[str]]:
             continue
         tree = ast.parse(py_file.read_text(), filename=str(py_file))
         pkg = _pkg_of(py_file)
+        guarded = _typecheck_guarded_imports(tree)
         for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)) and id(node) in guarded:
+                continue  # TYPE_CHECKING-only: not a runtime edge
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     head = alias.name.split(".")[0]

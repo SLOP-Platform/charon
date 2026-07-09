@@ -61,6 +61,22 @@ from .virtual_keys import VirtualKeyManager
 _SESSION_COOKIE = "charon_sess"
 _SESSION_TTL = 30 * 24 * 3600  # 2_592_000 — 30-day sliding lifetime
 
+# SR-13 F1: the ENUMERATED browser-console surface. Only these exact paths are
+# ``is_gui`` — i.e. session-cookie-authorizable and login-redirectable. An
+# un-enumerated ``/charon/*`` path is deliberately NOT here, so a stolen session
+# cookie can never authorize it and it can never fall through to the billed
+# data-plane forwarder (it 404s / 401s instead). Keep in sync with the routes
+# consumed by console_router.try_handle_public_gui / try_handle_control_plane.
+_GUI_ROUTES = frozenset({
+    "", "/charon",                                    # console home
+    "/charon/login", "/charon/logout",                # public auth pages
+    "/charon/status", "/charon/cost", "/charon/work",  # read-only panels
+    "/charon/setup", "/charon/config",                # setup UI + summary
+    "/charon/providers", "/charon/models", "/charon/models/import",
+    "/charon/pools", "/charon/tiers", "/charon/fallback",
+    "/charon/enable", "/charon/disable", "/charon/remove",  # setup writes
+})
+
 
 def _b64url(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
@@ -345,7 +361,11 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
         # signed ``charon_sess`` cookie authorizes ``/charon/*`` ONLY — ``/v1/*`` stays
         # byte-for-byte token-only, so opencode / ACP / LAN clients never see a change.
         path_only = urlsplit(self.path).path.rstrip("/")
-        is_gui = path_only in ("", "/charon") or path_only.startswith("/charon/")
+        # SR-13 F1(a): the session-authorizable surface is the ENUMERATED console
+        # routes ONLY — never a bare ``/charon/*`` prefix. An unknown ``/charon/xyz``
+        # is not ``is_gui``, so a session cookie can't authorize it and it can never
+        # reach the forwarder; it 404s below instead.
+        is_gui = path_only in _GUI_ROUTES
 
         # Public /charon routes (login page + login POST + logout) must be reachable
         # WITHOUT credentials — they run before the gate and self-serve.
@@ -383,6 +403,22 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
 
         # Control-plane dispatch (console/setup/discovery); True = fully served.
         if console_router.try_handle_control_plane(self, srv):
+            return
+
+        # SR-13 F1(a): an un-enumerated ``/charon/*`` path that fell through both
+        # routers is NOT a data-plane target — 404 rather than forward it to the
+        # billed provider call (which routes on the body ``model``, ignoring the URL).
+        if path_only in ("", "/charon") or path_only.startswith("/charon/"):
+            self._json(404, {"error": {"message": "not found"}})
+            return
+
+        # SR-13 F1(b), belt-and-suspenders: the data plane is Bearer-token ONLY. A
+        # request authorized solely by a ``charon_sess`` session cookie must never
+        # reach the forwarder, regardless of path — a stolen console cookie is not a
+        # spend credential.
+        if not authed_by_token:
+            self._json(401,
+                       {"error": {"message": "missing or invalid bearer token"}})
             return
 
         forwarder.forward_with_failover(self, srv)

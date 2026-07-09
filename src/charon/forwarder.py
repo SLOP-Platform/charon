@@ -13,12 +13,16 @@ import hashlib
 import json
 import urllib.error
 import urllib.request
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 from .netutil import BROWSER_UA
 from .proxy_response import _extract, _pre_flight_estimate
 from .request_normalizer import normalize_messages as _normalize_request_messages
 from .response_normalizer import NormalizeMode
+
+if TYPE_CHECKING:  # annotation-only; runtime import would be circular via proxy_server
+    from .proxy_server import UpstreamRoute
 
 _SKIP_HEADERS = {"host", "authorization", "content-length", "connection",
                  "accept-encoding", "proxy-authorization"}
