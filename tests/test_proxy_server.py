@@ -960,3 +960,111 @@ def test_serve_path_default_ua_is_browser_like() -> None:
     finally:
         proxy.shutdown()
         upstream.shutdown()
+
+
+# ── SR-6: Anthropic prompt-cache breakpoint injection ──────────────────────────
+# Captured FULL request bodies the upstream actually received, for byte-level
+# pass-through / enrichment assertions.
+_SEEN_BODIES: list[dict] = []
+
+# A system prompt over the ~2048-token (≈8192-char) cacheable minimum.
+_SR6_BIG_SYSTEM = "You are a meticulous coding assistant. " * 400
+
+
+class _BodyCapturingUpstream(http.server.BaseHTTPRequestHandler):
+    """A 200 upstream that records the entire JSON body it received."""
+
+    def log_message(self, *a) -> None:
+        pass
+
+    def do_POST(self) -> None:
+        length = int(self.headers.get("Content-Length") or 0)
+        body = json.loads(self.rfile.read(length) or b"{}")
+        _SEEN_BODIES.append(body)
+        payload = json.dumps({
+            "model": body.get("model", ""),
+            "choices": [{"message": {"content": "ok"}}],
+            "usage": {"prompt_tokens": 1},
+        }).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+
+def _anthropic_body(system):
+    return {
+        "model": "claude-x",
+        "system": system,
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+
+
+def test_anthropic_wire_route_gets_one_cache_breakpoint() -> None:
+    """An anthropic-wire route with a large stable prefix receives exactly one
+    cache_control breakpoint on the last system block (flag default ON)."""
+    _SEEN_BODIES.clear()
+    up = _Threaded(("127.0.0.1", 0), _BodyCapturingUpstream)
+    threading.Thread(target=up.serve_forever, daemon=True).start()
+    base = f"http://{up.server_address[0]}:{up.server_address[1]}"
+    proxy = GatewayProxyServer(
+        routes={"claude-x": UpstreamRoute(base, "k", wire="anthropic")})
+    proxy.serve_in_thread()
+    try:
+        status, _ = _post(proxy.url + "/v1/chat/completions",
+                          _anthropic_body([{"type": "text", "text": _SR6_BIG_SYSTEM}]))
+        assert status == 200
+        fwd = _SEEN_BODIES[-1]
+        assert fwd["system"][-1]["cache_control"] == {"type": "ephemeral"}
+    finally:
+        proxy.shutdown()
+        up.shutdown()
+
+
+def test_openai_wire_route_is_byte_for_byte_passthrough() -> None:
+    """Regression guard: an OpenAI-wire route (the default) is NEVER enriched —
+    even with a large system block it forwards no cache_control."""
+    _SEEN_BODIES.clear()
+    up = _Threaded(("127.0.0.1", 0), _BodyCapturingUpstream)
+    threading.Thread(target=up.serve_forever, daemon=True).start()
+    base = f"http://{up.server_address[0]}:{up.server_address[1]}"
+    # default wire == "openai"
+    proxy = GatewayProxyServer(routes={"claude-x": UpstreamRoute(base, "k")})
+    proxy.serve_in_thread()
+    try:
+        status, _ = _post(proxy.url + "/v1/chat/completions",
+                          _anthropic_body([{"type": "text", "text": _SR6_BIG_SYSTEM}]))
+        assert status == 200
+        fwd = _SEEN_BODIES[-1]
+        assert "cache_control" not in fwd["system"][-1]
+    finally:
+        proxy.shutdown()
+        up.shutdown()
+
+
+def test_flag_off_leaves_anthropic_body_unenriched() -> None:
+    """With anthropic_prompt_cache=False an anthropic-wire body is forwarded
+    without a breakpoint (byte-identical passthrough)."""
+    _SEEN_BODIES.clear()
+    up = _Threaded(("127.0.0.1", 0), _BodyCapturingUpstream)
+    threading.Thread(target=up.serve_forever, daemon=True).start()
+    base = f"http://{up.server_address[0]}:{up.server_address[1]}"
+    proxy = GatewayProxyServer(
+        routes={"claude-x": UpstreamRoute(base, "k", wire="anthropic")},
+        anthropic_prompt_cache=False)
+    proxy.serve_in_thread()
+    try:
+        status, _ = _post(proxy.url + "/v1/chat/completions",
+                          _anthropic_body([{"type": "text", "text": _SR6_BIG_SYSTEM}]))
+        assert status == 200
+        fwd = _SEEN_BODIES[-1]
+        assert "cache_control" not in fwd["system"][-1]
+    finally:
+        proxy.shutdown()
+        up.shutdown()
+
+
+def test_upstream_route_wire_defaults_openai() -> None:
+    assert UpstreamRoute("http://x/v1").wire == "openai"
+    assert UpstreamRoute("http://x/v1", wire="anthropic").wire == "anthropic"

@@ -22,6 +22,15 @@ from urllib.parse import urlsplit
 
 from .netutil import BROWSER_UA  # shared browser-like UA (P5 — Cloudflare 1010)
 
+# ── Upstream wire-format vocabulary (SR-6) ─────────────────────────────────────
+# The vendor-agnostic gateway/proxy core references these by constant, never by
+# literal, so it stays product-clean; the vendor vocabulary lives here in the
+# provider-adapter module (the layer the product-clean gate deliberately exempts).
+WIRE_OPENAI = "openai"       # OpenAI chat-completions wire (the default; never enriched)
+WIRE_ANTHROPIC = "anthropic"  # Anthropic /v1/messages wire (SR-6 prompt-cache target)
+# Gateway config key for the SR-6 prompt-cache toggle (default ON).
+ANTHROPIC_PROMPT_CACHE_KEY = "anthropic_prompt_cache"
+
 
 @dataclass(frozen=True)
 class ProviderPreset:
@@ -29,12 +38,26 @@ class ProviderPreset:
     key_env: str | None = None
     strip_v1: bool = True       # most OpenAI-compatible bases already end in /v1
     downgrade_prone: bool = False  # vendor known to silently swap models (arms R1 strictly)
+    # Upstream wire format: "openai" (default) or "anthropic". Drives SR-6 Phase-1
+    # prompt-cache enrichment — an "anthropic"-wire route may get one cache_control
+    # breakpoint injected; "openai" routes are NEVER touched. Provider-agnostic (a
+    # per-provider marker, not a hardcoded model list).
+    wire: str = WIRE_OPENAI
     note: str = ""
 
 
 # Built-in presets. VERIFIED bases are marked; UNVERIFIED ones carry a note and
 # should be confirmed (or overridden) before trusting them with a real key.
 PRESETS: dict[str, ProviderPreset] = {
+    # Anthropic — native Anthropic wire format (NOT OpenAI-compatible: chat lives at
+    # /v1/messages with an ``x-api-key`` header). Marked ``wire="anthropic"`` so an
+    # already-Anthropic body routed here can receive one SR-6 prompt-cache breakpoint.
+    # strip_v1=False: the Anthropic base is a bare host and keeps the client's /v1.
+    "anthropic": ProviderPreset(
+        "https://api.anthropic.com", "ANTHROPIC_API_KEY",
+        strip_v1=False, wire=WIRE_ANTHROPIC,
+        note="Anthropic native wire (/v1/messages). SR-6 Phase-1 prompt-cache "
+             "enrichment target; full OpenAI<->Anthropic translation is Phase-2."),
     # OpenCode Zen — one key (OPENCODE_ZEN_KEY), two endpoints with DIFFERENT model
     # sets (verified live 2026-06-26): /zen/v1 = full catalog (~49: Claude/GPT/Gemini/
     # Qwen + open); /zen/go/v1 = coding-focused subset (~20).
@@ -248,7 +271,7 @@ def resolve(name: str, overrides: dict | None = None) -> ProviderPreset:
                 f"({', '.join(sorted(PRESETS))}) and no base_url override given")
         base = ProviderPreset(base_url=str(overrides["base_url"]))
     fields = {}
-    for k in ("base_url", "key_env", "strip_v1", "downgrade_prone"):
+    for k in ("base_url", "key_env", "strip_v1", "downgrade_prone", "wire"):
         if k in overrides and overrides[k] is not None:
             fields[k] = overrides[k]
     return replace(base, **fields) if fields else base

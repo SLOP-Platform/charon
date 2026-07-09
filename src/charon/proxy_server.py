@@ -31,6 +31,7 @@ from .guardrails import Guardrails
 from .netutil import is_loopback
 from .observability import Observability
 from .policy_router import PolicyRouter
+from .providers import WIRE_OPENAI
 from .proxy import GatewayProxy
 
 # Facade re-exports (decompose): keep the public import surface resolving
@@ -69,6 +70,7 @@ class UpstreamRoute:
     pool_id: str | None = None  # observe under this id (the router's pool id) if set
     provider: str | None = None  # display label for failover visibility (X-Charon-Provider)
     strip_v1: bool | None = None  # per-provider quirk; None → use the server default
+    wire: str = WIRE_OPENAI  # upstream wire format (SR-6): WIRE_OPENAI | WIRE_ANTHROPIC
 
     @property
     def label(self) -> str:
@@ -258,6 +260,7 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         max_cooldown_s: float = 120.0,
         failover_log_path: str | None = None,
         failover_on_downgrade: bool = False,
+        anthropic_prompt_cache: bool = True,
         guardrails: Guardrails | None = None,
         semantic_cache: SemanticCache | None = None,
         response_normalizer: ResponseNormalizer | None = None,
@@ -311,6 +314,12 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         # discarded attempt is recorded with count_usage=True (visible, not the old
         # silent double-bill). Default False → serve the downgrade once, billed once.
         self.failover_on_downgrade = failover_on_downgrade
+        # Operator toggle (SR-6, default ON): for a route whose upstream speaks the
+        # Anthropic wire format, inject one prompt-cache breakpoint into the outbound
+        # body so a long stable tools+system prefix is billed at the cache-read (not
+        # full-input) price. OFF → the body is forwarded byte-identical. OpenAI-wire
+        # routes are NEVER touched regardless of this flag.
+        self.anthropic_prompt_cache = anthropic_prompt_cache
         self.guardrails = guardrails
         self.semantic_cache = semantic_cache
         self.response_normalizer = response_normalizer
