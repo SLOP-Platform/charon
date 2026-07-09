@@ -34,11 +34,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from assign import assign  # noqa: E402
 from availability import StaticAvailability  # noqa: E402
-from grades import MIN_N, DEFAULT_TSV, ScorecardGradesProvider, _wilson_bound  # noqa: E402
+from grades import MIN_N, DEFAULT_TSV, ScorecardGradesProvider, _wilson_bound, scores_tie  # noqa: E402
 
 # PROVISIONAL-vs-ACTIVE (#20): the promotion gate + a temp end-to-end fixture.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "benchmark"))
 import promote as _promote  # noqa: E402
+
+# AGGREGATE-N (#16): exercise the tier_chart aggregation directly.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "benchmark" / "lib"))
+import tier_chart as _tier_chart  # noqa: E402
 
 FIXTURE_TSV = Path(__file__).resolve().parent / "testdata" / "scorecard-fixture.tsv"
 
@@ -234,6 +238,7 @@ def main() -> int:
     )
 
     provisional_scoring_checks(grades, no_avail)
+    aggregate_n_checks()
 
     print()
     print("=" * 78)
@@ -418,6 +423,164 @@ def provisional_scoring_checks(grades: ScorecardGradesProvider, no_avail) -> Non
         check("promote(--apply) leaves the SATURATED unit provisional (gate refused)",
               (not rs["applied"]) and after["PSAT"] == "provisional",
               f"applied={rs['applied']} stage={after['PSAT']}")
+
+
+def aggregate_n_checks() -> None:
+    """BENCH-AGGREGATE-N (#16) acceptance — plan §5. Proves the aggregation
+    over N repeat runs is REALLY exercised: the grade/tier chart smooth
+    multiple rows per (model, section/work_class) into mean ± a noise band,
+    and a composite gap within the combined band renders as a TIE, not a rank.
+    Every assertion below FAILS if the aggregation is reverted to the prior
+    single-row / last-wins behavior (the values differ, not just the shape)."""
+    import tempfile
+
+    print()
+    print("=" * 78)
+    print("BENCH-AGGREGATE-N (#16): grades.py smooths the numeric bench aggregate")
+    print("=" * 78)
+    # A real-outcome (source=live) model with THREE numeric-score runs at one
+    # work_class. grade() must aggregate them into mean ± a measured noise band,
+    # not surface a bare single-run number. Scores 100/75/60 mirror the exact
+    # across-run variance the validity review recorded for glm-5.2 (S3/S5).
+    with tempfile.TemporaryDirectory() as td:
+        tsv = Path(td) / "sc.tsv"
+        tsv.write_text(
+            "2026-02-01\tlive\tR1\ttests\t1\taggN\tMERGE\t-\t100\t10\t-\t0\trun1\n"
+            "2026-02-02\tlive\tR2\ttests\t1\taggN\tMERGE\t-\t75\t10\t-\t0\trun2\n"
+            "2026-02-03\tlive\tR3\ttests\t1\taggN\tMERGE\t-\t60\t10\t-\t0\trun3\n"
+            "2026-02-04\tlive\tR4\ttests\t1\taggSolo\tMERGE\t-\t100\t10\t-\t0\tonly-run\n")
+        g_agg = ScorecardGradesProvider(tsv)
+        g = g_agg.grade("aggN", "tests")
+        n_runs = getattr(g, "bench_score_n", None)
+        sd = getattr(g, "bench_score_stddev", "<missing>")
+        band = getattr(g, "bench_score_band", "<missing>")
+        check(
+            "grade() aggregates all N=3 numeric-score runs (mean≈78.3, not a "
+            "single last/first run of 100 or 60)",
+            n_runs == 3 and g.mean_bench_score is not None
+            and abs(g.mean_bench_score - (235 / 3)) < 1e-6,
+            f"bench_score_n={n_runs} mean_bench_score={g.mean_bench_score}",
+        )
+        check(
+            "the numeric aggregate publishes a NON-ZERO noise band (stddev & CI) "
+            "over the N runs — the smoothing signal #16 exists to expose",
+            isinstance(sd, float) and sd > 0 and isinstance(band, float) and band > 0,
+            f"bench_score_stddev={sd} bench_score_band={band}",
+        )
+        check(
+            "the band is surfaced in the grade summary (band±, not just carried "
+            "silently on the Grade)",
+            "±" in g.summary() and "N=3" in g.summary(),
+            repr(g.summary()),
+        )
+        g_solo = g_agg.grade("aggSolo", "tests")
+        check(
+            "a SINGLE-run grade reports an unmeasurable band (stddev/band None), "
+            "never a fabricated 0 — one sample carries no run-to-run noise",
+            getattr(g_solo, "bench_score_n", None) == 1
+            and getattr(g_solo, "bench_score_stddev", "x") is None
+            and getattr(g_solo, "bench_score_band", "x") is None,
+            f"n={getattr(g_solo,'bench_score_n',None)} sd={getattr(g_solo,'bench_score_stddev','x')} "
+            f"band={getattr(g_solo,'bench_score_band','x')}",
+        )
+
+    # scores_tie: the pure #16 rule — a gap within the combined band is a TIE.
+    check(
+        "scores_tie(): a sub-band gap (2 within a ±22.9 band) is a TIE, not a rank",
+        scores_tie(78.0, 22.9, 80.0, None) is True,
+        "scores_tie(78.0, 22.9, 80.0, None)",
+    )
+    check(
+        "scores_tie(): a gap wider than the combined band is NOT a tie (real rank)",
+        scores_tie(50.0, 5.0, 90.0, 5.0) is False,
+        "scores_tie(50, 5, 90, 5)",
+    )
+
+    print()
+    print("=" * 78)
+    print("BENCH-AGGREGATE-N (#16): tier_chart.py aggregates repeat section runs")
+    print("=" * 78)
+    # A synthetic bench model whose section S1 was run THREE times (100/75/60).
+    # bench_rows_for must aggregate to the MEAN (≈78.3), NOT keep the last row
+    # (60) — so the composite tiers "Strong" (>=75), which last-wins (60) could
+    # never reach ("Capable"). This is the direct fails-if-reverted assertion.
+    with tempfile.TemporaryDirectory() as td:
+        tsv = Path(td) / "sc.tsv"
+        tsv.write_text(
+            # TM: S0 sanity=100, S1 three runs 100/75/60 (last row 60)
+            "2026-03-01\tbench\tS0\ttests\t0\tTM\tMERGE\tpass\t100\t5\t-\t0\ts0\n"
+            "2026-03-02\tbench\tS1\ttests\t1\tTM\tMERGE\tpass\t100\t5\t-\t0\ts1 run1\n"
+            "2026-03-03\tbench\tS1\ttests\t1\tTM\tFIXES\tfail\t75\t5\t-\t0\ts1 run2\n"
+            "2026-03-04\tbench\tS1\ttests\t1\tTM\tFIXES\tfail\t60\t5\t-\t0\ts1 run3\n"
+            # TN: S0=100, S1 single run 78 -> composite 78, no measurable band
+            "2026-03-05\tbench\tS0\ttests\t0\tTN\tMERGE\tpass\t100\t5\t-\t0\ts0\n"
+            "2026-03-06\tbench\tS1\ttests\t1\tTN\tFIXES\tfail\t78\t5\t-\t0\ts1 only\n")
+        rows = _tier_chart.load_rows(tsv)
+        sc = _tier_chart.bench_rows_for(rows, "TM")
+        s1 = sc.get("S1", {})
+        check(
+            "bench_rows_for aggregates S1's 3 runs (score_n=3, mean≈78.3), NOT the "
+            "last-wins single row (60)",
+            s1.get("score_n") == 3 and s1.get("score_mean") is not None
+            and abs(s1.get("score_mean") - (235 / 3)) < 1e-6,
+            f"score_n={s1.get('score_n')} score_mean={s1.get('score_mean')} "
+            f"score_values={s1.get('score_values')}",
+        )
+        check(
+            "the per-section aggregate carries a NON-ZERO noise band over its runs",
+            isinstance(s1.get("score_stddev"), float) and s1["score_stddev"] > 0
+            and isinstance(s1.get("score_band"), float) and s1["score_band"] > 0,
+            f"score_stddev={s1.get('score_stddev')} score_band={s1.get('score_band')}",
+        )
+        tier, comp = _tier_chart.overall_tier(sc)
+        check(
+            "the composite tiers off the MEAN (Strong, comp≈78) — reverting to "
+            "last-wins (60) would misfile it as Capable",
+            tier == "Strong" and isinstance(comp, float) and abs(comp - (235 / 3)) < 1e-6,
+            f"tier={tier} composite={comp}",
+        )
+        # TIE: TM (≈78.3, wide band) and TN (78, no band) differ by <band -> a
+        # sub-band gap must rank as a TIE, not be ordered on noise.
+        rank_tm, total, tied_tm = _tier_chart._rank_in_tier_v1_internal(rows, "TM", "Strong")
+        check(
+            "a sub-band composite gap between two same-tier models renders as a "
+            "TIE (competition rank shared), not a spurious rank on noise",
+            total == 2 and tied_tm is True,
+            f"rank={rank_tm} total={total} tied={tied_tm}",
+        )
+
+    # #16 review finding 1: NON-TRANSITIVE tie CHAINING must not collapse
+    # distinguishable models into one rank. Three same-tier ("Strong") models:
+    #   A composite 89, B 82, C 76 — each with a ±4.53 band (three S1 runs
+    #   symmetric ±4 => sd=4, band = z*4/sqrt(3) ≈ 4.526; only S1 graded so the
+    #   composite band equals it). Combined band ≈ 9.05, so:
+    #     A-B gap 7  <= 9.05  -> tie ;  B-C gap 6  <= 9.05 -> tie ;
+    #     A-C gap 13 >  9.05  -> NOT a tie.
+    # Ranking must anchor ties to the GROUP LEADER (A), not the neighbour, so C
+    # ranks BELOW the A/B group (ranks 1,1,3). The old neighbour-compare logic
+    # chained A~B~C into rank 1 for all three (C spuriously tied-#1 with A) — so
+    # this assertion FAILS on the pre-fix code and passes only with the fix.
+    with tempfile.TemporaryDirectory() as td:
+        tsv = Path(td) / "chain.tsv"
+        rows_txt = []
+        for model, s1runs in (("XA", (85, 89, 93)),   # mean 89, band ≈4.53
+                              ("XB", (78, 82, 86)),    # mean 82, band ≈4.53
+                              ("XC", (72, 76, 80))):    # mean 76, band ≈4.53
+            rows_txt.append(f"2026-04-01\tbench\tS0\ttests\t0\t{model}\tMERGE\tpass\t100\t5\t-\t0\ts0")
+            for i, sv in enumerate(s1runs):
+                rows_txt.append(f"2026-04-0{i + 2}\tbench\tS1\ttests\t1\t{model}\tFIXES\tfail\t{sv}\t5\t-\t0\ts1 run{i + 1}")
+        tsv.write_text("\n".join(rows_txt) + "\n")
+        rows = _tier_chart.load_rows(tsv)
+        rank_a, tot_a, tied_a = _tier_chart._rank_in_tier_v1_internal(rows, "XA", "Strong")
+        rank_b, _, _ = _tier_chart._rank_in_tier_v1_internal(rows, "XB", "Strong")
+        rank_c, tot_c, tied_c = _tier_chart._rank_in_tier_v1_internal(rows, "XC", "Strong")
+        check(
+            "non-transitive ties do NOT chain: with A~B and B~C but A NOT~C, the "
+            "weaker model C ranks BELOW the A/B group (rank 3, untied) rather than "
+            "collapsing to a spurious tied-#1 with A (fails on neighbour-compare)",
+            tot_c == 3 and rank_a == 1 and rank_b == 1 and rank_c == 3 and tied_c is False,
+            f"A(rank={rank_a},tied={tied_a}) B(rank={rank_b}) C(rank={rank_c},tied={tied_c}) total={tot_c}",
+        )
 
 
 def smoke_check_live_scorecard() -> None:
