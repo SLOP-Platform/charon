@@ -25,6 +25,8 @@ from pathlib import Path
 _ENGINE_FORBIDDEN: frozenset[str] = frozenset({
     "gateway", "proxy_server", "adapters", "cli", "config",
     "connect", "providers", "secrets",
+    # proxy_server decompose modules — same gateway boundary as proxy_server.
+    "proxy_console_assets", "proxy_response", "console_router", "forwarder",
 })
 
 _VENDOR_NAMES: frozenset[str] = frozenset({
