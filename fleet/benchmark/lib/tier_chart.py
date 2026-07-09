@@ -107,6 +107,26 @@ TIER_LADDER = [
 # example 4.7c.
 COMPOSITE_EFF_CAP = 2.0
 
+# REAL-OUTCOMES PIVOT (BENCH-REGROUND-LIVE, pivot A2 — design of record:
+# fleet/scratch/pivot-implementation-plan.md §0/§1/§7; driving verdict:
+# fleet/BENCHMARK-VALIDITY-REVIEW.md). The synthetic S0–S6 composite/tier this
+# module computes is DEMOTED to a smoke-test: it no longer sets a capability
+# tier position and must not be read as a ranking signal. Real capability
+# grades now come from `source=live` real-outcome actuals via
+# capability/grades.py (which excludes source in {bench,bench2}). S0 is kept
+# ONLY as the harness sanity gate (S0 != 100 => INVALID run). This banner is
+# printed on every human-facing render so the demotion can never be silent;
+# the composite math below is UNCHANGED (efficiency_selftest / token_capture
+# selftests + the v2 partition guard still depend on it verbatim) — only its
+# STATUS changed from "capability tier" to "smoke-only diagnostic".
+_SMOKE_BANNER = (
+    "SMOKE-ONLY (synthetic S0–S6) — DEMOTED per the real-outcomes pivot\n"
+    "(fleet/BENCHMARK-VALIDITY-REVIEW.md): this composite/tier is NOT a\n"
+    "capability signal and no longer feeds ranking or the grades brain.\n"
+    "Real grades come from source=live actuals via capability/grades.py.\n"
+    "S0 below remains ONLY a harness sanity gate."
+)
+
 
 def load_rows(tsv_path=TSV):
     rows = []
@@ -372,7 +392,8 @@ def render(model, tsv_path=TSV):
     sc = bench_rows_for(rows, model)
 
     print("=" * 78)
-    print(f"MODEL-BENCHMARK TIER CHART -- {model}")
+    print(f"MODEL-BENCHMARK SMOKE CHART -- {model}")
+    print(_SMOKE_BANNER)
     print("=" * 78)
     # section | skill | grade | time_s | cost_usd | corrections (all read
     # straight from the model's appended bench rows, never recomputed).
@@ -399,15 +420,19 @@ def render(model, tsv_path=TSV):
     print("-" * 78)
 
     tier, comp_or_reason = overall_tier(sc)
+    # DEMOTED: labeled "SMOKE COMPOSITE", never "OVERALL TIER" — this is a
+    # synthetic diagnostic, not a capability tier position (real-outcomes pivot).
     if tier is None:
-        print(f"OVERALL TIER: {comp_or_reason}")
+        print(f"SMOKE COMPOSITE (synthetic; NOT a capability tier): {comp_or_reason}")
     elif tier in ("INVALID", "No Tier"):
         label = "INVALID" if tier == "INVALID" else "NO TIER"
-        print(f"OVERALL TIER: {label} -- {comp_or_reason}")
+        print(f"SMOKE COMPOSITE (synthetic; NOT a capability tier): {label} -- {comp_or_reason}")
     else:
         rank, total = _rank_in_tier_v1_internal(rows, model, tier)
         rank_str = f"#{rank} of {total}" if rank else "unranked (composite unavailable)"
-        print(f"OVERALL TIER: {tier} (composite {comp_or_reason:.1f}) -- rank {rank_str} of models in this tier")
+        print(f"SMOKE COMPOSITE (synthetic; NOT a capability tier): {tier} "
+              f"(composite {comp_or_reason:.1f}) -- smoke-rank {rank_str} among smoke-charted models")
+    print("(capability grade/tier: see capability/grades.py — source=live actuals)")
     print("=" * 78)
 
 
@@ -431,7 +456,8 @@ def render_v2(model, season, tsv_path=TSV, seasons_dir=None):
     sc = bench2_rows_for(rows, model, season)
 
     print("=" * 78)
-    print(f"MODEL-BENCHMARK-V2 TIER CHART -- {model} -- season {season}")
+    print(f"MODEL-BENCHMARK-V2 SMOKE CHART -- {model} -- season {season}")
+    print(_SMOKE_BANNER)
     print("=" * 78)
 
     if not close_season.is_closed(season, seasons_dir=seasons_dir):
@@ -499,7 +525,10 @@ def render_v2(model, season, tsv_path=TSV, seasons_dir=None):
 
     print(f"composite_raw (pure correctness): {composite_raw:.1f}")
     print(f"composite_final (+/-{COMPOSITE_EFF_CAP:.0f} capped efficiency delta): {composite_final:.1f}")
-    print(f"OVERALL TIER: {label} -- rank {rank_str} of models in this season's bench2 cohort")
+    # DEMOTED: smoke composite, not a capability tier position (real-outcomes pivot).
+    print(f"SMOKE COMPOSITE (synthetic; NOT a capability tier): {label} -- "
+          f"smoke-rank {rank_str} among this season's bench2 smoke cohort")
+    print("(capability grade/tier: see capability/grades.py — source=live actuals)")
     print("=" * 78)
 
 

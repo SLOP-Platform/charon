@@ -94,6 +94,37 @@ GENERALIST = "generalist"
 
 _MERGE, _BLOCK = "MERGE", "BLOCK"
 
+# ---------------------------------------------------------------------------
+# REAL-OUTCOMES PIVOT (BENCH-REGROUND-LIVE, pivot A2 — design of record:
+# fleet/scratch/pivot-implementation-plan.md §0/§1/§2/§7; driving verdict:
+# fleet/BENCHMARK-VALIDITY-REVIEW.md). The synthetic S0–S6 benchmark is
+# "theater, not measure" for RANKING (graders world-readable + self-driven +
+# self-reported; 5/7 sections saturate), so it is DEMOTED to a smoke-test:
+# ONLY rows whose `source` is an explicitly REAL-OUTCOME provenance feed the
+# capability grade or its rank key `score`.
+#
+# This is an ALLOW-LIST (fail-CLOSED), NOT a deny-list, and that is deliberate
+# (BENCH-REGROUND-LIVE review Q2): a real signal is admitted only when its
+# provenance is on this list; every other source — synthetic (`bench`/
+# `bench2`), and any future PROVISIONAL/unknown value (plan §2 line ~136
+# floats `bench-prov`/`reds-prov` as a candidate encoding for #20 provisional
+# rows) — is treated as NOT-yet-trusted and excluded. A deny-list would let
+# such a future provisional row silently count as trusted live evidence — the
+# exact leak #20 exists to prevent.
+#
+# `live` is the ONLY genuinely-real production-outcome source today: per plan
+# §0 (VALID_SOURCE="live bench bench2") `source=live` rows are real routed
+# tickets/PRs whose MERGE/BLOCK verdict a human/gate produced out-of-band by
+# construction. `ticket` is NOT a production source — it is test-only (never
+# in model-scorecard.sh's VALID_SOURCE; it only ever appeared in the frozen
+# selftest fixture as the test-time analog of live), so the fixture's real
+# rows now use `source=live` too and the allow-list is exactly {"live"}.
+# Extend this set DELIBERATELY as new real sources land (e.g. promoted
+# reds-replay rows per §7/#25), never implicitly. `tier_chart.py` keeps S0
+# alone as the harness sanity/smoke gate and nothing synthetic sets a
+# capability tier position anymore.
+_REAL_OUTCOME_SOURCES = frozenset({"live"})
+
 
 @dataclass
 class Grade:
@@ -146,6 +177,16 @@ class ScorecardGradesProvider(GradesProvider):
     this parses the TSV structurally, same 15-column shape cmd_append writes,
     same tolerance for legacy 13-column rows tier_chart.py already relies on).
 
+    REAL-OUTCOMES PIVOT (A2): the grade is grounded ONLY in real-outcome
+    actuals rows — `source=live` real routed tickets/PRs (out-of-band-valid by
+    construction). Admission is an ALLOW-LIST (fail-closed): only sources in
+    `_REAL_OUTCOME_SOURCES` count; synthetic S0–S6 bench/bench2 rows AND any
+    provisional/unknown source are DEMOTED and no longer counted into
+    merge/block/score or the tier — see `_REAL_OUTCOME_SOURCES` and
+    `_rows_for(..., real_only=True)`. A model with only non-real evidence
+    therefore has no capability grade (grade() returns None), which is the
+    intended demotion, not a regression.
+
     Score formula: a confidence-aware, Wilson-bound spread (see module-level
     `_wilson_bound`/MIN_N docs) — merge's lower bound minus block's upper
     bound, NOT the raw `merge_pct - block_pct` this replaced. A verdict of
@@ -183,10 +224,25 @@ class ScorecardGradesProvider(GradesProvider):
     def all_models(self) -> list[str]:
         return sorted({r["model"] for r in self._rows})
 
-    def _rows_for(self, model: str, work_class: str | None) -> list[dict]:
-        if work_class is None:
-            return [r for r in self._rows if r["model"] == model]
-        return [r for r in self._rows if r["model"] == model and r["work_class"] == work_class]
+    def _rows_for(self, model: str, work_class: str | None,
+                  real_only: bool = True) -> list[dict]:
+        """Rows for a (model, work_class) — REAL-OUTCOME actuals ONLY by
+        default (ALLOW-LIST: source in _REAL_OUTCOME_SOURCES). Synthetic
+        S0–S6 bench/bench2 rows AND any provisional/unknown source are excluded
+        from the grade per the real-outcomes pivot (see _REAL_OUTCOME_SOURCES
+        above — fail-closed); pass real_only=False only for smoke/diagnostic
+        tooling that explicitly wants every row. work_class is None to
+        aggregate across every class (the generalist bucket)."""
+        out = []
+        for r in self._rows:
+            if r["model"] != model:
+                continue
+            if real_only and r["source"] not in _REAL_OUTCOME_SOURCES:
+                continue
+            if work_class is not None and r["work_class"] != work_class:
+                continue
+            out.append(r)
+        return out
 
     def grade(self, model: str, work_class: str) -> Grade | None:
         requested = work_class
@@ -214,8 +270,14 @@ class ScorecardGradesProvider(GradesProvider):
         score = _wilson_bound(merge, n, upper=False) - _wilson_bound(block, n, upper=True)
         low_confidence = n < MIN_N
 
-        bench_scores = [int(r["score"]) for r in rows
-                         if r["source"] in ("bench", "bench2") and r["score"].isdigit()]
+        # DEMOTED (real-outcomes pivot): `rows` are real-outcome actuals only
+        # (see _rows_for / _REAL_OUTCOME_SOURCES allow-list), so no synthetic
+        # bench/bench2 row is present here and mean_bench_score resolves to None
+        # for real data whose score column is '-' — the synthetic S0–S6
+        # composite no longer feeds the grade OR the assign rank/tiebreak. Kept
+        # defined so the field still populates if a future real-outcome source
+        # ever carries a numeric score.
+        bench_scores = [int(r["score"]) for r in rows if r["score"].isdigit()]
         costs = [float(r["cost_usd"]) for r in rows if _is_float(r["cost_usd"])]
         times = [float(r["time_s"]) for r in rows if _is_float(r["time_s"])]
         corr_total = sum(int(r["corrections"]) for r in rows if r["corrections"].isdigit())

@@ -34,7 +34,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from assign import assign  # noqa: E402
 from availability import StaticAvailability  # noqa: E402
-from grades import MIN_N, DEFAULT_TSV, ScorecardGradesProvider  # noqa: E402
+from grades import MIN_N, DEFAULT_TSV, ScorecardGradesProvider, _wilson_bound  # noqa: E402
 
 FIXTURE_TSV = Path(__file__).resolve().parent / "testdata" / "scorecard-fixture.tsv"
 
@@ -169,6 +169,64 @@ def main() -> int:
         "a high-n grade (n=5 >= MIN_N) is NOT flagged LOW_CONFIDENCE (contrast case)",
         g_sonnet_tests.n >= MIN_N and not g_sonnet_tests.low_confidence,
         f"n={g_sonnet_tests.n} low_confidence={g_sonnet_tests.low_confidence}",
+    )
+
+    print()
+    print("=" * 78)
+    print("BENCH-REGROUND-LIVE: synthetic-exclusion allow-list is REALLY exercised")
+    print("=" * 78)
+    # The headline behavior of this build: only real-outcome (source=live) rows
+    # feed the grade; synthetic bench/bench2 rows are DEMOTED and excluded. The
+    # fixture now carries synthetic rows that WOULD change the answer if counted,
+    # so these three checks FAIL if the exclusion (allow-list) is reverted —
+    # they are not tautologies against an all-source-identical fixture.
+    #
+    # (a) glm-5.2/routing has 3 real (source=live) rows AND an added source=bench
+    #     MERGE + source=bench2 BLOCK. If the synthetic rows leaked in, n would be
+    #     5 (merge 3, block 2). The grade must ignore them: n stays 3, merge 2,
+    #     block 1 — computed from real-outcome rows ONLY.
+    g_glm_excl = grades.grade("glm-5.2", "routing")
+    check(
+        "(a) synthetic bench/bench2 rows do NOT change glm-5.2/routing grade "
+        "(n=3 real-only, not 5)",
+        g_glm_excl.n == 3 and g_glm_excl.merge == 2 and g_glm_excl.block == 1,
+        f"n={g_glm_excl.n} merge={g_glm_excl.merge} block={g_glm_excl.block} "
+        f"(would be n=5 merge=3 block=2 if synthetic leaked in)",
+    )
+    # (b) synth-only-model has ONLY source=bench/bench2 rows -> no real-outcome
+    #     evidence -> grade() must be None for its class AND the generalist bucket,
+    #     and assign() must skip it (empty eligible pool -> refused). If synthetic
+    #     leaked in, grade() would return a real Grade and assign() would pick it.
+    g_synth_bugfix = grades.grade("synth-only-model", "bugfix")
+    g_synth_gen = grades.grade("synth-only-model", "generalist")
+    check(
+        "(b) a bench-ONLY model (only synthetic rows) has grade()==None at its "
+        "class and generalist",
+        g_synth_bugfix is None and g_synth_gen is None,
+        f"bugfix={g_synth_bugfix} generalist={g_synth_gen}",
+    )
+    r_synth = assign("bugfix", grades, no_avail, candidate_models=["synth-only-model"])
+    check(
+        "(b) assign() SKIPS the bench-only model -> refused, never assigned on "
+        "synthetic-only evidence",
+        r_synth.refused and r_synth.picked is None,
+        f"refused={r_synth.refused} picked={r_synth.picked}",
+    )
+    # (c) the rank-key `score` for glm-5.2/routing is computed from the 3 real
+    #     rows only. Assert it equals the Wilson spread on (merge=2, block=1, n=3),
+    #     NOT on the leaked (merge=3, block=2, n=5). This checks the actual
+    #     ranking signal, not just the counts.
+    expected_real_only = (_wilson_bound(2, 3, upper=False)
+                          - _wilson_bound(1, 3, upper=True))
+    leaked_score = (_wilson_bound(3, 5, upper=False)
+                    - _wilson_bound(2, 5, upper=True))
+    check(
+        "(c) glm-5.2/routing score is computed from real-outcome rows ONLY "
+        "(matches n=3 Wilson spread, not the n=5 leaked value)",
+        abs(g_glm_excl.score - expected_real_only) < 1e-9
+        and abs(g_glm_excl.score - leaked_score) > 1e-6,
+        f"score={g_glm_excl.score:.4f} real-only-expected={expected_real_only:.4f} "
+        f"leaked-would-be={leaked_score:.4f}",
     )
 
     print()
