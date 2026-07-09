@@ -356,6 +356,11 @@ class TestConfig:
         assert "proxy_server" in M._ENGINE_FORBIDDEN
         assert "adapters" in M._ENGINE_FORBIDDEN
         assert "config" in M._ENGINE_FORBIDDEN
+        # proxy_server decompose modules share the same forbidden gateway boundary.
+        assert "proxy_console_assets" in M._ENGINE_FORBIDDEN
+        assert "proxy_response" in M._ENGINE_FORBIDDEN
+        assert "console_router" in M._ENGINE_FORBIDDEN
+        assert "forwarder" in M._ENGINE_FORBIDDEN
 
     def test_vendor_names_set(self) -> None:
         assert "openai" in M._VENDOR_NAMES
