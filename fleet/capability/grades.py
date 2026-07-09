@@ -94,6 +94,22 @@ GENERALIST = "generalist"
 
 _MERGE, _BLOCK = "MERGE", "BLOCK"
 
+# ---------------------------------------------------------------------------
+# REAL-OUTCOMES PIVOT (BENCH-REGROUND-LIVE, pivot A2 — design of record:
+# fleet/scratch/pivot-implementation-plan.md §0/§1/§7; driving verdict:
+# fleet/BENCHMARK-VALIDITY-REVIEW.md). The synthetic S0–S6 benchmark is
+# "theater, not measure" for RANKING (graders world-readable + self-driven +
+# self-reported; 5/7 sections saturate), so it is DEMOTED to a smoke-test:
+# rows whose `source` is one of these NO LONGER feed the capability grade or
+# its rank key `score`. The grade is grounded ONLY in real-outcome actuals —
+# `source=live` rows are real routed tickets/PRs whose verdict a human/gate
+# produced out-of-band by construction (the frozen selftest fixture's
+# `source=ticket` rows are the test-time analog of exactly that). Any source
+# NOT in this set is treated as a real outcome; `tier_chart.py` keeps S0
+# alone as the harness sanity/smoke gate and nothing synthetic sets a
+# capability tier position anymore.
+_SYNTHETIC_SOURCES = frozenset({"bench", "bench2"})
+
 
 @dataclass
 class Grade:
@@ -146,6 +162,14 @@ class ScorecardGradesProvider(GradesProvider):
     this parses the TSV structurally, same 15-column shape cmd_append writes,
     same tolerance for legacy 13-column rows tier_chart.py already relies on).
 
+    REAL-OUTCOMES PIVOT (A2): the grade is grounded ONLY in real-outcome
+    actuals rows — `source=live` real routed tickets/PRs (out-of-band-valid by
+    construction). The synthetic S0–S6 bench/bench2 rows are DEMOTED to a
+    smoke-test and no longer counted into merge/block/score or the tier — see
+    `_SYNTHETIC_SOURCES` and `_rows_for(..., include_synthetic=False)`. A model
+    with only synthetic evidence therefore has no capability grade (grade()
+    returns None), which is the intended demotion, not a regression.
+
     Score formula: a confidence-aware, Wilson-bound spread (see module-level
     `_wilson_bound`/MIN_N docs) — merge's lower bound minus block's upper
     bound, NOT the raw `merge_pct - block_pct` this replaced. A verdict of
@@ -183,10 +207,24 @@ class ScorecardGradesProvider(GradesProvider):
     def all_models(self) -> list[str]:
         return sorted({r["model"] for r in self._rows})
 
-    def _rows_for(self, model: str, work_class: str | None) -> list[dict]:
-        if work_class is None:
-            return [r for r in self._rows if r["model"] == model]
-        return [r for r in self._rows if r["model"] == model and r["work_class"] == work_class]
+    def _rows_for(self, model: str, work_class: str | None,
+                  include_synthetic: bool = False) -> list[dict]:
+        """Rows for a (model, work_class) — REAL-OUTCOME actuals ONLY by
+        default (source not in _SYNTHETIC_SOURCES). The synthetic S0–S6
+        bench/bench2 rows are excluded from the grade per the real-outcomes
+        pivot (see _SYNTHETIC_SOURCES above); pass include_synthetic=True only
+        for smoke/diagnostic tooling that explicitly wants them. work_class is
+        None to aggregate across every class (the generalist bucket)."""
+        out = []
+        for r in self._rows:
+            if r["model"] != model:
+                continue
+            if not include_synthetic and r["source"] in _SYNTHETIC_SOURCES:
+                continue
+            if work_class is not None and r["work_class"] != work_class:
+                continue
+            out.append(r)
+        return out
 
     def grade(self, model: str, work_class: str) -> Grade | None:
         requested = work_class
@@ -214,8 +252,14 @@ class ScorecardGradesProvider(GradesProvider):
         score = _wilson_bound(merge, n, upper=False) - _wilson_bound(block, n, upper=True)
         low_confidence = n < MIN_N
 
+        # DEMOTED (real-outcomes pivot): `rows` are real-outcome actuals only
+        # (see _rows_for / _SYNTHETIC_SOURCES), so no synthetic bench/bench2 row
+        # is present here and mean_bench_score resolves to None for real data —
+        # the synthetic S0–S6 composite no longer feeds the grade OR the assign
+        # rank/tiebreak. The filter is kept literal so the field stays defined
+        # if a real-outcome source ever carries a numeric score.
         bench_scores = [int(r["score"]) for r in rows
-                         if r["source"] in ("bench", "bench2") and r["score"].isdigit()]
+                         if r["source"] in _SYNTHETIC_SOURCES and r["score"].isdigit()]
         costs = [float(r["cost_usd"]) for r in rows if _is_float(r["cost_usd"])]
         times = [float(r["time_s"]) for r in rows if _is_float(r["time_s"])]
         corr_total = sum(int(r["corrections"]) for r in rows if r["corrections"].isdigit())
