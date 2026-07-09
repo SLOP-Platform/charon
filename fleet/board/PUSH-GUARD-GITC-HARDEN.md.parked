@@ -1,0 +1,29 @@
+tier: strong
+work_class: ci-infra
+branch: chore/push-guard-gitc-harden
+depends_on:
+owns: /home/stack/code/charon/.claude/settings.local.json
+accept: manual — after the operator applies the deny globs, each of `git -C <path> reset --hard`,
+  `git -C <path> remote add`, `git -C <path> rebase`, `git -C <path> commit --amend` is REFUSED
+  (prompted/denied), verified by attempting each against a scratch path; `git -C <path> push*` already
+  refused (regression check).
+prompt: /home/stack/charon-private/prompts/push-guard-gitc-harden.md
+scope: Close the `git -C <path>` deny-list bypass in settings.local.json ([charon-push-guard-gap]).
+  RECONCILED CURRENT STATE (verified 2026-07-08): `Bash(git -C * push*)` IS ALREADY denied
+  (settings.local.json:250) — the push `-C` bypass is closed. The REMAINING gap: the `-C` form of the
+  OTHER destructive ops is NOT covered — only their bare forms are denied (`git reset --hard*`:246,
+  `git remote add*`:179, `git rebase*`:176, `git commit --amend*`:175). So `git -C <path> reset --hard`,
+  `git -C <path> remote add`, `git -C <path> rebase`, `git -C <path> commit --amend`, `git -C <path>
+  remote set-url` all still bypass. FIX: add `Bash(git -C * reset --hard*)`, `Bash(git -C * remote add*)`,
+  `Bash(git -C * remote set-url*)`, `Bash(git -C * rebase*)`, `Bash(git -C * commit --amend*)` to the deny
+  list (mirror every existing destructive-git glob with a `git -C * ` variant).
+  NOT covered by fleet/SETTINGS-GUARD-PROPOSAL.md — that proposal is the auto-compact SessionStart guard,
+  a DIFFERENT concern; this is not a duplicate. DEEPER porousness stays PARKED by design (per
+  [charon-push-guard-gap]): `defaultMode: bypassPermissions` is deny-only, and allow-listed interpreters
+  (`python3 -c "os.system('git push')"`, make, xargs, node) or env-prefixed `GIT_SSH_COMMAND=… git push`
+  bypass EVERY git deny glob. The only hard fix for those is moving `defaultMode` off bypassPermissions —
+  out of scope here (intentional-autonomy control, not a hard boundary against a malicious agent).
+  D&S: depends_on NONE; standalone; concurrency — owns only settings.local.json, disjoint from all product
+  code tickets, safe in parallel with everything.
+note: OPERATOR-ONLY — the manager session cannot edit `~/.claude/**` / settings.local.json is human-applied.
+  PARKED. A pure settings hardening, not a product feature.

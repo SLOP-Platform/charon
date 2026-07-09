@@ -3,13 +3,17 @@ rebase-after: PROXY-FAILOVER-FIX (parked 2026-07-08 — depends_on DRAIN-ROUTING
 work_class: money-path
 branch: feat/cost-rank-auto
 depends_on: SR-5b, DRAIN-ROUTING
+consumes: METER-MODEL-PROVIDER — the metered REAL per-(model,provider) cost is the source `cost_rank`
+  should DERIVE from, not hand-set values. SR-5b makes cost_usd real per attempt; METER-MODEL-PROVIDER
+  aggregates it into a per-(model,provider) cost the ranker reads. (No owns overlap — annotation only.)
 real-dep: SR-5b (cost_input/cost_output pricing must be captured and real). DRAIN-ROUTING
   (cost_class enum is the ordering primitive DRAIN uses — design them together).
 owns: src/charon/config.py, src/charon/gateway.py, tests/test_gateway.py
 accept: PYTHONPATH=src python3 -m pytest tests/test_gateway.py -v -q
 prompt: /home/stack/charon-private/prompts/cost-rank-auto.md
-scope: Auto-derive cost_rank from SR-5b's now-real cost_input/cost_output pricing instead
-  of hand-set values. Add a cost_class enum (operator-approved decision #16, design/spec
+scope: Auto-derive cost_rank from real METERED cost — cost_rank must DERIVE from
+  METER-MODEL-PROVIDER's per-(model,provider) metered cost (built on SR-5b's now-real
+  cost_input/cost_output pricing) instead of hand-set values. Add a cost_class enum (operator-approved decision #16, design/spec
   first): free-daily / expiring / prepaid / metered. One scalar (cost_rank) cannot express
   "spend expiring credits first" — cost_class is the policy axis, cost_rank is the
   within-class ordering. Compute cost_rank = f(cost_input, cost_output) so NanoGPT

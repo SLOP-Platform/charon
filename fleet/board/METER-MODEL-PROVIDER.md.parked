@@ -1,0 +1,66 @@
+tier: strong
+work_class: money-path
+branch: feat/meter-model-provider
+depends_on:
+owns: src/charon/proxy.py, src/charon/balance.py, tests/test_meter_model_provider.py
+owns-status: PROVISIONAL — the recording path is split today and the new per-(model,provider)
+  grain attaches to more than one seam; confirm/narrow at activation (see LOCATED below). It may
+  be cleaner to introduce a small dedicated recorder (e.g. src/charon/usage_meter.py) that both
+  proxy.py and balance.py fold into, rather than growing two aggregates in place.
+accept: PYTHONPATH=src python3 -m pytest tests/test_meter_model_provider.py -v -q
+  # A test asserting per-(model, provider) INPUT tokens, OUTPUT tokens, AND cost are each
+  # recorded and readable — not merely the per-provider spend + the single aggregate counter.
+prompt: /home/stack/charon-private/prompts/meter-model-provider.md
+scope: >-
+  THE SENSOR that closes the cost-aware routing loop (sense -> decide -> act). Record per-(model x
+  provider) token counts (input + output) AND cost, ON TOP OF today's per-provider spend + the one
+  aggregate token counter. This is a sensor, NOT a standalone dashboard: it exists to FEED the
+  routing actuators, and its acceptance is that those actuators can read a real per-(model,provider)
+  cost/token signal from it. It MUST explicitly feed three consumers:
+    (a) COST-RANK-AUTO  — derive a REAL `cost_rank` per (model, provider) from metered cost instead
+        of the hand-set values (the root cause of BUG 1: all gpt-5.5 entries tied at cost_rank:1000).
+    (b) FREE-TIER-QUOTA-SPILL — supply per-provider spend / quota-remaining as a live BALANCE signal
+        for demotion + auto-spill when a free/cheap tier hits its wall.
+    (c) capability / grades table (pools redesign Phase-2; see POOLS-SIMPLIFICATION) — cost x real
+        quality per (model, provider) for model->provider PLACEMENT ("send cheap-running models to
+        the capped cheap provider; route the models that are expensive there elsewhere").
+  Cross-ref OBS-CAPTURE / OBS-UI to SURFACE the metered per-(model,provider) rollup read-only in the
+  gateway console (anti-dilution: expose it, do NOT put it on the per-request hot path, and do NOT
+  let it become a dashboard-only feature disconnected from the actuators above).
+
+  LOCATED (product usage/cost recording path, grep 2026-07-08 in src/charon):
+    - Aggregate token counter (in/out + cost): proxy.py `GatewayProxy._usage` (single `Usage`,
+      folded in `GatewayProxy.record()` ~:419-430). ONE aggregate + per-session buckets
+      (`_session_usage`); NO per-model or per-(model,provider) breakdown.
+    - Per-provider spend: balance.py `record_spend(provider, usd)` / `_fixed_balances[provider]`
+      (~:211). Per-provider only; NO per-model grain.
+    - Global monthly spend cap / spend.json: spend_limits.py `SpendLimiter` (single `_spent_usd`).
+    - Cost source per attempt: proxy.py `_gateway_usage()` (~:115) + `classify()` (~:326-351),
+      which sets `cost_source` = provider|computed|unpriced. The meter records the SAME cost the
+      cost-attribution path already computes (do not re-derive it).
+  So the new (model x provider) grain extends the proxy.py aggregate (tokens) and the balance.py
+  per-provider spend (cost) — hence PROVISIONAL owns. quota.py (rate/quota-remaining) is owned by
+  FREE-TIER-QUOTA-SPILL; this ticket FEEDS it, it does not own it.
+
+## Dependencies & sequence
+depends_on: none — it is the SENSOR (an upstream producer, not a consumer of any board ticket).
+rebase-after: the failover / cost cluster (PROXY-FAILOVER-FIX, DRAIN-ROUTING, SR-5b, COST-RANK-AUTO).
+  NOT a logical block — a SHARED-FILE sequencing constraint: this ticket edits proxy.py, which sits
+  on the single-owner chain (SR-2 -> ... -> SR-5b) and is also touched by that cluster. Land it
+  AFTER the cluster and rebase onto the final proxy.py, never as a concurrent second writer.
+  It also reads SR-5b's now-real cost_usd (provider-reported OR computed-from-pricing); metering a
+  cost_usd that is still 0 would defeat the sensor, so sequence AFTER SR-5b for accurate cost even
+  though there is no code-ownership dependency.
+consumers (downstream — they depend on THIS, annotated on their own tickets):
+  - COST-RANK-AUTO         (consumes: metered cost -> real cost_rank per (model, provider))
+  - FREE-TIER-QUOTA-SPILL  (consumes: per-provider spend / quota-remaining balance signal)
+  - capability/grades table / pools Phase-2 (consumes: cost x quality per (model, provider))
+wave: after the failover/cost cluster; BEFORE COST-RANK-AUTO's auto-derive step and
+  FREE-TIER-QUOTA-SPILL's spill logic can source a real signal (they degrade to hand-set /
+  provider-echoed values without it, so they are not hard-blocked, but their real value is gated
+  on this sensor).
+concurrency: shares proxy.py with the SR / failover chain and balance.py with the drain/balance
+  work — NOT parallel-safe with those; disjoint from the bridge/bench tickets.
+note: PARKED — filed 2026-07-08 from the per-(model,provider) meter approval. Operator constraint:
+  this is a SENSOR wired to the actuators, explicitly NOT a standalone usage dashboard. Un-park +
+  author the prompt (with its own "## Dependencies & sequence" section) at activation.

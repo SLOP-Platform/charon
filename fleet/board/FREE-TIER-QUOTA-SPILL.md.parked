@@ -1,0 +1,34 @@
+tier: strong
+work_class: money-path
+branch: feat/free-tier-quota-spill
+depends_on: COST-RANK-AUTO
+consumes: METER-MODEL-PROVIDER — the quota/spend-remaining BALANCE signal this ticket tracks per
+  provider SOURCES from METER-MODEL-PROVIDER's per-provider metered spend (paid $) alongside quota.py's
+  rate/quota-remaining (free). The meter is the sensor; this ticket is the demotion/spill actuator that
+  reads it. (No owns overlap — annotation only.)
+real-dep: COST-RANK-AUTO — its cost_class enum (free-daily / expiring / prepaid / metered) is the
+  classification axis this ticket tracks a remaining-balance against; spill policy extends that enum's
+  ordering. Build the quota tracker on top of cost_class, not a parallel scheme.
+owns: src/charon/quota.py, src/charon/gateway.py, tests/test_quota_spill.py
+accept: PYTHONPATH=src python3 -m pytest tests/test_quota_spill.py -v -q
+prompt: /home/stack/charon-private/prompts/free-tier-quota-spill.md
+scope: The mechanism behind [use-free-tiers-to-their-limits] + the Cline→Featherless layering:
+  track each free/cheap-tier backend's REMAINING quota (daily/weekly/monthly and per-minute/day rate
+  caps, e.g. cerebras 5 req/min, groq 14.4k req/day) like a BALANCE — SOURCING the spend/quota-remaining
+  signal from METER-MODEL-PROVIDER (per-provider metered spend) + quota.py (rate/quota) — consume free
+  before paid, and
+  AUTO-SPILL to the next capable backend when a free tier hits its wall instead of erroring. Generalize
+  the P3 balance-monitoring work from "balance (paid $)" to "resource availability" = balance (paid) +
+  quota/rate-remaining (free), so the gateway sort/failover treats an exhausted free tier as unavailable
+  (skip + spill) rather than a hard error. Capability-matched only: a free rank-0 member must NOT front a
+  closed premium pool it cannot serve (free rank-0 members silently hijack the happy path if mis-placed).
+  Single-user ToS ONLY (free tiers are personal-account; legitimate for a solo gateway, revisit if it ever
+  fronts anyone but the operator) — see [charon-free-tier-routing], [charon-pools-redesign]. Relates the
+  pools-redesign capability engine (#14) and the P3 resource-availability work. Design/spec first, then
+  implement. Suggested agent: strong tier for spec; frontier for the gateway-sort/failover integration
+  (the spill's interaction with cost_class ordering + cooldown is design-sensitive).
+  D&S: depends_on COST-RANK-AUTO (cost_class enum must exist first); sequence AFTER the failover/cost
+  cluster (PROXY-FAILOVER-FIX, DRAIN-ROUTING, COST-RANK-AUTO) since it shares gateway.py; concurrency —
+  shares gateway.py with that cluster, so NOT parallel-safe with them; disjoint from the bridge/bench work.
+note: PARKED — filed from the institutionalization audit (no prior ticket for free-tier quota tracking/spill).
+  Staged so no droid claims ahead of manager gating; un-park + author the prompt at activation.
