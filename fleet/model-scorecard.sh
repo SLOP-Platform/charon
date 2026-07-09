@@ -21,6 +21,14 @@ VALID_SOURCE="live bench bench2"
 VALID_CLASS="money-path routing ci-infra refactor bugfix tests greenfield-feature docs frontend"
 VALID_VERDICT="MERGE FIXES BLOCK"
 VALID_GATE="pass fail -"
+# PROVISIONAL-vs-ACTIVE (#20 BENCH-PROVISIONAL-SCORING — pivot plan §2/§8 Q4).
+# A row's `stage` (16th trailing column) is the TRUST axis, orthogonal to the
+# `source` provenance axis: `active` rows feed live grades/tier; `provisional`
+# rows (a not-yet-promoted unit's data) are COLLECTED but excluded from every
+# grade until benchmark/promote.py flips the unit. A row with no 16th column
+# (every legacy 13/15-col row) defaults to `active`, so nothing historical
+# shifts. Follows the tokens_in/out trailing-column pattern exactly.
+VALID_STAGE="provisional active"
 
 die() { echo "error: $*" >&2; exit 1; }
 in_set() { local x="$1"; shift; for e in "$@"; do [ "$x" = "$e" ] && return 0; done; return 1; }
@@ -66,10 +74,19 @@ cmd_append() {
   local tokens_out="${CHARON_SCORECARD_TOKENS_OUT:--}"
   case "$tokens_in" in -) ;; ''|*[!0-9]*) die "tokens_in must be a non-negative integer or -";; esac
   case "$tokens_out" in -) ;; ''|*[!0-9]*) die "tokens_out must be a non-negative integer or -";; esac
+  # PROVISIONAL-vs-ACTIVE (#20): `stage` rides along in CHARON_SCORECARD_STAGE
+  # (same optional-env-var channel as the token vars above — `note` is variadic
+  # so there's no positional slot left), appended as the NEW 16th trailing
+  # column. Defaults to `active` (never guessed provisional) so any caller that
+  # doesn't set it — every existing bench/live path today — keeps writing
+  # active rows exactly as before. bench.sh looks the unit's current stage up
+  # in benchmark/units.tsv and sets this before calling `append`.
+  local stage="${CHARON_SCORECARD_STAGE:-active}"
+  in_set "$stage" $VALID_STAGE || die "stage must be one of: $VALID_STAGE"
   [ -f "$TSV" ] || die "ledger not found: $TSV"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$date" "$source" "$ref" "$wclass" "$tier" "$model" "$verdict" "$gate" "$score" \
-    "$time_s" "$cost_usd" "$corrections" "$note" "$tokens_in" "$tokens_out" >> "$TSV"
+    "$time_s" "$cost_usd" "$corrections" "$note" "$tokens_in" "$tokens_out" "$stage" >> "$TSV"
   echo "appended: $model / $wclass / $verdict (rows now $(row_count))"
 }
 
@@ -77,6 +94,13 @@ cmd_render() {
   [ -f "$TSV" ] || die "ledger not found: $TSV"
   awk -F'\t' '
     !/^#/ && NF>0 {
+      # PROVISIONAL-vs-ACTIVE (#20): stage is the 16th column; a row with no
+      # 16th field (legacy 13/15-col) defaults to active. Provisional rows are
+      # COLLECTED but NOT COUNTED into any aggregate below — they are tallied
+      # separately and surfaced in a clearly-labeled "PROVISIONAL (not counted)"
+      # block at the end so they are visible but can never move a live number.
+      st=(NF>=16 && $16!="" ? $16 : "active")
+      if(st=="provisional"){ prov[$6 SUBSEP $4]++; provtot++; next }
       m=$6; wc=$4; v=$7; src=$2; tier=$5; sc=$9; ts=$10; cu=$11; co=$12
       key=m SUBSEP wc
       n[key]++
@@ -122,6 +146,13 @@ cmd_render() {
           mo=(con[m]?sprintf("%11.1f",cosum[m]/con[m]):sprintf("%11s","-"))
           printf "%-16s %s %s %s\n",m,mt,mc,mo
         }
+      }
+      if(provtot>0){
+        printf "\nPROVISIONAL (not counted — unpromoted units, #20)\n"
+        printf "%-16s %-18s %3s\n","model","work_class","n"
+        printf "%-16s %-18s %3s\n","-----","----------","---"
+        for(k in prov){ split(k,a,SUBSEP); printf "%-16s %-18s %3d\n",a[1],a[2],prov[k] }
+        printf "(promote a unit with: benchmark/promote.py --unit <id>)\n"
       }
     }' "$TSV"
 }

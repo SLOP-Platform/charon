@@ -1,0 +1,24 @@
+# units.tsv — TEST-UNIT REGISTRY (build-rig only). BENCH-PROVISIONAL-SCORING (#20).
+# One row per benchmark test unit = a section (S0-S6) OR a replayed red (#25).
+# A unit is `provisional` while it COLLECTS data but has not yet proven it
+# discriminates, and `active` once benchmark/promote.py's promotion gate flips
+# it (score_spread >= SPREAD_MIN AND distinct_models >= K). bench.sh reads a
+# unit's current stage from here and tags every scorecard row it appends with
+# it (CHARON_SCORECARD_STAGE); capability/grades.py + tier_chart.py +
+# model-scorecard.sh render then EXCLUDE provisional rows from live grades.
+# TAB-separated. Columns: unit_id  kind(section|red)  stage(provisional|active)  promoted_on(YYYY-MM-DD or -)
+#
+# S0-S6 are the pre-existing synthetic sections, grandfathered `active` (they
+# predate the gate — legacy defaults to active, and they only ever emit
+# source=bench rows which the real-outcomes pivot already excludes from grades
+# regardless of stage; their stage matters only if a future run re-tags them).
+# NEW units (reds-replay per #25, harder sections per #17) MUST be added here
+# as `provisional` and earn `active` through promote.py.
+unit_id	kind	stage	promoted_on
+S0	section	active	-
+S1	section	active	-
+S2	section	active	-
+S3	section	active	-
+S4	section	active	-
+S5	section	active	-
+S6	section	active	-

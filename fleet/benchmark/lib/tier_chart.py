@@ -142,9 +142,24 @@ def load_rows(tsv_path=TSV):
     return rows
 
 
+def _stage(cols):
+    """PROVISIONAL-vs-ACTIVE (#20): a row's stage is its 16th column; any row
+    with < 16 columns (every legacy 13/15-col row) is `active`. An empty cell
+    also reads active — only an explicit `provisional` value excludes a row."""
+    if len(cols) >= 16 and cols[15].strip():
+        return cols[15].strip()
+    return "active"
+
+
 def bench_rows_for(rows, model):
     out = {}
     for cols in rows:
+        # PROVISIONAL-vs-ACTIVE (#20): a provisional unit's rows are COLLECTED
+        # but excluded from the (smoke) composite/tier — same trust gate the
+        # capability grade uses in capability/grades.py, applied here too so a
+        # provisional section can never move even the demoted smoke chart.
+        if _stage(cols) != "active":
+            continue
         _date, source, ref, wclass, _tier, m, verdict, gate, score, time_s, cost, corr, note = cols[:13]
         if source != "bench" or m != model:
             continue
@@ -254,6 +269,8 @@ def bench2_rows_for(rows, model, season):
     out = {}
     for cols in rows:
         if len(cols) < 13:
+            continue
+        if _stage(cols) != "active":  # PROVISIONAL-vs-ACTIVE (#20): exclude provisional (see bench_rows_for)
             continue
         date, source = cols[0], cols[1]
         _ref, wclass, _tier, m, verdict, gate, score, time_s, cost, corr, note = cols[2:13]

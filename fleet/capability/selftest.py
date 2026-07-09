@@ -36,6 +36,10 @@ from assign import assign  # noqa: E402
 from availability import StaticAvailability  # noqa: E402
 from grades import MIN_N, DEFAULT_TSV, ScorecardGradesProvider, _wilson_bound  # noqa: E402
 
+# PROVISIONAL-vs-ACTIVE (#20): the promotion gate + a temp end-to-end fixture.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "benchmark"))
+import promote as _promote  # noqa: E402
+
 FIXTURE_TSV = Path(__file__).resolve().parent / "testdata" / "scorecard-fixture.tsv"
 
 FAILURES: list[str] = []
@@ -229,6 +233,8 @@ def main() -> int:
         f"leaked-would-be={leaked_score:.4f}",
     )
 
+    provisional_scoring_checks(grades, no_avail)
+
     print()
     print("=" * 78)
     print("SHOULD-FIX #2 coverage: tier-exclusion path")
@@ -330,6 +336,88 @@ def main() -> int:
           "confidence-aware scoring fixes the small-N inversion, and "
           "availability demonstrably changes the pick.")
     return 0
+
+
+def provisional_scoring_checks(grades: ScorecardGradesProvider, no_avail) -> None:
+    """BENCH-PROVISIONAL-SCORING (#20) acceptance — plan §2. Proves a
+    provisional unit's rows are COLLECTED in the ledger but change NO active
+    grade / assign pick, that legacy rows default to active, and that the v1
+    promotion gate promotes ONLY a discriminating unit (a saturated one
+    provably cannot)."""
+    import tempfile
+
+    print()
+    print("=" * 78)
+    print("BENCH-PROVISIONAL-SCORING (#20): provisional rows collected, NOT counted")
+    print("=" * 78)
+    # The fixture carries a source=live, stage=provisional MERGE for
+    # glm-5.2/routing. It PASSES the source allow-list (it's real-outcome), so
+    # ONLY the stage gate can keep it out. If the stage filter were reverted the
+    # grade would be n=4 (merge=3, block=1); it must stay n=3 (merge=2, block=1).
+    g = grades.grade("glm-5.2", "routing")
+    check(
+        "a stage=provisional live row does NOT change the active grade "
+        "(glm-5.2/routing stays n=3, not 4)",
+        g.n == 3 and g.merge == 2 and g.block == 1,
+        f"n={g.n} merge={g.merge} block={g.block} (would be n=4 merge=3 if the "
+        f"provisional row leaked past the stage gate)",
+    )
+    # ...but it IS present in the ledger (collected): include_provisional sees it.
+    active_only = grades._rows_for("glm-5.2", "routing")
+    with_prov = grades._rows_for("glm-5.2", "routing", include_provisional=True)
+    check(
+        "the provisional row is COLLECTED (include_provisional=True sees n=4) but "
+        "EXCLUDED by default (n=3) — collected, not counted",
+        len(active_only) == 3 and len(with_prov) == 4,
+        f"active_only={len(active_only)} include_provisional={len(with_prov)}",
+    )
+    # ...and it changes no assign() pick: routing still picks glm-5.2 on its
+    # 3 ACTIVE rows, and legacy 13-col live rows are what feed it (default active).
+    r = assign("routing", grades, no_avail, candidate_models=["glm-5.2", "kimi-k2.6"])
+    g_pick = grades.grade(r.picked, "routing")
+    check(
+        "assign() pick is unchanged by the provisional row (routing -> glm-5.2, "
+        "graded on n=3 active legacy rows)",
+        r.picked == "glm-5.2" and g_pick.n == 3,
+        f"picked={r.picked} n={g_pick.n}",
+    )
+
+    print()
+    print("=" * 78)
+    print("BENCH-PROVISIONAL-SCORING (#20): promotion gate v1 (promote.py)")
+    print("=" * 78)
+    sat, sat_reason = _promote.evaluate_gate({"a": 100.0, "b": 100.0, "c": 100.0})
+    check("a SATURATED unit (all models ~100) provably CANNOT promote",
+          sat is False, sat_reason)
+    disc, disc_reason = _promote.evaluate_gate({"a": 100.0, "b": 40.0})
+    check("a DISCRIMINATING unit (spread 60 >= SPREAD_MIN, 2 models) promotes",
+          disc is True, disc_reason)
+    lone, lone_reason = _promote.evaluate_gate({"a": 100.0})
+    check("a unit only ONE model has run CANNOT promote (nothing to differentiate)",
+          lone is False, lone_reason)
+
+    # End-to-end: the gate actually flips units.tsv on --apply, and only for the
+    # discriminating unit — never the saturated one.
+    with tempfile.TemporaryDirectory() as td:
+        units_p = Path(td) / "units.tsv"
+        tsv_p = Path(td) / "sc.tsv"
+        units_p.write_text(
+            "# test units\nunit_id\tkind\tstage\tpromoted_on\n"
+            "PDISC\tsection\tprovisional\t-\nPSAT\tsection\tprovisional\t-\n")
+        tsv_p.write_text(
+            "2026-01-01\tbench\tPDISC\trouting\t1\tmodelA\tMERGE\tpass\t100\t-\t-\t0\tn\n"
+            "2026-01-01\tbench\tPDISC\trouting\t1\tmodelB\tBLOCK\tfail\t40\t-\t-\t0\tn\n"
+            "2026-01-01\tbench\tPSAT\trouting\t1\tmodelA\tMERGE\tpass\t100\t-\t-\t0\tn\n"
+            "2026-01-01\tbench\tPSAT\trouting\t1\tmodelB\tMERGE\tpass\t100\t-\t-\t0\tn\n")
+        rd = _promote.promote("PDISC", tsv_path=tsv_p, units_path=units_p, apply=True)
+        rs = _promote.promote("PSAT", tsv_path=tsv_p, units_path=units_p, apply=True)
+        after = {u["unit_id"]: u["stage"] for u in _promote.load_units(units_p)}
+        check("promote(--apply) flips the DISCRIMINATING unit provisional -> active",
+              rd["applied"] and after["PDISC"] == "active",
+              f"applied={rd['applied']} stage={after['PDISC']}")
+        check("promote(--apply) leaves the SATURATED unit provisional (gate refused)",
+              (not rs["applied"]) and after["PSAT"] == "provisional",
+              f"applied={rs['applied']} stage={after['PSAT']}")
 
 
 def smoke_check_live_scorecard() -> None:
