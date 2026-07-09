@@ -99,6 +99,8 @@ request(primary_model, work_class=None):
 ```
 Phase 1 ships the `else` branch only. The `if capability_layer_enabled` branch is dead code, feature-flagged off, until Phase 2's gate passes — this makes the "capability layer is optional and must earn its way in" decision structural, not just documented intent.
 
+> **Cost-routing pointer (free/cheap-first → spill):** the free-first / cheap-first cost ordering above now explicitly includes the **Cline-Pass (cheap, discounted, *exhaustible* quota) → Featherless (flat-rate *unlimited* backbone) layering** — route to the cheap-metered leg first, spill to the unlimited leg on quota/throttle (429), never treat a discounted-but-capped meter as unlimited. See `scratch/best-stack-recommendation.md` for the verified rationale (Featherless now carries the same fresh coding models + ~45K breadth, so it dominates Cline Pass on models; Cline Pass's only edge is price-while-quota-lasts). This is the routing-policy the pools cost logic should encode.
+
 ### The work-class crux — unchanged from v1, now explicitly Phase-2-only
 The three options (client-declared header, Arch-Router local classifier, infer-from-primary) and the recommendation (declared-overrides + Arch-Router fallback + GENERALIST default) are unchanged from v1 — see `POOLS-REDESIGN-ADR.md` §"The work-class crux" for full text. The only change in v2: this entire subsystem is **Phase 2 scope**, evaluated against the decision-differentiation gate before any of it ships live. It is not built or wired in Phase 1.
 
