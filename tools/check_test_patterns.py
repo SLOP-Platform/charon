@@ -9,12 +9,23 @@ Scans test files and enforces:
   (d) No test function exceeds 50 lines (WARNING)
   (e) Self-mirroring-mock: an inline upstream-mock body shaped like a canonical
       OpenAI response, whose assertions only read INSIDE `choices`/`usage` and
-      never check the top-level contract itself (WARNING) -- the pattern
-      behind the cline-envelope blind spot (see
+      never check the top-level contract itself (WARNING, gates under --strict)
+      -- the pattern behind the cline-envelope blind spot (see
       tests/test_provider_response_contract.py, the fixture to use instead).
 
 Stdlib only. Exit 0 on clean, 1 on error violations.
-Warnings are printed but do not affect exit code unless --strict.
+Warnings (including rule (e)) are printed but do not affect exit code unless
+--strict. NOTE: rule (e) is currently WARNING rather than a hard ERROR, and
+this tool is not yet invoked by `python3 -m charon.cli gate`
+(src/charon/gate_runner.py, outside this file's ownership) -- as of this
+writing, running `--strict` against the live `tests/` tree fails on
+pre-existing debt in files this tool does not own (docstring/parametrize-ratio
+gaps repo-wide, plus 4 files that predate rule (e):
+test_agent_launch_routing.py, test_fallback_provider.py, test_gateway.py,
+test_proxy_server.py), so promoting rule (e) to an unconditional ERROR here
+would break the gate for reasons unrelated to a change under test. Wiring
+`--strict` (or rule (e) alone) into the gate is real follow-up work, tracked
+separately from this file.
 """
 
 from __future__ import annotations

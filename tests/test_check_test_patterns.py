@@ -253,6 +253,40 @@ class TestSelfMirroringMock:
         mirror_warnings = [w for w in warnings if "self-mirroring mock" in w]
         assert mirror_warnings == []
 
+    def test_strict_mode_fails_on_self_mirroring_mock(self, tmp_path: Path) -> None:
+        """The self-mirroring rule GATES: a planted mock fails a `--strict`
+        run (isolated to this fixture dir, independent of any other file's
+        warnings) -- the "prove it" half of the rule actually enforcing
+        something, not just detecting it."""
+        (tmp_path / "test_proxy_mirror.py").write_text(
+            self._MOCK_HANDLER
+            + "def test_forwards_content():\n"
+            + '    """Drives a request through the mock proxy."""\n'
+            + "    body = {'choices': [{'message': {'content': 'hi'}}]}\n"
+            + "    assert body['choices'][0]['message']['content'] == 'hi'\n"
+        )
+        exit_code = M.main(["check_test_patterns.py", str(tmp_path), "--strict"])
+        assert exit_code != 0, (
+            "a planted self-mirroring mock did not fail a --strict gate run"
+        )
+
+    def test_strict_mode_passes_clean_fixture(self, tmp_path: Path) -> None:
+        """A fixture with no self-mirroring pattern (and no other rule (a-d)
+        violations) passes `--strict` cleanly -- the other half of "prove
+        it": the rule doesn't fire on legitimate top-level-asserting tests."""
+        (tmp_path / "test_proxy_contract.py").write_text(
+            "import pytest\n\n"
+            + self._MOCK_HANDLER
+            + "@pytest.mark.parametrize('expected', ['hi'])\n"
+            + "def test_forwards_content(expected):\n"
+            + '    """Drives a request through the mock proxy."""\n'
+            + "    body = {'choices': [{'message': {'content': 'hi'}}]}\n"
+            + "    assert 'choices' in body\n"
+            + "    assert body['choices'][0]['message']['content'] == expected\n"
+        )
+        exit_code = M.main(["check_test_patterns.py", str(tmp_path), "--strict"])
+        assert exit_code == 0, "a clean fixture unexpectedly failed --strict"
+
     def test_mock_without_choices_key_not_flagged(self, tmp_path: Path) -> None:
         """An inline mock handler that doesn't hand-author a `choices` shape
         (e.g. a non-2xx error stub) isn't the self-mirroring pattern."""
