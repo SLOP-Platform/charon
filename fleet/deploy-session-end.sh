@@ -44,16 +44,20 @@ session_end_deploy(){
   }
 
   local latest_cmd running_cmd ci_cmd latest_tag running_image running_tag ci_out rc
+  # Every external lookup is wrapped in `timeout` so an unreachable/auth-prompting 4-LOM (or a
+  # slow gh call) can NEVER hang the session close — the whole point of this harness is to be
+  # advisory. The default ssh additionally fails fast (BatchMode, no password prompt).
+  local lookup_timeout="${SESSION_END_LOOKUP_TIMEOUT:-15}"
   latest_cmd="${SESSION_END_LATEST_TAG_CMD:-git -C '$product_repo' tag --list 'v*' --sort=-v:refname | head -1}"
-  running_cmd="${SESSION_END_RUNNING_TAG_CMD:-ssh -i '$ssh_key' '$host' \"docker inspect '$container' --format '{{.Config.Image}}'\"}"
+  running_cmd="${SESSION_END_RUNNING_TAG_CMD:-ssh -o BatchMode=yes -o ConnectTimeout=5 -i '$ssh_key' '$host' \"docker inspect '$container' --format '{{.Config.Image}}'\"}"
 
-  latest_tag="$(bash -c "$latest_cmd" 2>/dev/null | head -1)" || latest_tag=""
+  latest_tag="$(timeout "$lookup_timeout" bash -c "$latest_cmd" 2>/dev/null | head -1)" || latest_tag=""
   if [ -z "$latest_tag" ]; then
     _sed_warn "could not resolve latest released tag; session close continues"
     return 0
   fi
 
-  running_image="$(bash -c "$running_cmd" 2>/dev/null | head -1)" || running_image=""
+  running_image="$(timeout "$lookup_timeout" bash -c "$running_cmd" 2>/dev/null | head -1)" || running_image=""
   running_tag="${running_image##*:}"
   if [ -z "$running_image" ] || [ -z "$running_tag" ] || [ "$running_tag" = "$running_image" ]; then
     _sed_warn "could not resolve 4-LOM running tag; session close continues"
@@ -66,7 +70,7 @@ session_end_deploy(){
   fi
 
   ci_cmd="${SESSION_END_CI_GREEN_CMD:-gh run list --repo SLOP-Platform/charon --workflow release.yml --branch '$latest_tag'}"
-  ci_out="$(bash -c "$ci_cmd" 2>/dev/null)"; rc=$?
+  ci_out="$(timeout "$lookup_timeout" bash -c "$ci_cmd" 2>/dev/null)"; rc=$?
   if [ "$rc" -ne 0 ] || ! printf '%s\n' "$ci_out" | grep -qi 'success' || ! printf '%s\n' "$ci_out" | grep -qi 'completed'; then
     _sed_warn "release CI for $latest_tag is not green/known; skipping deploy"
     _sed_unverified "$latest_tag"

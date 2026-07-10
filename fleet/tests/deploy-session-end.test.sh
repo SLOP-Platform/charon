@@ -109,6 +109,29 @@ grep -q 'commit' "$d/git.log" && ok "t5 handoff commit still happened" || bad "t
 check "t5 deploy attempted latest tag" "$(tr -d '\n' < "$d/deploy.log")" "v1.2.4"
 rm -rf "$d"
 
+echo "== t6 a hanging running-tag lookup is killed by timeout; close never blocks =="
+d="$(fixture)"
+probe="$d/probe"; : > "$d/deploy.log"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$1" >> "$DEPLOY_LOG"\nexit 0\n' > "$d/deploy.sh"; chmod +x "$d/deploy.sh"
+rc=0
+out="$( FLEET="$d" \
+        SESSION_END_REDS_TSV="$d/reds.tsv" \
+        SESSION_END_LOOKUP_TIMEOUT=1 \
+        SESSION_END_LATEST_TAG_CMD="printf '%s\\n' 'v1.2.4'" \
+        SESSION_END_RUNNING_TAG_CMD="printf started > '$probe'; sleep 5; printf finished >> '$probe'; printf 'ghcr.io/slop-platform/charon:v1.2.3\\n'" \
+        SESSION_END_CI_GREEN_CMD="printf '%s\\n' 'completed success'" \
+        SESSION_END_DEPLOY_SH="$d/deploy.sh" \
+        DEPLOY_LOG="$d/deploy.log" \
+        bash -c 'source "$1"; session_end_deploy' _ "$d/deploy-session-end.sh" 2>&1 )" || rc=$?
+check "t6 returns 0 despite a hanging lookup" "$rc" "0"
+[ ! -s "$d/deploy.log" ] && ok "t6 no deploy (running tag unresolved)" || bad "t6 no deploy (running tag unresolved)"
+# fail-on-revert: without the timeout wrapper the lookup runs to completion (writes 'finished'
+# and returns the image), CI passes, and the deploy fires — flipping both asserts above/below.
+{ grep -q started "$probe" && ! grep -q finished "$probe"; } 2>/dev/null \
+  && ok "t6 lookup killed mid-flight (started, never finished)" || bad "t6 lookup killed mid-flight"
+case "$out" in *"could not resolve 4-LOM running tag"*) ok "t6 logs unresolved running tag";; *) bad "t6 logs unresolved running tag";; esac
+rm -rf "$d"
+
 echo
 echo "--- $PASS passed, $FAIL failed ---"
 [ "$FAIL" -eq 0 ] || exit 1
