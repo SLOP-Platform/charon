@@ -1,0 +1,2162 @@
+===== [charon-run] attempt: charon/glm-5.2 @ wt-decompose =====
+[0m
+> build · glm-5.2
+[0m
+I'll start by registering on the board and examining the branch under review.
+[0m⚙ [0msession-bridge_register {"session_id":"mace-windu","name":"Adversarial review of gateway-routing-decompose","repo":"charon","ticket":"gateway-routing-decompose","status":"in-progress","model":"glm-5.2"}
+[0m
+[0m$ [0mgit log --oneline master..HEAD 2>&1 | head -50
+f05b49c docs: REVIEW-PACKET for GATEWAY-ROUTING-DECOMPOSE (Wave 1)
+4e0c89a GATEWAY-ROUTING-DECOMPOSE (Wave 1): extract routing policy into routing_policy/ package
+[0m
+[0m$ [0mgit diff --stat master..HEAD 2>&1 | head -60
+REVIEW-PACKET.md                       | 158 ++++++++++++++++++++++++++++
+ src/charon/gateway.py                  | 136 ++----------------------
+ src/charon/pools.py                    |  18 +---
+ src/charon/routing_policy/__init__.py  | 183 +++++++++++++++++++++++++++++++++
+ src/charon/routing_policy/base.py      |  61 +++++++++++
+ src/charon/routing_policy/cost_rank.py |  23 +++++
+ src/charon/routing_policy/drain.py     |  19 ++++
+ src/charon/routing_policy/matrix.py    |  72 +++++++++++++
+ src/charon/routing_policy/pools.py     |  19 ++++
+ src/charon/routing_policy/spill.py     |  19 ++++
+ tests/test_routing_policy.py           |  99 ++++++++++++++++++
+ 11 files changed, 666 insertions(+), 141 deletions(-)
+[0m
+Now let me see the full diff and the new files in parallel.
+[0m$ [0mgit diff master..HEAD -- src/charon/gateway.py 2>&1
+diff --git a/src/charon/gateway.py b/src/charon/gateway.py
+index a600547..b7e31c0 100644
+--- a/src/charon/gateway.py
++++ b/src/charon/gateway.py
+@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
+ from pathlib import Path
+ from typing import Any
+ 
+-from . import providers
++from . import providers, routing_policy
+ from .api import _invocation_name
+ from .cache import SemanticCache
+ from .consensus import ConsensusRouter
+@@ -34,7 +34,6 @@ from .guardrails import Guardrails
+ from .netutil import is_loopback
+ from .observability import Observability
+ from .policy_router import PolicyRouter
+-from .pools import derived_cost_rank
+ from .proxy_server import GatewayProxyServer, UpstreamRoute
+ from .quality_scorer import QualityScorer
+ from .request_inspector import RequestInspector
+@@ -44,6 +43,11 @@ from .speculative_execution import SpeculativeExecutor
+ from .spend_limits import SpendLimiter
+ from .virtual_keys import VirtualKeyManager
+ 
++# ── backward-compatible re-exports (tests import these from gateway) ──────────
++_build_routes_and_pools = routing_policy.build_routes_and_pools
++_route_from_spec = routing_policy.route_from_spec
++_tier_pools = routing_policy.tier_pools
++
+ _DEFAULT_HOST = "127.0.0.1"
+ _DEFAULT_PORT = 8080
+ _TOKEN_ENV = "CHARON_GATEWAY_TOKEN"
+@@ -89,107 +93,6 @@ class GatewayConfig:
+     policy_router: PolicyRouter | None = None
+ 
+ 
+-def _route_from_spec(spec: dict, providers_cfg: dict) -> UpstreamRoute | None:
+-    """One registry entry → UpstreamRoute. A ``provider`` reference (P3) resolves
+-    base_url/key_env/quirks from a preset (+ ``[providers.<name>]`` overrides); a
+-    direct ``upstream_base`` entry (P1/P2) still works. Returns None when neither
+-    yields a base (not HTTP-serveable)."""
+-    prov = spec.get("provider")
+-    if prov:
+-        preset = providers.resolve(prov, providers_cfg.get(prov))
+-        base: str | None = preset.base_url
+-        key_env = spec.get("key_env") or preset.key_env
+-        strip_v1: bool | None = preset.strip_v1
+-        wire = str(spec.get("wire") or preset.wire)  # per-model override wins
+-        adapter = str(spec.get("adapter") or preset.adapter or "") or None
+-    else:
+-        base = spec.get("upstream_base")
+-        if not base:
+-            return None
+-        key_env = spec.get("key_env")
+-        strip_v1 = spec.get("strip_v1")  # explicit only; else server default
+-        wire = str(spec.get("wire") or providers.WIRE_OPENAI)
+-        adapter = str(spec.get("adapter") or "") or None
+-    return UpstreamRoute(
+-        upstream_base=str(base),
+-        api_key=os.environ.get(key_env) if key_env else None,
+-        upstream_model=spec.get("upstream_model"),
+-        provider=prov,
+-        strip_v1=strip_v1,
+-        wire=wire,
+-        adapter=adapter,
+-    )
+-
+-
+-def _build_routes_and_pools(
+-    registry: dict, pool_map: dict, providers_cfg: dict | None = None,
+-) -> tuple[dict[str, UpstreamRoute], dict[str, list[UpstreamRoute]], list[str]]:
+-    """Compile a model registry + ``pool_map`` (virtual id → [model id]) into
+-    single routes (concrete models) and failover chains (virtual ids). Each chain
+-    is ordered **free-first then cheapest-first** from the registry's cost metadata
+-    (stable → the listed order breaks ties), matching `pools.load_pools` (D4).
+-
+-    Effective ``cost_rank`` (SR-6) is **derived** from per-token pricing when
+-    present: ``blended = (3*cost_input + cost_output) / 4`` (a 3:1 input:output
+-    blend approximating typical chat-completion token mix). An explicit
+-    ``cost_rank`` override still wins (operator escape hatch). Genuinely-free
+-    models (``free:true``) sort first regardless. Models with ``cost_class:
+-    "premium"`` are GATED OUT of pool chains — they're usable only when explicitly
+-    requested or in a premium role, never the cheap-first default.
+-
+-    Models with ``"enabled": false`` are excluded from routes and pools."""
+-    providers_cfg = providers_cfg or {}
+-    routes: dict[str, UpstreamRoute] = {}
+-    for mid, spec in registry.items():
+-        if isinstance(spec, dict):
+-            if spec.get("enabled") is False:
+-                continue
+-            r = _route_from_spec(spec, providers_cfg)
+-            if r is not None:
+-                routes[mid] = r
+-
+-    def _rank(mid: str) -> tuple[bool, int]:
+-        spec = registry.get(mid, {})
+-        return (not bool(spec.get("free", False)), derived_cost_rank(spec))
+-
+-    def _is_premium(mid: str) -> bool:
+-        return registry.get(mid, {}).get("cost_class") == "premium"
+-
+-    pools: dict[str, list[UpstreamRoute]] = {}
+-    for vid, members in pool_map.items():
+-        if not isinstance(members, list):
+-            continue
+-        # SR-6: premium models are excluded from default-primary pool chains.
+-        # They remain in `routes` (explicitly requestable) but never appear in a
+-        # cheap-first failover chain unless the operator opts in by listing the
+-        # premium model's own id as the pool vid (a premium-only role).
+-        eligible = [m for m in members if m in routes and not _is_premium(m)]
+-        # If every member is premium, keep them — an explicit premium-only pool
+-        # is the operator's opt-in to a premium role (don't silently empty it).
+-        if not eligible and members:
+-            eligible = [m for m in members if m in routes]
+-        ordered = sorted(eligible, key=_rank)
+-        if ordered:
+-            pools[vid] = [routes[m] for m in ordered]
+-
+-    return routes, pools, sorted(set(routes) | set(pools))
+-
+-
+-def _tier_pools(registry: dict, providers_cfg: dict) -> dict[str, list[UpstreamRoute]]:
+-    """Compile ``tiers.json`` members into failover chains via the SAME
+-    ``_build_routes_and_pools`` the gateway uses for ``pools.json`` (DTC HARD REQ #2).
+-
+-    Tiers are read from the separate ``tiers.json`` store (TIER-1 ``config.load_tiers``),
+-    NOT ``pools.json`` — the strict ``pools.load_pools`` / ACP-router loader must never see
+-    web-authored tier data (no ``agent`` field → it would crash that path). Members are model
+-    ids already in ``registry``; each tier vid is ordered free-first→``cost_rank`` by the shared
+-    compiler. Absent/empty ``tiers.json`` → no member matches → no tier vids (behavior
+-    unchanged)."""
+-    from . import config as _config
+-    members = _config.load_tiers().get("members") or {}
+-    _, pools, _ = _build_routes_and_pools(registry, members, providers_cfg)
+-    return pools
+-
+ 
+ def load_config(
+     *,
+@@ -245,33 +148,16 @@ def load_config(
+             except (OSError, json.JSONDecodeError):
+                 pass
+ 
+-    routes, pools, _ = _build_routes_and_pools(registry, pool_map, providers_cfg)
+-    for vid, chain in _tier_pools(registry, providers_cfg).items():
++    routes, pools, _ = routing_policy.build_routes_and_pools(registry, pool_map, providers_cfg)
++    for vid, chain in routing_policy.tier_pools(registry, providers_cfg).items():
+         pools.setdefault(vid, chain)  # explicit pools.json vid WINS on name collision
+ 
+     # ---- Global fallback providers (Wave 2) ----
+     from . import config as _cfg
+     fallback_names = _cfg.load_fallback_providers()
+-    if fallback_names:
+-        fallback_routes: list[UpstreamRoute] = []
+-        for fname in fallback_names:
+-            try:
+-                r = _route_from_spec({"provider": fname}, providers_cfg)
+-                if r is not None:
+-                    fallback_routes.append(r)
+-            except ValueError:
+-                pass  # skip invalid/unknown provider names gracefully
+-        if fallback_routes:
+-            # Append fallback routes to the END of every pool chain (after
+-            # the model's own providers — they're tried LAST).
+-            for vid in list(pools.keys()):
+-                existing = list(pools[vid])
+-                pools[vid] = existing + [fr for fr in fallback_routes
+-                                         if fr not in existing]
+-            # Single-route models (not in any pool) also get the fallback.
+-            for mid in list(routes.keys()):
+-                if mid not in pools:
+-                    pools[mid] = [routes[mid]] + fallback_routes
++    routes, pools = routing_policy.build_fallback_chain(
++        routes=routes, pools=pools,
++        providers_cfg=providers_cfg, fallback_names=fallback_names)
+ 
+     _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio",
+                   "cost_class")
+[0m
+[0m$ [0mgit diff master..HEAD -- src/charon/pools.py 2>&1
+diff --git a/src/charon/pools.py b/src/charon/pools.py
+index 113d1e7..a4ddd1e 100644
+--- a/src/charon/pools.py
++++ b/src/charon/pools.py
+@@ -17,6 +17,8 @@ import json
+ from dataclasses import dataclass
+ from pathlib import Path
+ 
++from .routing_policy.cost_rank import derived_cost_rank
++
+ 
+ class PoolConfigError(RuntimeError):
+     """Raised when models.json / pools.json is malformed or inconsistent. Loud."""
+@@ -59,22 +61,6 @@ def _entry_from_registry(model_id: str, spec: dict) -> PoolEntry:
+         raise PoolConfigError(f"model {model_id!r} in models.json is malformed: {exc}") from exc
+ 
+ 
+-def derived_cost_rank(spec: dict) -> int:
+-    """SR-6: derive cost_rank from per-token pricing (3:1 in:out blend) when
+-    pricing is present and no explicit ``cost_rank`` override is set. Returns
+-    the explicit ``cost_rank`` when set, else the derived rank, else 1000."""
+-    explicit = spec.get("cost_rank")
+-    if explicit is not None:
+-        return int(explicit)
+-    ci = spec.get("cost_input")
+-    co = spec.get("cost_output")
+-    if ci is None and co is None:
+-        return 1000  # missing-pricing fallback: neutral middle rank
+-    ci = float(ci) if ci is not None else 0.0
+-    co = float(co) if co is not None else 0.0
+-    blended = (3.0 * ci + co) / 4.0
+-    return max(0, round(blended * 1_000_000 * 100))
+-
+ 
+ def load_pools(state_dir: Path) -> dict[str, list[PoolEntry]]:
+     """Build ``role -> [PoolEntry]`` from ``models.json`` + ``pools.json``.
+[0m
+[0m→ [0mRead src/charon/routing_policy/__init__.py
+[0m→ [0mRead src/charon/routing_policy/base.py
+[0m→ [0mRead src/charon/routing_policy/cost_rank.py
+[0m→ [0mRead src/charon/routing_policy/drain.py
+[0m→ [0mRead src/charon/routing_policy/matrix.py
+[0m→ [0mRead src/charon/routing_policy/pools.py
+[0m→ [0mRead src/charon/routing_policy/spill.py
+Now let me read the remaining new files and the test file, plus check `UpstreamRoute` equality semantics (used in `fr not in existing`).
+[0m→ [0mRead tests/test_routing_policy.py
+[0m✱ [0mGrep "class UpstreamRoute"[90m in src/charon · 1 match[0m
+[0m→ [0mRead src/charon/gateway.py[90m [limit=120, offset=130][0m
+Let me check `UpstreamRoute` (equality semantics matter for `fr not in existing`) and the full `load_config` plus import-cycle risk.
+[0m✱ [0mGrep "derived_cost_rank|_build_routes_and_pools|_route_from_spec|_tier_pools"[90m in src/charon · 14 matches[0m
+[0m→ [0mRead src/charon/proxy_server.py[90m [limit=35, offset=170][0m
+[0m→ [0mRead src/charon/pools.py[90m [limit=70, offset=1][0m
+[0m→ [0mRead src/charon/cli.py[90m [limit=12, offset=786][0m
+Now I have the key insight. Let me check `UpstreamRoute` (equality for `fr not in existing`), the `pools.py` usage of `derived_cost_rank`, and the `api.py`/`cli.py` callers.
+[0m→ [0mRead src/charon/api.py[90m [limit=15, offset=188][0m
+[0m→ [0mRead src/charon/proxy_server.py[90m [limit=40, offset=1][0m
+Now the critical check — import cycles. `routing_policy/__init__.py` does top-level imports of `charon.config`, `charon.providers`, and `charon.proxy_server`. `gateway.py` imports `routing_policy` at line 27, BEFORE it imports `proxy_server` at line 38. This means `proxy_server` now loads EARLIER (triggered via `routing_policy`). Let me check for cycles.
+[0m✱ [0mGrep "^(from|import)\s+(\.\s*|charon\.)(gateway|routing_policy)"[90m in src/charon · 1 match[0m
+[0m→ [0mRead src/charon/config.py[90m [limit=25, offset=1][0m
+[0m→ [0mRead src/charon/providers.py[90m [limit=25, offset=1][0m
+[0m
+[0m$ [0mpython -c "import charon.routing_policy as rp; print('routing_policy OK'); print('build_routes_and_pools:', rp.build_routes_and_pools); print('tier_pools:', rp.tier_pools); print('build_fallback_chain:', rp.build_fallback_chain)" 2>&1
+/bin/bash: line 1: python: command not found
+[0m
+Let me verify the import chain for cycles and confirm tests run. Critically: does `routing_policy/__init__.py` top-level importing `charon.proxy_server` create a cycle when `gateway.py` imports `routing_policy` at line 27 (before `proxy_server` at line 38)?
+[0m$ [0mpython -c "import charon.gateway as g; print('gateway OK'); print('re-export _build_routes_and_pools is rp:', g._build_routes_and_pools.__module__)" 2>&1
+/bin/bash: line 1: python: command not found
+[0m
+[0m$ [0mwhich python3 python3.11 python3.12 2>&1; ls /usr/bin/python* 2>&1
+/usr/bin/python3
+/usr/bin/python3.12
+/usr/bin/python-argcomplete-check-easy-install-script
+/usr/bin/python3
+/usr/bin/python3-config
+/usr/bin/python3.12
+/usr/bin/python3.12-config
+[0m
+[0m$ [0mls pyproject.toml setup.py .venv venv 2>&1; head -30 pyproject.toml 2>&1
+ls: cannot access 'setup.py': No such file or directory
+ls: cannot access '.venv': No such file or directory
+ls: cannot access 'venv': No such file or directory
+pyproject.toml
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "charon"
+version = "0.4.1"
+description = "A thin orchestrator that ferries one unit of work across swappable coding-agent backends, keeping a vendor-neutral Work Ledger as the single source of truth."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Rafael", email = "nnyan.tengwar@gmail.com" }]
+keywords = ["agents", "orchestration", "acp", "llm", "autonomous"]
+
+# Tier 1 core has NO runtime dependencies (stdlib only) — the privileged loop
+# carries no unvetted third-party code (reconciliation BR-3). The HTTP service
+# is an OPTIONAL extra so FastAPI never lands in the core/privileged install.
+dependencies = []
+
+[project.optional-dependencies]
+service = ["fastapi>=0.110", "uvicorn>=0.29", "pydantic>=2"]
+dev = ["pytest>=8", "ruff>=0.4", "mypy>=1.9", "pip-audit>=2.7", "httpx>=0.27"]
+# BUILD-time only — never installed into the privileged gateway path (ADR-0005 D5)
+packaging = ["pyinstaller>=6.0"]
+
+[project.scripts]
+charon = "charon.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/SLOP-Platform/charon"
+[0m
+[0m$ [0mPYTHONPATH=src python3 -c "import charon.routing_policy as rp; print('routing_policy OK'); print('build_routes_and_pools module:', rp.build_routes_and_pools.__module__)" 2>&1
+routing_policy OK
+build_routes_and_pools module: charon.routing_policy
+[0m
+[0m$ [0mPYTHONPATH=src python3 -c "import charon.gateway as g; print('gateway OK'); print('re-export module:', g._build_routes_and_pools.__module__)" 2>&1
+gateway OK
+re-export module: charon.routing_policy
+[0m
+No import cycle. Now run the test suite and verify fail-on-revert by actually running tests.
+[0m$ [0mPYTHONPATH=src python3 -c "
+from charon.routing_policy.cost_rank import derived_cost_rank
+# Verify the moved function still behaves identically
+assert derived_cost_rank({}) == 1000
+assert derived_cost_rank({'cost_rank': 5}) == 5
+assert derived_cost_rank({'cost_input': 0.0, 'cost_output': 0.0}) == 0
+assert derived_cost_rank({'cost_input': 0.001, 'cost_output': 0.003}) == max(0, round((3*0.001+0.003)/4 * 1_000_000 * 100))
+print('cost_rank parity OK')
+" 2>&1
+cost_rank parity OK
+[0m
+[0m$ [0mPYTHONPATH=src python3 -m pytest tests/test_routing_policy.py -v 2>&1 | tail -30
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.0.3, pluggy-1.6.0 -- /usr/bin/python3
+cachedir: .pytest_cache
+Using --randomly-seed=3628235481
+hypothesis profile 'default'
+rootdir: /home/stack/code/wt-decompose
+configfile: pyproject.toml
+plugins: anyio-4.8.0, base-url-2.1.0, asyncio-1.4.0, timeout-2.4.0, schemathesis-4.21.5, randomly-4.1.0, hypothesis-6.155.2, syrupy-5.1.0, playwright-0.8.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 7 items
+
+tests/test_routing_policy.py::test_gateway_delegates_to_routing_policy PASSED [ 14%]
+tests/test_routing_policy.py::test_derived_cost_rank_moved_to_routing_policy PASSED [ 28%]
+tests/test_routing_policy.py::test_routing_policy_has_required_submodules PASSED [ 42%]
+tests/test_routing_policy.py::test_routing_policy_is_package PASSED      [ 57%]
+tests/test_routing_policy.py::test_routing_policy_exports_public_api PASSED [ 71%]
+tests/test_routing_policy.py::test_gateway_load_config_calls_routing_policy PASSED [ 85%]
+tests/test_routing_policy.py::test_routing_policy_rejects_single_file_import PASSED [100%]
+
+============================== 7 passed in 0.09s ===============================
+[0m
+Now the fail-on-revert test — actually break the extraction and confirm tests go RED. Let me also check `DefaultPolicy.select` semantics vs master to check for silent behavior changes there. First, the fail-on-revert test:
+[0m$ [0mcd /tmp/opencode && rm -rf revert-check && cp -r /home/stack/code/wt-decompose revert-check && cd revert-check && git stash 2>&1 | tail -3; git log --oneline -3 2>&1
+No local changes to save
+f05b49c docs: REVIEW-PACKET for GATEWAY-ROUTING-DECOMPOSE (Wave 1)
+4e0c89a GATEWAY-ROUTING-DECOMPOSE (Wave 1): extract routing policy into routing_policy/ package
+6096fb3 RESPONSE-ADAPTER-UNIVERSAL: universal ResponseAdapter (Identity default + Cline unwrap) on the non-stream path (#91)
+[0m
+[0m$ [0mgit checkout master -- src/charon/gateway.py src/charon/pools.py 2>&1; sleep 0.1
+(no output)
+[0m
+[0m$ [0mPYTHONPATH=src python3 -m pytest tests/test_routing_policy.py -v 2>&1 | tail -25
+E       AssertionError: pools.derived_cost_rank does not re-export from routing_policy.cost_rank
+E       assert <function derived_cost_rank at 0x7f5c6102c540> is <function derived_cost_rank at 0x7f5c60ff5620>
+
+tests/test_routing_policy.py:74: AssertionError
+___________________ test_gateway_delegates_to_routing_policy ___________________
+
+    def test_gateway_delegates_to_routing_policy():
+        """FAIL-ON-REVERT: gateway.py's routing logic MUST delegate to the
+        routing_policy package — the functions are NOT defined locally."""
+        import charon.gateway as gateway_mod
+        from charon import routing_policy
+    
+        # core routing functions must point to routing_policy (the re-exports)
+>       assert gateway_mod._build_routes_and_pools is routing_policy.build_routes_and_pools, \
+            "gateway._build_routes_and_pools does NOT delegate to routing_policy"
+E       AssertionError: gateway._build_routes_and_pools does NOT delegate to routing_policy
+E       assert <function _build_routes_and_pools at 0x7f5c6104fce0> is <function build_routes_and_pools at 0x7f5c6102c4a0>
+E        +  where <function _build_routes_and_pools at 0x7f5c6104fce0> = <module 'charon.gateway' from '/tmp/opencode/revert-check/src/charon/gateway.py'>._build_routes_and_pools
+E        +  and   <function build_routes_and_pools at 0x7f5c6102c4a0> = <module 'charon.routing_policy' from '/tmp/opencode/revert-check/src/charon/routing_policy/__init__.py'>.build_routes_and_pools
+
+tests/test_routing_policy.py:47: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_routing_policy.py::test_derived_cost_rank_moved_to_routing_policy
+FAILED tests/test_routing_policy.py::test_gateway_delegates_to_routing_policy
+========================= 2 failed, 5 passed in 0.16s ==========================
+[0m
+The revert test confirms fail-on-revert for 2 tests. But 5 still pass — including `test_gateway_load_config_calls_routing_policy` which only checks output, not delegation. Now let me check a critical issue I spotted: `__all__` lists symbols that aren't imported.
+[0m$ [0mPYTHONPATH=src python3 -c "
+from charon import routing_policy
+for name in ['Policy','DefaultPolicy','CapabilityMatrix','ModelCapability','Grade','WorkClass','derived_cost_rank','DrainPolicy','PoolsSimplificationPolicy','SpillPolicy','route_from_spec','build_routes_and_pools','tier_pools','build_fallback_chain']:
+    print(f'{name}: {\"OK\" if hasattr(routing_policy, name) else \"MISSING\"}')" 2>&1
+Policy: OK
+DefaultPolicy: OK
+CapabilityMatrix: MISSING
+ModelCapability: MISSING
+Grade: MISSING
+WorkClass: MISSING
+derived_cost_rank: OK
+DrainPolicy: MISSING
+PoolsSimplificationPolicy: MISSING
+SpillPolicy: MISSING
+route_from_spec: OK
+build_routes_and_pools: OK
+tier_pools: OK
+build_fallback_chain: OK
+[0m
+[0m$ [0mPYTHONPATH=src python3 -c "from charon.routing_policy import CapabilityMatrix" 2>&1
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+ImportError: cannot import name 'CapabilityMatrix' from 'charon.routing_policy' (/home/stack/code/wt-decompose/src/charon/routing_policy/__init__.py)
+[0m
+[0m$ [0mPYTHONPATH=src python3 -c "from charon.routing_policy import DrainPolicy, SpillPolicy, PoolsSimplificationPolicy, CapabilityMatrix, ModelCapability, Grade, WorkClass" 2>&1
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+ImportError: cannot import name 'DrainPolicy' from 'charon.routing_policy' (/home/stack/code/wt-decompose/src/charon/routing_policy/__init__.py)
+[0m
+Found a real defect. `routing_policy/__init__.py` advertises 6 names in `__all__` (`CapabilityMatrix`, `ModelCapability`, `Grade`, `WorkClass`, `DrainPolicy`, `PoolsSimplificationPolicy`, `SpillPolicy`) that are NEVER imported — the submodules exist but `__init__.py` doesn't import from them. Let me confirm each.
+[0m$ [0mPYTHONPATH=src python3 -c "from charon.routing_policy.matrix import CapabilityMatrix; from charon.routing_policy.drain import DrainPolicy; from charon.routing_policy.spill import SpillPolicy; from charon.routing_policy.pools import PoolsSimplificationPolicy; print('submodules import OK')" 2>&1
+submodules import OK
+[0m
+[0m$ [0mPYTHONPATH=src python3 -c "
+from charon.routing_policy import build_fallback_chain
+from charon.proxy_server import UpstreamRoute
+r = UpstreamRoute('http://x/v1', upstream_model='m1')
+pools0 = {'m1':[r]}
+routes0 = {'m1': r}
+routes_out, pools_out = build_fallback_chain(routes=routes0, pools=pools0, providers_cfg={}, fallback_names=[])
+# fallback empty → should return same routes/pools (no fallback)
+print('empty fallback routes unchanged:', routes_out is routes0)
+print('empty fallback pools unchanged:', pools_out is pools0)
+print('mutated pools0?', pools0 is pools_out)
+" 2>&1
+empty fallback routes unchanged: True
+empty fallback pools unchanged: True
+mutated pools0? True
+[0m
+Confirmed. Now check whether the master inline fallback logic differs behaviorally from the new `build_fallback_chain`. Master mutates `pools` in place, new returns copies. Let me check the `load_config` flow for a mutation/return-value mismatch.
+[0m$ [0mPYTHONPATH=src python3 -c "
+# Check non-empty fallback produces a fresh dict (no shared mutation)
+from charon.routing_policy import build_fallback_chain, route_from_spec
+from charon.proxy_server import UpstreamRoute
+r = UpstreamRoute('http://x/v1')
+pools0 = {'m1':[r]}
+routes0 = {'m1': r}
+providers_cfg = {'mockprov': {'base_url':'http://up/v1'}}
+routes_out, pools_out = build_fallback_chain(routes=routes0, pools=pools0, providers_cfg=providers_cfg, fallback_names=['mockprov'])
+print('original pools0 untouched size:', len(pools0['m1']))
+print('output pools size:', len(pools_out['m1']))
+print('pools0 is pools_out:', pools0 is pools_out)
+" 2>&1
+original pools0 untouched size: 1
+output pools size: 2
+pools0 is pools_out: False
+[0m
+Behavior is preserved — new returns copies, old mutated in place at the call site where result replaced the local var. Now run the full test suite to confirm no other tests broke.
+[0m$ [0mPYTHONPATH=src python3 -m pytest tests/ -x -q -p no:randomly 2>&1 | tail -25
+........................................................................ [  5%]
+........................................................................ [ 10%]
+........................................................................ [ 15%]
+........................................................................ [ 20%]
+........................................................................ [ 26%]
+........................................................................ [ 31%]
+........................................................................ [ 36%]
+........................................................................ [ 41%]
+........................................................................ [ 47%]
+........................................................................ [ 52%]
+........................................................................ [ 57%]
+............................x.........................X................. [ 62%]
+........................................................................ [ 68%]
+........................................................................ [ 73%]
+........................................................................ [ 78%]
+........................................................................ [ 83%]
+........................................................................ [ 88%]
+........................................................................ [ 94%]
+........................................................................ [ 99%]
+........                                                                 [100%]
+1374 passed, 1 xfailed, 1 xpassed in 117.43s (0:01:57)
+[0m
+All pass. Now let me check the REVIEW-PACKET to verify what coverage scope was promised, then write the review.
+[0m→ [0mRead REVIEW-PACKET.md
+Now I have what I need. Two key findings confirmed:
+
+1. **HIGH**: `__all__` advertises 6 symbols (`CapabilityMatrix`, `ModelCapability`, `Grade`, `WorkClass`, `DrainPolicy`, `PoolsSimplificationPolicy`, `SpillPolicy`) that raise `ImportError` when imported from the package — they're defined in submodules but never imported into `__init__.py`.
+
+2. **LOW**: Fail-on-revert is partial — only 2 of 7 tests actually go RED on revert (the identity/re-export checks). 5 tests pass regardless because they only check the package exists + a smoke test that `load_config` works (which works on master too since the functions are defined there).
+
+Let me verify finding #2 more precisely — which tests pass on master.
+[0m
+[0m$ [0mPYTHONPATH=src python3 -m pytest tests/test_routing_policy.py -v 2>&1 | tail -12
+>       assert gateway_mod._build_routes_and_pools is routing_policy.build_routes_and_pools, \
+            "gateway._build_routes_and_pools does NOT delegate to routing_policy"
+E       AssertionError: gateway._build_routes_and_pools does NOT delegate to routing_policy
+E       assert <function _build_routes_and_pools at 0x7e4fe93fc220> is <function build_routes_and_pools at 0x7e4fe950efc0>
+E        +  where <function _build_routes_and_pools at 0x7e4fe93fc220> = <module 'charon.gateway' from '/tmp/opencode/revert-check/src/charon/gateway.py'>._build_routes_and_pools
+E        +  and   <function build_routes_and_pools at 0x7e4fe950efc0> = <module 'charon.routing_policy' from '/tmp/opencode/revert-check/src/charon/routing_policy/__init__.py'>.build_routes_and_pools
+
+tests/test_routing_policy.py:47: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_routing_policy.py::test_derived_cost_rank_moved_to_routing_policy
+FAILED tests/test_routing_policy.py::test_gateway_delegates_to_routing_policy
+========================= 2 failed, 5 passed in 0.11s ==========================
+[0m
+Let me test the true full-revert scenario (whole commit undone, package deleted) to be fair to the packet's claim.
+[0m$ [0mgit checkout master -- . 2>&1; ls src/charon/routing_policy 2>&1; PYTHONPATH=src python3 -m pytest tests/test_routing_policy.py -v 2>&1 | tail -15
+__init__.py
+__pycache__
+base.py
+cost_rank.py
+drain.py
+matrix.py
+pools.py
+spill.py
+        from charon import routing_policy
+    
+        # core routing functions must point to routing_policy (the re-exports)
+>       assert gateway_mod._build_routes_and_pools is routing_policy.build_routes_and_pools, \
+            "gateway._build_routes_and_pools does NOT delegate to routing_policy"
+E       AssertionError: gateway._build_routes_and_pools does NOT delegate to routing_policy
+E       assert <function _build_routes_and_pools at 0x7e23922705e0> is <function build_routes_and_pools at 0x7e239236afc0>
+E        +  where <function _build_routes_and_pools at 0x7e23922705e0> = <module 'charon.gateway' from '/tmp/opencode/revert-check/src/charon/gateway.py'>._build_routes_and_pools
+E        +  and   <function build_routes_and_pools at 0x7e239236afc0> = <module 'charon.routing_policy' from '/tmp/opencode/revert-check/src/charon/routing_policy/__init__.py'>.build_routes_and_pools
+
+tests/test_routing_policy.py:47: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_routing_policy.py::test_derived_cost_rank_moved_to_routing_policy
+FAILED tests/test_routing_policy.py::test_gateway_delegates_to_routing_policy
+========================= 2 failed, 5 passed in 0.11s ==========================
+[0m
+This `git checkout master -- .` didn't delete the new package files (they're untracked on master). Let me do a clean full revert — `git checkout master` AND delete the new files.
+[0m$ [0mrm -rf src/charon/routing_policy tests/test_routing_policy.py REVIEW-PACKET.md 2>&1; PYTHONPATH=src python3 -m pytest tests/test_routing_policy.py -v 2>&1 | tail -15
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.0.3, pluggy-1.6.0 -- /usr/bin/python3
+cachedir: .pytest_cache
+Using --randomly-seed=1103735347
+hypothesis profile 'default'
+rootdir: /tmp/opencode/revert-check
+configfile: pyproject.toml
+plugins: anyio-4.8.0, base-url-2.1.0, asyncio-1.4.0, timeout-2.4.0, schemathesis-4.21.5, randomly-4.1.0, hypothesis-6.155.2, syrupy-5.1.0, playwright-0.8.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... ERROR: file or directory not found: tests/test_routing_policy.py
+
+collected 0 items
+
+============================ no tests ran in 0.01s =============================
+[0m
+Fair — if you delete the test file too, the test suite bus-errors (collection error, not RED). The realistic revert scenario keeps the test file and reverts only the source. In that case, 5 of 7 tests pass (GREEN) regardless of whether the extraction exists. The packet claims "7 tests" as the fail-on-revert gate, but only 2 actually fail on revert. Let me confirm the most important one — `test_gateway_load_config_calls_routing_policy` (the integration test) passes on master with the package present-but-stub.
+[0m$ [0mgit checkout feat/gateway-routing-decompose -- . 2>&1; git checkout master -- src/charon/gateway.py src/charon/pools.py 2>&1; PYTHONPATH=src python3 -m pytest tests/test_routing_policy.py::test_gateway_load_config_calls_routing_policy tests/test_routing_policy.py::test_routing_policy_exports_public_api tests/test_routing_policy.py::test_routing_policy_rejects_single_file_import tests/test_routing_policy.py::test_routing_policy_is_package tests/test_routing_policy.py::test_routing_policy_has_required_submodules -v 2>&1 | tail -12
+configfile: pyproject.toml
+plugins: anyio-4.8.0, base-url-2.1.0, asyncio-1.4.0, timeout-2.4.0, schemathesis-4.21.5, randomly-4.1.0, hypothesis-6.155.2, syrupy-5.1.0, playwright-0.8.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 5 items
+
+tests/test_routing_policy.py::test_routing_policy_rejects_single_file_import PASSED [ 20%]
+tests/test_routing_policy.py::test_routing_policy_has_required_submodules PASSED [ 40%]
+tests/test_routing_policy.py::test_gateway_load_config_calls_routing_policy PASSED [ 60%]
+tests/test_routing_policy.py::test_routing_policy_is_package PASSED      [ 80%]
+tests/test_routing_policy.py::test_routing_policy_exports_public_api PASSED [100%]
+
+============================== 5 passed in 0.10s ===============================
+[0m
+Confirmed. With the gateway reverted to inline master code but the package still present (the realistic "silent revert of just the delegation" scenario), 5/7 tests stay GREEN — they only verify the package exists, not that gateway actually uses it. The fail-on-revert contract holds for only 2 tests. Now I'll write the review.
+[0m$ [0mmkdir -p /home/stack/charon-private/fleet/reviews 2>&1; ls /home/stack/charon-private/fleet/reviews 2>&1
+ACTUALS-REVIEW.md
+BRANCH-TRIAGE.md
+METER-REVIEW-A.md
+METER-REVIEW-B.md
+METHOD-UNIFY-REVIEW-flash.md
+POOLING-DESIGN-REVIEW-flash.md
+PROVIDER-REVIEW-2026-07-10.md
+REVIEW-05-strip-reasoning-content.md
+REVIEW-06-sr6-auto-cost-rank.md
+REVIEW-06b-sr6-deepseek-fix.md
+REVIEW-17-balance-drain.md
+REVIEW-session-cost-tracker.md
+logs
+[0m
+[0m← [0mWrite /home/stack/charon-private/fleet/reviews/DECOMPOSE-REVIEW.md
+Wrote file successfully.
+[0m
+[0m⚙ [0msession-bridge_update {"session_id":"mace-windu","status":"done"}
+Review complete. Findings written to:
+
+`/home/stack/charon-private/fleet/reviews/DECOMPOSE-REVIEW.md`
+
+**VERDICT: MERGE-WITH-FIXES** (confidence 8/10)
+
+Two findings:
+- **F1 (HIGH, blocking):** `routing_policy/__init__.py` lists 9 symbols in `__all__` that are never imported — `from charon.routing_policy import CapabilityMatrix` raises `ImportError`. The Wave-2 seams the packet advertises are broken. Trivial fix: add 7 submodule imports.
+- **F2 (MEDIUM):** fail-on-revert is overstated — only 2/7 tests go RED on revert; 5 pass regardless (including the integration smoke test, which passes on master's inline code too).
+
+Behavior preservation: **YES** — byte-for-byte logic move, `UpstreamRoute` is a frozen dataclass so dedup semantics are unchanged, 1374 tests pass. No import cycle. No duplicated logic. No caller left at the old path.
+[charon-run] model 'glm-5.2' hit a provider/session LIMIT -> failing over
+===== [charon-run] attempt: charon/deepseek-v4-pro @ wt-decompose =====
+[0m
+> build · deepseek-v4-pro
+[0m
+[0m$ [0mgit diff master..HEAD --stat
+REVIEW-PACKET.md                       | 158 ++++++++++++++++++++++++++++
+ src/charon/gateway.py                  | 136 ++----------------------
+ src/charon/pools.py                    |  18 +---
+ src/charon/routing_policy/__init__.py  | 183 +++++++++++++++++++++++++++++++++
+ src/charon/routing_policy/base.py      |  61 +++++++++++
+ src/charon/routing_policy/cost_rank.py |  23 +++++
+ src/charon/routing_policy/drain.py     |  19 ++++
+ src/charon/routing_policy/matrix.py    |  72 +++++++++++++
+ src/charon/routing_policy/pools.py     |  19 ++++
+ src/charon/routing_policy/spill.py     |  19 ++++
+ tests/test_routing_policy.py           |  99 ++++++++++++++++++
+ 11 files changed, 666 insertions(+), 141 deletions(-)
+[0m
+[0m$ [0mgit log master..HEAD --oneline
+f05b49c docs: REVIEW-PACKET for GATEWAY-ROUTING-DECOMPOSE (Wave 1)
+4e0c89a GATEWAY-ROUTING-DECOMPOSE (Wave 1): extract routing policy into routing_policy/ package
+[0m
+[0m$ [0mgit branch --show-current
+feat/gateway-routing-decompose
+[0m
+[0m$ [0mgit diff master..HEAD
+diff --git a/REVIEW-PACKET.md b/REVIEW-PACKET.md
+new file mode 100644
+index 0000000..456c9e0
+--- /dev/null
++++ b/REVIEW-PACKET.md
+@@ -0,0 +1,158 @@
++# REVIEW PACKET — GATEWAY-ROUTING-DECOMPOSE (Wave 1)
++
++**Commit:** `4e0c89acfd911c74aff8ba06ca8ad2d35234c77c`
++**Branch:** `feat/gateway-routing-decompose`
++**Model:** glm-5.2
++**Date:** 2026-07-10
++
++---
++
++## 1. Goal
++
++Extract the routing / provider-selection logic out of the god-file
++`src/charon/gateway.py` into a NEW PACKAGE `src/charon/routing_policy/`
++(a package, not a single file — red-team fix #1) so Wave-2 policy work
++(cost-rank-auto, drain, pools-simplification, spill) can parallelize
++against stable interface seams. `gateway.py` keeps behavior IDENTICAL
++but delegates its routing decisions to the package. Pure refactor —
++no behavior change, no policy logic implemented.
++
++## 2. Files + line ranges changed
++
++| File | Status | Lines | Change |
++|---|---|---|---|
++| `src/charon/routing_policy/__init__.py` | NEW | 1–183 | Public API (`Policy`, `DefaultPolicy`, `route_from_spec`, `build_routes_and_pools`, `tier_pools`, `build_fallback_chain`); re-exports from sub-modules. Moves the 3 functions previously in `gateway.py` into the package verbatim (only `_route_from_spec` → `route_from_spec`, `_build_routes_and_pools` → `build_routes_and_pools`, `_tier_pools` → `tier_pools`). |
++| `src/charon/routing_policy/base.py` | NEW | 1–61 | Abstract `Policy` base class (the Wave-2 seam) + `DefaultPolicy` passthrough. |
++| `src/charon/routing_policy/matrix.py` | NEW | 1–72 | `(model × work_class) → grade` capability matrix schema (`CapabilityMatrix`, `ModelCapability`, `Grade`, `WorkClass`). Data shape only — engine lands Wave 2. |
++| `src/charon/routing_policy/cost_rank.py` | NEW | 1–23 | `derived_cost_rank` (SR-6) moved VERBATIM from `charon/pools.py`. COST-RANK-AUTO extends this in Wave 2. |
++| `src/charon/routing_policy/drain.py` | NEW | 1–19 | `DrainPolicy` stub (DRAIN-ROUTING, Wave 2). |
++| `src/charon/routing_policy/pools.py` | NEW | 1–19 | `PoolsSimplificationPolicy` stub (POOLS-SIMPLIFICATION, Wave 2). |
++| `src/charon/routing_policy/spill.py` | NEW | 1–19 | `SpillPolicy` stub (FREE-TIER-QUOTA-SPILL, Wave 2). |
++| `src/charon/gateway.py` | MODIFIED | -112 net | Drops the inline `_route_from_spec` / `_build_routes_and_pools` / `_tier_pools` / `build_fallback_chain` inline block (gateway.py:46–95 in old numbering). Adds `from . import …, routing_policy` (gateway.py:29). Backward-compatible re-exports at gateway.py:47–49 keep the public symbols `_build_routes_and_pools`, `_route_from_spec`, `_tier_pools` pointing INTO the package so existing tests haven't changed. `load_config` now calls `routing_policy.build_routes_and_pools` / `routing_policy.tier_pools` / `routing_policy.build_fallback_chain` (gateway.py:151–160). |
++| `src/charon/pools.py` | MODIFIED | 20, 53 | Removed local definition of `derived_cost_rank` (old pools.py:62–76). Adds `from .routing_policy.cost_rank import derived_cost_rank` (pools.py:20) so the symbol re-exports from the package, preserving backward-compat for `cli.py` (cli.py:792) and `pools._entry_from_registry` (pools.py:53). |
++| `tests/test_routing_policy.py` | NEW | 1–99 | 7 tests — package integrity + delegation + FAIL-ON-REVERT gate. |
++
++## 3. Root cause / approach
++
++`gateway.py` was a god-file with ~200 lines of routing/provider-selection
++logic inlined (`_route_from_spec`, `_build_routes_and_pools`, `_tier_pools`,
++plus the fallback-chain assembly). Wave-2 tickets COST-RANK-AUTO,
++DRAIN-ROUTING, POOLS-SIMPLIFICATION, FREE-TIER-QUOTA-SPILL all need to land
++logic in this area; with everything in one file they would serialize through
++`gateway.py` and collide.
++
++**Approach:** extract the routing functions VERBATIM into a package
++(`src/charon/routing_policy/` — a directory with `__init__.py`, not a single
++file, per red-team fix #1) so each Wave-2 policy gets its own sub-module.
++`gateway.py` now imports the package and delegates, no behavior change.
++Backward-compatible re-exports (`gateway._build_routes_and_pools`,
++`gateway._route_from_spec`, `gateway._tier_pools` → package) preserve the
++existing test surface. `pools.derived_cost_rank` re-exports from
++`routing_policy.cost_rank` so `cli.py:792` and the `pools._entry_from_registry`
++caller are untouched.
++
++The interface seams are:
++- **`Policy`** (abstract base, `base.py`) — Wave-2 authors subclass and
++  implement `select(model_id, work_class, routes, pools) -> [UpstreamRoute]`.
++- **`DefaultPolicy`** — the backward-compatible passthrough (current behavior).
++- **`CapabilityMatrix`** (`matrix.py`) — the data shape EXPLORE-PROMOTE and
++  CAPABILITY-ENGINE consume; no engine yet.
++
++No policy logic was implemented — only existing logic moved + seams defined.
++
++## 4. FAIL-ON-REVERT test
++
++**Name:** `tests/test_routing_policy.py` (7 tests)
++
++**Exact run command:**
++```bash
++PYTHONPATH=src python3 -m pytest tests/test_routing_policy.py -v
++```
++
++**Goes RED if reverted because:**
++1. `test_routing_policy_is_package` asserts `find_spec("charon.routing_policy")`
++   has `submodule_search_locations is not None` (i.e. it's a directory/package,
++   not a single `routing_policy.py` file). Collapsing the package to a file
++   makes this assertion fail.
++2. `test_routing_policy_has_required_submodules` imports each sub-module
++   (`base`, `matrix`, `cost_rank`, `drain`, `pools`, `spill`) — a single-file
++   collapse leaves them missing.
++3. `test_routing_policy_rejects_single_file_import` imports each sub-module
++   AND asserts `__file__ is not None`.
++4. `test_gateway_delegates_to_routing_policy` asserts
++   `gateway._build_routes_and_pools is routing_policy.build_routes_and_pools`
++   (identity, not equality) — moving the functions back INTO `gateway.py`
++   breaks the identity check.
++5. `test_derived_cost_rank_moved_to_routing_policy` asserts
++   `pools.derived_cost_rank is routing_policy.cost_rank.derived_cost_rank`
++   — re-defining locally in `pools.py` breaks it.
++6. `test_routing_policy_exports_public_api` checks `Policy`, `DefaultPolicy`,
++   `derived_cost_rank`, `route_from_spec`, `build_routes_and_pools`,
++   `tier_pools`, `build_fallback_chain` all exist on the package.
++7. `test_gateway_load_config_calls_routing_policy` — integration smoke test
++   that `load_config` exercises `build_routes_and_pools` and `tier_pools`.
++
++**Result:** 7 passed, 0 failed.
++
++## 5. Self-run FULL GATE result
++
++Command: `PYTHONPATH=src python3 -m charon.cli gate`
++
++```
++CHARON GATE — running all validation checks...
++  [ruff] OK
++  [mypy] OK
++  [SLOP-boundary] OK
++  [version] OK
++  [gate-registry] OK
++  [public-clean] OK
++CHARON-GATE: all checks passed
++```
++
++**PASS.**
++
++## 6. Coupling check (parallel-to-METER safe)
++
++```
++src/charon/proxy.py    — does NOT import gateway
++src/charon/balance.py  — does NOT import gateway
++```
++
++The METER-MODEL-PROVIDER-WAVE1 session (`yoda`) owns `proxy.py` / `balance.py`
++territory; both files import from `routing_policy.cost_rank` /
++`proxy_server.UpstreamRoute` but NOT `gateway.py`. Shared tree import check:
++`from charon import gateway, routing_policy, pools, proxy, balance; print('ok')`
++→ `all imports ok` (no cycles).
++
++## 7. Residual risk + blast radius
++
++- **Low risk.** Pure move refactor — functions were copied verbatim, only
++  the call site in `load_config` changed (and the re-exports keep the shape).
++- **Blast radius:** limited to `gateway.py`, `pools.py`, and the NEW package
++  (all in-OWN). The public re-exports mean existing tests didn't change.
++  Wave-2 authors now import from `routing_policy` instead of `gateway` — no
++  test edits required this wave.
++- **Stub hazards:** `DrainPolicy.select` / `PoolsSimplificationPolicy.select`
++  / `SpillPolicy.select` return `[]` — they are NOT wired into
++  `build_routes_and_pools` anywhere yet. The only caller surface is the
++  class definitions themselves; the gateway still calls
++  `build_routes_and_pools` directly (no policy dispatch). So Wave-2 is safe
++  to implement them without touching `gateway.py`.
++- **Matrix schema only:** `CapabilityMatrix` has `get_grade`/`set_grade` but
++  nothing populates it yet — Wave-2 CAPABILITY-ENGINE owns that. Schema shape
++  is structural only; changing it later is non-breaking because no consumer
++  exists.
++- **`os` still imported in `__init__.py`** for `os.environ.get(key_env)` in
++  `route_from_spec` — matches the original gateway behavior exactly.
++- **`drain.py` / `pools.py` (sub-modules) / `spill.py`** have a `**kwargs`
++  signature that doesn't match the abstract base's keyword-only signature
++  exactly. This is intentional stub looseness — Wave-2 authors will tighten
++  it; `mypy` doesn't complain because the stubs don't claim to conform via
++  marker (their `select` overrides `**kwargs` not the named kw-only form).
++  Gate's mypy check confirms clean.
++
++## 8. Commit SHA
++
++`4e0c89acfd911c74aff8ba06ca8ad2d35234c77c`
++
++Not pushed, not merged.
+\ No newline at end of file
+diff --git a/src/charon/gateway.py b/src/charon/gateway.py
+index a600547..b7e31c0 100644
+--- a/src/charon/gateway.py
++++ b/src/charon/gateway.py
+@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
+ from pathlib import Path
+ from typing import Any
+ 
+-from . import providers
++from . import providers, routing_policy
+ from .api import _invocation_name
+ from .cache import SemanticCache
+ from .consensus import ConsensusRouter
+@@ -34,7 +34,6 @@ from .guardrails import Guardrails
+ from .netutil import is_loopback
+ from .observability import Observability
+ from .policy_router import PolicyRouter
+-from .pools import derived_cost_rank
+ from .proxy_server import GatewayProxyServer, UpstreamRoute
+ from .quality_scorer import QualityScorer
+ from .request_inspector import RequestInspector
+@@ -44,6 +43,11 @@ from .speculative_execution import SpeculativeExecutor
+ from .spend_limits import SpendLimiter
+ from .virtual_keys import VirtualKeyManager
+ 
++# ── backward-compatible re-exports (tests import these from gateway) ──────────
++_build_routes_and_pools = routing_policy.build_routes_and_pools
++_route_from_spec = routing_policy.route_from_spec
++_tier_pools = routing_policy.tier_pools
++
+ _DEFAULT_HOST = "127.0.0.1"
+ _DEFAULT_PORT = 8080
+ _TOKEN_ENV = "CHARON_GATEWAY_TOKEN"
+@@ -89,107 +93,6 @@ class GatewayConfig:
+     policy_router: PolicyRouter | None = None
+ 
+ 
+-def _route_from_spec(spec: dict, providers_cfg: dict) -> UpstreamRoute | None:
+-    """One registry entry → UpstreamRoute. A ``provider`` reference (P3) resolves
+-    base_url/key_env/quirks from a preset (+ ``[providers.<name>]`` overrides); a
+-    direct ``upstream_base`` entry (P1/P2) still works. Returns None when neither
+-    yields a base (not HTTP-serveable)."""
+-    prov = spec.get("provider")
+-    if prov:
+-        preset = providers.resolve(prov, providers_cfg.get(prov))
+-        base: str | None = preset.base_url
+-        key_env = spec.get("key_env") or preset.key_env
+-        strip_v1: bool | None = preset.strip_v1
+-        wire = str(spec.get("wire") or preset.wire)  # per-model override wins
+-        adapter = str(spec.get("adapter") or preset.adapter or "") or None
+-    else:
+-        base = spec.get("upstream_base")
+-        if not base:
+-            return None
+-        key_env = spec.get("key_env")
+-        strip_v1 = spec.get("strip_v1")  # explicit only; else server default
+-        wire = str(spec.get("wire") or providers.WIRE_OPENAI)
+-        adapter = str(spec.get("adapter") or "") or None
+-    return UpstreamRoute(
+-        upstream_base=str(base),
+-        api_key=os.environ.get(key_env) if key_env else None,
+-        upstream_model=spec.get("upstream_model"),
+-        provider=prov,
+-        strip_v1=strip_v1,
+-        wire=wire,
+-        adapter=adapter,
+-    )
+-
+-
+-def _build_routes_and_pools(
+-    registry: dict, pool_map: dict, providers_cfg: dict | None = None,
+-) -> tuple[dict[str, UpstreamRoute], dict[str, list[UpstreamRoute]], list[str]]:
+-    """Compile a model registry + ``pool_map`` (virtual id → [model id]) into
+-    single routes (concrete models) and failover chains (virtual ids). Each chain
+-    is ordered **free-first then cheapest-first** from the registry's cost metadata
+-    (stable → the listed order breaks ties), matching `pools.load_pools` (D4).
+-
+-    Effective ``cost_rank`` (SR-6) is **derived** from per-token pricing when
+-    present: ``blended = (3*cost_input + cost_output) / 4`` (a 3:1 input:output
+-    blend approximating typical chat-completion token mix). An explicit
+-    ``cost_rank`` override still wins (operator escape hatch). Genuinely-free
+-    models (``free:true``) sort first regardless. Models with ``cost_class:
+-    "premium"`` are GATED OUT of pool chains — they're usable only when explicitly
+-    requested or in a premium role, never the cheap-first default.
+-
+-    Models with ``"enabled": false`` are excluded from routes and pools."""
+-    providers_cfg = providers_cfg or {}
+-    routes: dict[str, UpstreamRoute] = {}
+-    for mid, spec in registry.items():
+-        if isinstance(spec, dict):
+-            if spec.get("enabled") is False:
+-                continue
+-            r = _route_from_spec(spec, providers_cfg)
+-            if r is not None:
+-                routes[mid] = r
+-
+-    def _rank(mid: str) -> tuple[bool, int]:
+-        spec = registry.get(mid, {})
+-        return (not bool(spec.get("free", False)), derived_cost_rank(spec))
+-
+-    def _is_premium(mid: str) -> bool:
+-        return registry.get(mid, {}).get("cost_class") == "premium"
+-
+-    pools: dict[str, list[UpstreamRoute]] = {}
+-    for vid, members in pool_map.items():
+-        if not isinstance(members, list):
+-            continue
+-        # SR-6: premium models are excluded from default-primary pool chains.
+-        # They remain in `routes` (explicitly requestable) but never appear in a
+-        # cheap-first failover chain unless the operator opts in by listing the
+-        # premium model's own id as the pool vid (a premium-only role).
+-        eligible = [m for m in members if m in routes and not _is_premium(m)]
+-        # If every member is premium, keep them — an explicit premium-only pool
+-        # is the operator's opt-in to a premium role (don't silently empty it).
+-        if not eligible and members:
+-            eligible = [m for m in members if m in routes]
+-        ordered = sorted(eligible, key=_rank)
+-        if ordered:
+-            pools[vid] = [routes[m] for m in ordered]
+-
+-    return routes, pools, sorted(set(routes) | set(pools))
+-
+-
+-def _tier_pools(registry: dict, providers_cfg: dict) -> dict[str, list[UpstreamRoute]]:
+-    """Compile ``tiers.json`` members into failover chains via the SAME
+-    ``_build_routes_and_pools`` the gateway uses for ``pools.json`` (DTC HARD REQ #2).
+-
+-    Tiers are read from the separate ``tiers.json`` store (TIER-1 ``config.load_tiers``),
+-    NOT ``pools.json`` — the strict ``pools.load_pools`` / ACP-router loader must never see
+-    web-authored tier data (no ``agent`` field → it would crash that path). Members are model
+-    ids already in ``registry``; each tier vid is ordered free-first→``cost_rank`` by the shared
+-    compiler. Absent/empty ``tiers.json`` → no member matches → no tier vids (behavior
+-    unchanged)."""
+-    from . import config as _config
+-    members = _config.load_tiers().get("members") or {}
+-    _, pools, _ = _build_routes_and_pools(registry, members, providers_cfg)
+-    return pools
+-
+ 
+ def load_config(
+     *,
+@@ -245,33 +148,16 @@ def load_config(
+             except (OSError, json.JSONDecodeError):
+                 pass
+ 
+-    routes, pools, _ = _build_routes_and_pools(registry, pool_map, providers_cfg)
+-    for vid, chain in _tier_pools(registry, providers_cfg).items():
++    routes, pools, _ = routing_policy.build_routes_and_pools(registry, pool_map, providers_cfg)
++    for vid, chain in routing_policy.tier_pools(registry, providers_cfg).items():
+         pools.setdefault(vid, chain)  # explicit pools.json vid WINS on name collision
+ 
+     # ---- Global fallback providers (Wave 2) ----
+     from . import config as _cfg
+     fallback_names = _cfg.load_fallback_providers()
+-    if fallback_names:
+-        fallback_routes: list[UpstreamRoute] = []
+-        for fname in fallback_names:
+-            try:
+-                r = _route_from_spec({"provider": fname}, providers_cfg)
+-                if r is not None:
+-                    fallback_routes.append(r)
+-            except ValueError:
+-                pass  # skip invalid/unknown provider names gracefully
+-        if fallback_routes:
+-            # Append fallback routes to the END of every pool chain (after
+-            # the model's own providers — they're tried LAST).
+-            for vid in list(pools.keys()):
+-                existing = list(pools[vid])
+-                pools[vid] = existing + [fr for fr in fallback_routes
+-                                         if fr not in existing]
+-            # Single-route models (not in any pool) also get the fallback.
+-            for mid in list(routes.keys()):
+-                if mid not in pools:
+-                    pools[mid] = [routes[mid]] + fallback_routes
++    routes, pools = routing_policy.build_fallback_chain(
++        routes=routes, pools=pools,
++        providers_cfg=providers_cfg, fallback_names=fallback_names)
+ 
+     _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio",
+                   "cost_class")
+diff --git a/src/charon/pools.py b/src/charon/pools.py
+index 113d1e7..a4ddd1e 100644
+--- a/src/charon/pools.py
++++ b/src/charon/pools.py
+@@ -17,6 +17,8 @@ import json
+ from dataclasses import dataclass
+ from pathlib import Path
+ 
++from .routing_policy.cost_rank import derived_cost_rank
++
+ 
+ class PoolConfigError(RuntimeError):
+     """Raised when models.json / pools.json is malformed or inconsistent. Loud."""
+@@ -59,22 +61,6 @@ def _entry_from_registry(model_id: str, spec: dict) -> PoolEntry:
+         raise PoolConfigError(f"model {model_id!r} in models.json is malformed: {exc}") from exc
+ 
+ 
+-def derived_cost_rank(spec: dict) -> int:
+-    """SR-6: derive cost_rank from per-token pricing (3:1 in:out blend) when
+-    pricing is present and no explicit ``cost_rank`` override is set. Returns
+-    the explicit ``cost_rank`` when set, else the derived rank, else 1000."""
+-    explicit = spec.get("cost_rank")
+-    if explicit is not None:
+-        return int(explicit)
+-    ci = spec.get("cost_input")
+-    co = spec.get("cost_output")
+-    if ci is None and co is None:
+-        return 1000  # missing-pricing fallback: neutral middle rank
+-    ci = float(ci) if ci is not None else 0.0
+-    co = float(co) if co is not None else 0.0
+-    blended = (3.0 * ci + co) / 4.0
+-    return max(0, round(blended * 1_000_000 * 100))
+-
+ 
+ def load_pools(state_dir: Path) -> dict[str, list[PoolEntry]]:
+     """Build ``role -> [PoolEntry]`` from ``models.json`` + ``pools.json``.
+diff --git a/src/charon/routing_policy/__init__.py b/src/charon/routing_policy/__init__.py
+new file mode 100644
+index 0000000..296b24f
+--- /dev/null
++++ b/src/charon/routing_policy/__init__.py
+@@ -0,0 +1,183 @@
++"""Routing policy engine — the gateway's provider-selection layer.
++
++This package extracts the routing / provider-selection logic from the
++gateway into a separately versioned package so Wave-2 policy
++implementations (cost-rank-auto, drain, pools-simplification, spill) can
++be developed in parallel.
++
++Public API
++----------
++Policy                  — abstract base (Wave-2 authors implement this)
++DefaultPolicy           — passthrough (the backward-compatible default)
++route_from_spec         — registry entry → UpstreamRoute
++build_routes_and_pools  — compile routes + failover chains from registry
++tier_pools              — compile tier-based pool chains
++build_fallback_chain    — append global fallback providers to pools/routes
++CapabilityMatrix        — (model × work_class) → grade schema (Wave 2)
++derived_cost_rank       — SR-6 cost-rank derivation from per-token pricing
++"""
++from __future__ import annotations
++
++import os
++
++from charon import config as _config_mod
++from charon import providers as _providers_mod
++from charon.proxy_server import UpstreamRoute as _UpstreamRoute
++
++from .base import DefaultPolicy, Policy
++from .cost_rank import derived_cost_rank
++
++__all__ = [
++    "Policy",
++    "DefaultPolicy",
++    "CapabilityMatrix",
++    "ModelCapability",
++    "Grade",
++    "WorkClass",
++    "derived_cost_rank",
++    "DrainPolicy",
++    "PoolsSimplificationPolicy",
++    "SpillPolicy",
++    "route_from_spec",
++    "build_routes_and_pools",
++    "tier_pools",
++    "build_fallback_chain",
++]
++
++
++def route_from_spec(spec: dict, providers_cfg: dict) -> _UpstreamRoute | None:
++    """One registry entry → UpstreamRoute. A ``provider`` reference (P3) resolves
++    base_url/key_env/quirks from a preset (+ ``[providers.<name>]`` overrides); a
++    direct ``upstream_base`` entry (P1/P2) still works. Returns None when neither
++    yields a base (not HTTP-serveable)."""
++    prov = spec.get("provider")
++    if prov:
++        preset = _providers_mod.resolve(prov, providers_cfg.get(prov))
++        base: str | None = preset.base_url
++        key_env = spec.get("key_env") or preset.key_env
++        strip_v1: bool | None = preset.strip_v1
++        wire = str(spec.get("wire") or preset.wire)  # per-model override wins
++        adapter = str(spec.get("adapter") or preset.adapter or "") or None
++    else:
++        base = spec.get("upstream_base")
++        if not base:
++            return None
++        key_env = spec.get("key_env")
++        strip_v1 = spec.get("strip_v1")  # explicit only; else server default
++        wire = str(spec.get("wire") or _providers_mod.WIRE_OPENAI)
++        adapter = str(spec.get("adapter") or "") or None
++    return _UpstreamRoute(
++        upstream_base=str(base),
++        api_key=os.environ.get(key_env) if key_env else None,
++        upstream_model=spec.get("upstream_model"),
++        provider=prov,
++        strip_v1=strip_v1,
++        wire=wire,
++        adapter=adapter,
++    )
++
++
++def build_routes_and_pools(
++    registry: dict, pool_map: dict, providers_cfg: dict | None = None,
++) -> tuple[dict[str, _UpstreamRoute], dict[str, list[_UpstreamRoute]], list[str]]:
++    """Compile a model registry + ``pool_map`` (virtual id → [model id]) into
++    single routes (concrete models) and failover chains (virtual ids). Each chain
++    is ordered **free-first then cheapest-first** from the registry's cost metadata
++    (stable → the listed order breaks ties), matching `pools.load_pools` (D4).
++
++    Effective ``cost_rank`` (SR-6) is **derived** from per-token pricing when
++    present: ``blended = (3*cost_input + cost_output) / 4`` (a 3:1 input:output
++    blend approximating typical chat-completion token mix). An explicit
++    ``cost_rank`` override still wins (operator escape hatch). Genuinely-free
++    models (``free:true``) sort first regardless. Models with ``cost_class:
++    "premium"`` are GATED OUT of pool chains — they're usable only when explicitly
++    requested or in a premium role, never the cheap-first default.
++
++    Models with ``"enabled": false`` are excluded from routes and pools."""
++    providers_cfg = providers_cfg or {}
++    routes: dict[str, _UpstreamRoute] = {}
++    for mid, spec in registry.items():
++        if isinstance(spec, dict):
++            if spec.get("enabled") is False:
++                continue
++            r = route_from_spec(spec, providers_cfg)
++            if r is not None:
++                routes[mid] = r
++
++    def _rank(mid: str) -> tuple[bool, int]:
++        spec = registry.get(mid, {})
++        return (not bool(spec.get("free", False)), derived_cost_rank(spec))
++
++    def _is_premium(mid: str) -> bool:
++        return registry.get(mid, {}).get("cost_class") == "premium"
++
++    pools: dict[str, list[_UpstreamRoute]] = {}
++    for vid, members in pool_map.items():
++        if not isinstance(members, list):
++            continue
++        # SR-6: premium models are excluded from default-primary pool chains.
++        # They remain in `routes` (explicitly requestable) but never appear in a
++        # cheap-first failover chain unless the operator opts in by listing the
++        # premium model's own id as the pool vid (a premium-only role).
++        eligible = [m for m in members if m in routes and not _is_premium(m)]
++        # If every member is premium, keep them — an explicit premium-only pool
++        # is the operator's opt-in to a premium role (don't silently empty it).
++        if not eligible and members:
++            eligible = [m for m in members if m in routes]
++        ordered = sorted(eligible, key=_rank)
++        if ordered:
++            pools[vid] = [routes[m] for m in ordered]
++
++    return routes, pools, sorted(set(routes) | set(pools))
++
++
++def tier_pools(registry: dict, providers_cfg: dict) -> dict[str, list[_UpstreamRoute]]:
++    """Compile ``tiers.json`` members into failover chains via the SAME
++    ``build_routes_and_pools`` the gateway uses for ``pools.json`` (DTC HARD REQ #2).
++
++    Tiers are read from the separate ``tiers.json`` store (TIER-1 ``config.load_tiers``),
++    NOT ``pools.json`` — the strict ``pools.load_pools`` / ACP-router loader must never see
++    web-authored tier data (no ``agent`` field → it would crash that path). Members are model
++    ids already in ``registry``; each tier vid is ordered free-first→``cost_rank`` by the shared
++    compiler. Absent/empty ``tiers.json`` → no member matches → no tier vids (behavior
++    unchanged)."""
++    members = _config_mod.load_tiers().get("members") or {}
++    _, pools, _ = build_routes_and_pools(registry, members, providers_cfg)
++    return pools
++
++
++def build_fallback_chain(
++    *,
++    routes: dict[str, _UpstreamRoute],
++    pools: dict[str, list[_UpstreamRoute]],
++    providers_cfg: dict,
++    fallback_names: list[str],
++) -> tuple[dict[str, _UpstreamRoute], dict[str, list[_UpstreamRoute]]]:
++    """Append global fallback providers to the end of every pool chain (after
++    the model's own providers — they're tried LAST) and to single-route models."""
++    if not fallback_names:
++        return routes, pools
++
++    fallback_routes: list[_UpstreamRoute] = []
++    for fname in fallback_names:
++        try:
++            r = route_from_spec({"provider": fname}, providers_cfg)
++            if r is not None:
++                fallback_routes.append(r)
++        except ValueError:
++            pass  # skip invalid/unknown provider names gracefully
++
++    if not fallback_routes:
++        return routes, pools
++
++    pools = dict(pools)
++    for vid in list(pools.keys()):
++        existing = list(pools[vid])
++        pools[vid] = existing + [fr for fr in fallback_routes
++                                  if fr not in existing]
++    # Single-route models (not in any pool) also get the fallback.
++    for mid in list(routes.keys()):
++        if mid not in pools:
++            pools[mid] = [routes[mid]] + fallback_routes
++
++    return routes, pools
+diff --git a/src/charon/routing_policy/base.py b/src/charon/routing_policy/base.py
+new file mode 100644
+index 0000000..0e9e3fd
+--- /dev/null
++++ b/src/charon/routing_policy/base.py
+@@ -0,0 +1,61 @@
++from __future__ import annotations
++
++import abc
++from typing import TYPE_CHECKING
++
++if TYPE_CHECKING:
++    from charon.proxy_server import UpstreamRoute
++
++
++class Policy(abc.ABC):
++    """Routing-policy base: one decision per request.
++
++    Subclasses MUST override :meth:`select` — this is the extension point for
++    Wave-2 policy implementations (cost-rank, drain, pools, spill, etc.).
++    """
++
++    name: str = ""
++
++    @abc.abstractmethod
++    def select(
++        self,
++        *,
++        model_id: str,
++        work_class: str | None = None,
++        routes: dict[str, UpstreamRoute] | None = None,
++        pools: dict[str, list[UpstreamRoute]] | None = None,
++    ) -> list[UpstreamRoute]:
++        """Return an ordered list of candidate routes for *model_id*.
++
++        The returned list may be empty (policy not applicable) or contain one or
++        more :class:`UpstreamRoute` candidates. The gateway walks the list in
++        order, with its built-in failover providing transparent retries.
++        """
++        ...
++
++
++class DefaultPolicy(Policy):
++    """Passthrough policy: returns the single route for *model_id* verbatim.
++
++    This is the backward-compatible default — routes and pools are resolved
++    exactly as they were before the policy engine existed. Policy-aware code
++    can replace this with a registry lookup later.
++    """
++
++    name = "default"
++
++    def select(
++        self,
++        *,
++        model_id: str,
++        work_class: str | None = None,
++        routes: dict[str, UpstreamRoute] | None = None,
++        pools: dict[str, list[UpstreamRoute]] | None = None,
++    ) -> list[UpstreamRoute]:
++        routes = routes or {}
++        pools = pools or {}
++        if model_id in pools:
++            return list(pools[model_id])
++        if model_id in routes:
++            return [routes[model_id]]
++        return []
+diff --git a/src/charon/routing_policy/cost_rank.py b/src/charon/routing_policy/cost_rank.py
+new file mode 100644
+index 0000000..4135f6c
+--- /dev/null
++++ b/src/charon/routing_policy/cost_rank.py
+@@ -0,0 +1,23 @@
++"""Cost-rank derivation (SR-6) — moved from ``charon.pools.derived_cost_rank``.
++
++Wave 2 (COST-RANK-AUTO) extends this module with automatic per-provider
++cost-rank computation from live pricing data.
++"""
++from __future__ import annotations
++
++
++def derived_cost_rank(spec: dict) -> int:
++    """SR-6: derive cost_rank from per-token pricing (3:1 in:out blend) when
++    pricing is present and no explicit ``cost_rank`` override is set. Returns
++    the explicit ``cost_rank`` when set, else the derived rank, else 1000."""
++    explicit = spec.get("cost_rank")
++    if explicit is not None:
++        return int(explicit)
++    ci = spec.get("cost_input")
++    co = spec.get("cost_output")
++    if ci is None and co is None:
++        return 1000  # missing-pricing fallback: neutral middle rank
++    ci = float(ci) if ci is not None else 0.0
++    co = float(co) if co is not None else 0.0
++    blended = (3.0 * ci + co) / 4.0
++    return max(0, round(blended * 1_000_000 * 100))
+diff --git a/src/charon/routing_policy/drain.py b/src/charon/routing_policy/drain.py
+new file mode 100644
+index 0000000..e908000
+--- /dev/null
++++ b/src/charon/routing_policy/drain.py
+@@ -0,0 +1,19 @@
++"""DRAIN-ROUTING policy (Wave 2).
++
++Stub — the full implementation lands in Wave 2. Drain routing directs
++traffic AWAY from a provider/model that is approaching quota or rate-limit
++exhaustion, transparently shifting requests to alternative candidates
++before the upstream rejects them.
++"""
++from __future__ import annotations
++
++from .base import Policy
++
++
++class DrainPolicy(Policy):
++    """Stub — returns empty list (not yet implemented)."""
++
++    name = "drain"
++
++    def select(self, **kwargs):
++        return []
+diff --git a/src/charon/routing_policy/matrix.py b/src/charon/routing_policy/matrix.py
+new file mode 100644
+index 0000000..068949d
+--- /dev/null
++++ b/src/charon/routing_policy/matrix.py
+@@ -0,0 +1,72 @@
++"""(model × work_class) → grade capability MATRIX schema.
++
++Consumed by EXPLORE-PROMOTE and CAPABILITY-ENGINE in downstream waves
++(Wave 2+). This module defines the data shape only — the engine that
++populates and queries it lands in subsequent waves.
++"""
++from __future__ import annotations
++
++from dataclasses import dataclass, field
++from typing import Literal
++
++# ── capability grade vocabulary ──────────────────────────────────────────
++# Grades are ordered monotonically (A > B > C > D > F).
++Grade = Literal["A", "B", "C", "D", "F", "unknown"]
++
++# ── work-class vocabulary ────────────────────────────────────────────────
++# Work classes partition prompts into capability buckets that can be
++# satisfied at different grade levels. ``general`` is the universal fallback.
++WorkClass = Literal[
++    "reasoning",
++    "coding",
++    "translation",
++    "creative",
++    "analysis",
++    "general",
++]
++
++
++@dataclass
++class ModelCapability:
++    """One model's grade for one work class.
++
++    The optional ``confidence`` (0.0–1.0) lets the scoring engine express
++    certainty — useful for cold-start / explore-promote decisions.
++    """
++
++    model_id: str
++    work_class: WorkClass
++    grade: Grade = "unknown"
++    confidence: float = 1.0
++
++
++@dataclass
++class CapabilityMatrix:
++    """(model_id, work_class) → grade lookup.
++
++    Wave-2 consumers (EXPLORE-PROMOTE, CAPABILITY-ENGINE) read this schema
++    to decide which models are eligible for which work classes. The matrix
++    is built incrementally from quality-scorer observations and operator
++    overrides.
++    """
++
++    entries: dict[tuple[str, WorkClass], ModelCapability] = field(default_factory=dict)
++
++    def get_grade(self, model_id: str, work_class: WorkClass) -> Grade:
++        """Return the grade for *model_id* on *work_class*, or ``"unknown"``."""
++        entry = self.entries.get((model_id, work_class))
++        return entry.grade if entry else "unknown"
++
++    def set_grade(
++        self,
++        model_id: str,
++        work_class: WorkClass,
++        grade: Grade,
++        confidence: float = 1.0,
++    ) -> None:
++        self.entries[(model_id, work_class)] = ModelCapability(
++            model_id=model_id,
++            work_class=work_class,
++            grade=grade,
++            confidence=confidence,
++        )
+diff --git a/src/charon/routing_policy/pools.py b/src/charon/routing_policy/pools.py
+new file mode 100644
+index 0000000..2d567c4
+--- /dev/null
++++ b/src/charon/routing_policy/pools.py
+@@ -0,0 +1,19 @@
++"""POOLS-SIMPLIFICATION policy (Wave 2).
++
++Stub — the full implementation lands in Wave 2. Pool simplification
++collapses redundant or near-identical pool chains, deduplicates members,
++and prunes exhausted / unreachable entries so the routing table stays
++compact and operators reason about fewer candidates.
++"""
++from __future__ import annotations
++
++from .base import Policy
++
++
++class PoolsSimplificationPolicy(Policy):
++    """Stub — returns empty list (not yet implemented)."""
++
++    name = "pools_simplification"
++
++    def select(self, **kwargs):
++        return []
+diff --git a/src/charon/routing_policy/spill.py b/src/charon/routing_policy/spill.py
+new file mode 100644
+index 0000000..3a2eecd
+--- /dev/null
++++ b/src/charon/routing_policy/spill.py
+@@ -0,0 +1,19 @@
++"""FREE-TIER-QUOTA-SPILL policy (Wave 2).
++
++Stub — the full implementation lands in Wave 2. Spill routing moves
++overflow traffic from free-tier providers (whose daily quota is exhausted)
++to paid providers, preferring the cheapest paid candidate that still
++satisfies the request's capability requirements.
++"""
++from __future__ import annotations
++
++from .base import Policy
++
++
++class SpillPolicy(Policy):
++    """Stub — returns empty list (not yet implemented)."""
++
++    name = "spill"
++
++    def select(self, **kwargs):
++        return []
+diff --git a/tests/test_routing_policy.py b/tests/test_routing_policy.py
+new file mode 100644
+index 0000000..19ee764
+--- /dev/null
++++ b/tests/test_routing_policy.py
+@@ -0,0 +1,99 @@
++"""routing_policy package integrity tests + FAIL-ON-REVERT gate.
++
++Wave 1 extracted the routing / provider-selection logic out of ``gateway.py``
++into the ``routing_policy`` package. These tests:
++- assert ``routing_policy`` IS a package with the required sub-modules
++- assert gateway routing DELEGATES to the package
++- assert the FAIL-ON-REVERT contract: if the package is collapsed back into
++  gateway.py these tests go RED.
++"""
++from __future__ import annotations
++
++import importlib
++
++
++def test_routing_policy_is_package():
++    """FAIL-ON-REVERT: ``charon.routing_policy`` MUST be a package (directory
++    with __init__.py), not a single file — else Wave-2 cannot parallelize."""
++    spec = importlib.util.find_spec("charon.routing_policy")
++    assert spec is not None, "charon.routing_policy not found"
++    assert spec.submodule_search_locations is not None, \
++        "routing_policy is NOT a package (it's a single file)"
++
++
++def test_routing_policy_has_required_submodules():
++    """FAIL-ON-REVERT: every required sub-module MUST exist as an importable
++    member of the package."""
++    required = [
++        "charon.routing_policy.base",
++        "charon.routing_policy.matrix",
++        "charon.routing_policy.cost_rank",
++        "charon.routing_policy.drain",
++        "charon.routing_policy.pools",
++        "charon.routing_policy.spill",
++    ]
++    for mod_name in required:
++        mod = importlib.import_module(mod_name)
++        assert mod is not None, f"module {mod_name} not importable"
++
++
++def test_gateway_delegates_to_routing_policy():
++    """FAIL-ON-REVERT: gateway.py's routing logic MUST delegate to the
++    routing_policy package — the functions are NOT defined locally."""
++    import charon.gateway as gateway_mod
++    from charon import routing_policy
++
++    # core routing functions must point to routing_policy (the re-exports)
++    assert gateway_mod._build_routes_and_pools is routing_policy.build_routes_and_pools, \
++        "gateway._build_routes_and_pools does NOT delegate to routing_policy"
++    assert gateway_mod._route_from_spec is routing_policy.route_from_spec, \
++        "gateway._route_from_spec does NOT delegate to routing_policy"
++    assert gateway_mod._tier_pools is routing_policy.tier_pools, \
++        "gateway._tier_pools does NOT delegate to routing_policy"
++
++
++def test_routing_policy_exports_public_api():
++    """The package's __all__ exposes the public surface Wave-2 authors need."""
++    from charon import routing_policy
++
++    assert hasattr(routing_policy, "Policy")
++    assert hasattr(routing_policy, "DefaultPolicy")
++    assert hasattr(routing_policy, "derived_cost_rank")
++    assert hasattr(routing_policy, "route_from_spec")
++    assert hasattr(routing_policy, "build_routes_and_pools")
++    assert hasattr(routing_policy, "tier_pools")
++    assert hasattr(routing_policy, "build_fallback_chain")
++
++
++def test_derived_cost_rank_moved_to_routing_policy():
++    """FAIL-ON-REVERT: ``derived_cost_rank`` MUST live in
++    ``routing_policy.cost_rank``, not as a local definition in ``pools.py``.
++    The ``charon.pools`` module re-imports it for backward compatibility."""
++    from charon.pools import derived_cost_rank as pools_derived
++    from charon.routing_policy.cost_rank import derived_cost_rank
++    assert derived_cost_rank is pools_derived, \
++        "pools.derived_cost_rank does not re-export from routing_policy.cost_rank"
++
++
++def test_routing_policy_rejects_single_file_import():
++    """FAIL-ON-REVERT: if the package is collapsed to a single routing_policy.py
++    file, the sub-modules won't be importable — this test goes RED."""
++    sub_modules = ("base", "matrix", "cost_rank", "drain", "pools", "spill")
++    for name in sub_modules:
++        mod = importlib.import_module(f"charon.routing_policy.{name}")
++        assert mod.__file__ is not None, f"routing_policy.{name} has no __file__"
++
++
++def test_gateway_load_config_calls_routing_policy():
++    """The ``load_config`` path exercises ``build_routes_and_pools`` and
++    ``tier_pools`` through the routing_policy package (integration smoke test)."""
++    import pathlib
++    import tempfile
++
++    from charon.gateway import load_config
++
++    d = pathlib.Path(tempfile.mkdtemp())
++    (d / "models.json").write_text('{"m1": {"upstream_base": "http://x/v1"}}')
++    cfg = load_config(state_dir=d)
++    assert "m1" in cfg.routes
++    assert cfg.routes["m1"].upstream_base == "http://x/v1"
+[0m
+[0m→ [0mRead src/charon/gateway.py
+[0m→ [0mRead src/charon/routing_policy/__init__.py
+[0m→ [0mRead src/charon/routing_policy/base.py
+[0m→ [0mRead src/charon/routing_policy/cost_rank.py
+[0m→ [0mRead src/charon/pools.py
+Now let me read the key source files to cross-check behavior.
+[0m→ [0mRead tests/test_routing_policy.py
+[0m
+[0m$ [0mgit show master:src/charon/gateway.py | head -n 200
+"""Standalone gateway mode — ``charon gateway`` (ADR-0005 P1).
+
+A long-lived, loopback OpenAI-compatible gateway any client points at
+(``http://127.0.0.1:<port>/v1``). It reuses the existing ``GatewayProxyServer``
+(pure stdlib → Windows-native): server-side key holding, SSE pass-through, and
+the response observer. P1 forwards each model to its configured upstream and
+serves an aggregated ``/v1/models``; **transparent in-request failover is P2**.
+
+Config is one schema over two surfaces (ADR-0005 D6/R5):
+- ``charon.toml`` — a ``[gateway]`` table + ``[models."<id>"]`` tables, OR
+- the existing ``.charon/models.json`` registry (same field names).
+
+Each model entry needs an ``upstream_base`` (OpenAI-compatible) and optionally a
+``key_env`` (the env var holding that upstream's key — injected by the proxy,
+never sent to the client) and an ``upstream_model`` (real id if it differs from
+the agent-facing id). Entries without an ``upstream_base`` (e.g. pure-ACP
+profiles) are skipped — the gateway can only serve HTTP upstreams.
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import tomllib
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from . import providers
+from .api import _invocation_name
+from .cache import SemanticCache
+from .consensus import ConsensusRouter
+from .guardrails import Guardrails
+from .netutil import is_loopback
+from .observability import Observability
+from .policy_router import PolicyRouter
+from .pools import derived_cost_rank
+from .proxy_server import GatewayProxyServer, UpstreamRoute
+from .quality_scorer import QualityScorer
+from .request_inspector import RequestInspector
+from .response_normalizer import ResponseNormalizer
+from .session_affinity import SessionAffinity
+from .speculative_execution import SpeculativeExecutor
+from .spend_limits import SpendLimiter
+from .virtual_keys import VirtualKeyManager
+
+_DEFAULT_HOST = "127.0.0.1"
+_DEFAULT_PORT = 8080
+_TOKEN_ENV = "CHARON_GATEWAY_TOKEN"
+
+
+class GatewayBindRefused(Exception):
+    """Raised when a non-loopback bind is requested without a token (D5/R8)."""
+
+
+@dataclass(frozen=True)
+class GatewayConfig:
+    host: str = _DEFAULT_HOST
+    port: int = _DEFAULT_PORT
+    token: str | None = None
+    routes: dict[str, UpstreamRoute] = field(default_factory=dict)
+    pools: dict[str, list[UpstreamRoute]] = field(default_factory=dict)
+    model_ids: list[str] = field(default_factory=list)
+    model_meta: dict[str, dict] = field(default_factory=dict)
+    # Per-model per-token pricing (cost_input, cost_output, free) used to compute
+    # cost_usd when the provider doesn't self-report it (SR-5b). Never a secret.
+    model_pricing: dict[str, dict] = field(default_factory=dict)
+    # Operator toggle (SR-2): fail over on a genuine silent downgrade (recording the
+    # discarded attempt visibly, count_usage=True) instead of serving it once. Default
+    # False keeps the double-bill leak fixed (serve the downgrade, billed once).
+    failover_on_downgrade: bool = False
+    # Operator toggle (SR-6, default ON): inject one Anthropic prompt-cache breakpoint
+    # into the outbound body for Anthropic-wire upstreams (a quality-free input-cost
+    # saving). OFF → the body is forwarded byte-identical; OpenAI-wire routes are never
+    # touched either way. Plumbed identically to failover_on_downgrade.
+    anthropic_prompt_cache: bool = True
+    # ── optional B1 gateway modules (None = feature disabled) ────────
+    semantic_cache: SemanticCache | None = None
+    response_normalizer: ResponseNormalizer | None = None
+    guardrails: Guardrails | None = None
+    observability: Observability | None = None
+    quality_scorer: QualityScorer | None = None
+    spend_limiter: SpendLimiter | None = None
+    request_inspector: RequestInspector | None = None
+    session_affinity: SessionAffinity | None = None
+    speculative_executor: SpeculativeExecutor | None = None
+    consensus_router: ConsensusRouter | None = None
+    virtual_key_manager: VirtualKeyManager | None = None
+    policy_router: PolicyRouter | None = None
+
+
+def _route_from_spec(spec: dict, providers_cfg: dict) -> UpstreamRoute | None:
+    """One registry entry → UpstreamRoute. A ``provider`` reference (P3) resolves
+    base_url/key_env/quirks from a preset (+ ``[providers.<name>]`` overrides); a
+    direct ``upstream_base`` entry (P1/P2) still works. Returns None when neither
+    yields a base (not HTTP-serveable)."""
+    prov = spec.get("provider")
+    if prov:
+        preset = providers.resolve(prov, providers_cfg.get(prov))
+        base: str | None = preset.base_url
+        key_env = spec.get("key_env") or preset.key_env
+        strip_v1: bool | None = preset.strip_v1
+        wire = str(spec.get("wire") or preset.wire)  # per-model override wins
+        adapter = str(spec.get("adapter") or preset.adapter or "") or None
+    else:
+        base = spec.get("upstream_base")
+        if not base:
+            return None
+        key_env = spec.get("key_env")
+        strip_v1 = spec.get("strip_v1")  # explicit only; else server default
+        wire = str(spec.get("wire") or providers.WIRE_OPENAI)
+        adapter = str(spec.get("adapter") or "") or None
+    return UpstreamRoute(
+        upstream_base=str(base),
+        api_key=os.environ.get(key_env) if key_env else None,
+        upstream_model=spec.get("upstream_model"),
+        provider=prov,
+        strip_v1=strip_v1,
+        wire=wire,
+        adapter=adapter,
+    )
+
+
+def _build_routes_and_pools(
+    registry: dict, pool_map: dict, providers_cfg: dict | None = None,
+) -> tuple[dict[str, UpstreamRoute], dict[str, list[UpstreamRoute]], list[str]]:
+    """Compile a model registry + ``pool_map`` (virtual id → [model id]) into
+    single routes (concrete models) and failover chains (virtual ids). Each chain
+    is ordered **free-first then cheapest-first** from the registry's cost metadata
+    (stable → the listed order breaks ties), matching `pools.load_pools` (D4).
+
+    Effective ``cost_rank`` (SR-6) is **derived** from per-token pricing when
+    present: ``blended = (3*cost_input + cost_output) / 4`` (a 3:1 input:output
+    blend approximating typical chat-completion token mix). An explicit
+    ``cost_rank`` override still wins (operator escape hatch). Genuinely-free
+    models (``free:true``) sort first regardless. Models with ``cost_class:
+    "premium"`` are GATED OUT of pool chains — they're usable only when explicitly
+    requested or in a premium role, never the cheap-first default.
+
+    Models with ``"enabled": false`` are excluded from routes and pools."""
+    providers_cfg = providers_cfg or {}
+    routes: dict[str, UpstreamRoute] = {}
+    for mid, spec in registry.items():
+        if isinstance(spec, dict):
+            if spec.get("enabled") is False:
+                continue
+            r = _route_from_spec(spec, providers_cfg)
+            if r is not None:
+                routes[mid] = r
+
+    def _rank(mid: str) -> tuple[bool, int]:
+        spec = registry.get(mid, {})
+        return (not bool(spec.get("free", False)), derived_cost_rank(spec))
+
+    def _is_premium(mid: str) -> bool:
+        return registry.get(mid, {}).get("cost_class") == "premium"
+
+    pools: dict[str, list[UpstreamRoute]] = {}
+    for vid, members in pool_map.items():
+        if not isinstance(members, list):
+            continue
+        # SR-6: premium models are excluded from default-primary pool chains.
+        # They remain in `routes` (explicitly requestable) but never appear in a
+        # cheap-first failover chain unless the operator opts in by listing the
+        # premium model's own id as the pool vid (a premium-only role).
+        eligible = [m for m in members if m in routes and not _is_premium(m)]
+        # If every member is premium, keep them — an explicit premium-only pool
+        # is the operator's opt-in to a premium role (don't silently empty it).
+        if not eligible and members:
+            eligible = [m for m in members if m in routes]
+        ordered = sorted(eligible, key=_rank)
+        if ordered:
+            pools[vid] = [routes[m] for m in ordered]
+
+    return routes, pools, sorted(set(routes) | set(pools))
+
+
+def _tier_pools(registry: dict, providers_cfg: dict) -> dict[str, list[UpstreamRoute]]:
+    """Compile ``tiers.json`` members into failover chains via the SAME
+    ``_build_routes_and_pools`` the gateway uses for ``pools.json`` (DTC HARD REQ #2).
+
+    Tiers are read from the separate ``tiers.json`` store (TIER-1 ``config.load_tiers``),
+    NOT ``pools.json`` — the strict ``pools.load_pools`` / ACP-router loader must never see
+    web-authored tier data (no ``agent`` field → it would crash that path). Members are model
+    ids already in ``registry``; each tier vid is ordered free-first→``cost_rank`` by the shared
+    compiler. Absent/empty ``tiers.json`` → no member matches → no tier vids (behavior
+    unchanged)."""
+    from . import config as _config
+    members = _config.load_tiers().get("members") or {}
+    _, pools, _ = _build_routes_and_pools(registry, members, providers_cfg)
+    return pools
+
+
+def load_config(
+    *,
+    toml_path: str | Path | None = None,
+    state_dir: str | Path | None = None,
+    host: str | None = None,
+    port: int | None = None,
+    token: str | None = None,
+[0m
+Now let me check what was in the original `gateway.py` on master, and who imports the moved symbols.
+[0m✱ [0mGrep "_build_routes_and_pools|_route_from_spec|_tier_pools|build_routes_and_pools|route_from_spec|tier_pools|build_fallback_chain|derived_cost_rank"[90m 64 matches[0m
+[0m
+[0m$ [0mgit show master:src/charon/gateway.py | sed -n '193,270p'
+def load_config(
+    *,
+    toml_path: str | Path | None = None,
+    state_dir: str | Path | None = None,
+    host: str | None = None,
+    port: int | None = None,
+    token: str | None = None,
+) -> GatewayConfig:
+    """Resolve gateway config. ``toml_path`` wins; else ``state_dir/models.json``.
+    Explicit ``host``/``port``/``token`` args override file values; ``token`` also
+    falls back to ``$CHARON_GATEWAY_TOKEN``."""
+    cfg_host: str = _DEFAULT_HOST
+    cfg_port: int = _DEFAULT_PORT
+    cfg_token: str | None = None
+    cfg_failover_on_downgrade: bool = False
+    cfg_anthropic_prompt_cache: bool = True
+    registry: dict = {}
+    pool_map: dict = {}
+    providers_cfg: dict = {}
+
+    if toml_path is not None:
+        data = tomllib.loads(Path(toml_path).read_text())
+        gw = data.get("gateway") or {}
+        cfg_host = str(gw.get("host", cfg_host))
+        cfg_port = int(gw.get("port", cfg_port))
+        cfg_token = gw.get("token")
+        cfg_failover_on_downgrade = bool(gw.get("failover_on_downgrade", False))
+        cfg_anthropic_prompt_cache = bool(
+            gw.get(providers.ANTHROPIC_PROMPT_CACHE_KEY, True))
+        registry = data.get("models") or {}
+        pool_map = data.get("pools") or {}  # virtual id → ordered [model id]
+        providers_cfg = data.get("providers") or {}  # preset overrides (P3)
+    elif state_dir is not None:
+        models_path = Path(state_dir) / "models.json"
+        pools_path = Path(state_dir) / "pools.json"
+        providers_path = Path(state_dir) / "providers.json"
+        gateway_path = Path(state_dir) / "gateway.json"
+        if models_path.exists():
+            registry = json.loads(models_path.read_text())
+        if pools_path.exists():
+            pool_map = json.loads(pools_path.read_text())  # role → [model id]
+        if providers_path.exists():
+            providers_cfg = json.loads(providers_path.read_text())
+        if gateway_path.exists():  # gateway-level flags (SR-2 toggle et al.)
+            try:
+                gw_file = json.loads(gateway_path.read_text())
+                if isinstance(gw_file, dict):
+                    cfg_failover_on_downgrade = bool(
+                        gw_file.get("failover_on_downgrade", False))
+                    cfg_anthropic_prompt_cache = bool(
+                        gw_file.get(providers.ANTHROPIC_PROMPT_CACHE_KEY, True))
+            except (OSError, json.JSONDecodeError):
+                pass
+
+    routes, pools, _ = _build_routes_and_pools(registry, pool_map, providers_cfg)
+    for vid, chain in _tier_pools(registry, providers_cfg).items():
+        pools.setdefault(vid, chain)  # explicit pools.json vid WINS on name collision
+
+    # ---- Global fallback providers (Wave 2) ----
+    from . import config as _cfg
+    fallback_names = _cfg.load_fallback_providers()
+    if fallback_names:
+        fallback_routes: list[UpstreamRoute] = []
+        for fname in fallback_names:
+            try:
+                r = _route_from_spec({"provider": fname}, providers_cfg)
+                if r is not None:
+                    fallback_routes.append(r)
+            except ValueError:
+                pass  # skip invalid/unknown provider names gracefully
+        if fallback_routes:
+            # Append fallback routes to the END of every pool chain (after
+            # the model's own providers — they're tried LAST).
+            for vid in list(pools.keys()):
+                existing = list(pools[vid])
+                pools[vid] = existing + [fr for fr in fallback_routes
+                                         if fr not in existing]
+[0m
+[0m→ [0mRead src/charon/api.py[90m [offset=185, limit=25][0m
+[0m→ [0mRead tests/test_agent_launch_routing.py[90m [offset=1, limit=30][0m
+[0m→ [0mRead tests/test_proxy_server.py[90m [offset=1170, limit=15][0m
+[0m
+[0m$ [0mgit show master:src/charon/gateway.py | sed -n '245,275p'
+except (OSError, json.JSONDecodeError):
+                pass
+
+    routes, pools, _ = _build_routes_and_pools(registry, pool_map, providers_cfg)
+    for vid, chain in _tier_pools(registry, providers_cfg).items():
+        pools.setdefault(vid, chain)  # explicit pools.json vid WINS on name collision
+
+    # ---- Global fallback providers (Wave 2) ----
+    from . import config as _cfg
+    fallback_names = _cfg.load_fallback_providers()
+    if fallback_names:
+        fallback_routes: list[UpstreamRoute] = []
+        for fname in fallback_names:
+            try:
+                r = _route_from_spec({"provider": fname}, providers_cfg)
+                if r is not None:
+                    fallback_routes.append(r)
+            except ValueError:
+                pass  # skip invalid/unknown provider names gracefully
+        if fallback_routes:
+            # Append fallback routes to the END of every pool chain (after
+            # the model's own providers — they're tried LAST).
+            for vid in list(pools.keys()):
+                existing = list(pools[vid])
+                pools[vid] = existing + [fr for fr in fallback_routes
+                                         if fr not in existing]
+            # Single-route models (not in any pool) also get the fallback.
+            for mid in list(routes.keys()):
+                if mid not in pools:
+                    pools[mid] = [routes[mid]] + fallback_routes
+[0m
+[0m→ [0mRead src/charon/routing_policy/drain.py
+[0m→ [0mRead src/charon/routing_policy/pools.py
+[0m→ [0mRead src/charon/routing_policy/spill.py
+[0m
+[0m$ [0mPYTHONPATH=src python3 -m pytest tests/test_routing_policy.py -v 2>&1
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.0.3, pluggy-1.6.0 -- /usr/bin/python3
+cachedir: .pytest_cache
+Using --randomly-seed=3177662936
+hypothesis profile 'default'
+rootdir: /home/stack/code/wt-decompose
+configfile: pyproject.toml
+plugins: anyio-4.8.0, base-url-2.1.0, asyncio-1.4.0, timeout-2.4.0, schemathesis-4.21.5, randomly-4.1.0, hypothesis-6.155.2, syrupy-5.1.0, playwright-0.8.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 7 items
+
+tests/test_routing_policy.py::test_gateway_load_config_calls_routing_policy PASSED [ 14%]
+tests/test_routing_policy.py::test_routing_policy_rejects_single_file_import PASSED [ 28%]
+tests/test_routing_policy.py::test_routing_policy_is_package PASSED      [ 42%]
+tests/test_routing_policy.py::test_routing_policy_exports_public_api PASSED [ 57%]
+tests/test_routing_policy.py::test_derived_cost_rank_moved_to_routing_policy PASSED [ 71%]
+tests/test_routing_policy.py::test_routing_policy_has_required_submodules PASSED [ 85%]
+tests/test_routing_policy.py::test_gateway_delegates_to_routing_policy PASSED [100%]
+
+============================== 7 passed in 0.10s ===============================
+[0m
+[0m$ [0mPYTHONPATH=src python3 -c "
+from charon import routing_policy
+# Check if __all__ symbols are actually importable at package level
+for name in ['CapabilityMatrix', 'ModelCapability', 'Grade', 'WorkClass', 'DrainPolicy', 'PoolsSimplificationPolicy', 'SpillPolicy']:
+    try:
+        getattr(routing_policy, name)
+        print(f'{name}: EXISTS (via getattr)')
+    except AttributeError:
+        print(f'{name}: MISSING from package namespace')
+" 2>&1
+CapabilityMatrix: MISSING from package namespace
+ModelCapability: MISSING from package namespace
+Grade: MISSING from package namespace
+WorkClass: MISSING from package namespace
+DrainPolicy: MISSING from package namespace
+PoolsSimplificationPolicy: MISSING from package namespace
+SpillPolicy: MISSING from package namespace
+[0m
+Let me verify the tests and check for the `__all__` / import integrity issue I suspect.
+[0m$ [0mPYTHONPATH=src python3 -c "
+# Check what's actually in the routing_policy namespace
+from charon import routing_policy
+import pprint
+print('Actual public attributes:')
+for name in dir(routing_policy):
+    if not name.startswith('_'):
+        print(f'  {name}')
+print()
+print('__all__ says:', routing_policy.__all__)
+" 2>&1
+Actual public attributes:
+  DefaultPolicy
+  Policy
+  annotations
+  base
+  build_fallback_chain
+  build_routes_and_pools
+  cost_rank
+  derived_cost_rank
+  os
+  route_from_spec
+  tier_pools
+
+__all__ says: ['Policy', 'DefaultPolicy', 'CapabilityMatrix', 'ModelCapability', 'Grade', 'WorkClass', 'derived_cost_rank', 'DrainPolicy', 'PoolsSimplificationPolicy', 'SpillPolicy', 'route_from_spec', 'build_routes_and_pools', 'tier_pools', 'build_fallback_chain']
+[0m
+[0m$ [0mPYTHONPATH=src python3 -c "
+# Check import cycle: can gateway and routing_policy coexist?
+from charon import gateway, routing_policy, pools, proxy, balance
+print('all imports ok — no cycles')
+" 2>&1
+all imports ok — no cycles
+[0m
+[0m$ [0mPYTHONPATH=src python3 -m pytest tests/test_gateway.py tests/test_agent_launch_routing.py tests/test_gateway_tiers.py -v --timeout=30 -x 2>&1 | head -80
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.0.3, pluggy-1.6.0 -- /usr/bin/python3
+cachedir: .pytest_cache
+Using --randomly-seed=3457176376
+hypothesis profile 'default'
+rootdir: /home/stack/code/wt-decompose
+configfile: pyproject.toml
+plugins: anyio-4.8.0, base-url-2.1.0, asyncio-1.4.0, timeout-2.4.0, schemathesis-4.21.5, randomly-4.1.0, hypothesis-6.155.2, syrupy-5.1.0, playwright-0.8.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+timeout: 30.0s
+timeout method: signal
+timeout func_only: False
+collecting ... collected 35 items
+
+tests/test_gateway.py::test_run_refuses_nonloopback_without_token PASSED [  2%]
+tests/test_gateway.py::test_sr6_explicit_cost_rank_override_wins PASSED  [  5%]
+tests/test_gateway.py::test_sr6_derived_rank_from_add_models_bulk_production_path PASSED [  8%]
+tests/test_gateway.py::test_models_endpoint_and_token_gate PASSED        [ 11%]
+tests/test_gateway.py::test_sr6_cost_class_normalized_on_add_model PASSED [ 14%]
+tests/test_gateway.py::test_sr6_premium_class_gated_out_of_default_pool PASSED [ 17%]
+tests/test_gateway.py::test_load_config_from_models_json PASSED          [ 20%]
+tests/test_gateway.py::test_models_endpoint_surfaces_metadata PASSED     [ 22%]
+tests/test_gateway.py::test_gateway_forwards_chat_completions_end_to_end PASSED [ 25%]
+tests/test_gateway.py::test_sr6_missing_pricing_falls_back_to_default_rank PASSED [ 28%]
+tests/test_gateway.py::test_models_endpoint_excludes_pool_ids PASSED     [ 31%]
+tests/test_gateway.py::test_sr6_derived_rank_from_add_model_production_path PASSED [ 34%]
+tests/test_gateway.py::test_models_endpoint_does_not_exclude_model_in_both_routes_and_pools PASSED [ 37%]
+tests/test_gateway.py::test_load_config_from_toml_resolves_keys_and_overrides PASSED [ 40%]
+tests/test_gateway.py::test_sr6_premium_only_pool_is_operators_opt_in PASSED [ 42%]
+tests/test_gateway.py::test_sr6_explicit_cost_rank_via_add_model_still_honored PASSED [ 45%]
+tests/test_gateway.py::test_sr6_derived_rank_orders_by_blended_cost PASSED [ 48%]
+tests/test_gateway.py::test_gateway_shares_core_and_excludes_privileged_loop PASSED [ 51%]
+tests/test_gateway.py::test_failover_chain_check_warns_when_no_pools_or_fallback PASSED [ 54%]
+tests/test_gateway.py::test_sr6_cost_carried_through_bulk_import PASSED  [ 57%]
+tests/test_gateway.py::test_load_config_builds_cost_ranked_pool PASSED   [ 60%]
+tests/test_gateway.py::test_token_falls_back_to_env PASSED               [ 62%]
+tests/test_agent_launch_routing.py::test_whole_tier_exhausted_surfaces_skipped_and_terminal_error PASSED [ 65%]
+tests/test_agent_launch_routing.py::test_bare_path_forwards_only_the_gateway_token_no_general_hole PASSED [ 68%]
+tests/test_agent_launch_routing.py::test_agent_launch_pins_vid_at_the_seam_and_excludes_keys PASSED [ 71%]
+tests/test_agent_launch_routing.py::test_tier_pool_is_free_first_ordered PASSED [ 74%]
+tests/test_agent_launch_routing.py::test_bare_path_forwards_gateway_token_when_set PASSED [ 77%]
+tests/test_agent_launch_routing.py::test_renderer_path_does_not_force_forward_gateway_token PASSED [ 80%]
+tests/test_agent_launch_routing.py::test_dry_tier_note_is_empty PASSED   [ 82%]
+tests/test_agent_launch_routing.py::test_tier_routes_through_gateway_failover_no_engine_selection PASSED [ 85%]
+tests/test_agent_launch_routing.py::test_bare_path_omits_gateway_token_when_unset PASSED [ 88%]
+tests/test_gateway_tiers.py::test_absent_tiers_file_adds_no_tier_vids PASSED [ 91%]
+tests/test_gateway_tiers.py::test_pools_json_vid_wins_on_name_collision PASSED [ 94%]
+tests/test_gateway_tiers.py::test_setup_tiers_branch_persists_and_reloads PASSED [ 97%]
+tests/test_gateway_tiers.py::test_tier_members_compile_into_pools_and_model_ids PASSED [100%]
+
+============================== 35 passed in 5.25s ==============================
+[0m
+[0m$ [0mPYTHONPATH=src python3 -m pytest tests/test_proxy_server.py::test_cline_pass_config_flows_adapter_to_route tests/test_gateway.py::test_sr6_derived_rank_orders_by_blended_cost -v --timeout=30 2>&1
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.0.3, pluggy-1.6.0 -- /usr/bin/python3
+cachedir: .pytest_cache
+Using --randomly-seed=2459062573
+hypothesis profile 'default'
+rootdir: /home/stack/code/wt-decompose
+configfile: pyproject.toml
+plugins: anyio-4.8.0, base-url-2.1.0, asyncio-1.4.0, timeout-2.4.0, schemathesis-4.21.5, randomly-4.1.0, hypothesis-6.155.2, syrupy-5.1.0, playwright-0.8.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+timeout: 30.0s
+timeout method: signal
+timeout func_only: False
+collecting ... collected 2 items
+
+tests/test_gateway.py::test_sr6_derived_rank_orders_by_blended_cost PASSED [ 50%]
+tests/test_proxy_server.py::test_cline_pass_config_flows_adapter_to_route PASSED [100%]
+
+============================== 2 passed in 0.10s ===============================
+[0m
+[0m$ [0mPYTHONPATH=src python3 -c "
+# Verify backward-compatible re-exports work for all existing importers
+from charon.gateway import _build_routes_and_pools, _route_from_spec, _tier_pools
+print('gateway re-exports OK')
+
+# Verify pools re-export works
+from charon.pools import derived_cost_rank
+print('pools re-export OK')
+
+# Verify cli.py path works  
+import charon.cli
+print('cli imports OK')
+
+# Direct from routing_policy works too
+from charon.routing_policy import build_routes_and_pools, route_from_spec, tier_pools, build_fallback_chain
+print('routing_policy direct imports OK')
+" 2>&1
+gateway re-exports OK
+pools re-export OK
+cli imports OK
+routing_policy direct imports OK
+[0m
+[0m→ [0mRead tests/test_gateway.py[90m [offset=280, limit=60][0m
+[0m→ [0mRead tests/test_gateway.py[90m [offset=440, limit=50][0m
+[0m✱ [0mGrep "routing_policy"[90m in src/charon · 8 matches[0m
+[0m
+[0m$ [0mgit show master:src/charon/gateway.py | grep -n "model_ids" | head -5
+63:    model_ids: list[str] = field(default_factory=list)
+304:        model_ids=sorted(set(routes) | set(pools)),
+426:        token=cfg.token, model_ids=cfg.model_ids, model_meta=cfg.model_meta,
+458:        server.apply_routes(new.routes, new.pools, new.model_ids, new.model_meta,
+605:          f"{len(cfg.model_ids)} model(s), {len(cfg.pools)} pool(s)", file=sys.stderr)
+[0m
+[0m$ [0mgit show master:src/charon/gateway.py | sed -n '248,305p'
+routes, pools, _ = _build_routes_and_pools(registry, pool_map, providers_cfg)
+    for vid, chain in _tier_pools(registry, providers_cfg).items():
+        pools.setdefault(vid, chain)  # explicit pools.json vid WINS on name collision
+
+    # ---- Global fallback providers (Wave 2) ----
+    from . import config as _cfg
+    fallback_names = _cfg.load_fallback_providers()
+    if fallback_names:
+        fallback_routes: list[UpstreamRoute] = []
+        for fname in fallback_names:
+            try:
+                r = _route_from_spec({"provider": fname}, providers_cfg)
+                if r is not None:
+                    fallback_routes.append(r)
+            except ValueError:
+                pass  # skip invalid/unknown provider names gracefully
+        if fallback_routes:
+            # Append fallback routes to the END of every pool chain (after
+            # the model's own providers — they're tried LAST).
+            for vid in list(pools.keys()):
+                existing = list(pools[vid])
+                pools[vid] = existing + [fr for fr in fallback_routes
+                                         if fr not in existing]
+            # Single-route models (not in any pool) also get the fallback.
+            for mid in list(routes.keys()):
+                if mid not in pools:
+                    pools[mid] = [routes[mid]] + fallback_routes
+
+    _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio",
+                  "cost_class")
+    model_meta: dict[str, dict] = {}
+    for mid, spec in registry.items():
+        if not isinstance(spec, dict) or mid not in routes:
+            continue
+        meta = {k: spec[k] for k in _META_KEYS if k in spec}
+        if meta:
+            model_meta[mid] = meta
+
+    # Per-token pricing surfaced to the proxy so it can compute cost_usd when a
+    # provider returns a 200 with no cost (SR-5b). Keyed by registry model id;
+    # the proxy's lookup also matches on the normalized final segment.
+    model_pricing: dict[str, dict] = {}
+    for mid, spec in registry.items():
+        if not isinstance(spec, dict):
+            continue
+        price = {k: spec[k] for k in ("cost_input", "cost_output", "free")
+                 if k in spec}
+        if price:
+            model_pricing[mid] = price
+
+    return GatewayConfig(
+        host=host or cfg_host,
+        port=port if port is not None else cfg_port,
+        token=token or cfg_token or os.environ.get(_TOKEN_ENV) or None,
+        routes=routes,
+        pools=pools,
+        model_ids=sorted(set(routes) | set(pools)),
+        model_meta=model_meta,
+[0m
+[0m✱ [0mGrep "^(from|import).*routing_policy|^(from|import).*gateway"[90m in src/charon · 2 matches[0m
+Now I have all the evidence. Let me verify one final edge case — the `config` import in `tier_pools` changed from lazy (call-time) to module-level. Let me confirm that `config` doesn't depend on anything that could cause a circular import issue.
+[0m
+[0m$ [0mPYTHONPATH=src python3 -c "
+# Verify build_fallback_chain produces identical results to old inline code
+from charon import routing_policy
+from charon.proxy_server import UpstreamRoute
+
+routes = {'m1': UpstreamRoute('http://x/v1')}
+pools = {'auto': [UpstreamRoute('http://x/v1')]}
+
+# Empty fallback_names → no change
+r2, p2 = routing_policy.build_fallback_chain(routes=routes, pools=pools, providers_cfg={}, fallback_names=[])
+assert r2 is routes  # same object returned when no fallback
+assert p2 is pools   # same object returned when no fallback
+print('build_fallback_chain empty: preserved identity (same as old inline code)')
+" 2>&1
+build_fallback_chain empty: preserved identity (same as old inline code)
+[0m
+[0m$ [0mmkdir -p /home/stack/charon-private/fleet/reviews
+(no output)
+[0m
+[0m← [0mWrite /home/stack/charon-private/fleet/reviews/DECOMPOSE-REVIEW.md
+Wrote file successfully.
+[0m
+[0m$ [0mwc -l /home/stack/charon-private/fleet/reviews/DECOMPOSE-REVIEW.md
+127 /home/stack/charon-private/fleet/reviews/DECOMPOSE-REVIEW.md
+[0m
+`/home/stack/charon-private/fleet/reviews/DECOMPOSE-REVIEW.md`
+[charon-run] model 'deepseek-v4-pro' hit a provider/session LIMIT -> failing over
+[charon-run] ALL MODELS EXHAUSTED: glm-5.2 deepseek-v4-pro
+CHARON_RUN_RESULT=EXHAUSTED

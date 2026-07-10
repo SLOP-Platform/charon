@@ -9,6 +9,13 @@ set -uo pipefail   # deliberately NOT -e: a red check_cmd exits non-zero — tha
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TSV="$HERE/reds.tsv"
+VALIDATE_BOARD="$HERE/validate_board.sh"
+VERIFY_MERGED_SH="$HERE/verify-merged.sh"
+BOARD_RED_ID="board-validator-red"
+# shared merge-verification helper (verify_merged) — the ONE source of truth for G2/G3a.
+FLEET="$HERE"
+# shellcheck source=/dev/null
+source "$HERE/_lib.sh"
 TODAY="$(date +%F)"
 TAB=$'\t'
 
@@ -45,7 +52,10 @@ cmd_scan(){
     [ "$state" = NOW-GREEN ] && printf '    ready to close: preflight.sh close %s\n' "$id"
   done < "$TSV"
   printf -- '--- %d open: %d STILL-RED  %d NOW-GREEN  %d MANUAL ---\n' "$total" "$red" "$green" "$manual"
-  [ $red -gt 0 ] && echo "Address or explicitly DEFER each STILL-RED before proceeding."
+  if [ $red -gt 0 ]; then
+    echo "Address or explicitly DEFER each STILL-RED before proceeding."
+    return 1
+  fi
   return 0
 }
 
@@ -219,17 +229,164 @@ $(basename "$f"): $(head -1 "$f" 2>/dev/null)"
   fi
 }
 
-detect_health(){
-  local vb="$HERE/validate_board.sh"
-  [ -f "$vb" ] || { echo "health: validate_board.sh not found at $vb"; return 0; }
-  local out rc
-  out="$(bash "$vb" 2>&1)"; rc=$?
-  if [ $rc -eq 0 ]; then
-    echo "health: validate_board.sh GREEN"
-  else
-    echo "DETECTED (unregistered): health — validate_board.sh exited $rc"
-    printf '%s\n' "$out" | tail -5 | sed 's/^/    /'
+# --- board_gate: MECHANIZES [never-ignore-preexisting-issues] for the board class.
+# Runs validate_board.sh EVERY preflight (not just --full) and AUTO-REGISTERS a tracked
+# red into reds.tsv when it is red — so board hygiene issues can never again hide in the
+# advisory "DETECTED" section and get dismissed as "not the tracked reds". The umbrella red
+# self-closes when validate_board goes green (machine-owned, so machine-closed). Because it
+# lands in reds.tsv BEFORE cmd_scan, a red board makes preflight exit non-zero — it blocks
+# the session the same way a failing test does, rather than relying on the manager to recall.
+_board_red_status(){ awk -F"$TAB" -v id="$BOARD_RED_ID" '$1==id{print $7; exit}' "$TSV"; }
+_board_red_ensure_open(){
+  local st; st="$(_board_red_status)"
+  if [ -z "$st" ]; then
+    cmd_add "$BOARD_RED_ID" P2 board \
+      "validate_board.sh RED — fix or explicitly DEFER each board issue before proceeding" \
+      "bash $VALIDATE_BOARD >/dev/null 2>&1" >/dev/null 2>&1 || true
+  elif [ "$st" = closed ]; then
+    local tmp; tmp="$(mktemp)"
+    awk -F"$TAB" -v OFS="$TAB" -v id="$BOARD_RED_ID" \
+      '/^#/{print;next} $1==id{$7="open";$8=""} {print}' "$TSV" > "$tmp" && mv "$tmp" "$TSV"
   fi
+}
+_board_red_close_if_open(){
+  [ "$(_board_red_status)" = open ] && \
+    cmd_close "$BOARD_RED_ID" --override "auto: validate_board.sh GREEN" >/dev/null 2>&1 || true
+}
+board_gate(){
+  [ -f "$VALIDATE_BOARD" ] || { echo "board_gate: validate_board.sh not found at $VALIDATE_BOARD"; return 0; }
+  local out rc; out="$(bash "$VALIDATE_BOARD" 2>&1)"; rc=$?
+  if [ $rc -eq 0 ]; then
+    echo "board_gate: validate_board.sh GREEN"; _board_red_close_if_open
+  else
+    local n; n="$(printf '%s\n' "$out" | grep -cE '^[[:space:]]*RED')"
+    _board_red_ensure_open
+    echo "board_gate: validate_board.sh RED ($n issue(s)) — AUTO-REGISTERED as tracked red '$BOARD_RED_ID' (blocks preflight until fixed or DEFERRED)"
+    printf '%s\n' "$out" | grep -E '^[[:space:]]*RED' | head -6 | sed 's/^ *//; s/^/    /'
+    [ "$n" -gt 6 ] && echo "    +$((n-6)) more — run: fleet/validate_board.sh"
+  fi
+}
+
+# --- detect_needs_push: MECHANIZES [never-ignore-preexisting-issues] for STRANDED PUSHES (#3).
+# submit.sh writes state/needs-push/<id> when a droid committed work but no PR opened, and a
+# later re-claim's `git worktree remove --force` can DESTROY that committed work (CI-WORKFLOW-
+# POLICY-GATE sat stranded since 2026-07-09). This AUTO-REGISTERS a tracked reds.tsv red per live
+# marker (identical machinery to board_gate) so a stranded push BLOCKS preflight until landed —
+# it can no longer be silently missed. The red self-closes when the marker goes away (landed).
+# A marker whose ticket is already state/done (merged) is stale cruft -> cleaned + red closed.
+NEEDS_PUSH_DIR="$HERE/state/needs-push"
+DONE_DIR="$HERE/state/done"
+_red_status(){ awk -F"$TAB" -v id="$1" '$1==id{print $7; exit}' "$TSV"; }
+_np_red_id(){ printf 'needs-push-%s' "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\{1,\}/-/g; s/^-//; s/-$//')"; }
+_np_red_ensure_open(){
+  local rid="$1" id="$2" marker="$3" st; st="$(_red_status "$rid")"
+  if [ -z "$st" ]; then
+    cmd_add "$rid" P1 gate \
+      "needs-push STRANDED: $id committed but unlanded — land it (fleet/land-needs-push.sh $id) or it blocks preflight" \
+      "test ! -e '$marker'" >/dev/null 2>&1 || true
+  elif [ "$st" = closed ]; then
+    local tmp; tmp="$(mktemp)"
+    awk -F"$TAB" -v OFS="$TAB" -v id="$rid" \
+      '/^#/{print;next} $1==id{$7="open";$8=""} {print}' "$TSV" > "$tmp" && mv "$tmp" "$TSV"
+  fi
+}
+detect_needs_push(){
+  [ -d "$NEEDS_PUSH_DIR" ] || { echo "clean: needs-push (no markers)"; return 0; }
+  _vm_refresh   # M1: refresh the product ref once so a stale local ref cannot mis-decide the clear.
+  # (1) auto-close any needs-push-* red whose marker is gone (the work landed).
+  awk -F"$TAB" '$7=="open" && $1 ~ /^needs-push-/{print $1 "\t" $6}' "$TSV" | \
+  while IFS="$TAB" read -r rid chk; do
+    [ -n "$rid" ] || continue
+    run_check "$chk" && cmd_close "$rid" --override "auto: needs-push landed" >/dev/null 2>&1 || true
+  done
+  # (2) per live marker: clear ONLY when the ticket is MERGE-VERIFIED (HIGH #1 fix); else keep the
+  #     blocking red. A `done` marker is NOT proof-of-merge — a false/legacy done must NEVER again
+  #     silently delete the guard protecting committed-but-unlanded work. `done` + `needs-push` +
+  #     NOT-verified is the exact contradiction danger case: keep the guard, let a human resolve.
+  local m id rid n=0
+  for m in "$NEEDS_PUSH_DIR"/*; do
+    [ -f "$m" ] || continue
+    id="$(basename "$m")"; rid="$(_np_red_id "$id")"
+    if [ -e "$DONE_DIR/$id" ] && verify_merged "$id"; then
+      rm -f "$m"
+      [ "$(_red_status "$rid")" = open ] && cmd_close "$rid" --override "auto: merge-verified; stale needs-push cleared" >/dev/null 2>&1 || true
+      echo "needs-push: $id merge-verified — stale marker cleared"
+      continue
+    fi
+    [ -e "$DONE_DIR/$id" ] && \
+      echo "needs-push: $id has BOTH done + needs-push but is NOT merge-verified — keeping guard (contradiction: verify the PR actually merged)"
+    n=$((n+1))
+    _np_red_ensure_open "$rid" "$id" "$m"
+    echo "needs-push: $id STRANDED — AUTO-REGISTERED red '$rid' (blocks preflight until landed: fleet/land-needs-push.sh $id)"
+  done
+  [ "$n" -eq 0 ] && echo "clean: needs-push (no stranded markers)"
+  return 0
+}
+
+# --- done_merge_gate: G2 BACKFILL detector — "a done marker can't lie" (DONE-AUDIT 2026-07-10).
+# For EVERY state/done/<id> marker, re-run the merge-verification (verify_merged) rather than
+# trusting the marker's mere existence. A marker that FAILS verification AUTO-REGISTERS a blocking
+# P1 reds.tsv red 'done-unmerged-<id>' whose check_cmd re-runs verify-merged.sh, so it SELF-CLOSES
+# the instant the ticket actually lands. Identical machinery to detect_needs_push/board_gate: it
+# lands in reds.tsv BEFORE cmd_scan, so a lying done marker BLOCKS preflight exactly like a red
+# board. Offline-tolerant (verify_merged prefers local git checks). Override markers are a RECORDED
+# exception (not a lie) -> surfaced, never red. This closes the bypass that stranded
+# CI-WORKFLOW-POLICY-GATE and fired 32x historically.
+_dm_red_id(){ printf 'done-unmerged-%s' "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\{1,\}/-/g; s/^-//; s/-$//')"; }
+_dm_red_ensure_open(){
+  local rid="$1" id="$2" st; st="$(_red_status "$rid")"
+  if [ -z "$st" ]; then
+    cmd_add "$rid" P1 gate \
+      "done marker for $id is NOT merge-verified — refuse to trust it; land/prove it (done.sh $id --merged-sha <sha>) or override, or it blocks preflight" \
+      "bash '$VERIFY_MERGED_SH' '$id'" >/dev/null 2>&1 || true
+  elif [ "$st" = closed ]; then
+    local tmp; tmp="$(mktemp)"
+    awk -F"$TAB" -v OFS="$TAB" -v id="$rid" \
+      '/^#/{print;next} $1==id{$7="open";$8=""} {print}' "$TSV" > "$tmp" && mv "$tmp" "$TSV"
+  fi
+}
+done_merge_gate(){
+  [ -d "$DONE_DIR" ] || { echo "clean: done-merge-gate (no done markers)"; return 0; }
+  _vm_refresh   # M1: one best-effort fetch so a stale local ref cannot false-negative a fresh merge.
+  local can_verify=1; _verification_available || can_verify=0
+  # (1) auto-close any done-unmerged-* red whose ticket now verifies merged (POSITIVE proof only).
+  awk -F"$TAB" '$7=="open" && $1 ~ /^done-unmerged-/{print $1 "\t" $6}' "$TSV" | \
+  while IFS="$TAB" read -r rid chk; do
+    [ -n "$rid" ] || continue
+    run_check "$chk" && cmd_close "$rid" --override "auto: done marker now merge-verified" >/dev/null 2>&1 || true
+  done
+  # (2) per done marker: override -> surface; POSITIVELY verified -> ok; owns-content-present -> weak
+  #     ADVISORY (informational, non-blocking — H1: owns-present is NOT proof, never blocks/closes on
+  #     it); cannot verify (gh/network down) -> ONE 'verification-unavailable' advisory (M1/M2, not a
+  #     per-marker blocking red); otherwise (no proof, no owns, verification available) -> blocking red.
+  local m id rid unmerged=0 ov=0 adv=0 unavail=0
+  for m in "$DONE_DIR"/*; do
+    [ -f "$m" ] || continue
+    id="$(basename "$m")"; rid="$(_dm_red_id "$id")"
+    if grep -q 'override:' "$m" 2>/dev/null; then
+      ov=$((ov+1)); echo "done-merge-gate: $id closed by OPERATOR OVERRIDE —$(sed -n 's/.*override:/ /p' "$m" | head -1)"
+      [ "$(_red_status "$rid")" = open ] && cmd_close "$rid" --override "auto: override recorded on marker" >/dev/null 2>&1 || true
+      continue
+    fi
+    if verify_merged "$id"; then
+      [ "$(_red_status "$rid")" = open ] && cmd_close "$rid" --override "auto: done marker merge-verified" >/dev/null 2>&1 || true
+      continue
+    fi
+    if verify_merged_owns_advisory "$id"; then
+      adv=$((adv+1))
+      echo "done-merge-gate: $id — owns-content present in origin/master but THIS ticket's merge is NOT positively proven (ADVISORY, weak, NOT blocking). Prove it: done.sh $id --merged-sha <sha>."
+      continue
+    fi
+    if [ "$can_verify" -eq 0 ]; then
+      unavail=$((unavail+1)); continue
+    fi
+    unmerged=$((unmerged+1))
+    _dm_red_ensure_open "$rid" "$id"
+    echo "done-merge-gate: $id done but NOT merge-verified — AUTO-REGISTERED blocking red '$rid' (prove: done.sh $id --merged-sha <sha>, or override)"
+  done
+  [ "$unavail" -gt 0 ] && echo "done-merge-gate: verification-unavailable — gh/network absent; $unavail done marker(s) could not be positively checked (ADVISORY, NOT blocking; re-run when online)."
+  [ "$unmerged" -eq 0 ] && echo "done-merge-gate: clean ($ov override(s), $adv owns-advisory, $unavail unverifiable; all other done markers merge-verified)"
+  return 0
 }
 
 # WCI high-contention-file advisory: a file owned by >= N tickets is a DECOMPOSE
@@ -262,20 +419,26 @@ cmd_detect(){
   detect_repo_drift
   detect_claim_loop
   detect_wci_contention
-  if [ $full -eq 1 ]; then
-    detect_health
-  else
-    echo "health: skipped (pass --full to run validate_board.sh)"
-  fi
   echo "--- end detectors ---"
   return 0
 }
 
+show_operator_actions(){
+  echo "--- OPERATOR ACTIONS (things the manager needs YOU to do/decide) ---"
+  bash "$HERE/pending.sh" list
+  echo "--- end operator actions ---"
+  return 0
+}
+
+# Dispatch ONLY when run directly. When SOURCED (fleet/tests/needs-push-gate.test.sh) the
+# functions above are exposed with NO side effects.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 case "${1:-scan}" in
-  scan|"") cmd_scan; cmd_detect ;;
+  scan|"") bash "$HERE/reconcile-merged.sh"; board_gate; done_merge_gate; detect_needs_push; bash "$HERE/retire-done.sh"; cmd_scan; scan_rc=$?; cmd_detect; show_operator_actions; exit $scan_rc ;;
   add)     shift; cmd_add "$@" ;;
   close)   shift; cmd_close "$@" ;;
   list)    shift; cmd_list "$@" ;;
   detect)  shift; cmd_detect "$@" ;;
   *) echo "usage: $0 {scan|add <id> <sev> <area> \"<desc>\" \"<check>\"|close <id> [--override r|--evidence t]|list [open|closed|all]|detect [--full]}" >&2; exit 1 ;;
 esac
+fi

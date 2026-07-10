@@ -1,0 +1,52 @@
+tier: frontier
+difficulty: 5  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
+work_class: money-path
+branch: feat/drain-then-park
+depends_on: METER-MODEL-PROVIDER, DRAIN-ROUTING
+real-dep: METER-MODEL-PROVIDER build — the auto-park trigger needs a REAL per-provider balance
+  (starting_credit - real metered spend). METER is the sensor that supplies it; without it, "balance
+  hits ~0" is fiction (the $223 spend.json was 100% fabricated est_cost). True correctness prereq.
+real-dep: DRAIN-ROUTING build — DRAIN establishes the funding-class / cost_class ordering primitive
+  and the starting_balance + auto-decrement mechanism (providers.json). Drain-then-park is the
+  LIFECYCLE layer on top of that (park at 0, re-arm on top-up); it extends DRAIN's balance model, not
+  a parallel scheme. Also shares gateway.py + balance.py with the cost chain (shared-file sequencing).
+owns: src/charon/balance.py, src/charon/gateway.py, tests/test_drain_then_park.py
+accept: PYTHONPATH=src python3 -m pytest tests/test_drain_then_park.py -v -q
+  # FAIL-ON-REVERT (two invariants): (1) a class-3 (drain-then-park) provider whose balance reaches
+  # ~0 is AUTO-PARKED (marked unavailable; routing skips it, no fail-churn) and RE-ARMS to active when
+  # topped up; (2) SOLE-LEG GUARD — a provider that is the ONLY remaining leg of any pool is NEVER
+  # auto-parked at 0 (kept/alerted instead of orphaning the pool). Reverting either the park trigger
+  # or the sole-leg guard fails the corresponding assertion.
+prompt: /home/stack/charon-private/prompts/drain-then-park.md   # author at activation
+scope: >-
+  Operator feature directive (memory charon-drain-then-park-provider-class, 2026-07-09). Model
+  providers by FUNDING CLASS and add a first-class drain-then-park lifecycle for CLASS-3 finite
+  prepaid credit (OpenRouter ~$9.90, NeuralWatt $22 PAYG, opencode-zen prepaid, DeepSeek $9.99,
+  Together $9.83). Taxonomy (cheap-first): (1) free-tier recurring quota, (2) flat subscription
+  ($0 marginal), (3) DRAIN-THEN-PARK finite prepaid, (4) true PAYG. Class 3 = drain the finite
+  balance first, then AUTO-PARK (deactivate) at ~0 so it stops erroring / failing over, and RE-ARM to
+  active on top-up (console toggle — surface in RFL-4). HARD SAFETY GUARD (operator, non-negotiable):
+  auto-park must NEVER park a provider that is the sole/only remaining leg of any pool — check pool
+  membership before parking; if last leg, keep it (or alert), never orphan the pool. RESOLVED
+  ordering: credit (class 3) drained BEFORE flat-fee (class 2) once the credit legs are un-blocked
+  (NORMALIZE-CASE-QUANT-FIX + OPENROUTER-FLAKINESS-FIX must land first, else credit-first just
+  fail-churns); interim = flat-fee-first. Optional per-provider `expires` field later.
+
+## Dependencies & sequence
+depends_on: METER-MODEL-PROVIDER (real balance sensor), DRAIN-ROUTING (funding-class + balance model).
+real-dep: both (see above) — genuine correctness prereqs, not merge-order.
+couples-with: FREE-TIER-QUOTA-SPILL — these are TWO faces of ONE resource-availability eligibility
+  mechanism (mark-unavailable + skip/spill): FREE-TIER handles class-1 quota exhaustion, DRAIN-THEN-PARK
+  handles class-3 balance-zero. They share the SAME gateway.py routing-skip surface and the same
+  predict-and-switch-at-boundary timing. MANAGER DECISION FLAG: consider FOLDING these into one
+  eligibility ticket (fewer serial gateway.py waves, one reviewed money-path surface). If kept
+  separate, sequence DRAIN-THEN-PARK immediately after FREE-TIER-QUOTA-SPILL on gateway.py.
+wave: WAVE 7 (if kept separate) — after FREE-TIER-QUOTA-SPILL on the gateway.py single-writer chain.
+concurrency: co-owns gateway.py with the whole cost chain -> NOT parallel-safe with any of
+  DRAIN-ROUTING / COST-RANK-AUTO / POOLS-SIMPLIFICATION / FREE-TIER-QUOTA-SPILL / CAPABILITY-ENGINE;
+  co-owns balance.py with METER (before). Disjoint from RFL-*, PFF-P2, bench track.
+recommended-model: frontier (Claude Opus 4.8) — money-path lifecycle with the sole-leg safety guard
+  and balance-zero edge cases; design-sensitive. ADVERSARIAL review before merge (safety guard is
+  where a regression orphans a pool).
+note: PARKED — staged; new ticket. Un-park + author the prompt at activation. Filed 2026-07-09 by the
+  WCI designed-work plan.

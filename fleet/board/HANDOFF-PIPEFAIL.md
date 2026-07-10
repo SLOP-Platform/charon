@@ -1,7 +1,9 @@
 tier: economy
+difficulty: 1  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
 work_class: bugfix
 branch: feat/handoff-pipefail
-depends_on:
+depends_on: HANDOFF-MECHANIZE
+real-dep: HANDOFF-MECHANIZE (shared fleet/handoff.sh — sequence onto its final file)
 owns: /home/stack/charon-private/fleet/handoff.sh
 accept: bash /home/stack/charon-private/fleet/handoff.sh 2>&1 | grep -q "version OK\|VERSION DRIFT\|passed"
 prompt: /home/stack/charon-private/prompts/handoff-pipefail.md

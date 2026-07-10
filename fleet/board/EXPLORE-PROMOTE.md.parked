@@ -1,0 +1,18 @@
+tier: frontier
+difficulty: 5
+work_class: engine
+branch: feat/explore-promote
+depends_on: ACTUALS-LEDGER, CAPABILITY-ENGINE
+owns: src/charon/capability/bandit.py, src/charon/capability/promote.py, tests/test_explore_promote.py
+accept: |
+  Risk-gated contextual bandit, FLAT per work_class (no cross-difficulty ladder yet, D1 hybrid).
+  Exploration draws ONLY from the reversible/low-blast-radius work pool (risk-gate). Promotion/
+  demotion is confidence-gated (Wilson lower-bound or Thompson) and bidirectional. Exploration rate
+  DECAYS but never reaches zero. Fail-on-revert: set exploration to zero -> a drifted model never
+  re-samples (test RED). Difficulty field is READ but ladder logic deferred.
+scope: |
+  GATEWAY-PROGRAM §1.4-8. Consumes the (model x work_class) matrix schema from CAPABILITY-ENGINE
+  matrix.py and grades from ACTUALS-LEDGER. Difficulty ladder = future ticket (data captured now).
+ds: Wave 2. AFTER matrix.py (CAPABILITY-ENGINE) + ACTUALS-LEDGER. New files, disjoint.
+
+park-reason: consumes parked CAPABILITY-ENGINE (model x work_class matrix) + ACTUALS-LEDGER; cannot start until CAPABILITY-ENGINE is built/un-parked. Un-park together.

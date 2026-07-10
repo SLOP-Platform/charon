@@ -4,6 +4,7 @@
 >   Stays PARKED. If later prioritized, GUI-SVELTE Phase-0/1 lands FIRST and RFL-2/RFL-4 are
 >   rebuilt as Svelte panels rather than inline HTML.
 tier: opus
+difficulty: 4  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
 rebase-after: PROXY-FAILOVER-FIX (parked 2026-07-08 to let the Phase-1 failover fix land solo on proxy_server.py; un-park + rebase on top after it merges)
 work_class: frontend
 branch: feat/gui-svelte-build

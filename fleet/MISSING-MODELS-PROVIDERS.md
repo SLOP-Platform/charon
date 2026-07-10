@@ -1,0 +1,47 @@
+# Missing-models provider research (2026-07-05)
+
+Read-only research for models the operator wants that are absent from Charon's 199-model
+catalog. Goal: identify where each is served and the budget-high-value provider to add,
+prioritizing providers Charon already holds keys for: **nanogpt, groq, cerebras, mistral,
+together, openrouter, neuralwatt, deepseek, opencode-zen**.
+
+No configs changed. `models.json` / provider routes still need the actual edit + a route
+test once these are approved.
+
+## Summary table
+
+| Model | Real? | Available on | Budget-high-value rec | Cost / limits | Notes |
+|---|---|---|---|---|---|
+| MiMo 2.5 (non-free) | Yes — Xiaomi MiMo V2.5 | **NanoGPT** (subscription-included), OpenRouter, DeepInfra, Novita, GMI, Xiaomi direct | **NanoGPT** flat sub | $0/marginal — included in the $12/mo sub at 1x token-consumption rate | [OpenRouter](https://openrouter.ai/xiaomi/mimo-v2.5), [pricepertoken](https://pricepertoken.com/pricing-page/model/xiaomi-mimo-v2.5-pro) confirms sub-inclusion pattern |
+| MiMo 2.5 Pro | Yes — released 2026-04-22, 1.02T MoE / 42B active, 1M ctx | **NanoGPT** (subscription-included, 2x token rate), OpenRouter, DeepInfra (~$0.435/$0.870 per M), Novita, GMI | **NanoGPT** flat sub | $0 marginal but consumes sub's weekly 60M-token pool at 2x rate | [OpenRouter](https://openrouter.ai/xiaomi/mimo-v2.5-pro), [Artificial Analysis](https://artificialanalysis.ai/models/mimo-v2-5-pro/providers) |
+| MiniMax M3 (non-free) | Yes — released 2026-05-31, MSA attention, 1M ctx, computer-use | **Together.ai** ($0.30/$1.20 per M in/out), NanoGPT (via Fireworks passthrough, metered — not confirmed flat-included), OpenRouter, NVIDIA NIM | **Together.ai** (already keyed) | $0.30 in / $1.20 out per M tokens | [Together listing](https://www.together.ai/models/minimax-m3); nanogpt route seen at nano-gpt.com/models/text/accounts/fireworks/models/minimax-m3:thinking but sub-inclusion unconfirmed |
+| MiniMax M2.5 | Yes | **OpenRouter** ($0.12/$0.48 per M in/out, 204.8K ctx) | **OpenRouter** (already keyed) | $0.12 in / $0.48 out per M | Not confirmed on NanoGPT's flat-sub list (only M2.7 is) — [OpenRouter](https://openrouter.ai/minimax/minimax-m2.5) |
+| MiniMax M2.7 | Yes | **NanoGPT** (subscription-included, no 2x multiplier), OpenRouter ($0.18/$0.72 per M) | **NanoGPT** flat sub | $0 marginal, 1x consumption rate | Best value of the three MiniMax variants — already in nanogpt's curated included-list |
+| Hy3 Preview (Tencent Hunyuan, rebuilt infra) | Yes — 295B MoE / 21B active, 256K ctx, released 2026-04-22 | **OpenRouter free tag** (`tencent/hy3-preview:free`), Tencent Cloud TokenHub (paid, $0.063/$0.210 per M) | **OpenRouter free tier** (already keyed) | $0 while free promo lasts; paid fallback ~$0.06/$0.21 per M | [GitHub](https://github.com/Tencent-Hunyuan/Hy3-preview), [OpenRouter](https://openrouter.ai/tencent/hy3-preview) — treat free tag as time-limited |
+| Step 3.7 Flash | Yes — StepFun, 198B MoE/11B active, 256K ctx, vision | StepFun platform (api.stepfun.ai, $0.20/$1.15 per M), **OpenRouter**, NVIDIA NIM | **OpenRouter** (already keyed) | ~$0.20 in / $1.15 out per M (StepFun list price; OR price not independently confirmed but listed) | No free tier found; not on nanogpt/groq/cerebras/together — [StepFun docs](https://platform.stepfun.ai/docs/en/guides/models/step-3.7-flash), [OpenRouter](https://openrouter.ai/stepfun/step-3.7-flash) |
+| Owl Alpha | Yes, but **stealth/rebrand** — confirmed to be Meituan's LongCat-2.0 running anonymously under this alias | **OpenRouter** (`openrouter/owl-alpha`) | **OpenRouter** promo pricing (already keyed) | Was free; now unmasked and priced $0.75/$2.95 per M list, **$0.30/$1.20 promo** currently | [Yahoo/tech coverage of unmasking](https://tech.yahoo.com/ai/gemini/articles/longcat-2-0-stealth-ai-201855556.html), [OpenRouter](https://openrouter.ai/openrouter/owl-alpha) — recommend tracking as "LongCat-2.0" going forward since the alias may be pulled |
+| Laguna M.1 (free) | Yes — Poolside, 225B MoE/23B active, 262K ctx, released 2026-04-28 | **OpenRouter free tag** (`poolside/laguna-m.1:free`), Poolside direct free API | **OpenRouter free tier** (already keyed) | $0 | [OpenRouter](https://openrouter.ai/poolside/laguna-m.1:free) — **ToS flag**: free-tier inputs/outputs may be used by Poolside to train; personal-use caution per prior free-tier findings |
+| Gemini 2.5 Flash | Yes, but **superseded/deprecating** | Google AI Studio / Vertex, OpenRouter, etc. | **Do not add** | Stable shutdown 2026-10-16; Google pushing migration to Gemini 3.5 Flash | Charon already carries Gemini 3.x — [Google deprecations doc](https://ai.google.dev/gemini-api/docs/deprecations) |
+| Gemini 2.5 Flash Lite | Yes, but **imminently deprecating** | Google AI Studio / Vertex, OpenRouter, etc. | **Do not add** | Stable shutdown **2026-07-22** (~2.5 weeks from today); preview variant already shut down 2026-03-31 | Same rationale as above, even more urgent — [Google deprecations doc](https://ai.google.dev/gemini-api/docs/deprecations) |
+| gpt-oss-120B | Yes — OpenAI open-weight, 120B MoE/5.1B active | **Groq free tier** (1,000 req/day, 8K TPM), **Cerebras free tier** (1M free tokens/day), OpenRouter free tag, DeepInfra, 19 providers total | **Groq or Cerebras free tier** (both already keyed) | $0 rate-limited; Groq metered fallback $0.15/$0.60 per M | [Groq docs](https://console.groq.com/docs/model/openai/gpt-oss-120b), [Artificial Analysis](https://artificialanalysis.ai/models/gpt-oss-120b/providers) |
+| Gemma 4 26B A4B (free + non-free) | Yes — Google DeepMind, 25.2B MoE/3.8B active, 256K ctx, released 2026-03/04 | **OpenRouter free tag** (`google/gemma-4-26b-a4b-it:free`), **Cerebras** (first Google DeepMind model hosted there, free-tier eligible), non-free variants elsewhere | **Cerebras free tier or OpenRouter free tag** (both already keyed) | $0 on either free route | [Cerebras blog](https://www.cerebras.ai/blog/gemma-4-on-cerebras-the-fastest-inference-is-now-multimodal), [OpenRouter](https://openrouter.ai/google/gemma-4-26b-a4b-it:free) |
+| Gemma 4 31B (free) | Yes — 30.7B dense, 256K ctx | **OpenRouter free tag** (`google/gemma-4-31b-it:free`), **Cerebras** (~1,800 tok/s, "world's fastest multimodal model" per Cerebras) | **Cerebras free tier** (already keyed, fastest) | $0 | [Cerebras blog](https://www.cerebras.ai/blog/gemma-4-on-cerebras-the-fastest-inference-is-now-multimodal), [OpenRouter](https://openrouter.ai/google/gemma-4-31b-it:free) |
+| GLM 5 | Yes, but current shipping version is **GLM-5.1 / GLM-5.2** — plain "GLM 5" (Feb 2026, 745B MoE) has been superseded by GLM-5.2 (1M ctx, MIT license, released 2026-06-13) | **NanoGPT** (GLM 5.1 subscription-included, 2x token rate), Z.ai / WaveSpeed direct, OpenRouter | **NanoGPT** flat sub (already keyed) | $0 marginal, 2x consumption rate | Recommend adding whichever GLM-5.x nanogpt currently serves rather than chasing the exact "GLM 5" label — [Zhipu lineage writeup](https://presenc.ai/research/zhipu-glm-model-lineage-2026), [GLM-5.2 coverage](https://www.eigent.ai/blog/glm-5-2) |
+
+## Addability count
+
+13 of 15 rows are addable today through a provider Charon already holds a key for
+(nanogpt: MiMo 2.5, MiMo 2.5 Pro, MiniMax M2.7, GLM-5.1; together: MiniMax M3; openrouter:
+MiniMax M2.5, Hy3 Preview, Step 3.7 Flash, Owl Alpha/LongCat-2.0, Laguna M.1; groq/cerebras:
+gpt-oss-120B, Gemma 4 26B A4B, Gemma 4 31B). The 2 excluded are both Gemini 2.5 variants,
+which are superseded by Gemini 3.x and either already or imminently (2026-07-22) shut down —
+recommend skipping regardless of provider.
+
+## Single best budget-provider recommendation
+
+No single provider covers all of them, but **NanoGPT** (flat $12/mo sub, already the
+value anchor) picks up 4 of the highest-value additions at zero marginal cost (MiMo 2.5,
+MiMo 2.5 Pro, MiniMax M2.7, GLM-5.1). Layer **Groq + Cerebras free tiers** (already keyed)
+for gpt-oss-120B and both Gemma 4 sizes at true $0, and **OpenRouter** (already keyed) as
+the aggregator fallback for everything else (Hy3 Preview free, Laguna M.1 free, MiniMax
+M2.5, Step 3.7 Flash, Owl Alpha/LongCat-2.0).

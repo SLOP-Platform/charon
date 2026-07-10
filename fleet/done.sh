@@ -1,25 +1,102 @@
 #!/usr/bin/env bash
-# MANAGER runs this AFTER merging a ticket's PR. Marks done -> unblocks dependents.
-# REFUSES unless a MERGED PR exists for the ticket's branch (audit 2026-06-27, THEME 5:
-# done-before-merge unblocks dependents onto a master that lacks the dep code).
-# Override for offline/manual cases with: done.sh <id> --no-verify
+# done.sh — MANAGER marks a ticket done AFTER its PR merged -> unblocks dependents.
+#
+# G1 ("a done marker can't lie"): REFUSE to write the marker unless the merge is VERIFIED, and make
+# the marker CARRY THE PROOF so G2/G3 can re-check it offline later. A close is accepted when ANY of:
+#   (a) --merged-sha <sha> is supplied and is an ancestor of the product origin/master, OR
+#   (b) a MERGED PR exists for the ticket's recorded `branch:` (gh), OR
+#   (c) a MERGED PR on ANY branch TOUCHED the ticket's `owns:` files (gh; branch-drift tolerant), OR
+#   (d) --override "<reason>" is supplied — reason REQUIRED, recorded in the marker + surfaced by
+#       preflight so an exception can never hide. This REPLACES the old bare `--no-verify`.
+# Marker body (one self-verifying line):
+#   <iso>\tmerged:<sha|#pr>\tbranch:<actual-branch>   (verified close)
+#   <iso>\toverride:<reason>                           (recorded exception)
+#
+# Offline/CI hooks: DONE_CHARON_REPO overrides the product-repo path; DONE_MERGED_SRC=<file>
+# (TSV lines "<branch>\t<pr#>") injects the merged-PR list instead of gh (see fleet/tests).
 set -euo pipefail
 FLEET="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; S="$FLEET/state"; BOARD="$FLEET/board"
-REPO_SLUG="SLOP-Platform/charon"
-canon(){ local w="$1" f b; for f in "$BOARD"/*.md; do b="$(basename "$f" .md)"
-  [ "${b,,}" = "${w,,}" ] && { echo "$b"; return 0; }; done
+CHARON_REPO="${DONE_CHARON_REPO:-/home/stack/code/charon}"
+REPO_SLUG="$(git -C "$CHARON_REPO" remote get-url origin 2>/dev/null | sed -E 's#(git@[^:]*:|https?://[^/]*/)##; s/\.git$//' || true)"
+[ -n "$REPO_SLUG" ] || REPO_SLUG="SLOP-Platform/charon"
+
+canon(){ local w="$1" f b; for f in "$BOARD"/*.md "$BOARD"/archive/*.md; do [ -e "$f" ] || continue
+  b="$(basename "$f" .md)"; [ "${b,,}" = "${w,,}" ] && { echo "$b"; return 0; }; done
   echo "done.sh: no board ticket matching '$w'" >&2; return 1; }
-meta(){ awk -F': ' -v k="$1" '$1==k{sub(/^[^:]*: ?/,"");print;exit}' "$2"; }
-id="$(canon "${1:?usage: done.sh <id> [--no-verify]}")" || exit 2
-if [ "${2:-}" != "--no-verify" ]; then
-  branch="$(meta branch "$BOARD/$id.md")"
-  n="$(gh pr list --repo "$REPO_SLUG" --head "$branch" --state merged --json number -q '.[0].number' 2>/dev/null || true)"
-  if [ -z "$n" ]; then
-    echo "done.sh: REFUSED — no MERGED PR found for branch '$branch' (ticket $id)." >&2
-    echo "         Merge the PR first, or pass --no-verify to override." >&2
-    exit 3
+meta(){ awk -F': ' -v k="$1" '$1==k{sub(/^[^:]*: ?/,"");print;exit}' "$2" 2>/dev/null; }
+
+# merged PR number for head-branch <1>. Fixture hook DONE_MERGED_SRC wins (offline test).
+merged_pr_for_branch(){
+  local br="$1"; [ -n "$br" ] || return 0
+  if [ -n "${DONE_MERGED_SRC:-}" ]; then
+    [ -f "$DONE_MERGED_SRC" ] && awk -F'\t' -v b="$br" '$1==b{print $2; exit}' "$DONE_MERGED_SRC"
+    return 0
   fi
-  echo "done.sh: verified PR #$n (branch $branch) is MERGED."
+  command -v gh >/dev/null 2>&1 || return 0
+  gh pr list --repo "$REPO_SLUG" --head "$br" --state merged --json number -q '.[0].number' 2>/dev/null || true
+}
+
+# merged PR touching ANY of the ticket's `owns:` files (gh only; skipped under the offline fixture).
+merged_pr_touching_owns(){
+  local owns="$1"; [ -n "$owns" ] || return 0
+  [ -z "${DONE_MERGED_SRC:-}" ] || return 0
+  command -v gh >/dev/null 2>&1 || return 0
+  local p pr; local IFS=','
+  for p in $owns; do
+    p="$(printf '%s' "$p" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"; [ -n "$p" ] || continue
+    pr="$(gh pr list --repo "$REPO_SLUG" --state merged --search "$p" --json number,files \
+            -q "map(select(any(.files[]; .path==\"$p\")))|.[0].number" 2>/dev/null || true)"
+    [ -n "$pr" ] && [ "$pr" != "null" ] && { echo "$pr"; return 0; }
+  done
+  return 0
+}
+
+sha_in_master(){ git -C "$CHARON_REPO" merge-base --is-ancestor "$1" origin/master 2>/dev/null; }
+
+id_arg="${1:?usage: done.sh <id> [--merged-sha <sha>] [--override \"<reason>\"]}"; shift
+merged_sha=""; override=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --merged-sha) [ $# -ge 2 ] || { echo "done.sh: --merged-sha needs a <sha>" >&2; exit 2; }; merged_sha="$2"; shift 2;;
+    --override)   [ $# -ge 2 ] || { echo "done.sh: --override needs a \"<reason>\" (an exception MUST record WHY)" >&2; exit 2; }; override="$2"; shift 2;;
+    --no-verify)  echo "done.sh: --no-verify is REMOVED — use --override \"<reason>\" (records the exception)." >&2; exit 2;;
+    *) echo "done.sh: unknown arg: $1" >&2; exit 2;;
+  esac
+done
+id="$(canon "$id_arg")" || exit 2
+branch="$(meta branch "$BOARD/$id.md")"; [ -n "$branch" ] || branch="$(meta branch "$BOARD/archive/$id.md")"
+owns="$(meta owns "$BOARD/$id.md")";     [ -n "$owns" ]   || owns="$(meta owns "$BOARD/archive/$id.md")"
+
+if [ -n "$override" ]; then
+  marker_line="$(date -u +%FT%TZ)"$'\t'"override:$override"
+  echo "done.sh: OVERRIDE close for $id — reason recorded: $override" >&2
+else
+  proof=""
+  if [ -n "$merged_sha" ]; then
+    if sha_in_master "$merged_sha"; then proof="merged:$merged_sha"
+      echo "done.sh: verified $merged_sha is an ancestor of $REPO_SLUG origin/master."
+    else
+      echo "done.sh: REFUSED — $merged_sha is NOT an ancestor of $REPO_SLUG origin/master (ticket $id)." >&2
+      exit 3
+    fi
+  else
+    n="$(merged_pr_for_branch "$branch")"
+    if [ -n "$n" ]; then proof="merged:#$n"; echo "done.sh: verified PR #$n (branch $branch) is MERGED."
+    else
+      n="$(merged_pr_touching_owns "$owns")"
+      if [ -n "$n" ]; then proof="merged:#$n"; echo "done.sh: verified MERGED PR #$n touched $id's owns files (branch-drift tolerant)."
+      else
+        echo "done.sh: REFUSED — no MERGED PR for branch '$branch' and none touching $id's owns files." >&2
+        echo "         Merge the PR first, or: done.sh $id --merged-sha <sha> | --override \"<reason>\"." >&2
+        exit 3
+      fi
+    fi
+  fi
+  marker_line="$(date -u +%FT%TZ)"$'\t'"$proof"$'\t'"branch:$branch"
 fi
-mkdir -p "$S/done"; date -u +%FT%TZ > "$S/done/$id"; rm -f "$S/submitted/$id" "$S/claims/$id"
+
+mkdir -p "$S/done"; printf '%s\n' "$marker_line" > "$S/done/$id"; rm -f "$S/submitted/$id" "$S/claims/$id"
 echo "done $id (dependents unblocked)"
+# MECHANIZED CLOSURE: retire the just-completed ticket off the active board (done tickets can never
+# accumulate as "active"). retire-done.sh HOLDS any ticket whose marker is not merge-verified.
+bash "$FLEET/retire-done.sh"

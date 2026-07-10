@@ -1,4 +1,5 @@
 tier: strong
+difficulty: 3  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
 work_class: money-path
 branch: feat/meter-model-provider
 depends_on:
@@ -64,3 +65,10 @@ concurrency: shares proxy.py with the SR / failover chain and balance.py with th
 note: PARKED — filed 2026-07-08 from the per-(model,provider) meter approval. Operator constraint:
   this is a SENSOR wired to the actuators, explicitly NOT a standalone usage dashboard. Un-park +
   author the prompt (with its own "## Dependencies & sequence" section) at activation.
+
+wave2-scope: CALLER-WIRING (folds in the former "METER-CALLER-WIRE"). Wire `provider=route.label` into the
+  forwarder.py record()/observe() sites so the per-(model,provider) meter is populated under real traffic
+  (Wave-1 shipped scaffold-only; reviews flagged the meter empty until this lands). This is the SHARED
+  prerequisite for COST-RANK-AUTO, DRAIN-THEN-PARK, and METER-SESSION-TAG — sequence it here (right after
+  Wave-1) rather than as a standalone ticket. Acceptance: an integration test through forwarder.py asserts
+  the meter registers real per-(model,provider) spend.

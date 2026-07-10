@@ -7,6 +7,7 @@
 >   below. Stays PARKED. owns kept = proxy.py (per D&S flag: disjoint-check vs any in-flight
 >   proxy.py wave before un-parking).
 tier: sonnet
+difficulty: 2  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
 work_class: bugfix
 branch: fix/cooldown-fix3
 depends_on:

@@ -27,7 +27,8 @@ mechanical, prefer the mechanism (hook / gate / launcher flag) over recall.
 - Any "remaining work" / roadmap view MUST include specced-but-unbuilt (designed-not-built) features with estimates, not just open tickets. `[remaining-work-includes-designed-not-built]`
 - For any action the operator must run themselves (push, login, open a tab): give the literal copy-pasteable command, not a description. `[always-give-exact-command]`
 - Droid launch commands are always given with flags: `fleet-droid.sh <tier> --wait 3 --retries 10`, never the bare form. `[droid-launch-with-wait-retry-flags]`
-- At every handoff, give a one-liner copy-pasteable prompt to bootstrap the next session. `[manager-gives-new-session-prompt]`
+- At every handoff, give a one-liner copy-pasteable prompt to bootstrap the next session. The one-liner is a **SINGLE SENTENCE** that tells the next session to read and follow the handoff FILE — NOT a paragraph. All first-actions, hard-rules, and context go INSIDE the handoff file (which holds COMPLETE instructions); the bootstrap sentence only points at it. (Recurring drift: these keep ballooning into multi-clause paragraphs — keep it one sentence.) `[manager-gives-new-session-prompt]`
+- **Handoffs are MECHANIZED, not memory.** Before ending a session, the handoff file MUST pass `bash fleet/handoff-check.sh <file>` (required sections present; every referenced SHA/path/script exists; committed-SHA claim real) — a non-zero exit means the handoff is incomplete/inaccurate, fix it before handing off. Prefer generating the machine-state block via `fleet/handoff.sh` rather than hand-typing facts. Poor/inaccurate/incomplete handoffs are a recurring failure; the gate is the fix. `[mechanized-handoff-gate]`
 - "TL" → one plain-language line per ACTIVE ticket; skip done/parked. `[tl-terse-status-command]`
 
 ## 3. DELEGATION (primary stays lean; workers write to disk)
@@ -80,3 +81,9 @@ mechanical, prefer the mechanism (hook / gate / launcher flag) over recall.
 *Bracketed refs point to the originating manager-memory note. Once this doc is
 wired into the SessionStart hook, those memories can be slimmed to one-line
 pointers here (see institutionalization-audit.md demotion list).*
+
+## 9. CONTEXT / SESSION-COST DISCIPLINE (2026-07-10)
+
+- **Warn at 250K context.** When this session's context reaches ~250K tokens, PROACTIVELY warn the operator and offer a handoff — the manager session runs on Opus and re-reads its full accumulated context every turn, so a large session is itself a top token consumer (it drained the limit during a perceived "pause" on 2026-07-09). Don't wait to be asked. `[route-work-to-charon-not-claude]`
+- **The spend limit is a CEILING, not a throttle** — it stops work only after the budget is gone. Protect the budget PROACTIVELY: keep the session lean, hand off early, and route sub-work off Claude.
+- **Route sub-work to Charon, not Claude.** Default droid/sub-session work to Charon Gateway (opencode pointed at 4-LOM) with a best-fit model; use Claude sub-agents only when the work truly needs Claude AND the operator OKs it. NOTE the tension: `fleet-droid.sh` launches Claude (opus/sonnet) — launching droids spends the Claude limit. Until `WORK-ROUTING-TO-CHARON-ENGINE` lands, prefer opencode-on-Charon for builds. `[route-work-to-charon-not-claude]`

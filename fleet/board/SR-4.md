@@ -1,4 +1,5 @@
 tier: economy
+difficulty: 1  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
 work_class: docs
 branch: feat/sr-4-smart-routing-doc-fix
 depends_on:

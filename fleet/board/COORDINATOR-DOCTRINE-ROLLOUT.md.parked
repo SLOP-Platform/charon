@@ -1,6 +1,7 @@
 > PARKED for review AFTER the failover Phase-1 work completes (operator, 2026-07-08). Blocked on: confirm the Charon rig injected-rules path (none exists today) + whether SLOP AGENTS.md is a rollout target.
 
 tier: strong
+difficulty: 3  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
 work_class: docs
 branch: feat/coordinator-doctrine-rollout
 depends_on:

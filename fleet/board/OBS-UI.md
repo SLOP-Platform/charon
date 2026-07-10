@@ -1,9 +1,0 @@
-tier: frontier
-work_class: frontend
-branch: feat/obs-ui
-depends_on:
-owns: src/charon/proxy_server.py, src/charon/console_work.py, tests/test_console_work.py
-accept: PYTHONPATH=src python3 -m pytest -q tests/test_console_work.py
-prompt: /home/stack/charon-private/prompts/obs-ui.md
-# BACKLOG (parked) — WORK-OBSERVABILITY follow-on: read-only work/board panel in the gateway console
-# (anti-dilution: NOT on the per-request hot path). Decision baked in: console panel first.

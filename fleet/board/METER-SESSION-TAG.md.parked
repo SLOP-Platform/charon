@@ -1,0 +1,37 @@
+tier: strong
+difficulty: 3  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
+work_class: money-path
+branch: feat/meter-session-tag
+depends_on: METER-MODEL-PROVIDER
+real-dep: METER-MODEL-PROVIDER build (single-owner file src/charon/proxy.py) — this ticket adds a
+  third dimension (session tag) to the SAME per-(model,provider) meter key introduced by
+  METER-MODEL-PROVIDER; it MUST rebase onto that diff and never write proxy.py concurrently.
+  Shared-file sequencing, JUSTIFIED.
+real-dep: METER-MODEL-PROVIDER Wave-2 caller-wiring (`provider=route.label` into forwarder.py — see
+  METER-MODEL-PROVIDER `wave2-scope`, which absorbed the former standalone "METER-CALLER-WIRE"). Until
+  that wiring lands the meter is EMPTY under real traffic, so a session tag has nothing to attach to. This
+  ticket is BLOCKED-UNTIL-USEFUL by that Wave-2 step even though it can be built against the meter API
+  beforehand. The wiring is the shared prerequisite of COST-RANK-AUTO / DRAIN-THEN-PARK too — sequenced in
+  METER-MODEL-PROVIDER, not a dangling dep.
+owns: src/charon/proxy.py, src/charon/proxy_server.py, tests/test_meter_session_tag.py
+owns-status: PROVISIONAL — confirm the session-tag ingress point (a request header or per-key label the
+  client sends) at activation; it may be cleaner to carry the tag on the ProxyObservation than to thread
+  a new kwarg through every observe() site.
+accept: PYTHONPATH=src python3 -m pytest tests/test_meter_session_tag.py -v -q
+  # A test asserting that two requests carrying DIFFERENT session tags for the SAME (model,provider)
+  # accumulate into SEPARATE meter buckets, and that the sum across tags equals the untagged
+  # per-(model,provider) total (delta-zero invariant preserved). Fail-on-revert: turns RED if the tag
+  # dimension is dropped and both requests collapse into one bucket.
+scope: >-
+  Add an OPTIONAL per-SESSION dimension to the per-(model,provider) cost meter so a single client
+  session's token/$ use can be read directly, instead of inferred from a quiet-window snapshot delta
+  (see fleet/SLOP-TOKEN-CAPTURE-RECIPE.md — this ticket is what turns that recipe's "Method A" into an
+  exact "Method B" read). The gateway accepts a lightweight session tag (a request header the client
+  sends, e.g. `X-Charon-Session`, or a label derived from the /v1 credential) and folds it into the
+  meter key as a THIRD dimension: (session_tag, model, provider) -> {tokens_in, tokens_out, cost}. The
+  tag is OPTIONAL: untagged traffic keeps working exactly as today (tag = None bucket), and the
+  delta-zero invariant (sum over tags == per-(model,provider) total) MUST hold. Expose the tagged
+  breakdown on the /charon/cost read-only console panel. STDLIB-ONLY, no new deps. Motivating use case:
+  measure the SLOP DeepSeek-V4-Pro session's spend through the Charon bridge without pausing other
+  traffic. D&S: sequences AFTER METER-MODEL-PROVIDER (shared proxy.py) and is only meaningful once the
+  forwarder provider-wiring lands (see real-dep).

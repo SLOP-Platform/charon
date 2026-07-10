@@ -1,4 +1,5 @@
 tier: strong
+difficulty: 3  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
 branch: feat/first-run-ux-polish
 depends_on:
 owns: src/charon/cli.py, src/charon/gateway.py, src/charon/connect.py

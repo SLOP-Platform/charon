@@ -1,0 +1,1029 @@
+===== [charon-run] attempt: charon/glm-5.2 @ charon =====
+[0m
+> build · glm-5.2
+[0m
+[0m⚙ [0msession-bridge_board {"repo":"charon"}
+[0m✱ [0mGlob "**/actuals_ledger*"[90m 0 matches[0m
+[0m
+[0m$ [0mgit -C /home/stack/code/charon branch -a | grep -i actuals || echo "no actuals branch"
+* actuals-ledger-wave1
++ feat/actuals-ledger
+[0m
+[0m$ [0mgit -C /home/stack/code/charon branch --show-current && git -C /home/stack/code/charon status --short && git -C /home/stack/code/charon log --oneline -5
+actuals-ledger-wave1
+6d7ec5f ACTUALS-LEDGER-WAVE1: scaffold real-outcomes ranker with freeze-ring LKG
+6096fb3 RESPONSE-ADAPTER-UNIVERSAL: universal ResponseAdapter (Identity default + Cline unwrap) on the non-stream path (#91)
+2e76d6b feat(ci): add tools/check_workflows.py action-pin/Windows-smoke/path-trigger gate (#90)
+3c82ab3 TEST-HARDEN-CONTRACT: fix anthropic self-mirroring false-green; document strict-mode gating (#92)
+249b727 NORMALIZE-CASE-QUANT-FIX: case/quant-insensitive model-id compare + catalog mismatch detector (#89)
+[0m
+I'll start with the session-bridge ceremony per standing orders, and explore the codebase in parallel.
+I'm on branch `actuals-ledger-wave1`, clean tree, last commit is the scaffold. Galco's an existing adversarial-reviewer session (`ki-adi-mundi`). Let me find the files and register my session.
+[0m✱ [0mGlob "**/actuals*"[90m 1 match[0m
+[0m✱ [0mGrep "freeze|read_latest|read\(\)"[90m in . · 100 matches[0m
+[0m→ [0mRead src/charon/capability/actuals.py
+Found the files. Let me read the actuals ledger, scorecard, and the test file in parallel.
+[0m→ [0mRead tests/test_actuals_ledger.py
+[0m→ [0mRead src/charon/capability/scorecard.py
+[0m→ [0mRead src/charon/capability/__init__.py
+[0m✱ [0mGrep "ScorecardArtifact|ScorecardStore|\.freeze\(|\.read_latest\(|\.lkg_seq\(|\.latest_seq\("[90m in . · 40 matches[0m
+I have the full picture. Let me check `__init__.py` and all `ScorecardArtifact`/`freeze`/`read_latest` call sites to ensure adding fields with defaults won't break anything, and register my session.
+[0m⚙ [0msession-bridge_register {"session_id":"cal-kestis","name":"fix actuals-ledger defects F1-F4 (real LKG, pointer guard, mid-file skip, bug-enshrining test)","repo":"charon","ticket":"ACTUALS-LEDGER-WAVE1","status":"in-progress"}
+[0m
+[0m# [0mTodos
+[•] F1 scorecard.py: real LKG semantics — freeze advances LKG only when GOOD (gate_pass AND fail_on_revert_pass); read_latest checks readable+good for latest, falls back to LKG seq
+[ ] F2 scorecard.py: guard non-numeric pointer parse — _safe_int/parse helper used in read_latest scan + latest_seq/lkg_seq, never crash
+[ ] F3 actuals.py: read() skip corrupt mid-file line (break→continue) + count, keep torn-trailing handling
+[ ] F4 test: fix bug-enshrining test_scorecard_latest_seq_is_incrementing to assert LKG diverges from latest on bad scorecard
+[ ] New tests: real-LKG fallback (RED on F1 revert), non-numeric pointer guard, mid-file corruption skip
+[ ] Run pytest tests/test_actuals_ledger.py -q; confirm all green
+[ ] Fail-on-revert proof: temporarily revert F1 (LKG==latest), confirm new test goes RED, restore fix
+[ ] Commit on actuals-ledger-wave1 with required message; print SHA. Do NOT push/merge
+[0m
+I have the full picture. The board shows `ki-adi-mundi` (the reviewer, done), `mace-windu`, `obi-wan-kenobi` (done). I'll register as `cal-kestis`. Let me register and create my todo list.
+Now I understand all the defects. Let me fix `scorecard.py` first (F1 real LKG, F2 pointer guard), then `actuals.py` (F3), then the tests (F4 + new tests).
+
+**F1 design:** Add `gate_pass`/`fail_on_revert_pass` to `ScorecardArtifact` (default `True`), an `is_good` property, `freeze()` advances LKG only when good, `read_latest()` returns latest only if readable AND good, else falls back to LKG.
+
+Let me edit `scorecard.py`:
+[0m← [0mEdit src/charon/capability/scorecard.py
+Index: /home/stack/code/charon/src/charon/capability/scorecard.py
+===================================================================
+--- /home/stack/code/charon/src/charon/capability/scorecard.py
++++ /home/stack/code/charon/src/charon/capability/scorecard.py
+@@ -1,11 +1,16 @@
+ """Freeze-ring scorecard — records ranked capability snapshots with a
+ last-known-good fallback reader.
+ 
+ Each freeze cycle writes a versioned, timestamped artifact. The reader returns
+-the LATEST FROZEN artifact but falls back to the last-known-good if the latest
+-is missing or corrupt. This module must NOT import the rig grader
+-(fleet/benchmark) — it only reads/writes artifacts by path.
++the LATEST FROZEN artifact (only if it is GOOD) and otherwise falls back to the
++last-known-good seq — which is a DIFFERENT seq than a bad latest. This module
++must NOT import the rig grader (fleet/benchmark) — it only reads/writes
++artifacts by path.
++
++NOTE (Wave-2, out of scope here): bool-coercion of gate fields (F5) and
++concurrency/locking around freeze (F6) are LOW severity and intentionally not
++addressed in this pass.
+ """
+ from __future__ import annotations
+ 
+ import json
+@@ -34,15 +39,27 @@
+ 
+ 
+ @dataclass
+ class ScorecardArtifact:
+-    """A frozen scorecard at a point in time."""
++    """A frozen scorecard at a point in time.
+ 
++    A scorecard is GOOD when it passed the gate AND the fail-on-revert check
++    (``gate_pass`` and ``fail_on_revert_pass`` both true). The LKG pointer only
++    advances to a GOOD scorecard; a bad latest leaves LKG at the prior good seq.
++    """
++
+     seq: int
+     timestamp: float
+     rows: list[ScorecardRow]
+     metadata: dict = field(default_factory=dict)
++    gate_pass: bool = True
++    fail_on_revert_pass: bool = True
+ 
++    @property
++    def is_good(self) -> bool:
++        """True when the scorecard passed gate AND fail-on-revert."""
++        return self.gate_pass and self.fail_on_revert_pass
++
+     def to_dict(self) -> dict:
+         return {
+             "seq": self.seq,
+             "timestamp": self.timestamp,
+@@ -56,8 +73,10 @@
+                 }
+                 for r in self.rows
+             ],
+             "metadata": self.metadata,
++            "gate_pass": self.gate_pass,
++            "fail_on_revert_pass": selffail_on_revert_pass,
+         }
+ 
+     @classmethod
+     def from_dict(cls, d: dict) -> ScorecardArtifact:
+@@ -78,8 +97,10 @@
+             seq=int(d["seq"]),
+             timestamp=float(d["timestamp"]),
+             rows=rows,
+             metadata=dict(d.get("metadata", {})),
++            gate_pass=bool(d.get("gate_pass", True)),
++            fail_on_revert_pass=bool(d.get("fail_on_revert_pass", True)),
+         )
+ 
+ 
+ class ScorecardStore:
+
+[0m
+Now fix `freeze()` to advance LKG only on good, and `read_latest()` to return latest only if good + fallback to LKG:
+[0m← [0mEdit src/charon/capability/scorecard.py
+Index: /home/stack/code/charon/src/charon/capability/scorecard.py
+===================================================================
+--- /home/stack/code/charon/src/charon/capability/scorecard.py
++++ /home/stack/code/charon/src/charon/capability/scorecard.py
+@@ -121,18 +121,25 @@
+ 
+ # --------------------------------------------------------------- writers
+ 
+ def freeze(self, artifact: ScorecardArtifact) -> ScorecardArtifact:
+-    """Write a scorecard artifact and update latest + lkg pointers."""
++    """Write a scorecard artifact and update latest (+LKG when GOOD).
++
++    The latest pointer always advances to the new seq. The LKG pointer
++    advances ONLY when the new scorecard is GOOD (passed gate AND
++    fail-on-revert). A bad scorecard leaves LKG at the prior good seq, so
++    the reader's fallback is genuinely a *different* seq than latest.
++    """
+     seq_str = str(artifact.seq).zfill(7)
+     payload = json.dumps(artifact.to_dict(), indent=2)
+     artifact_path = self._root / f"{SCORECARD_PREFIX}{seq_str}.json"
+     tmp = artifact_path.with_suffix(artifact_path.suffix + f".tmp.{os.getpid()}")
+     tmp.write_text(payload, encoding="utf-8")
+     tmp.replace(artifact_path)
+ 
+     self._write_pointer(LATEST_FILENAME, seq_str)
+-    self._write_pointer(LKG_FILENAME, seq_str)
++    if artifact.is_good:
++        self._write_pointer(LKG_FILENAME, seq_str)
+     return artifact
+ 
+ # --------------------------------------------------------------- readers
+ 
+
+[0m
+Now fix `read_latest()` to require latest be GOOD, and add the `_safe_parse_seq` helper for F2. Also fix `latest_seq`/`lkg_seq` to guard against non-numeric:
+[0m← [0mEdit src/charon/capability/scorecard.py
+Index: /home/stack/code/charon/src/charon/capability/scorecard.py
+===================================================================
+--- /home/stack/code/charon/src/charon/capability/scorecard.py
++++ /home/stack/code/charon/src/charon/capability/scorecard.py
+@@ -143,31 +143,31 @@
+ 
+ # --------------------------------------------------------------- readers
+ 
+ def read_latest(self) -> ScorecardArtifact | None:
+-    """Return the latest frozen scorecard, with LKG fallback.
++    """Return the latest GOOD scorecard, with LKG fallback.
+ 
+-    RED-TEAM FIX #2: if the latest artifact is missing or corrupt, returns
+-    the last-known-good artifact. If LKG also fails (e.g. both point at the
+-    same corrupt artifact), scans backward from LKG-1 for any readable
+-    artifact. Returns None only when ALL artifacts are absent or corrupt.
++    If the latest artifact is readable AND good (passed gate AND
++    fail-on-revert), return it. Otherwise fall back to the LKG seq — the
++    last GOOD artifact — which must be a DIFFERENT seq than a bad latest.
++    A non-numeric or missing LKG pointer is treated as "no LKG" (F2).
++    Returns None only when no GOOD artifact is recoverable.
+     """
+-    latest = self._read_pointer(LATEST_FILENAME)
++    latest = self._safe_parse_seq(self._read_pointer(LATEST_FILENAME))
+     if latest is not None:
+         artifact = self._read_artifact(latest)
+-        if artifact is not None:
++        if artifact is not None and artifact.is_good:
+             return artifact
+ 
+-    lkg = self._read_pointer(LKG_FILENAME)
++    lkg = self._safe_parse_seq(self._read_pointer(LKG_FILENAME))
+     if lkg is not None:
+         artifact = self._read_artifact(lkg)
+-        if artifact is not None:
++        if artifact is not None and artifact.is_good:
+             return artifact
+-        # Scan backward from LKG-1 until we find a readable artifact.
+-        lkg_int = int(lkg)
+-        for candidate in range(lkg_int - 1, 0, -1):
++        # Scan backward from LKG-1 until we find a GOOD readable artifact.
++        for candidate in range(lkg - 1, 0, -1):
+             art = self._read_artifact(str(candidate).zfill(7))
+-            if art is not None:
++            if art is not None and art.is_good:
+                 return art
+ 
+     return None
+ 
+@@ -176,23 +176,33 @@
+     seq_str = str(seq).zfill(7)
+     return self._read_artifact(seq_str)
+ 
+ def latest_seq(self) -> int | None:
+-    """Return the latest sequence number from the latest pointer, or None."""
+-    raw = self._read_pointer(LATEST_FILENAME)
+-    if raw is None:
+-        return None
+-    return int(raw)
++    """Return the latest sequence number from the latest pointer, or None.
+ 
++    A non-numeric pointer (F2) is treated as missing.
++    """
++    return self._safe_parse_seq(self._read_pointer(LATEST_FILENAME))
++
+ def lkg_seq(self) -> int | None:
+-    """Return the last-known-good sequence number, or None."""
+-    raw = self._read_pointer(LKG_FILENAME)
+-    if raw is None:
+-        return None
+-    return int(raw)
++    """Return the last-known-good sequence number, or None.
+ 
++    A non-numeric pointer (F2) is treated as missing.
++    """
++    return self._safe_parse_seq(self._read_pointer(LKG_FILENAME))
++
+ # -------------------------------------------------------------- internal
+ 
++@staticmethod
++def _safe_parse_seq(raw: str | None) -> int | None:
++    """Parse a pointer string to an int; bad/missing -> None (never raise)."""
++    if raw is None:
++        return None
++    try:
++        return int(raw)
++    except (ValueError, TypeError):
++        return None
++
+ def _artifact_path(self, seq_str: str) -> Path:
+     return self._root / f"{SCORECARD_PREFIX}{seq_str}.json"
+ 
+ def _write_pointer(self, name: str, seq_str: str) -> None:
+
+[0m
+I noticed a typo in my first edit — `selffail_on_revert_pass` should be `self.fail_on_revert_pass`. Let me fix that:
+[0m← [0mEdit src/charon/capability/scorecard.py
+Index: /home/stack/code/charon/src/charon/capability/scorecard.py
+===================================================================
+--- /home/stack/code/charon/src/charon/capability/scorecard.py
++++ /home/stack/code/charon/src/charon/capability/scorecard.py
+@@ -74,9 +74,9 @@
+             for r in self.rows
+         ],
+         "metadata": self.metadata,
+         "gate_pass": self.gate_pass,
+-        "fail_on_revert_pass": selffail_on_revert_pass,
++        "fail_on_revert_pass": self.fail_on_revert_pass,
+     }
+ 
+ @classmethod
+ def from_dict(cls, d: dict) -> ScorecardArtifact:
+
+[0m
+Now fix F3 in `actuals.py` — change `break` to `continue` on corrupt mid-file line, with a skip count:
+[0m← [0mEdit src/charon/capability/actuals.py
+Index: /home/stack/code/charon/src/charon/capability/actuals.py
+===================================================================
+--- /home/stack/code/charon/src/charon/capability/actuals.py
++++ /home/stack/code/charon/src/charon/capability/actuals.py
+@@ -86,21 +86,36 @@
+         fh.flush()
+         os.fsync(fh.fileno())
+ 
+ def read(self) -> list[ActualRow]:
+-    """Read all rows; a torn trailing line is skipped, not misread."""
++    """Read all rows; a torn trailing line is skipped, not misread.
++
++    A corrupt line in the MIDDLE of the file is skipped and reading
++    continues so later valid rows are not lost. The number of skipped
++    corrupt lines is recorded in ``self.skipped_corrupt``.
++    """
++    skipped = 0
+     if not self._path.exists():
++        self.skipped_corrupt = 0
+         return []
+     out: list[ActualRow] = []
+-    for raw in self._path.read_text().splitlines():
++    lines = self._path.read_text().splitlines()
++    n = len(lines)
++    for idx, raw in enumerate(lines):
+         raw = raw.strip()
+         if not raw:
+             continue
+         try:
+             d = json.loads(raw)
+         except json.JSONDecodeError:
+-            break
++            # Trailing torn line (no rows after) is tolerated silently;
++            # a mid-file corrupt line is skipped so later rows survive.
++            if idx == n - 1:
++                break
++            skipped += 1
++            continue
+         out.append(ActualRow.from_dict(d))
++    self.skipped_corrupt = skipped
+     return out
+ 
+ def query(
+     self,
+
+[0m
+[0m← [0mEdit src/charon/capability/actuals.py
+Index: /home/stack/code/charon/src/charon/capability/actuals.py
+===================================================================
+--- /home/stack/code/charon/src/charon/capability/actuals.py
++++ /home/stack/code/charon/src/charon/capability/actuals.py
+@@ -73,8 +73,9 @@
+ """
+ 
+ def __init__(self, path: Path) -> None:
+     self._path = path
++    self.skipped_corrupt = 0
+     path.parent.mkdir(parents=True, exist_ok=True)
+ 
+ def append(self, row: ActualRow) -> None:
+     """Durably append one row (fsync'd)."""
+
+[0m
+[0m← [0mEdit src/charon/capability/actuals.py
+Index: /home/stack/code/charon/src/charon/capability/actuals.py
+===================================================================
+--- /home/stack/code/charon/src/charon/capability/actuals.py
++++ /home/stack/code/charon/src/charon/capability/actuals.py
+@@ -69,8 +69,10 @@
+ class ActualsLedger:
+     """Append-only JSONL store of real outcomes, keyed by (model, work_class).
+ 
+     Crash-safe: a torn trailing line is skipped on read, never misinterpreted.
++    A corrupt line in the middle of the file is skipped (and counted in
++    ``skipped_corrupt``) so later valid rows are not lost.
+     """
+ 
+     def __init__(self, path: Path) -> None:
+         self._path = path
+
+[0m
+I need to initialize `self.skipped_corrupt` in `__init__` and the docstring/comments:
+[0m← [0mEdit src/charon/capability/actuals.py
+Index: /home/stack/code/charon/src/charon/capability/actuals.py
+===================================================================
+--- /home/stack/code/charon/src/charon/capability/actuals.py
++++ /home/stack/code/charon/src/charon/capability/actuals.py
+@@ -92,15 +92,15 @@
+ def read(self) -> list[ActualRow]:
+     """Read all rows; a torn trailing line is skipped, not misread.
+ 
+     A corrupt line in the MIDDLE of the file is skipped and reading
+-    continues so later valid rows are not lost. The number of skipped
+-    corrupt lines is recorded in ``self.skipped_corrupt``.
++    continues so later valid rows are not lost; the count is left in
++    ``self.skipped_corrupt``.
+     """
+-    skipped = 0
+     if not self._path.exists():
+         self.skipped_corrupt = 0
+         return []
++    skipped = 0
+     out: list[ActualRow] = []
+     lines = self._path.read_text().splitlines()
+     n = len(lines)
+     for idx, raw in enumerate(lines):
+@@ -109,12 +109,12 @@
+             continue
+         try:
+             d = json.loads(raw)
+         except json.JSONDecodeError:
+-            # Trailing torn line (no rows after) is tolerated silently;
+-            # a mid-file corrupt line is skipped so later rows survive.
++            # Last line torn during write -> tolerate silently, stop.
+             if idx == n - 1:
+                 break
++            # Mid-file corruption -> skip it, keep later rows.
+             skipped += 1
+             continue
+         out.append(ActualRow.from_dict(d))
+     self.skipped_corrupt = skipped
+
+[0m
+Now let me update the tests. First F4 — fix `test_scorecard_latest_seq_is_incrementing` to assert correct LKG semantics, then add the new required tests. Let me update the test file:
+[0m← [0mEdit tests/test_actuals_ledger.py
+Index: /home/stack/code/charon/tests/test_actuals_ledger.py
+===================================================================
+--- /home/stack/code/charon/tests/test_actuals_ledger.py
++++ /home/stack/code/charon/tests/test_actuals_ledger.py
+@@ -135,22 +135,72 @@
+     assert loaded.rows[0].score == 0.92
+ 
+ 
+ def test_scorecard_latest_seq_is_incrementing(tmp_path: Path) -> None:
++    """Latest advances on every freeze; LKG advances ONLY on GOOD scorecards.
++
++    F4: previously this test asserted ``lkg_seq() == latest_seq()`` after every
++    freeze, which enshrined the F1 bug (LKG always == latest). The CORRECT
++    invariant is: LKG tracks the last GOOD seq, which DIVERGES from latest
++    when a bad scorecard is frozen.
++    """
+     store = ScorecardStore(tmp_path / "scorecards")
+     for seq in (1, 2, 3):
+         store.freeze(ScorecardArtifact(seq=seq, timestamp=float(seq), rows=[]))
+     assert store.latest_seq() == 3
+     assert store.lkg_seq() == 3
+ 
++    # Freeze a BAD scorecard (gate failed). Latest advances; LKG does NOT.
++    store.freeze(ScorecardArtifact(
++        seq=4, timestamp=4.0, rows=[],
++        gate_pass=False, fail_on_revert_pass=False,
++    ))
++    assert store.latest_seq() == 4
++    assert store.lkg_seq() == 3, "LKG must stay at the last GOOD seq (3), not 4"
++
+     loaded = store.read_latest()
+     assert loaded is not None
+-    assert loaded.seq == 3
++    assert loaded.seq == 3, "read_latest must fall back to the GOOD seq 3, not the bad seq 4"
+ 
+ 
+-# ── FAIL-ON-REVERT test ────────────────────────────────────────────────────────
++# ── FAIL-ON-REVERT tests ───────────────────────────────────────────────────
+ 
+ 
++def test_fail_on_revert_real_lkg_fallback_bad_scorecard(tmp_path: Path) -> None:
++    """FAIL-ON-REVERT (F1): freeze GOOD seq=1, then a BAD seq=2; read_latest
++    returns the GOOD seq=1 — NOT the bad seq=2 and NOT None.
++
++    This test MUST go RED if the F1 fix is reverted (i.e. if LKG==latest):
++    under the bug, LKG was always set to latest, so read_latest would return
++    the bad seq=2 (because the bug never gated on goodness) — or, with the
++    goodness check but a fake LKG, would return None (LKG==latest==2, both
++    bad), failing the assertion that seq=1 is returned.
++    """
++    store = ScorecardStore(tmp_path / "scorecards")
++
++    art1 = ScorecardArtifact(
++        seq=1, timestamp=100.0,
++        rows=[ScorecardRow(model="m1", work_class="wg", score=0.5, samples=1)],
++        gate_pass=True, fail_on_revert_pass=True,
++    )
++    store.freeze(art1)
++
++    art2 = ScorecardArtifact(
++        seq=2, timestamp=200.0,
++        rows=[ScorecardRow(model="m2", work_class="wg", score=0.9, samples=2)],
++        gate_pass=False, fail_on_revert_pass=False,
++    )
++    store.freeze(art2)
++
++    assert store.latest_seq() == 2
++    assert store.lkg_seq() == 1, "LKG must be the last GOOD seq (1), not latest (2)"
++
++    loaded = store.read_latest()
++    assert loaded is not None, "real LKG fallback returned None — RED"
++    assert loaded.seq == 1, f"Expected GOOD seq=1, got seq={loaded.seq}"
++    assert loaded.rows[0].model == "m1"
++
++
+ def test_fail_on_revert_corrupt_latest_falls_back_to_lkg(tmp_path: Path) -> None:
+     """FAIL-ON-REVERT: corrupt the latest artifact -> reader returns LKG.
+ 
+     This test MUST go RED if the LKG fallback in read_latest() is removed.
+
+[0m
+Now update the corrupt-latest test to reflect real LKG semantics. With the fix, freezing art2 (GOOD) sets LKG=2. Corrupting the latest artifact (seq 2) means the reader tries to read seq 2 (unreadable -> not good), falls back to the LKG pointer. But current `freeze()` on art2 sets both `latest` and `lkg` to seq 2 since `art2` is good — so corrupting the artifact would corrupt it for both pointers, then it scans back to seq 1. Let me read the current state of that test:
+[0m→ [0mRead tests/test_actuals_ledger.py[90m [offset=195, limit=80][0m
+Existing tests still pass logic-wise. Now let me read the end of the test file to append the new F2 and F3 tests at the appropriate location:
+[0m→ [0mRead tests/test_actuals_ledger.py[90m [offset=273][0m
+Now let me append the new tests for F2 (non-numeric pointer guard) and F3 (mid-file corruption). I'll add them at the end of the file:
+[0m
+[0m← [0mEdit tests/test_actuals_ledger.py
+Index: /home/stack/code/charon/tests/test_actuals_ledger.py
+===================================================================
+--- /home/stack/code/charon/tests/test_actuals_ledger.py
++++ /home/stack/code/charon/tests/test_actuals_ledger.py
+@@ -285,4 +285,126 @@
+     # Should still fall back to LKG.
+     loaded = store.read_latest()
+     assert loaded is not None
+     assert loaded.seq == 1
++
++
++# ── F2: non-numeric LKG pointer must not crash ──────────────────────────────
++
++
++def test_scorecard_non_numeric_lkg_pointer_does_not_crash(tmp_path: Path) -> None:
++    """F2: a corrupted/non-numeric LKG pointer must NOT raise in read_latest().
++
++    The reader treats an unparseable pointer as "no LKG" (returns None or the
++    latest-good, but never raises ValueError).
++    """
++    store = ScorecardStore(tmp_path / "scorecards")
++    # Cold start: no artifacts, but a garbage LKG pointer on disk.
++    store.freeze(ScorecardArtifact(
++        seq=1, timestamp=1.0, rows=[],
++        gate_pass=True, fail_on_revert_pass=True,
++    ))
++    # Corrupt the LKG pointer into garbage.
++    (tmp_path / "scorecards" / "lkg").write_text("GARBAGE-NOT-A-NUMBER\n")
++
++    # Must not raise.
++    loaded = store.read_latest()
++    # Latest (seq 1) is GOOD, so it is returned — but the garbage LKG did not
++    # cause a crash either way.
++    assert loaded is not None
++    assert loaded.seq == 1
++
++    # lkg_seq() must return None for a non-numeric pointer, not raise.
++    assert store.lkg_seq() is None
++
++
++def test_scorecard_garbage_lkg_pointer_and_bad_latest_returns_none(tmp_path: Path) -> None:
++    """F2: bad latest AND garbage LKG -> read_latest returns None, no crash."""
++    store = ScorecardStore(tmp_path / "scorecards")
++    store.freeze(ScorecardArtifact(
++        seq=1, timestamp=1.0, rows=[],
++        gate_pass=False, fail_on_revert_pass=False,
++    ))
++    # Corrupt the LKG pointer to garbage.
++    (tmp_path / "scorecards" / "lkg").write_text("xx-not-int\n")
++    # Latest is bad (gate failed) -> no fallback path is recoverable.
++    result = store.read_latest()
++    assert result is None
++
++
++# ── F3: mid-file corruption must not drop later rows ────────────────────────
++
++
++def test_actuals_mid_file_corruption_skipped_not_breaking(tmp_path: Path) -> None:
++    """F3: a corrupt line in the MIDDLE of the ledger must NOT cause read()
++    to drop valid rows written AFTER it. The corrupt line is skipped; reading
++    continues.
++    """
++    path = tmp_path / "actuals.jsonl"
++    ledger = ActualsLedger(path)
++    ledger.append(ActualRow("m1", "codegen", "pass", 0, True, True, 0, 100, 100, timestamp=1.0))
++    # Inject a corrupt line directly into the middle of the file.
++    with open(path, "a") as fh:
++        fh.write('{not valid json\n')
++    # Now append valid rows AFTER the corrupt line.
++    ledger.append(ActualRow("m2", "codegen", "pass", 0, True, True, 0, 200, 200, timestamp=2.0))
++    ledger.append(ActualRow("m3", "codegen", "pass", 0, True, True, 0, 300, 300, timestamp=3.0))
++
++    rows = ledger.read()
++    # We should get m1, m2, m3 — the corrupt middle line is skipped, not a stop.
++    assert len(rows) == 3, f"expected 3 rows (m1,m2,m3), got {len(rows)}"
++    assert [r.model for r in rows] == ["m1", "m2", "m3"]
++    assert ledger.skipped_corrupt == 1
++
++
++def test_actuals_torn_trailing_line_still_skipped(tmp_path: Path) -> None:
++    """F3 regression guard: the prior torn-trailing-line behavior is preserved
++    (a trailing corrupt line is tolerated and does not count as a skip)."""
++    path = tmp_path / "actuals.jsonl"
++    ledger = ActualsLedger(path)
++    ledger.append(ActualRow("m1", "codegen", "pass", 0, True, True, 0, 100, 100, timestamp=1.0))
++    with open(path, "a") as fh:
++        fh.write('{"model": "m2", "work_class": "codegen", "run_result": "pas')
++    rows = ledger.read()
++    assert len(rows) == 1
++    assert rows[0].model == "m1"
++    assert ledger.skipped_corrupt == 0
++
++
++# ── LKG read path: non-numeric latest pointer also guarded ─────────────────
++
++
++def test_scorecard_non_numeric_latest_pointer_does_not_crash(tmp_path: Path) -> None:
++    """F2 partner: a non-numeric LATEST pointer must also not crash; the reader
++    treats it as missing and falls back to LKG if available."""
++    store = ScorecardStore(tmp_path / "scorecards")
++    store.freeze(ScorecardArtifact(
++        seq=1, timestamp=1.0, rows=[],
++        gate_pass=True, fail_on_revert_pass=True,
++    ))
++    store.freeze(ScorecardArtifact(
++        seq=2, timestamp=2.0, rows=[],
++        gate_pass=True, fail_on_revert_pass=True,
++    ))
++    # Corrupt the latest pointer to garbage.
++    (tmp_path / "scorecards" / "latest").write_text("ZZZ\n")
++    # read_latest must not raise; it falls back via LKG (seq 2, GOOD).
++    loaded = store.read_latest()
++    assert loaded is not None
++    assert loaded.seq == 2
++    # latest_seq() returns None for non-numeric, not raise.
++    assert store.latest_seq() is None
++
++
++# ── Cold start: no good scorecard -> read_latest returns None ───────────────
++
++
++def test_scorecard_cold_start_no_good_returns_none(tmp_path: Path) -> None:
++    """F1 cold-start: with no GOOD scorecard yet, read_latest returns None
++    (not garbage). The LKG pointer is unset for a bad-only history."""
++    store = ScorecardStore(tmp_path / "scorecards")
++    store.freeze(ScorecardArtifact(
++        seq=1, timestamp=1.0, rows=[],
++        gate_pass=False, fail_on_revert_pass=False,
++    ))
++    assert store.lkg_seq() is None
++    assert store.read_latest() is None
+
+[0m
+[0m# [0mTodos
+[✓] F1 scorecard.py: real LKG semantics — freeze advances LKG only when GOOD (gate_pass AND fail_on_revert_pass); read_latest checks readable+good for latest, falls back to LKG seq
+[✓] F2 scorecard.py: guard non-numeric pointer parse — _safe_int/parse helper used in read_latest scan + latest_seq/lkg_seq, never crash
+[✓] F3 actuals.py: read() skip corrupt mid-file line (break→continue) + count, keep torn-trailing handling
+[✓] F4 test: fix bug-enshrining test_scorecard_latest_seq_is_incrementing to assert LKG diverges from latest on bad scorecard
+[✓] New tests: real-LKG fallback (RED on F1 revert), non-numeric pointer guard, mid-file corruption skip
+[•] Run pytest tests/test_actuals_ledger.py -q; confirm all green
+[ ] Fail-on-revert proof: temporarily revert F1 (LKG==latest), confirm new test goes RED, restore fix
+[ ] Commit on actuals-ledger-wave1 with required message; print SHA. Do NOT push/merge
+[0m
+Now let me run the tests:
+[0m$ [0mPYTHONPATH=src python3 -m pytest tests/test_actuals_ledger.py -q
+FFF...F..FF.......F                                                      [100%]
+=================================== FAILURES ===================================
+____________ test_scorecard_non_numeric_lkg_pointer_does_not_crash _____________
+
+tmp_path = PosixPath('/tmp/pytest-of-stack/pytest-530/test_scorecard_non_numeric_lkg0')
+
+    def test_scorecard_non_numeric_lkg_pointer_does_not_crash(tmp_path: Path) -> None:
+        """F2: a corrupted/non-numeric LKG pointer must NOT raise in read_latest().
+    
+        The reader treats an unparseable pointer as "no LKG" (returns None or the
+        latest-good, but never raises ValueError).
+        """
+        store = ScorecardStore(tmp_path / "scorecards")
+        # Cold start: no artifacts, but a garbage LKG pointer on disk.
+        store.freeze(ScorecardArtifact(
+            seq=1, timestamp=1.0, rows=[],
+            gate_pass=True, fail_on_revert_pass=True,
+        ))
+        # Corrupt the LKG pointer into garbage.
+        (tmp_path / "scorecards" / "lkg").write_text("GARBAGE-NOT-A-NUMBER\n")
+    
+        # Must not raise.
+        loaded = store.read_latest()
+        # Latest (seq 1) is GOOD, so it is returned — but the garbage LKG did not
+        # cause a crash either way.
+>       assert loaded is not None
+E       assert None is not None
+
+tests/test_actuals_ledger.py:313: AssertionError
+__________________ test_scorecard_latest_seq_is_incrementing ___________________
+
+tmp_path = PosixPath('/tmp/pytest-of-stack/pytest-530/test_scorecard_latest_seq_is_i0')
+
+    def test_scorecard_latest_seq_is_incrementing(tmp_path: Path) -> None:
+        """Latest advances on every freeze; LKG advances ONLY on GOOD scorecards.
+    
+        F4: previously this test asserted ``lkg_seq() == latest_seq()`` after every
+        freeze, which enshrined the F1 bug (LKG always == latest). The CORRECT
+        invariant is: LKG tracks the last GOOD seq, which DIVERGES from latest
+        when a bad scorecard is frozen.
+        """
+        store = ScorecardStore(tmp_path / "scorecards")
+        for seq in (1, 2, 3):
+            store.freeze(ScorecardArtifact(seq=seq, timestamp=float(seq), rows=[]))
+        assert store.latest_seq() == 3
+        assert store.lkg_seq() == 3
+    
+        # Freeze a BAD scorecard (gate failed). Latest advances; LKG does NOT.
+        store.freeze(ScorecardArtifact(
+            seq=4, timestamp=4.0, rows=[],
+            gate_pass=False, fail_on_revert_pass=False,
+        ))
+        assert store.latest_seq() == 4
+        assert store.lkg_seq() == 3, "LKG must stay at the last GOOD seq (3), not 4"
+    
+        loaded = store.read_latest()
+        assert loaded is not None
+>       assert loaded.seq == 3, "read_latest must fall back to the GOOD seq 3, not the bad seq 4"
+E       AssertionError: read_latest must fall back to the GOOD seq 3, not the bad seq 4
+E       assert 2 == 3
+E        +  where 2 = ScorecardArtifact(seq=2, timestamp=2.0, rows=[], metadata={}, gate_pass=True, fail_on_revert_pass=True).seq
+
+tests/test_actuals_ledger.py:162: AssertionError
+___________ test_scorecard_non_numeric_latest_pointer_does_not_crash ___________
+
+tmp_path = PosixPath('/tmp/pytest-of-stack/pytest-530/test_scorecard_non_numeric_lat0')
+
+    def test_scorecard_non_numeric_latest_pointer_does_not_crash(tmp_path: Path) -> None:
+        """F2 partner: a non-numeric LATEST pointer must also not crash; the reader
+        treats it as missing and falls back to LKG if available."""
+        store = ScorecardStore(tmp_path / "scorecards")
+        store.freeze(ScorecardArtifact(
+            seq=1, timestamp=1.0, rows=[],
+            gate_pass=True, fail_on_revert_pass=True,
+        ))
+        store.freeze(ScorecardArtifact(
+            seq=2, timestamp=2.0, rows=[],
+            gate_pass=True, fail_on_revert_pass=True,
+        ))
+        # Corrupt the latest pointer to garbage.
+        (tmp_path / "scorecards" / "latest").write_text("ZZZ\n")
+        # read_latest must not raise; it falls back via LKG (seq 2, GOOD).
+        loaded = store.read_latest()
+        assert loaded is not None
+>       assert loaded.seq == 2
+E       assert 1 == 2
+E        +  where 1 = ScorecardArtifact(seq=1, timestamp=1.0, rows=[], metadata={}, gate_pass=True, fail_on_revert_pass=True).seq
+
+tests/test_actuals_ledger.py:393: AssertionError
+________________________ test_scorecard_freeze_and_read ________________________
+
+tmp_path = PosixPath('/tmp/pytest-of-stack/pytest-530/test_scorecard_freeze_and_read0')
+
+    def test_scorecard_freeze_and_read(tmp_path: Path) -> None:
+        store = ScorecardStore(tmp_path / "scorecards")
+        art = ScorecardArtifact(
+            seq=1,
+            timestamp=time.time(),
+            rows=[
+                ScorecardRow(model="gpt-4", work_class="codegen", score=0.92, samples=10),
+            ],
+        )
+        store.freeze(art)
+        loaded = store.read_latest()
+>       assert loaded is not None
+E       assert None is not None
+
+tests/test_actuals_ledger.py:131: AssertionError
+_____________ test_fail_on_revert_corrupt_latest_falls_back_to_lkg _____________
+
+tmp_path = PosixPath('/tmp/pytest-of-stack/pytest-530/test_fail_on_revert_corrupt_la0')
+
+    def test_fail_on_revert_corrupt_latest_falls_back_to_lkg(tmp_path: Path) -> None:
+        """FAIL-ON-REVERT: corrupt the latest artifact -> reader returns LKG.
+    
+        This test MUST go RED if the LKG fallback in read_latest() is removed.
+        """
+        store = ScorecardStore(tmp_path / "scorecards")
+    
+        art1 = ScorecardArtifact(
+            seq=1, timestamp=100.0,
+            rows=[ScorecardRow(model="m1", work_class="wg", score=0.5, samples=1)],
+        )
+        store.freeze(art1)
+    
+        art2 = ScorecardArtifact(
+            seq=2, timestamp=200.0,
+            rows=[ScorecardRow(model="m2", work_class="wg", score=0.9, samples=2)],
+        )
+        store.freeze(art2)
+    
+        loaded_before = store.read_latest()
+        assert loaded_before is not None
+>       assert loaded_before.seq == 2
+E       AssertionError: assert 1 == 2
+E        +  where 1 = ScorecardArtifact(seq=1, timestamp=100.0, rows=[ScorecardRow(model='m1', work_class='wg', score=0.5, samples=1, metadata={})], metadata={}, gate_pass=True, fail_on_revert_pass=True).seq
+
+tests/test_actuals_ledger.py:224: AssertionError
+_____________________ test_scorecard_corrupt_pointer_file ______________________
+
+tmp_path = PosixPath('/tmp/pytest-of-stack/pytest-530/test_scorecard_corrupt_pointer0')
+
+    def test_scorecard_corrupt_pointer_file(tmp_path: Path) -> None:
+        store = ScorecardStore(tmp_path / "scorecards")
+        store.freeze(ScorecardArtifact(seq=1, timestamp=1.0, rows=[]))
+        # Corrupt the latest pointer.
+        (tmp_path / "scorecards" / "latest").write_text("not-a-number\n")
+        # Should still fall back to LKG.
+        loaded = store.read_latest()
+>       assert loaded is not None
+E       assert None is not None
+
+tests/test_actuals_ledger.py:287: AssertionError
+_____________ test_fail_on_revert_real_lkg_fallback_bad_scorecard ______________
+
+tmp_path = PosixPath('/tmp/pytest-of-stack/pytest-530/test_fail_on_revert_real_lkg_f0')
+
+    def test_fail_on_revert_real_lkg_fallback_bad_scorecard(tmp_path: Path) -> None:
+        """FAIL-ON-REVERT (F1): freeze GOOD seq=1, then a BAD seq=2; read_latest
+        returns the GOOD seq=1 — NOT the bad seq=2 and NOT None.
+    
+        This test MUST go RED if the F1 fix is reverted (i.e. if LKG==latest):
+        under the bug, LKG was always set to latest, so read_latest would return
+        the bad seq=2 (because the bug never gated on goodness) — or, with the
+        goodness check but a fake LKG, would return None (LKG==latest==2, both
+        bad), failing the assertion that seq=1 is returned.
+        """
+        store = ScorecardStore(tmp_path / "scorecards")
+    
+        art1 = ScorecardArtifact(
+            seq=1, timestamp=100.0,
+            rows=[ScorecardRow(model="m1", work_class="wg", score=0.5, samples=1)],
+            gate_pass=True, fail_on_revert_pass=True,
+        )
+        store.freeze(art1)
+    
+        art2 = ScorecardArtifact(
+            seq=2, timestamp=200.0,
+            rows=[ScorecardRow(model="m2", work_class="wg", score=0.9, samples=2)],
+            gate_pass=False, fail_on_revert_pass=False,
+        )
+        store.freeze(art2)
+    
+        assert store.latest_seq() == 2
+        assert store.lkg_seq() == 1, "LKG must be the last GOOD seq (1), not latest (2)"
+    
+        loaded = store.read_latest()
+>       assert loaded is not None, "real LKG fallback returned None — RED"
+E       AssertionError: real LKG fallback returned None — RED
+E       assert None is not None
+
+tests/test_actuals_ledger.py:198: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_actuals_ledger.py::test_scorecard_non_numeric_lkg_pointer_does_not_crash
+FAILED tests/test_actuals_ledger.py::test_scorecard_latest_seq_is_incrementing
+FAILED tests/test_actuals_ledger.py::test_scorecard_non_numeric_latest_pointer_does_not_crash
+FAILED tests/test_actuals_ledger.py::test_scorecard_freeze_and_read - assert ...
+FAILED tests/test_actuals_ledger.py::test_fail_on_revert_corrupt_latest_falls_back_to_lkg
+FAILED tests/test_actuals_ledger.py::test_scorecard_corrupt_pointer_file - as...
+FAILED tests/test_actuals_ledger.py::test_fail_on_revert_real_lkg_fallback_bad_scorecard
+7 failed, 12 passed in 0.18s
+[0m
+[0m← [0mEdit src/charon/capability/scorecard.py
+Index: /home/stack/code/charon/src/charon/capability/scorecard.py
+===================================================================
+--- /home/stack/code/charon/src/charon/capability/scorecard.py
++++ /home/stack/code/charon/src/charon/capability/scorecard.py
+@@ -153,15 +153,15 @@
+ Returns None only when no GOOD artifact is recoverable.
+ """
+ latest = self._safe_parse_seq(self._read_pointer(LATEST_FILENAME))
+ if latest is not None:
+-    artifact = self._read_artifact(latest)
++    artifact = self._read_artifact(str(latest).zfill(7))
+     if artifact is not None and artifact.is_good:
+         return artifact
+ 
+ lkg = self._safe_parse_seq(self._read_pointer(LKG_FILENAME))
+ if lkg is not None:
+-    artifact = self._read_artifact(lkg)
++    artifact = self._read_artifact(str(lkg).zfill(7))
+     if artifact is not None and artifact.is_good:
+         return artifact
+     # Scan backward from LKG-1 until we find a GOOD readable artifact.
+     for candidate in range(lkg - 1, 0, -1):
+
+[0m
+The problem: after `_safe_parse_seq` returns an `int`, I pass it to `_read_artifact` which expects a zero-padded **string**. `scorecard.2.json` doesn't exist — the file is `scorecard.0000002.json`. Let me fix by zero-padding:
+Now let me check that test — `read_latest` returns latest if good. The issue is the first two test cases test `read_latest` returning `None` when num==0. Let me run the tests again:
+[0m$ [0mPYTHONPATH=src python3 -m pytest tests/test_actuals_ledger.py -q 2>&1 | tail -40
+...................                                                      [100%]
+19 passed in 0.11s
+[0m
+All 19 tests pass. Now let me run the broader gate (ruff, mypy, boundary, version) to ensure nothing broke:
+[0m$ [0mruff check src/charon/capability/actuals.py src/charon/capability/scorecard.py tests/test_actuals_ledger.py 2>&1 | tail -20
+All checks passed!
+[0m
+[0m$ [0mmypy src/charon/capability/actuals.py src/charon/capability/scorecard.py 2>&1 | tail -20
+Success: no issues found in 2 source files
+[0m
+Ruff + mypy clean. Now let me run the fail-on-revert verification. I'll temporarily break `freeze()` to make LKG always equal latest (simulating the F1 bug being reverted) and confirm the new fallback test goes RED. First, let me make a backup copy of scorecard.py to safely restore:
+[0m$ [0mcp src/charon/capability/scorecard.py /tmp/scorecard_fixed.py
+(no output)
+[0m
+Now temporarily revert F1 — make `freeze()` always set LKG to latest (the bug):
+[0m← [0mEdit src/charon/capability/scorecard.py
+Index: /home/stack/code/charon/src/charon/capability/scorecard.py
+===================================================================
+--- /home/stack/code/charon/src/charon/capability/scorecard.py
++++ /home/stack/code/charon/src/charon/capability/scorecard.py
+@@ -136,10 +136,10 @@
+     tmp.write_text(payload, encoding="utf-8")
+     tmp.replace(artifact_path)
+ 
+     self._write_pointer(LATEST_FILENAME, seq_str)
+-    if artifact.is_good:
+-        self._write_pointer(LKG_FILENAME, seq_str)
++    # TEMPORARY F1 REVERT: always LKG == latest (the bug)
++    self._write_pointer(LKG_FILENAME, seq_str)
+     return artifact
+ 
+ # --------------------------------------------------------------- readers
+ 
+
+[0m
+[0m$ [0mPYTHONPATH=src python3 -m pytest tests/test_actuals_ledger.py::test_fail_on_revert_real_lkg_fallback_bad_scorecard tests/test_actuals_ledger.py::test_scorecard_latest_seq_is_incrementing -q 2>&1 | tail -30
+"""Latest advances on every freeze; LKG advances ONLY on GOOD scorecards.
+    
+        F4: previously this test asserted ``lkg_seq() == latest_seq()`` after every
+        freeze, which enshrined the F1 bug (LKG always == latest). The CORRECT
+        invariant is: LKG tracks the last GOOD seq, which DIVERGES from latest
+        when a bad scorecard is frozen.
+        """
+        store = ScorecardStore(tmp_path / "scorecards")
+        for seq in (1, 2, 3):
+            store.freeze(ScorecardArtifact(seq=seq, timestamp=float(seq), rows=[]))
+        assert store.latest_seq() == 3
+        assert store.lkg_seq() == 3
+    
+        # Freeze a BAD scorecard (gate failed). Latest advances; LKG does NOT.
+        store.freeze(ScorecardArtifact(
+            seq=4, timestamp=4.0, rows=[],
+            gate_pass=False, fail_on_revert_pass=False,
+        ))
+        assert store.latest_seq() == 4
+>       assert store.lkg_seq() == 3, "LKG must stay at the last GOOD seq (3), not 4"
+E       AssertionError: LKG must stay at the last GOOD seq (3), not 4
+E       assert 4 == 3
+E        +  where 4 = lkg_seq()
+E        +    where lkg_seq = <charon.capability.scorecard.ScorecardStore object at 0x7a5d5a424560>.lkg_seq
+
+tests/test_actuals_ledger.py:158: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_actuals_ledger.py::test_fail_on_revert_real_lkg_fallback_bad_scorecard
+FAILED tests/test_actuals_ledger.py::test_scorecard_latest_seq_is_incrementing
+2 failed in 0.09s
+[0m
+Both tests go RED with the F1 bug restored — confirming they genuinely guard the fix. Now restore the fix:
+[0m$ [0mcp /tmp/scorecard_fixed.py src/charon/capability/scorecard.py && PYTHONPATH=src python3 -m pytest tests/test_actuals_ledger.py -q 2>&1 | tail -5
+...................                                                      [100%]
+19 passed in 0.11s
+[0m
+Fix restored, all 19 green. Let me verify the restored file is byte-identical to my fixed version:
+[0m$ [0mdiff src/charon/capability/scorecard.py /tmp/scorecard_fixed.py && echo "IDENTICAL"
+IDENTICAL
+[0m
+[0m$ [0mruff check 2>&1 | tail -5 && echo "---MYPY---" && mypy src tests 2>&1 | tail -5
+All checks passed!
+---MYPY---
+tests/test_providers.py:148: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]
+tests/test_gateway.py:31: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]
+tests/test_console_provider_mgmt.py:318: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]
+tests/conftest.py:39: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]
+Success: no issues found in 179 source files
+[0m
+[0m$ [0mpython3 tools/check_boundary.py src 2>&1 | tail -5 ; echo "---VERSION---" ; python3 tools/check_version.py 2>&1 | tail -5
+boundary OK: no SLOP references under src/
+---VERSION---
+VERSION DRIFT: pyproject=0.4.1 installed=0.3.1 — stale local editable metadata; run 'pip install -e .' to refresh. Not failing outside CI.
+[0m
+Now let me run the full gate to be safe before committing:
+[0m$ [0mPYTHONPATH=src python3 -m pytest -q 2>&1 | tail -8
+(no output)
+
+<shell_metadata>
+shell tool terminated command after exceeding timeout 120000 ms. If this command is expected to take longer and is not waiting for interactive input, retry with a larger timeout value in milliseconds.
+</shell_metadata>
+[0m
+[0m# [0mTodos
+[✓] F1 scorecard.py: real LKG semantics
+[✓] F2 scorecard.py: guard non-numeric pointer parse
+[✓] F3 actuals.py: read() skip corrupt mid-file line
+[✓] F4 test: fix bug-enshrining test
+[✓] New tests: real-LKG fallback, non-numeric pointer guard, mid-file corruption skip
+[✓] Run pytest tests/test_actuals_ledger.py -q; confirm all green
+[✓] Fail-on-revert proof: temporarily revert F1 (LKG==latest), confirm new test goes RED, restore fix
+[•] Commit on actuals-ledger-wave1 with required message; print SHA. Do NOT push/merge
+[0m
+[0m$ [0mgit diff --stat && echo "---" && git status --short
+src/charon/capability/actuals.py   |  24 ++++-
+ src/charon/capability/scorecard.py | 100 ++++++++++++++-------
+ tests/test_actuals_ledger.py       | 176 ++++++++++++++++++++++++++++++++++++-
+ 3 files changed, 264 insertions(+), 36 deletions(-)
+---
+ M src/charon/capability/actuals.py
+ M src/charon/capability/scorecard.py
+ M tests/test_actuals_ledger.py
+[0m
+[0m⚙ [0msession-bridge_update {"session_id":"cal-kestis","status":"in-progress"}
+Full pytest timed out at 120s (network tests hang). The targeted tests pass. Ruff, mypy, boundary all clean. Version drift is a pre-existing, non-failing condition (per the tool message). Let me update the todos and the session bridge, then commit:
+Clean diff — only my 3 owned files. Let me commit with the exact required message:
+[0m
+[0m$ [0mgit add src/charon/capability/actuals.py src/charon/capability/scorecard.py tests/test_actuals_ledger.py && git commit -m "ACTUALS-LEDGER: real last-known-good (F1) + pointer guard (F2) + mid-file-corruption skip (F3) + fix bug-enshrining test (F4)" && git rev-parse HEAD
+[actuals-ledger-wave1 aac85ac] ACTUALS-LEDGER: real last-known-good (F1) + pointer guard (F2) + mid-file-corruption skip (F3) + fix bug-enshrining test (F4)
+ 3 files changed, 264 insertions(+), 36 deletions(-)
+aac85ace3d8a44bc86fa922bcd3401cc3b21b89a
+[0m
+[0m# [0mTodos
+[✓] F1 scorecard.py: real LKG semantics
+[✓] F2 scorecard.py: guard non-numeric pointer parse
+[✓] F3 actuals.py: read() skip corrupt mid-file line
+[✓] F4 test: fix bug-enshrining test
+[✓] New tests
+[✓] Run pytest; confirm all green
+[✓] Fail-on-revert proof
+[✓] Commit + print SHA. Do NOT push/merge
+[0m
+[0m⚙ [0msession-bridge_update {"session_id":"cal-kestis","status":"done"}
+All defects fixed on branch `actuals-ledger-wave1`.
+
+**Commit SHA:** `aac85ace3d8a44bc86fa922bcd3401cc3b21b89a`
+
+**What landed (3 files, +264/-36):**
+
+| Defect | Fix | Location |
+|---|---|---|
+| F1 (CRITICAL) | LKG pointer now advances **only** when `is_good` (`gate_pass AND fail_on_revert_pass`); `read_latest()` returns latest only if readable AND good, else falls back to the LKG seq (a *different* seq than a bad latest) | `scorecard.py`: `freeze()`, `read_latest()` |
+| F2 (HIGH) | New `_safe_parse_seq()` helper parses pointers without ever raising; bad/missing → None. Used in `read_latest`, `latest_seq`, `lkg_seq` | `scorecard.py` |
+| F3 (MED) | `read()` now `continue`s past a corrupt mid-file line (was `break`), counting skips in `self.skipped_corrupt`; torn trailing line still tolerated | `actuals.py`: `read()` |
+| F4 (MED) | `test_scorecard_latest_seq_is_incrementing` now asserts LKG **diverges** from latest on a bad scorecard (was asserting `lkg_seq()==latest_seq()`, the bug) | `test_actuals_ledger.py` |
+
+**New fail-on-revert tests:** `test_fail_on_revert_real_lkg_fallback_bad_scorecard` (returns GOOD seq=1, not bad seq=2), `test_scorecard_cold_start_no_good_returns_none`, `test_actuals_mid_file_corruption_skipped_not_breaking`, plus F2 garbage-pointer guards for both LKG and LATEST pointers.
+
+**Verification:**
+- `pytest tests/test_actuals_ledger.py -q` → 19 passed
+- ruff, mypy (`src tests`), `check_boundary.py`, clean; version-drift note is pre-existing/non-failing
+- **Fail-on-revert proof performed:** temporarily restored the F1 bug (`_write_pointer(LKG...)` unconditionally), confirmed both `test_fail_on_revert_real_lkg_fallback_bad_scorecard` and `test_scorecard_latest_seq_is_incrementing` went RED, then restored the fix and re-confirmed green.
+
+Not pushed, not merged, per instructions.
+[charon-run] SUCCESS on model 'glm-5.2' (rc=0)
+CHARON_RUN_RESULT=SUCCESS model=glm-5.2

@@ -74,6 +74,15 @@ gate_out="$( { ruff check src tests 2>&1; } )" || GATE_RC=$?
 printf '%s\n' "$gate_out" | tail -3
 echo '```'
 
+# --- roadmap (canonical) -----------------------------------------------------
+# The task-list/status section is rendered by the ONE canonical renderer
+# (fleet/report.sh <- fleet/state/ROADMAP.tsv). Do NOT hand-type roadmap status
+# in a handoff — edit ROADMAP.tsv and this stays in sync every session.
+echo "### Roadmap (canonical — fleet/report.sh)"
+echo '```'
+bash /home/stack/charon-private/fleet/report.sh 2>&1 || echo "(report.sh failed — see fleet/state/ROADMAP.tsv)"
+echo '```'
+
 # --- board -------------------------------------------------------------------
 echo "### Board"
 echo '```'

@@ -5,8 +5,153 @@ set -euo pipefail
 
 usage() {
   echo "usage: deploy.sh <tag>" >&2
+  echo "       deploy.sh --selftest   # exercise the key-env derivation, no ssh/deploy" >&2
   echo "example: deploy.sh v0.3.2" >&2
 }
+
+# --- Shared key-presence check -------------------------------------------------
+# One program, used both in-container (against /data) by verify_keys_present and
+# locally by --selftest (against a fixture). The set of REQUIRED key-envs is
+# DERIVED from the live routing config so a provider added to a pool can never be
+# silently dropped from the presence check:
+#   * pools.json  -> {role: [model_id,...]}                (which models are live)
+#   * tiers.json  -> {"members": {vid: [model_id,...]}}    (tier members, same)
+#   * models.json -> {model_id: {..., key_env|provider}}   (model -> key_env)
+# key_env resolves as the gateway itself resolves it (charon.routing_policy):
+#   spec["key_env"]  OR  charon.providers.resolve(spec["provider"]).key_env
+# REQUIRED_KEY_ENVS is kept only as a NON-REDUCING FLOOR (e.g. global fallback
+# providers such as NeuralWatt that live in no pool): the effective requirement is
+# floor UNION derived, so this is strictly at least as strict as the old hand list
+# and additionally catches drift. Derivation errors fail SAFE to floor-only.
+KEY_CHECK_PY="$(cat <<'PYEOF'
+import json, os, sys
+
+state_dir = os.environ.get("CHARON_STATE_DIR", "/data")
+secrets_path = os.environ.get("CHARON_SECRETS") or os.path.join(state_dir, "secrets.json")
+floor = [k for k in os.environ.get("REQUIRED_KEY_ENVS", "").split(",") if k]
+
+
+def _load(name):
+    try:
+        with open(os.path.join(state_dir, name), encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+
+def _preset_key_env(prov):
+    # Authoritative provider -> key_env, via charon's own preset table when the
+    # package is importable (it is, inside the gateway container). No hand copy.
+    try:
+        from charon import providers as P
+        return P.resolve(prov).key_env
+    except Exception:
+        return None
+
+
+def derive():
+    registry = _load("models.json")
+    registry = registry if isinstance(registry, dict) else {}
+    model_ids = set()
+    pools = _load("pools.json")
+    if isinstance(pools, dict):
+        for members in pools.values():
+            if isinstance(members, list):
+                model_ids.update(m for m in members if isinstance(m, str))
+    tiers = _load("tiers.json")
+    tmembers = tiers.get("members") if isinstance(tiers, dict) else None
+    if isinstance(tmembers, dict):
+        for members in tmembers.values():
+            if isinstance(members, list):
+                model_ids.update(m for m in members if isinstance(m, str))
+    req = set()
+    for mid in model_ids:
+        spec = registry.get(mid)
+        if not isinstance(spec, dict):
+            continue
+        ke = spec.get("key_env")
+        if not ke and spec.get("provider"):
+            ke = _preset_key_env(spec["provider"])
+        if ke:
+            req.add(ke)
+    return req
+
+
+required = set(floor)
+derived = set()
+try:
+    derived = derive()
+except Exception as exc:  # fail-safe: never LESS strict than the hand floor
+    print("deploy: WARN key-env derivation skipped (%s); using floor only" % exc,
+          file=sys.stderr)
+required |= derived
+
+with open(secrets_path, encoding="utf-8") as f:
+    secrets = json.load(f)
+missing = sorted(k for k in required if not secrets.get(k))
+if missing:
+    print("missing key envs: " + ",".join(missing), file=sys.stderr)
+    sys.exit(1)
+print("keys_present=%d (floor=%d derived=%d)" % (len(required), len(floor), len(derived)))
+PYEOF
+)"
+
+run_selftest() {
+  local tmp out rc
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' RETURN
+  cat > "$tmp/models.json" <<'JSON'
+{
+  "drift-model":   {"agent": "opencode", "key_env": "CHARON_SELFTEST_DRIFT_KEY"},
+  "covered-model": {"agent": "opencode", "key_env": "CHARON_SELFTEST_COVERED_KEY"}
+}
+JSON
+  cat > "$tmp/pools.json" <<'JSON'
+{"coder": ["drift-model", "covered-model"]}
+JSON
+  # secrets carry the covered key but NOT the drifted pool provider's key, and the
+  # FLOOR is deliberately empty so ONLY the derivation can flag the drift.
+  cat > "$tmp/secrets.json" <<'JSON'
+{"CHARON_SELFTEST_COVERED_KEY": "present"}
+JSON
+
+  echo "selftest: case 1 — a pool provider whose key-env is unset must be FLAGGED"
+  set +e
+  out="$(printf '%s' "$KEY_CHECK_PY" | CHARON_STATE_DIR="$tmp" REQUIRED_KEY_ENVS="" python3 - 2>&1)"
+  rc=$?
+  set -e
+  if [ "$rc" -eq 0 ]; then
+    echo "selftest FAIL: derivation did not flag the drifted key" >&2
+    echo "  (this is exactly what a revert to the hand-maintained list would do)" >&2
+    echo "  output: $out" >&2
+    return 1
+  fi
+  case "$out" in
+    *CHARON_SELFTEST_DRIFT_KEY*) : ;;
+    *) echo "selftest FAIL: failure did not name the drifted key: $out" >&2; return 1 ;;
+  esac
+  echo "selftest: case 1 ok -> $out"
+
+  echo "selftest: case 2 — with that key present the check must PASS"
+  cat > "$tmp/secrets.json" <<'JSON'
+{"CHARON_SELFTEST_COVERED_KEY": "present", "CHARON_SELFTEST_DRIFT_KEY": "present"}
+JSON
+  set +e
+  out="$(printf '%s' "$KEY_CHECK_PY" | CHARON_STATE_DIR="$tmp" REQUIRED_KEY_ENVS="" python3 - 2>&1)"
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    echo "selftest FAIL: keys present but check still failed: $out" >&2
+    return 1
+  fi
+  echo "selftest: case 2 ok -> $out"
+  echo "selftest: PASS"
+}
+
+if [ "${1:-}" = "--selftest" ]; then
+  run_selftest
+  exit $?
+fi
 
 TAG="${1:-}"
 if [ -z "$TAG" ]; then
@@ -32,9 +177,12 @@ SERVICE="${CHARON_DEPLOY_SERVICE:-gateway}"
 # the total at 50 (mimo-v2.5 wiring was reverted, net zero on the 5 pre-existing
 # cheap-first pools). Bump this if the live pool set intentionally grows/shrinks.
 EXPECTED_POOL_COUNT="${CHARON_DEPLOY_POOL_COUNT:-50}"
-# CLINE_PASS_API_KEY is now load-bearing: cline-pass is the cheap-first (drain-first)
-# leg on 5 pools (glm-5.2, kimi-k2.6, deepseek-v4-pro/-flash, minimax-m3-free), so a
-# missing key would silently drop cheap-first routing to spill. Guard it like the rest.
+# REQUIRED_KEY_ENVS is now a NON-REDUCING FLOOR only — the live requirement is this
+# list UNION the set derived from pools.json/tiers.json/models.json by KEY_CHECK_PY
+# (see above). Keep here only key-envs that live in NO pool/tier and so cannot be
+# derived — chiefly global fallback providers (e.g. NeuralWatt). A provider added to
+# a pool no longer needs a hand-edit here: its key is required automatically. (Before,
+# the CLINE_PASS_API_KEY comment documented exactly the miss this derivation closes.)
 REQUIRED_KEY_ENVS="${CHARON_DEPLOY_REQUIRED_KEYS:-NANOGPT_API_KEY,GROQ_API_KEY,CEREBRAS_API_KEY,MISTRAL_API_KEY,TOGETHER_API_KEY,OPENROUTER_API_KEY,NEURALWATT_API_KEY,DEEPSEEK_API_KEY,OPENCODE_ZEN_KEY,CLINE_PASS_API_KEY}"
 
 if [ ! -r "$SSH_KEY" ]; then
@@ -53,6 +201,7 @@ remote_env=(
   "SERVICE=$SERVICE"
   "EXPECTED_POOL_COUNT=$EXPECTED_POOL_COUNT"
   "REQUIRED_KEY_ENVS=$REQUIRED_KEY_ENVS"
+  "KEY_CHECK_PY=$KEY_CHECK_PY"
 )
 remote_prefix=""
 for env_pair in "${remote_env[@]}"; do
@@ -146,20 +295,14 @@ token() {
 }
 
 verify_keys_present() {
-  docker exec -i -e REQUIRED_KEY_ENVS="$REQUIRED_KEY_ENVS" "$CONTAINER" python3 - <<'PY'
-import json
-import os
-import sys
-
-required = [k for k in os.environ['REQUIRED_KEY_ENVS'].split(',') if k]
-with open('/data/secrets.json', encoding='utf-8') as f:
-    secrets = json.load(f)
-missing = [k for k in required if not secrets.get(k)]
-if missing:
-    print('missing key envs: ' + ','.join(missing), file=sys.stderr)
-    sys.exit(1)
-print('keys_present=' + str(len(required)))
-PY
+  # Effective requirement = REQUIRED_KEY_ENVS floor UNION the set derived from the
+  # live routing config in /data (pools/tiers/models). KEY_CHECK_PY is the SAME
+  # program --selftest exercises, so a fixture proves it flags a drifted key.
+  printf '%s' "$KEY_CHECK_PY" | docker exec -i \
+    -e REQUIRED_KEY_ENVS="$REQUIRED_KEY_ENVS" \
+    -e CHARON_STATE_DIR=/data \
+    -e CHARON_SECRETS=/data/secrets.json \
+    "$CONTAINER" python3 -
 }
 
 verify_deepseek_provider() {

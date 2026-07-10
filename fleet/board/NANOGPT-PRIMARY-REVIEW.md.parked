@@ -1,4 +1,5 @@
 tier: economy
+difficulty: 1  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
 branch: feat/nanogpt-primary-review
 depends_on: DRAIN-ROUTING
 real-dep: DRAIN-ROUTING (the review only makes sense once DRAIN is live and we can

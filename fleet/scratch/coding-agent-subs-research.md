@@ -1,0 +1,45 @@
+# Coding-Agent Subscription Plans as Charon Gateway Backends — Feasibility/Pricing Research
+
+Research date: 2026-07-08. Prices/facts dated inline; all from primary vendor pages + docs unless noted.
+
+**Decisive filter applied first, per row:** Can Charon point at it as an OpenAI-compatible API endpoint with a proxiable key? If the plan only works inside the vendor's own IDE/CLI/extension (no general base-URL + key), it is UNUSABLE as a gateway backend regardless of price.
+
+Legend: 🟢 proxiable-API · 🟡 partial/unclear · 🔴 agent-locked-unusable. ToS proxy/resale stance: G=allowed · Y=personal-only/unclear · R=forbidden.
+
+---
+
+## Comparison table
+
+| Product | Proxiable? | Endpoint | Pricing model | $ Numbers | Unlimited / caps | Models fronted (quality tier) | ToS resale/proxy | Source (date) |
+|---|---|---|---|---|---|---|---|---|
+| **Cline Pass** | 🟢 (OpenAI-compat; FAQ explicitly allows "use with other coding agents by using your ClinePass API key") | `https://api.cline.bot/api/v1`, bearer key, model IDs `cline-pass/*`, **no `/models` endpoint** (must declare models explicitly) | Flat subscription | **$4.99 first month, then $9.99/mo** (+ possible processing fees) | "Generous quota", claims **2–5× standard API rate limits**; hard caps/concurrency NOT disclosed → NOT truly unlimited | 10 open-weight models / 6 providers: GLM 5.2, Kimi K2.7 Code, Kimi K2.6, DeepSeek V4 Pro/Flash, MiniMax M3, MiMo V2.5 Pro/V2.5, Qwen variants (strong open-weight coding tier; no frontier Claude/GPT) | **R** — ToS §2.2 forbids "buy, sell or transfer API keys" + forbids sharing subscription/credentials + competitive use. Personal use in another client tolerated; gateway-**resale/multi-user = forbidden** | cline.bot/cline-pass, docs.cline.bot, cline.bot/tos (2026-07-08) |
+| **Kiro.dev** | 🔴 | None general. Sub works ONLY with Kiro IDE / Kiro CLI / Kiro web / ACP-compatible IDEs / CI-CD. Explicitly **prohibits "OpenClaw and similar tools that leverage third-party harnesses"** | Credit subscription | Free (50 cr) · Pro $20 (1k cr) · Pro+ $40 (2k) · Pro Max $100 (5k) · Power $200 (10k); overage $0.04/cr | Credit-metered, per-individual | "Auto" mix of frontier models incl. Sonnet 4.6, Claude Opus 4.8, open-weight (frontier tier) | **R** — third-party harnesses banned; no proxiable key | kiro.dev/pricing, kiro.dev/faq, kiro.dev/cli (2026-07-08) |
+| **Kimi membership** (kimi.com) | 🔴 (membership) / note: API path already covered | Membership = consumer app only ("membership does NOT equal API access"). Separate `api.moonshot.ai/v1` (OpenAI-SDK compatible) is the proxiable path — **metered, and kimi-k2.6 is ALREADY a Charon provider** | Flat app sub (membership) vs metered (API) | Membership: Moderato $19 · Allegretto $39 · Allegro $99 · Vivace $199. API ≈ $0.55/M in, $2.65/M out | Membership = app quotas/agent credits/Deep Research; API = pay-per-token | Kimi K2.6 / K2.7 Code (strong agentic-coding open-weight) | Y/R — membership is app-access, not resellable; API is the sanctioned proxy path (already used) | kimi.com/membership, platform.kimi.ai, kimik2ai.com (2026-07-08) |
+| **Aider** | 🔴 as a *cost source* (it's a CLIENT, not a provider) | N/A — open-source CLI, BYOK. It could *consume* Charon, not back it | None (free OSS) | $0 (you pay your own upstream keys) | N/A | Whatever key you bring | N/A | (operator-provided fact, confirmed) |
+| **Kilo Code** | 🟢 **Kilo Gateway** is OpenAI-compatible & explicitly external-usable; but Kilo Code the extension is BYOK (client, like Aider) | Gateway: `https://api.kilo.ai/api/gateway` — drop-in for `/chat/completions`, one key, OpenAI SDK / any client | **Metered credits, zero markup** (reseller gateway, OpenRouter-like). "Kilo Pass" = credit sub | Kilo Pass $19 (Starter) → $199 (Expert); Teams $15/user; $20 free credits; BYOK $0 markup | Credit/token metered, not flat-unlimited | 500+ models incl. Anthropic, OpenAI, Google, xAI, Mistral, MiniMax (frontier + open-weight) | G-ish for the **gateway** (it's sold as an inference API for external apps); zero-markup = no cost edge vs direct | kilo.ai/gateway, kilo.ai/docs/gateway, kilo.ai/pricing (2026-07-08) |
+| **Roo Code** (= "Zoo Code" misspelling; Cline fork) | 🔴 as a cost source (CLIENT, BYOK, like Cline/Aider). "Roo Code Router" credits are BYOK-style pass-through | N/A — extension consumes OpenAI-compatible providers; not itself a proxiable backend | Free OSS + optional pre-paid Router credits (no markup) | $0 tool; ~$2–8/mo typical BYOK spend | N/A | BYOK: Anthropic/OpenAI/Google/Bedrock/Azure/any OpenAI-compat | N/A (it's a consumer, not a backend) | docs.roocode.com, morphllm/baeseokjae comparisons (2026-07-08) |
+| **Cursor** | 🔴 (the subscription) | No proxiable endpoint for the sub. BYOK exists but **bypasses the sub** (you pay the provider directly); Tab/Apply run on Cursor's own models, key-inelig. | Credit-pool subscription | Hobby $0 · Pro $20 · Pro+ $60 · Ultra $200 · Teams $40/user (annual −20%) | Credit pool = plan price; Auto mode "unlimited", frontier models draw credits | Composer 2.5 (1st-party) + Claude/GPT/Gemini via credits (frontier) | R — sub credits can't be extracted as an API key; agent-locked | cursor.com/pricing, aiproductivity.ai (2026-07-08) |
+| **OpenAI Codex plans** | 🔴 (the ChatGPT-sub Codex) | ChatGPT-plan Codex is OAuth-locked to Codex CLI/IDE (or ACP inside e.g. Kilo). NOT a general OpenAI-compatible key. The proxiable path = separate metered **OpenAI API** (already covered as gpt-direct) | ChatGPT sub (credit/token) vs separate metered API | Codex in Free/Go/Plus/Pro/Business/Edu/Ent; Pro $100 (5×) / $200 (20× Plus usage). API billed separately | ChatGPT-plan = token-credit metered; client-locked | GPT-5.x / Codex models (frontier) | R for the sub (OAuth client-locked); API = separate metered billing already available | developers.openai.com/codex, help.openai.com, uibakery (2026-07-08) |
+
+---
+
+## Verdict
+
+**Gateway-usable (proxiable) count: 2–3 of 8.** Agent-locked-out: Kiro, Cursor, Codex-sub, Kimi-membership, and (by nature) Aider/Roo Code which are CLIENTS not backends.
+
+**Ranked usable options:**
+
+1. **Cline Pass — the only genuinely NEW flat-rate proxiable backend.** 🟢 real OpenAI-compatible endpoint (`api.cline.bot/api/v1`), and the vendor FAQ *itself* says use the key in other agents. **$9.99/mo flat** ($4.99 first month) for 10 strong open-weight coding models (GLM 5.2, Kimi K2.7 Code, DeepSeek V4, MiniMax M3, Qwen). **BUT the ToS is the blocker:** §2.2 forbids selling/transferring keys and forbids sharing the subscription — so it's clean only as the *operator's single personal* backend; the moment Charon fronts it to multiple clients/users it becomes prohibited sharing/resale. Rate caps undisclosed ("2–5× API limits") so not safely "unlimited." Confidence the endpoint works: HIGH. Confidence it's ToS-clean for a multi-user gateway: LOW (R).
+2. **Kilo Gateway** — 🟢 proxiable and openly sold as an external inference API, but it's a **zero-markup metered reseller** (OpenRouter-class), not a flat sub — **no cost advantage** over hitting providers directly. Useful as a routing convenience, not a savings play.
+3. **Kimi via `api.moonshot.ai`** — already a Charon provider; the *membership* adds nothing proxiable. No action.
+
+**Agent-locked-out (do not pursue as backends):** Kiro (bans third-party harnesses outright), Cursor (sub credits non-extractable), Codex ChatGPT-sub (OAuth client-locked; API is separate metered = already have it). Aider & Roo Code are consumers that could point *at* Charon, never back it.
+
+**vs current stack (Featherless flat-rate / DeepInfra metered / gpt-5.4-direct):**
+- **Cline Pass at $9.99 flat** is dramatically cheaper than metered DeepInfra/gpt-direct for a heavy *open-weight coding* workload, and overlaps Featherless's flat-rate niche with a fresher/curated coding model set (K2.7 Code, GLM 5.2, DeepSeek V4). If the workload is single-operator coding, it's the cheapest option on the board.
+- **Kilo Gateway** offers no price edge (zero-markup = same as direct).
+
+**Strategic tradeoff to flag:** A $9.99 flat coding-sub (Cline Pass) is compelling for raw coding cost, but (a) it fronts **only open-weight models** — no frontier Claude/GPT — so leaning on it **bypasses Charon's core value: cross-provider failover + multi-model tier substitution**; (b) undisclosed rate/concurrency caps make it a fragile *sole* backend; and (c) its ToS makes it **legally safe only as one personal backend, not as a resold/multi-user gateway leg** — exactly the CommandCode/Trae "cheap-but-can't-proxy-at-scale" trap the operator wants filtered out. Best role: an *optional, personal, cost-saver leg* inside Charon's pool, never a replacement for the failover fabric.
+
+---
+*Sources: cline.bot/cline-pass + /tos + docs.cline.bot; kiro.dev/pricing,/faq,/cli; kimi.com/membership + platform.kimi.ai; kilo.ai/gateway,/docs,/pricing; docs.roocode.com; cursor.com/pricing; developers.openai.com/codex + help.openai.com. All fetched 2026-07-08.*

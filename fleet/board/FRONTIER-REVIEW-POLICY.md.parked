@@ -1,4 +1,5 @@
 tier: economy
+difficulty: 1  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
 branch: feat/frontier-review-policy
 depends_on:
 owns: /home/stack/charon-private/fleet/board/FRONTIER-REVIEW-POLICY.md

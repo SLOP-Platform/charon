@@ -50,7 +50,7 @@ gated L2+ (INV-B4) · INV-P0 (add a backend/provider = config, not code).
 - Repo `/home/stack/code/charon`, package `charon`, src-layout, Python ≥3.11.
 - Branches: `master` (Tier 1) · `tier2` = **PR #1** (tiers 2–4, on GitHub) ·
   **`mvp-routing`** = current work (ADR-0004 + the routing/proxy/failover engine,
-  ~12 commits, pushed to GitHub `Nnyan/charon`).
+  ~12 commits, pushed to GitHub `SLOP-Platform/charon`).
 - **You cannot `git push`** (harness-gated). The operator runs `! git -C
   /home/stack/code/charon push` in their session. `gh` is authed as `Nnyan` (will
   change for GitLab — see §8).
@@ -257,7 +257,7 @@ The GitLab detour left artifacts to revert/redirect to the SLOP-Platform target:
 
 ### 9c. Current repo/remote state at handoff
 - Branch **`mvp-routing`**, 3 commits ahead of `e99d3cc`, **pushed to GitHub
-  `Nnyan/charon`** (origin) AND `gitlab` (the abandoned remote — can be removed:
+  `SLOP-Platform/charon`** (origin) AND `gitlab` (the abandoned remote — can be removed:
   `git remote remove gitlab`). 114 tests green; tree clean.
 - The product (failover engine + web UI) is **done and host-independent** — none of
   the above touches application code, only CI/URLs.

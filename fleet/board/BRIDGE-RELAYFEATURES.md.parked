@@ -4,6 +4,7 @@
 >   "Incorporates RelayFreeLLM's superior features" — scope must be reconciled at un-park so
 >   the same features are not built twice. Stays PARKED (also gated on BRIDGE-HARDEN).
 tier: frontier
+difficulty: 5  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
 branch: feat/bridge-relay-features
 depends_on: BRIDGE-HARDEN
 owns: src/charon/proxy_server.py, src/charon/proxy.py, src/charon/gateway.py, src/charon/config.py

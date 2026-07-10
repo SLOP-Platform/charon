@@ -1,0 +1,47 @@
+tier: strong
+difficulty: 3  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
+work_class: routing
+branch: feat/capability-engine
+depends_on:
+owns: src/charon/providers.py, src/charon/config.py, src/charon/gateway.py, tests/test_capability_gating.py
+accept: PYTHONPATH=src python3 -m pytest tests/test_capability_gating.py -v -q
+  # FAIL-ON-REVERT: a request whose token count exceeds a provider's max_context is SKIPPED as
+  # ineligible (routing falls to the next capable leg); and a provider at max_concurrency in-flight
+  # is SKIPPED (queue/spill) rather than dispatched. Reverting the eligibility gate routes the
+  # over-context / saturated request to the incapable provider -> the test FAILS.
+prompt: /home/stack/charon-private/prompts/capability-engine.md   # author at activation
+scope: >-
+  The per-provider CAPABILITY dimension of the one routing engine — orthogonal to funding class /
+  cost (memory charon-drain-then-park-provider-class: "the one capability engine must encode
+  per-provider max_context + max_concurrency, not just funding class"; relates tracking #14). Some
+  cheap/flat legs are ineligible for a given REQUEST or MOMENT even though they are cheapest:
+  confirmed example Featherless.ai = flat/unlimited calls BUT 32K context per session AND
+  concurrency = 1 (one in-flight call). ADD two per-provider capability fields to the provider
+  schema (config.py / providers.py ProviderPreset): max_context (int tokens, optional) and
+  max_concurrency (int, optional). GATE routing in gateway.py's route-eligibility step: skip a
+  provider whose max_context < the request's estimated context, and skip a provider already at its
+  max_concurrency in-flight (track live in-flight count; skip -> next capable leg, i.e. spill, NOT a
+  hard error). Capability-matched only — a free rank-0 member must NOT front a request it cannot
+  serve. This is a FILTER (eligibility), NOT an ordering change: cost ordering (cost_rank /
+  cost_class) is untouched here. Deliberately LANDS EARLY (before the cost chain heats gateway.py) so
+  it is off the critical path.
+
+## Dependencies & sequence
+depends_on: none — a self-contained eligibility filter; independent of the METER/cost chain.
+real-dep: none.
+owns-note: writes gateway.py's route-eligibility step + the provider schema (config.py/providers.py).
+  Shares gateway.py + config.py with the later cost chain (DRAIN-ROUTING / COST-RANK-AUTO /
+  POOLS-SIMPLIFICATION) — so it must land in a DIFFERENT wave from any of them (single-writer per
+  gateway.py wave). Scheduling it in WAVE 1 (before DRAIN needs gateway.py) keeps it collision-free
+  and off the critical path.
+wave: WAVE 1 — concurrent with OPENROUTER-FLAKINESS-FIX (proxy.py) and RFL-2 (proxy_server.py); all
+  three owns-disjoint. gateway.py/config.py are free in Wave 1 (the cost chain starts at Wave 3).
+concurrency: NOT parallel-safe with DRAIN-ROUTING / COST-RANK-AUTO / POOLS-SIMPLIFICATION /
+  FREE-TIER-QUOTA-SPILL / DRAIN-THEN-PARK (all co-own gateway.py); disjoint from METER, RFL-*, PFF-P2,
+  OPENROUTER-FLAKINESS-FIX, and the bench track.
+recommended-model: strong tier for the schema + eligibility gate (mechanical, well-specced); the
+  in-flight concurrency counter needs care (thread-safety on the serve path) — flag for standard
+  review, escalate to adversarial only if the counter touches the money/spend path (it should not).
+note: PARKED — staged; new ticket (no prior board ticket for capability gating). Un-park + author the
+  prompt at activation. Filed 2026-07-09 by the WCI designed-work plan. Also update
+  fleet/FREE-TIER-ROUTING.md with the Featherless 32K/concurrency=1 clarification (rig doc, separate).

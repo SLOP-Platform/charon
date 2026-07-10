@@ -1,0 +1,8 @@
+ts	job	model	event	note
+2026-07-10T14:46:55Z	out-C	glm-5.2	limit-failover	rc=0; all providers for this model exhausted at gateway
+2026-07-10T15:45:47Z	grader	deepseek-v4-pro	limit-failover	rc=0; all providers for this model exhausted at gateway
+2026-07-10T15:45:47Z	grader	glm-5.2 deepseek-v4-pro	ALL-EXHAUSTED	every model failed over; POOL TOO THIN -> consider adding providers
+2026-07-10T16:51:34Z	grader-refire	glm-5.2	limit-failover	rc=124; all providers for this model exhausted at gateway
+2026-07-10T17:49:08Z	decompose-review	glm-5.2	limit-failover	rc=0; all providers for this model exhausted at gateway
+2026-07-10T17:52:31Z	decompose-review	deepseek-v4-pro	limit-failover	rc=0; all providers for this model exhausted at gateway
+2026-07-10T17:52:31Z	decompose-review	glm-5.2 deepseek-v4-pro	ALL-EXHAUSTED	every model failed over; POOL TOO THIN -> consider adding providers

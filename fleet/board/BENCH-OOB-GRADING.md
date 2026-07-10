@@ -1,4 +1,7 @@
+repurpose-2026-07-10: grade REAL tasks (reds-replay + sub-session actuals), NOT synthetic S0-S6; write VERSIONED frozen scorecard artifacts consumed via freeze-ring (GATEWAY-PROGRAM).
 tier: frontier
+difficulty: 5  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
+parked: true
 work_class: ci-infra
 branch: feat/bench-oob-grading
 depends_on:
@@ -24,3 +27,5 @@ scope: #26 (P0 INTEGRITY — the top fix; nothing the benchmark says is trustwor
   vs (b) root-owned tree + sudo wrapper vs (c) second host) — DO NOT BUILD until Q1 is resolved.
   Enables trustworthy #25 (reds-replay). Authoritative: scratch/pivot-implementation-plan.md §3 + §8 Q1.
 note: PARKED — staged so no droid claims ahead of manager gating. Blocked on operator substrate call (Q1).
+
+Q1-RESOLVED 2026-07-09: substrate = A (dedicated bench-grader unix user on LOCAL WSL box, answer-keys mode 0700). Still parked for BUILD pending: (1) proper #26/#25 design review, (2) build-after #20 (BENCH-PROVISIONAL-SCORING) resolution. Keep parked: true until both clear.

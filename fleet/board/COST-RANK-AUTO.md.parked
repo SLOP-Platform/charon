@@ -1,4 +1,5 @@
 tier: strong
+difficulty: 3  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
 rebase-after: PROXY-FAILOVER-FIX (parked 2026-07-08 — depends_on DRAIN-ROUTING which was parked to let the Phase-1 failover fix land solo; also owns config.py/gateway.py in that cluster. Un-park + rebase with DRAIN-ROUTING after the failover fix merges.)
 work_class: money-path
 branch: feat/cost-rank-auto

@@ -7,7 +7,9 @@ test-keys.env
 charon-rebuild-backup.git/
 
 # --- ephemeral fleet runtime state (claims/submitted/done markers) ---
-fleet/state/
+fleet/state/*
+# ...except the persisted roadmap (canonical source for report.sh/handoff.sh).
+!fleet/state/ROADMAP.tsv
 
 # --- scratch / logs ---
 *.log

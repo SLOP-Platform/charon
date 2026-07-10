@@ -16,6 +16,9 @@
 # (claim once, stand down when empty); raise `--retries` to ride out longer dependency gaps.
 set -euo pipefail
 FLEET="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CHARON="/home/stack/code/charon"   # the product repo (READ/worktree host only)
+# WORKTREE-LEAK GUARD (#1): launcher pre-creates the worktree + post-session leak detector.
+source "$FLEET/leak-guard.sh"
 usage(){ echo "usage: fleet-droid.sh <frontier|strong|economy|low|med|high|opus|sonnet|haiku> [--wait <min>] [--retries <n>] [--patience <cycles>]"; exit 2; }
 TIER=""; WAIT_MIN=3; RETRIES=6; PATIENCE=1
 while [ $# -gt 0 ]; do case "$1" in
@@ -64,11 +67,58 @@ while true; do
   echo "[$DROID] claimed $id — launching session…"
   pfile="$(awk -F': ' '$1=="prompt"{sub(/^[^:]*: ?/,"");print;exit}' "$tfile")"
   spec="$(cat "$tfile"; echo; echo '--- WORK SPEC ---'; cat "$pfile" 2>/dev/null || echo '(no prompt file)')"
-  prompt="$(cat "$FLEET/JOIN-PROMPT.md")
+  branch="$(awk -F': ' '$1=="branch"{sub(/^[^:]*: ?/,"");print;exit}' "$tfile")"
+  wt="$CHARON-fleet-$id"
+  # #1 WORKTREE-LEAK GUARD (a): the LAUNCHER creates the worktree off origin/master BEFORE the
+  # model runs, so the create/cd step is out of the model's hands — a model that ignores it can
+  # no longer land in the main checkout undetected. On failure we FAIL LOUDLY and never launch
+  # into the main checkout. A live needs-push marker means committed-but-unlanded work is sitting
+  # in that worktree — REFUSE to re-run (would risk destroying it); the manager lands it.
+  npmark="$FLEET/state/needs-push/$id"
+  set +e; leak_worktree_setup "$CHARON" "$wt" "$branch" "$npmark"; lg_rc=$?; set -e
+  if [ "$lg_rc" -eq 2 ]; then
+    echo "[$DROID] $id has committed-but-unlanded work (state/needs-push/$id) — NOT re-running (would risk its worktree). Land it: fleet/land-needs-push.sh $id. Keeping claim; next…" >&2
+    current=""   # keep the claim marker so it isn't re-offered; manager lands it
+    continue
+  elif [ "$lg_rc" -ne 0 ]; then
+    echo "[$DROID] FATAL: could not create worktree $wt off origin/master — REFUSING to launch into the main checkout. Releasing $id for retry." >&2
+    bash "$FLEET/release.sh" "$id" || true; current=""
+    bash "$FLEET/loop-guard.sh" record "$id" "$DROID" \
+      || echo "[$DROID] LOOP-GUARD: $id quarantined (repeated worktree-create failures)."
+    continue
+  fi
+  # Snapshot the main checkout so the post-session leak detector can spot NEW stray work in it.
+  main_before="$(git -C "$CHARON" status --porcelain 2>/dev/null)"
+  # LAUNCHER NOTE wins over JOIN-PROMPT step 1: the worktree already exists and is the CWD.
+  launcher_note="=== LAUNCHER NOTE (overrides step 1 of the join prompt) ===
+Your isolated worktree ALREADY EXISTS and is your current working directory:
+  $wt   (branch $branch, freshly created off origin/master by the launcher)
+Do NOT run 'git worktree add' or 'git worktree remove'. SKIP the worktree-creation step.
+Verify you are in $wt (run: pwd), then begin at the implementation step. NEVER edit the main
+checkout $CHARON — only files under $wt.
+"
+  prompt="$launcher_note
+$(cat "$FLEET/JOIN-PROMPT.md")
 
 === YOUR ASSIGNED TICKET: $id ===
 $spec"
-  if claude -p --model "$MODEL" --dangerously-skip-permissions "$prompt"; then
+  # Run WITH the worktree as the working directory (belt: launcher-set CWD; braces: the note above).
+  if ( cd "$wt" && claude -p --model "$MODEL" --dangerously-skip-permissions "$prompt" ); then
+    # #1 WORKTREE-LEAK GUARD (b): did the droid leak into the main checkout instead of its worktree?
+    # (0 commits AND clean worktree AND the main checkout gained NEW porcelain entries.)
+    if [ "$(leak_detect "$CHARON" "$wt" "$branch" "$main_before")" = LEAK ]; then
+      lf="$(leak_capture "$CHARON" "$id" "$FLEET/state/leaks")"
+      {
+        echo ""
+        echo "[$DROID] !!! LEAK DETECTED for $id !!! The droid wrote into the MAIN checkout"
+        echo "[$DROID]     $CHARON instead of its worktree (0 commits, clean worktree, main newly dirty)."
+        echo "[$DROID]     Stray work CAPTURED (quarantined) -> $lf"
+        echo "[$DROID]     Main checkout LEFT UNTOUCHED for manager recovery. NOT releasing/publishing $id."
+        echo "[$DROID]     MANAGER: recover from the capture, clean $CHARON, then 'fleet/release.sh $id'."
+      } >&2
+      current=""   # keep the claim so the ticket isn't re-run over the un-recovered leak
+      continue
+    fi
     # The droid committed its work on its branch but does NOT push or open the PR: the
     # deny-list blocks `git push`/`gh pr create` inside the Claude session (even with
     # --dangerously-skip-permissions, which does NOT bypass deny rules). So the LAUNCHER
