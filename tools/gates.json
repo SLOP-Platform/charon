@@ -128,5 +128,15 @@
     "ci_step": true,
     "invariant": "Gate passes iff all sub-checks pass",
     "red_proof": null
+  },
+  {
+    "id": "workflow-policy",
+    "name": "CI workflow policy gate",
+    "domain": "ci-infra",
+    "enforcer": "tools/check_workflows.py",
+    "covers": "action-ref pin policy, fragile Windows smoke patterns, packaging-trigger path scoping",
+    "ci_step": true,
+    "invariant": "Every .github/workflows/*.yml conforms to the action-pin/Windows-smoke/path-trigger policy",
+    "red_proof": "tests/test_check_workflows.py"
   }
 ]
