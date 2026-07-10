@@ -22,6 +22,7 @@ Fleet	F10	done	-	retire-done-ordering	retire finished tickets in order	Wave C
 Fleet	F20	done	-	report-renderer	one canonical fleet status report
 Fleet	F21	building	now	gate-exclude-goldens	drop benchmark fixtures from the gate
 Fleet	F22	done	-	done-close-archived	record merge-proof on archived tickets
+Fleet	F23	building	now	session-end-deploy	auto-update 4-LOM at session close
 Fleet	F11	queued	next	work-optimizer	schedule work for max parallelism
 Fleet	F12	queued	next	auto-close	close stale and landed tickets
 Fleet	F13	queued	next	recurrence-auditor	catch repeat failures automatically
