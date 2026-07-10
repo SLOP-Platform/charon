@@ -30,6 +30,17 @@ FIRST ACTS, in order:
    e.g. "Tab 1: bash /home/stack/charon-private/fleet/fleet-droid.sh sonnet  -> claims FB1".
    Tell me the FIRST tab to open, then wait.
 
+SESSION CLOSE (the ONLY sanctioned close path — never hand off from memory):
+- End EVERY session with `SESSION=<your-jedi-name> bash /home/stack/charon-private/fleet/end-session.sh`.
+  It is the single mechanized close ritual (audit item #4, `state/MANUAL-STEPS-AUDIT-2026-07-10.md`;
+  memory `mechanized-handoff-gate`): (1) first run GENERATES the machine-state via handoff.sh into
+  `SESSION-HANDOFF-<name>.md` and STOPS non-zero (NOT closed) so you fill in the human sections
+  (summary / key findings / gotchas / committed SHA / session-bridge); (2) re-run it — it runs
+  handoff-check.sh and REFUSES to declare the session closed (non-zero) until the handoff PASSES;
+  (3) on PASS it commits the handoff to charon-private and prints `SESSION CLOSED`. Do NOT
+  hand-write, hand-check, or hand-commit a handoff — that is the recurring bad-handoff failure this
+  replaces. Self-check the wrapper anytime with `bash fleet/end-session.sh --selftest`.
+
 THE LOOP (repeat):
 - I open the tab(s) you name; a droid claims the ticket, works in its own worktree, opens
   a DRAFT PR (base master), and stands down. It never merges.

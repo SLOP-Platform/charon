@@ -53,6 +53,19 @@ operator-approved before changing the harness.
 D005 WorkerBackend port (until a non-ACP worker); D015 verified isolation (promote as the
 safety pair for auto-land/Phase-2 per D016).
 
+## Session close (the ONLY sanctioned close path)
+End EVERY session with `SESSION=<jedi-name> bash /home/stack/charon-private/fleet/end-session.sh`.
+Do NOT write / check / commit a handoff by hand from memory — that is the recurring bad-handoff
+failure (memory `mechanized-handoff-gate`; audit item #4, `state/MANUAL-STEPS-AUDIT-2026-07-10.md`).
+`end-session.sh` mechanizes the whole ritual:
+1. **Phase 1 (no handoff yet):** generates the machine-state via `handoff.sh` into
+   `SESSION-HANDOFF-<name>.md` and exits non-zero — the session is NOT closed. Fill in the human
+   sections (summary / key findings / gotchas / committed SHA / session-bridge), then re-run it.
+2. **Phase 2 (handoff present):** runs `handoff-check.sh` and **REFUSES to close (non-zero) until it
+   PASSES** — an incomplete/inaccurate handoff can never be handed off as done.
+3. **On PASS:** commits the handoff file to charon-private and prints `SESSION CLOSED`.
+Regenerate the machine-state with `--regen`; verify the wrapper with `bash fleet/end-session.sh --selftest`.
+
 ## Release + redeploy runbook (durable steps — salvaged 2026-07-08 from REDEPLOY-PLAN.md)
 The version-specific REDEPLOY-PLAN snapshot (v0.3.3→v0.3.4) was archived; these are the
 version-independent steps that recur every release.

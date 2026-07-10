@@ -76,7 +76,12 @@ def is_parked(d):
     # whose text contains PARKED. A parked ticket is staged, not live.
     return (d["parked_field"].strip().lower() in ("true", "yes", "1")
             or "PARKED" in d["note"].upper())
-red, info, wci = [], [], []
+red, info, wci, warn = [], [], [], []
+# Product repo root — owns paths are either absolute (rig paths under /home/stack/...) or
+# RELATIVE to the product working tree. Used by the owns-path existence check (WARN only)
+# and by the uncommitted-work check (#6). Overridable via CHARON_REPO (self-tests point it
+# at an isolated fixture; default preserves the live path exactly).
+PRODUCT_REPO = os.environ.get("CHARON_REPO", "/home/stack/code/charon")
 
 # 1. prompt files exist
 for t, d in tickets.items():
@@ -85,11 +90,51 @@ for t, d in tickets.items():
     if d["prompt"] and not os.path.exists(d["prompt"]):
         red.append(f"missing-prompt: {t} -> {d['prompt']}")
 
-# 2. depends_on valid
+# 2. depends_on valid — a dangling dep id (references no live/done/archived ticket) is a
+# HARD FAIL: the sequencing it encodes can never be satisfied. (Correctness check b.)
 for t, d in tickets.items():
     for dep in d["deps"]:
-        if dep.lower() not in ids and dep.lower() not in done_ids:
+        if dep.lower() not in ids and dep.lower() not in done_ids and dep.lower() not in archived_ids:
             red.append(f"bad-dep: {t} depends_on '{dep}' (no such ticket)")
+
+# 2c. self-dependency — a ticket that depends_on itself can never be scheduled. HARD FAIL.
+# (Slips past check 2 because the id DOES resolve — to itself. Correctness check c.)
+for t, d in tickets.items():
+    for dep in d["deps"]:
+        if dep.lower() == t.lower():
+            red.append(f"self-dep: {t} depends_on itself — a ticket cannot block on itself; drop the self-reference")
+
+# 2d. dependency cycles — a cycle in the depends_on graph is unschedulable (every ticket
+# in it waits on another). HARD FAIL, and name the cycle. DFS with a GRAY (on-stack) /
+# BLACK (done) colouring; only edges to KNOWN board tickets (ids) are followed — a dep to a
+# done/archived/dangling id is terminal (no outgoing edges), so it can never form a cycle.
+# Self-deps are skipped here (reported by 2c) so the cycle names are genuine ≥2-node loops.
+# (Correctness check d.)
+_WHITE, _GRAY, _BLACK = 0, 1, 2
+_color = {t: _WHITE for t in tickets}
+_cycles_seen = set()
+def _walk(node, stack):
+    _color[node] = _GRAY
+    stack.append(node)
+    for dep in tickets[node]["deps"]:
+        nxt = ids.get(dep.lower())
+        if nxt is None or nxt == node:
+            continue  # dangling (check 2) / done-archived terminal / self-dep (check 2c)
+        if _color[nxt] == _GRAY:
+            i = stack.index(nxt)
+            cyc = stack[i:] + [nxt]           # e.g. A -> B -> C -> A
+            key = frozenset(cyc)
+            if key not in _cycles_seen:
+                _cycles_seen.add(key)
+                red.append("dep-cycle: " + " -> ".join(cyc) +
+                           " — depends_on forms an unschedulable loop; break it")
+        elif _color[nxt] == _WHITE:
+            _walk(nxt, stack)
+    stack.pop()
+    _color[node] = _BLACK
+for _t in list(tickets):
+    if _color[_t] == _WHITE:
+        _walk(_t, [])
 
 # 2b. work_class required + valid (capability/assign.py's auto-resolve source; see D&S
 # standing rule precedent below — same "every LIVE ticket must self-document" discipline,
@@ -160,6 +205,26 @@ for p, owners in sorted(path_owners.items()):
     else:
         tag = "all-done" if not live else "dep-sequenced/historical"
         info.append(f"owns hand-off ({tag}, ok): {p} <- {' '.join(owners)}")
+
+# 4b. owns paths should exist. WARN ONLY (never RED): owns may legitimately name a
+# not-yet-created file, a directory, a glob, or (for design-first tickets) prose. A path
+# is resolved absolute-as-is, else RELATIVE to the product repo; a glob (`*`) that matches
+# nothing is a soft warning. Prose entries (whitespace / leading `(`) are skipped — they
+# aren't paths. Correctness check a; deliberately non-blocking so it can NEVER false-block a
+# preflight. Only live tickets are checked (parked/done may carry provisional owns).
+for t, d in tickets.items():
+    if inactive(t):
+        continue
+    for p in d["owns"]:
+        if not p or " " in p or "\t" in p or p.startswith("("):
+            continue  # prose / descriptive owns, not a real path
+        base = p if os.path.isabs(p) else os.path.join(PRODUCT_REPO, p)
+        if "*" in p or "?" in p or "[" in p:
+            if not glob.glob(base):
+                warn.append(f"owns-glob-empty: {t} owns '{p}' matches no path (yet) — verify")
+        elif not os.path.exists(base):
+            warn.append(f"owns-path-missing: {t} owns '{p}' does not exist (yet) — verify it "
+                        f"is a to-be-created file or a typo")
 
 # 5. state markers must match a board ticket exactly (catches case-orphans)
 for sub in ("claims", "submitted", "done"):
@@ -279,7 +344,7 @@ if any(d["deps"] for d in tickets.values()):
 # Modified tracked files in src/ = a session exited without committing.
 # Untracked files (??) are OK — they belong to the active session.
 import subprocess
-charon_repo = "/home/stack/code/charon"
+charon_repo = PRODUCT_REPO
 try:
     result = subprocess.run(
         ["git", "-C", charon_repo, "status", "--porcelain", "--", "src/"],
@@ -297,6 +362,7 @@ except Exception as e:
 
 print("== validate_board ==")
 for i in info:  print(f"  INFO {i}")
+for w in warn:  print(f"  WARN {w}")
 for w in wci:   print(f"  WCI-ADVISORY {w}")
 for r in red:   print(f"  RED  {r}")
 print("  GREEN board structurally valid" if not red else f"  RED  {len(red)} issue(s) — fix before launching")
