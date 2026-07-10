@@ -9,6 +9,8 @@ set -uo pipefail   # deliberately NOT -e: a red check_cmd exits non-zero — tha
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TSV="$HERE/reds.tsv"
+VALIDATE_BOARD="$HERE/validate_board.sh"
+BOARD_RED_ID="board-validator-red"
 TODAY="$(date +%F)"
 TAB=$'\t'
 
@@ -45,7 +47,10 @@ cmd_scan(){
     [ "$state" = NOW-GREEN ] && printf '    ready to close: preflight.sh close %s\n' "$id"
   done < "$TSV"
   printf -- '--- %d open: %d STILL-RED  %d NOW-GREEN  %d MANUAL ---\n' "$total" "$red" "$green" "$manual"
-  [ $red -gt 0 ] && echo "Address or explicitly DEFER each STILL-RED before proceeding."
+  if [ $red -gt 0 ]; then
+    echo "Address or explicitly DEFER each STILL-RED before proceeding."
+    return 1
+  fi
   return 0
 }
 
@@ -219,16 +224,41 @@ $(basename "$f"): $(head -1 "$f" 2>/dev/null)"
   fi
 }
 
-detect_health(){
-  local vb="$HERE/validate_board.sh"
-  [ -f "$vb" ] || { echo "health: validate_board.sh not found at $vb"; return 0; }
-  local out rc
-  out="$(bash "$vb" 2>&1)"; rc=$?
+# --- board_gate: MECHANIZES [never-ignore-preexisting-issues] for the board class.
+# Runs validate_board.sh EVERY preflight (not just --full) and AUTO-REGISTERS a tracked
+# red into reds.tsv when it is red — so board hygiene issues can never again hide in the
+# advisory "DETECTED" section and get dismissed as "not the tracked reds". The umbrella red
+# self-closes when validate_board goes green (machine-owned, so machine-closed). Because it
+# lands in reds.tsv BEFORE cmd_scan, a red board makes preflight exit non-zero — it blocks
+# the session the same way a failing test does, rather than relying on the manager to recall.
+_board_red_status(){ awk -F"$TAB" -v id="$BOARD_RED_ID" '$1==id{print $7; exit}' "$TSV"; }
+_board_red_ensure_open(){
+  local st; st="$(_board_red_status)"
+  if [ -z "$st" ]; then
+    cmd_add "$BOARD_RED_ID" P2 board \
+      "validate_board.sh RED — fix or explicitly DEFER each board issue before proceeding" \
+      "bash $VALIDATE_BOARD >/dev/null 2>&1" >/dev/null 2>&1 || true
+  elif [ "$st" = closed ]; then
+    local tmp; tmp="$(mktemp)"
+    awk -F"$TAB" -v OFS="$TAB" -v id="$BOARD_RED_ID" \
+      '/^#/{print;next} $1==id{$7="open";$8=""} {print}' "$TSV" > "$tmp" && mv "$tmp" "$TSV"
+  fi
+}
+_board_red_close_if_open(){
+  [ "$(_board_red_status)" = open ] && \
+    cmd_close "$BOARD_RED_ID" --override "auto: validate_board.sh GREEN" >/dev/null 2>&1 || true
+}
+board_gate(){
+  [ -f "$VALIDATE_BOARD" ] || { echo "board_gate: validate_board.sh not found at $VALIDATE_BOARD"; return 0; }
+  local out rc; out="$(bash "$VALIDATE_BOARD" 2>&1)"; rc=$?
   if [ $rc -eq 0 ]; then
-    echo "health: validate_board.sh GREEN"
+    echo "board_gate: validate_board.sh GREEN"; _board_red_close_if_open
   else
-    echo "DETECTED (unregistered): health — validate_board.sh exited $rc"
-    printf '%s\n' "$out" | tail -5 | sed 's/^/    /'
+    local n; n="$(printf '%s\n' "$out" | grep -cE '^[[:space:]]*RED')"
+    _board_red_ensure_open
+    echo "board_gate: validate_board.sh RED ($n issue(s)) — AUTO-REGISTERED as tracked red '$BOARD_RED_ID' (blocks preflight until fixed or DEFERRED)"
+    printf '%s\n' "$out" | grep -E '^[[:space:]]*RED' | head -6 | sed 's/^ *//; s/^/    /'
+    [ "$n" -gt 6 ] && echo "    +$((n-6)) more — run: fleet/validate_board.sh"
   fi
 }
 
@@ -262,17 +292,12 @@ cmd_detect(){
   detect_repo_drift
   detect_claim_loop
   detect_wci_contention
-  if [ $full -eq 1 ]; then
-    detect_health
-  else
-    echo "health: skipped (pass --full to run validate_board.sh)"
-  fi
   echo "--- end detectors ---"
   return 0
 }
 
 case "${1:-scan}" in
-  scan|"") cmd_scan; cmd_detect ;;
+  scan|"") board_gate; cmd_scan; scan_rc=$?; cmd_detect; exit $scan_rc ;;
   add)     shift; cmd_add "$@" ;;
   close)   shift; cmd_close "$@" ;;
   list)    shift; cmd_list "$@" ;;
