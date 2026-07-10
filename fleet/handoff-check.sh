@@ -26,8 +26,21 @@ declare -A NEED=(
 for k in "${!NEED[@]}"; do
   if grep -qiE "${NEED[$k]}" "$F"; then ok "has: $k"; else miss "MISSING section: $k"; fi
 done
-# bootstrap one-liner must be a fenced copy-paste block
-grep -qE '```' "$F" && ok "has fenced block (bootstrap one-liner)" || miss "no fenced code block (bootstrap must be copy-pasteable)"
+# bootstrap one-liner must be a fenced copy-paste block AND a SINGLE SENTENCE (not a paragraph).
+# The FILE holds complete instructions; the bootstrap only points at it. Recurring drift = paragraphs.
+if grep -qE '```' "$F"; then
+  ok "has fenced block (bootstrap one-liner)"
+  BLOCK=$(awk '/```/{c++; next} c==1{print}' "$F")
+  nlines=$(printf '%s\n' "$BLOCK" | grep -c '[^[:space:]]')
+  splits=$(printf '%s' "$BLOCK" | grep -oE '[.;!?][[:space:]]+[^[:space:]]' | wc -l | tr -d ' ')
+  if [ "${nlines:-0}" -eq 1 ] && [ "${splits:-0}" -eq 0 ]; then
+    ok "bootstrap is a single-sentence one-liner"
+  else
+    miss "bootstrap must be ONE sentence pointing at the handoff FILE (found ${nlines} line(s), ${splits} sentence-break(s)) — move first-actions/hard-rules INTO the file body, not the bootstrap"
+  fi
+else
+  miss "no fenced code block (bootstrap must be copy-pasteable)"
+fi
 
 # 2) ACCURACY — every referenced SHA must exist; committed-SHA claim must match HEAD
 say "[sha]"
