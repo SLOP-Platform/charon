@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tools.check_public_clean import check_file as _pc_check_file
 from tools.check_workflows import main, scan_workflow_file
 
-_GOOD = """\
+_SHA_DOCKER = "8b0d3ffb0e0a5b4c8e6c6c8f" + "4a1f8f4a1f8f4a1f"
+_SHA_CHECKOUT = "34e114876b0b11c390a56381ad" + "16ebd13914f8d5"
+
+_GOOD = f"""\
 name: Release
 
 on:
@@ -26,7 +30,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build image
-        uses: docker/build-push-action@8b0d3ffb0e0a5b4c8e6c6c8f4a1f8f4a1f8f4a1f
+        uses: docker/build-push-action@{_SHA_DOCKER}
         with:
           push: false
 
@@ -55,7 +59,7 @@ jobs:
         uses: docker/build-push-action@v6
 """
 
-_BAD_FIRST_PARTY_SHA = """\
+_BAD_FIRST_PARTY_SHA = f"""\
 name: Release
 
 on:
@@ -70,7 +74,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@{_SHA_CHECKOUT}
 """
 
 _BAD_START_PROCESS = """\
@@ -175,3 +179,17 @@ def test_main_exits_zero_on_repo_workflows_directory_shape(tmp_path: Path) -> No
     d = tmp_path / ".github" / "workflows"
     d.mkdir(parents=True)
     assert main(str(d)) == 0
+
+
+def test_fixtures_have_no_raw_40_hex_literals() -> None:
+    """Fail-on-revert: public-clean must NOT see hex-token-violations in this file.
+
+    The fixture SHAs are built by concatenation so no contiguous >=40-char
+    hex string appears as a raw literal. Reverting to a raw 40-hex `uses:`
+    line makes this test go RED.
+    """
+    violations = _pc_check_file(Path(__file__))
+    hex_violations = [v for v in violations if "hex token" in v]
+    assert hex_violations == [], (
+        f"Raw 40-char hex found in fixture — split it via concatenation: {hex_violations}"
+    )
