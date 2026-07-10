@@ -80,3 +80,9 @@ mechanical, prefer the mechanism (hook / gate / launcher flag) over recall.
 *Bracketed refs point to the originating manager-memory note. Once this doc is
 wired into the SessionStart hook, those memories can be slimmed to one-line
 pointers here (see institutionalization-audit.md demotion list).*
+
+## 9. CONTEXT / SESSION-COST DISCIPLINE (2026-07-10)
+
+- **Warn at 250K context.** When this session's context reaches ~250K tokens, PROACTIVELY warn the operator and offer a handoff — the manager session runs on Opus and re-reads its full accumulated context every turn, so a large session is itself a top token consumer (it drained the limit during a perceived "pause" on 2026-07-09). Don't wait to be asked. `[route-work-to-charon-not-claude]`
+- **The spend limit is a CEILING, not a throttle** — it stops work only after the budget is gone. Protect the budget PROACTIVELY: keep the session lean, hand off early, and route sub-work off Claude.
+- **Route sub-work to Charon, not Claude.** Default droid/sub-session work to Charon Gateway (opencode pointed at 4-LOM) with a best-fit model; use Claude sub-agents only when the work truly needs Claude AND the operator OKs it. NOTE the tension: `fleet-droid.sh` launches Claude (opus/sonnet) — launching droids spends the Claude limit. Until `WORK-ROUTING-TO-CHARON-ENGINE` lands, prefer opencode-on-Charon for builds. `[route-work-to-charon-not-claude]`
