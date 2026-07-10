@@ -65,6 +65,31 @@ def test_routing_policy_exports_public_api():
     assert hasattr(routing_policy, "build_fallback_chain")
 
 
+def test_routing_policy_all_names_importable_and_nonnone():
+    """FAIL-ON-REVERT: EVERY name in ``routing_policy.__all__`` MUST be
+    importable via ``from charon.routing_policy import <name>`` AND must not be
+    ``None``. Goes RED if ``__all__`` again lists a non-exported symbol (the
+    exact F1 defect from the adversarial review)."""
+    import importlib
+
+    from charon import routing_policy
+
+    assert routing_policy.__all__, "routing_policy.__all__ is empty/missing"
+    mod = importlib.import_module("charon.routing_policy")
+    for name in routing_policy.__all__:
+        # importlib.import_module doesn't do from-import of attributes; use getattr
+        # which exercises the same binding a real `from ... import name` would.
+        assert hasattr(mod, name), (
+            f"{name!r} is in routing_policy.__all__ but NOT importable "
+            f"as a package attribute (F1 regression)"
+        )
+        value = getattr(mod, name)
+        assert value is not None, (
+            f"{name!r} is in routing_policy.__all__ but binds to None "
+            f"(missing re-export — F1 regression)"
+        )
+
+
 def test_derived_cost_rank_moved_to_routing_policy():
     """FAIL-ON-REVERT: ``derived_cost_rank`` MUST live in
     ``routing_policy.cost_rank``, not as a local definition in ``pools.py``.

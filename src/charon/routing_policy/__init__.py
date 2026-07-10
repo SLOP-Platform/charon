@@ -18,14 +18,16 @@ derived_cost_rank       — SR-6 cost-rank derivation from per-token pricing
 """
 from __future__ import annotations
 
-import os
-
 from charon import config as _config_mod
 from charon import providers as _providers_mod
 from charon.proxy_server import UpstreamRoute as _UpstreamRoute
 
 from .base import DefaultPolicy, Policy
 from .cost_rank import derived_cost_rank
+from .drain import DrainPolicy
+from .matrix import CapabilityMatrix, Grade, ModelCapability, WorkClass
+from .pools import PoolsSimplificationPolicy
+from .spill import SpillPolicy
 
 __all__ = [
     "Policy",
@@ -66,6 +68,8 @@ def route_from_spec(spec: dict, providers_cfg: dict) -> _UpstreamRoute | None:
         strip_v1 = spec.get("strip_v1")  # explicit only; else server default
         wire = str(spec.get("wire") or _providers_mod.WIRE_OPENAI)
         adapter = str(spec.get("adapter") or "") or None
+    import os
+
     return _UpstreamRoute(
         upstream_base=str(base),
         api_key=os.environ.get(key_env) if key_env else None,
