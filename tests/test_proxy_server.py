@@ -1101,8 +1101,9 @@ class _ClineWrappedUpstream(http.server.BaseHTTPRequestHandler):
 def test_proxy_nonstream_cline_shaped_upstream_returns_openai_body(
         monkeypatch, tmp_path) -> None:
     """FAIL-ON-REVERT: a route with adapter='cline' unwraps a wrapped Cline body so
-    the CLIENT sees top-level `choices` AND real usage/cost is metered. Revert the
-    shim → the served body lacks `choices` and cost records 0 → RED."""
+    the CLIENT sees top-level `choices` AND the real usage/cost ($0.03) is metered.
+    Revert the shim → the served body lacks `choices` and cost falls back to the
+    nominal pre-flight floor (~$0.00015) instead of $0.03 → RED."""
     monkeypatch.setenv("CHARON_HOME", str(tmp_path))
     from charon.spend_limits import SpendLimiter
 
@@ -1121,8 +1122,10 @@ def test_proxy_nonstream_cline_shaped_upstream_returns_openai_body(
         # client-observable body is the canonical OpenAI object (top-level choices)
         assert "choices" in body and "data" not in body
         assert body["choices"][0]["message"]["content"] == "unwrapped-ok"
-        # real usage/cost was metered (revert → wrapped body → cost 0 → this fails)
-        assert limiter._spent_usd > 0
+        # the REAL unwrapped cost ($0.03) was metered — NOT the nominal pre-flight
+        # floor. Revert the shim → no top-level usage → cost falls back to ~$0.00015
+        # → this discriminating assertion goes RED.
+        assert abs(limiter._spent_usd - 0.03) < 1e-6
     finally:
         proxy.shutdown()
         up.shutdown()
