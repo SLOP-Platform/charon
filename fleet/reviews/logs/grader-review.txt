@@ -1,0 +1,1832 @@
+===== [charon-run] attempt: charon/glm-5.2 @ wt-grader =====
+[0m
+> build · glm-5.2
+[0m
+I'll start by registering my session and then conduct the adversarial review.
+[0m⚙ [0msession-bridge_register {"name":"adversarial-reviewer-bench-oob-grading","repo":"charon","session_id":"mace-windu","status":"in-progress","ticket":"26","model":"glm-5.2"}
+[0m
+[0m$ [0mgit show --stat f5fc2be
+commit f5fc2bee561f621745c485db94c05343e1ce7cae
+Author: Nnyan <nnyan.tengwar@gmail.com>
+Date:   Fri Jul 10 09:51:34 2026 -0700
+
+    bench(#26): OOB grader-daemon + versioned scorecard artifact (Wave 1)
+    
+    Build the out-of-band benchmark grading daemon that grades real tasks
+    (reds-replay + real sub-session actuals) as the dedicated bench-grader
+    unix user. Closes the three trust defects from
+    ADR-BENCH-OOB-GRADING.md §1.1:
+      - Answer keys out of the subject's reach (0700 bench-grader tree)
+      - Grading not self-driven (daemon is sole grader)
+      - No self-report (daemon is sole writer of scorecard.v{n}.json)
+    
+    RED-TEAM FIX #2 (artifact seam): the daemon writes versioned, append-only
+    scorecard.v{n}.json artifacts that are NEVER imported by product code.
+    Consumers read frozen artifacts only. The version n bumps at daemon
+    restart, sealing the prior artifact read-only (chmod 0444) via
+    _seal_artifact(); the current version stays writable for appends.
+    
+    Files:
+      - fleet/benchmark/grader-daemon.py — main daemon (stdlib only)
+      - fleet/benchmark/graders/reds_replay.py — real-task grader for #25
+      - fleet/benchmark/selftest/test_grader_daemon.py — FAIL-ON-REVERT test
+      - fleet/benchmark/RUN-BENCHMARK.md — OOB daemon documentation
+    
+    FAIL-ON-REVERT test: python3 fleet/benchmark/selftest/test_grader_daemon.py
+      Check A: stack denied read of /home/bench-grader/keys — isolation holds
+      Check B: daemon --selftest writes scorecard.v{n}.json end-to-end
+      Check C: no product import of scorecard.v in /home/stack/code/charon
+      Check D: daemon source contains versioning + isolation refs
+
+ REVIEW-PACKET.md                               | 154 ++++++
+ fleet/benchmark/RUN-BENCHMARK.md               |  61 +++
+ fleet/benchmark/grader-daemon.py               | 636 +++++++++++++++++++++++++
+ fleet/benchmark/graders/reds_replay.py         | 154 ++++++
+ fleet/benchmark/selftest/test_grader_daemon.py | 184 +++++++
+ 5 files changed, 1189 insertions(+)
+[0m
+[0m$ [0mgit log --oneline master..HEAD
+f5fc2be bench(#26): OOB grader-daemon + versioned scorecard artifact (Wave 1)
+b14f084 Mechanize handoffs: handoff-check.sh gate + operating rule + HANDOFF-MECHANIZE ticket
+b53ae95 HANDOFF-2026-07-10-c + Wave-1 briefs staged; bank session-C sandbox/process gotchas
+8cd9851 GATEWAY-PROGRAM: consolidation plan (rev-2 post 3-reviewer red-team) + board actions
+34f2bc0 handoff(session-B): PR backlog cleared via headless-Charon review loop + durable launcher
+59b7c35 board: session 2026-07-10 — land PR backlog via headless-Charon review loop
+ab09ace docs(handoff): 2026-07-10 lean restart + 250K-context warning rule + route-to-Charon cost discipline
+acce348 board: file fragility-sweep follow-up tickets (5)
+[0m
+[0m$ [0mgit diff master..HEAD -- REVIEW-PACKET.md
+diff --git a/REVIEW-PACKET.md b/REVIEW-PACKET.md
+new file mode 100644
+index 0000000..cde73c1
+--- /dev/null
++++ b/REVIEW-PACKET.md
+@@ -0,0 +1,154 @@
++# REVIEW PACKET — BENCH-OOB-GRADING #26 (Wave 1)
++
++**Ticket:** BENCH-OOB-GRADING-26
++**Model:** glm-5.2 (charon/glm-5.2)
++**Branch:** feat/bench-oob-grading
++**Date:** 2026-07-10
++
++## Files + line ranges changed
++
++| File | Lines | Change |
++|------|-------|--------|
++| `fleet/benchmark/grader-daemon.py` | 1–635 | **NEW** — OOB grader daemon (stdlib only); watches spool, snapshots worktree, dispatches real-task graders, writes versioned append-only `scorecard.v{n}.json` |
++| `fleet/benchmark/graders/reds_replay.py` | 1–153 | **NEW** — real-task grader for replayed reds (#25); reads `check_cmd` from `$KEYS/reds-replay.tsv`, substitutes `{worktree}`, runs it |
++| `fleet/benchmark/selftest/test_grader_daemon.py` | 1–184 | **NEW** — FAIL-ON-REVERT test: isolation + versioning + no-product-import |
++| `fleet/benchmark/RUN-BENCHMARK.md` | 95–155 | **MODIFIED** — OOB grader daemon documentation section appended |
++
++## Root cause / approach
++
++The benchmark grading pipeline had **three structural trust defects** (per
++`fleet/ADR-BENCH-OOB-GRADING.md` §1.1):
++1. **Answer key readable by the subject** — graders + check_cmds in the
++   stack-owned repo the agent can `cat`.
++2. **Grading self-driven** — the graded model ran `bench.sh grade` itself.
++3. **Self-report** — the model pasted its own tier chart as output.
++
++**Approach:** Build an out-of-band grader daemon (`grader-daemon.py`) that
++runs as the dedicated `bench-grader` unix user. The daemon:
++- Watches `/var/lib/bench-grader/spool/req/` for grading requests
++- Snapshots the agent's worktree into a read-only daemon-private copy
++  (`work/<run>/`) so the agent cannot tamper mid-grade
++- Grades against private keys in `/home/bench-grader/keys/` (mode 0700,
++  owned by `bench-grader`) — the graded agent's user (`stack`) cannot read
++  them
++- Writes results to `spool/res/<run>.json` for the agent to poll
++  (verdict/score/next-prompt only — never grader source or check_cmd)
++- Is the **sole writer** of the versioned, append-only
++  `scorecard.v{n}.json` artifact
++
++**RED-TEAM FIX #2 (artifact seam):** The versioned scorecard
++`scorecard.v{n}.json` is NEVER imported by product code. Consumers read
++frozen artifacts only. The version `n` bumps when the daemon (re)starts,
++sealing the prior artifact as a frozen, read-only snapshot (`chmod 0444`)
++via `_seal_artifact()`. The current version's artifact stays writable for
++appends; the sealed prior version is immutable.
++
++**Key fixes applied to the prior session's uncommitted work:**
++- Fixed selftest to copy the real `reds_replay.py` grader so `kind="red"`
++  dispatches correctly (was creating a `trivial_ok.py` grader but setting
++  `kind=red`, which made the daemon look for `reds_replay.py` and crash).
++- Fixed `_append_scorecard_row` to not chmod the artifact read-only after
++  each write (was preventing subsequent appends — the "append-only" test
++  failed with PermissionError on the second row).
++- Added `_seal_artifact()` method called from `_bump_version()` to seal
++  only the **prior** version as read-only at restart, keeping the current
++  version writable.
++- Fixed `_keys_unreadable_by_agent()` to handle PermissionError from
++  `keys.exists()` (stack can't stat `/home/bench-grader/keys`).
++- Fixed `_drain_pending` to accept a persistent `seen` set so the selftest
++  doesn't re-grade already-graded requests.
++
++## FAIL-ON-REVERT test
++
++**Name:** `test_grader_daemon.py` — grader-daemon isolation + versioning
++
++**Exact run command:**
++```
++python3 fleet/benchmark/selftest/test_grader_daemon.py
++```
++
++**What it checks (must go RED if reverted):**
++- **Check A (ISOLATION):** `stack` cannot `iterdir()` `/home/bench-grader/keys/`.
++  Reverting the `chmod 0700` / `chown bench-grader` on keys makes this FAIL.
++- **Check B (VERSIONING):** `grader-daemon.py --selftest` runs end-to-end:
++  drops a req, grades it, writes `scorecard.v{n}.json`, appends a second
++  row, bumps version. Removing the versioning or append-only logic → FAIL.
++- **Check C (NO-PRODUCT-IMPORT):** No `.py` file under
++  `/home/stack/code/charon/` references `scorecard.v`. Adding a product
++  import of the scorecard → FAIL (the artifact seam is breached).
++- **Check D (DAEMON STRUCTURE):** The daemon source contains the required
++  versioning + isolation refs (`_bump_version`, `_seal_artifact`,
++  `_append_scorecard_row`, `ARTIFACT_SCHEMA_VERSION`, keys/spool paths,
++  `_keys_unreadable_by_agent`). Removing any → FAIL.
++
++## Self-run FULL GATE result
++
++```
++PYTHONPATH=src python3 -m charon.cli gate
++```
++(run from `/home/stack/code/charon` — the product repo)
++
++```
++CHARON GATE — running all validation checks...
++  [ruff] OK
++  [mypy] OK
++  [SLOP-boundary] OK
++  [version] OK
++  [gate-registry] OK
++  [public-clean] OK
++CHARON-GATE: all checks passed
++```
++
++**FAIL-ON-REVERT test result:**
++```
++python3 fleet/benchmark/selftest/test_grader_daemon.py
++=== FAIL-ON-REVERT: grader-daemon isolation + versioning (#26) ===
++--- Check A: isolation (KEYS unreadable by graded agent) ---
++  [OK  ] stack denied read of /home/bench-grader/keys — isolation holds
++--- Check B: versioned artifact (daemon selftest) ---
++  [OK  ] daemon --selftest exit=0 stdout='SELFTEST OK'
++--- Check C: no product import of scorecard artifact ---
++  [OK  ] no product import of 'scorecard.v' in /home/stack/code/charon
++--- Check D: daemon source structure ---
++  [OK  ] daemon source contains all required versioning + isolation refs
++FAIL-ON-REVERT: ALL CHECKS PASSED
++```
++
++**Daemon selftest:**
++```
++python3 fleet/benchmark/grader-daemon.py --selftest
++[grader-daemon] graded run=r1 model=test-model unit=trivial_ok score=100 verdict=MERGE -> scorecard.v1.json
++[grader-daemon] graded run=r2 model=test-model unit=trivial_ok score=100 verdict=MERGE -> scorecard.v1.json
++SELFTEST OK
++```
++
++## Residual risk + blast radius
++
++1. **No bench.sh integration yet** — the daemon is built but `bench.sh`
++   still grades in-process. The operator must wire `bench.sh` to drop req
++   JSONs and poll res JSONs. Until then, the daemon watches an empty
++   spool. Risk: nil (daemon is idle, no false grades).
++
++2. **No reds-replay.tsv yet** — the keys file for real-task grading (#25)
++   is not populated. The daemon handles this gracefully (returns BLOCK
++   with "no check_cmd" reason). Once #25 lands and seeds
++   `$KEYS/reds-replay.tsv`, reds-replay grading activates without code
++   changes.
++
++3. **Cost attribution** — `cost_usd` / `tokens_in` / `tokens_out` come
++   from the request JSON (best-effort). When the daemon runs as
++   `bench-grader`, it has no opencode config, so cost will be `"-"` on
++   daemon-graded rows. Acceptable: cost was already best-effort.
++
++4. **Daemon must be started by operator** — `sudo -u bench-grader nohup
++   python3 ...` or a systemd unit (step 5 of ADR). Not wired in this wave
++   per instructions ("do NOT run step-5 systemd enable").
++
++5. **Blast radius: zero** — the daemon is a new file with no existing
++   callers. The product (`/home/stack/code/charon`) never imports it. The
++   synthetic section graders (s0.py–s6.js) are unchanged. `bench.sh`'s
++   existing in-process grading path is untouched.
++
++## Commit SHA
++
++(to be filled after commit)
+[0m
+[0m$ [0mgit diff master..HEAD -- fleet/benchmark/
+...output truncated...
+
+Full output saved to: /home/stack/.local/share/opencode/tool-output/tool_f4d1db7fc0017C3Ft0IhydWTNX
+
++  For the first season or two, v2 "efficiency" ≈ time+cost, the opposite of
++  intent.
++- **Cross-source contamination guard exists but is untested.** §4.2 correctly
++  restricts F to `bench2` rows (v1 rows have no tokens and a shorter row, and
++  must never share a percentile field). This is *specified* but there is **no
++  self-test named** to enforce it, and `model-scorecard.sh` still has
++  `VALID_SOURCE="live bench"` and `cmd_append` `$# -ge 12` — the `bench2`
++  enum + tokens column are unbuilt, so nothing yet prevents an implementer from
++  reading a mixed field. Add a golden asserting a v1 row never enters a v2
++  percentile field.
++
++**Fix:** gate v2 scoring on tokens actually being present for the field (if the
++season's tokens field is empty, either don't ship v2 efficiency that season or
++label it "time+cost only"); add the cross-source-isolation self-test.
++
++## 4. ±5 magnitude vs correctness — **real defect at composite level, MEDIUM-HIGH**
++
++Per-section the claim holds: ±5 can't carry a bad answer. But the tier decision
++is on the **composite mean of 6 sections**, and there the full efficiency swing
++is −5→+5 = **10 points**, which is wider than the gap between a mid-Strong and
++Frontier. Worked inversion:
++
++> Model P: true section-mean 87 (Strong), uniformly best efficiency → +5 →
++> composite 92 → **Frontier, ranked above Q**.
++> Model Q: true section-mean 91 (Frontier), uniformly worst efficiency → −5 →
++> composite 86 → **Strong**.
++> Q is genuinely *more correct* (91 vs 87) yet ranks below P. A 4-point
++> correctness lead is overturned by the 10-point efficiency swing.
++
++So efficiency **can** flip the tier ordering of two models whose correctness
++differs by up to ~10 composite points. §4.4's "cannot manufacture a tier jump
++on its own merit" is true per-section, false per-composite. This is exactly the
++"subtly-wrong normalization misranks models → misleads build-model choice"
++failure mode.
++
++Note the v1 chart *already* uses efficiency the safe way: `rank_in_tier`
++(tier_chart.py:145) tie-breaks **within** a tier by mean time_s, so a faster
++model wins only at equal tier — efficiency never crosses a tier boundary. v2
++abandons that safety by folding efficiency into the score itself.
++
++**Fix (recommended):** either (i) shrink MODIFIER_MAX to ±3 (max composite
++swing 6, still can flip a genuine coin-toss, much harder to overturn a real
++correctness gap), and/or (ii) keep the v1 posture — apply efficiency only as an
++explicit within-tier tie-breaker at near-equal correctness, not as a term added
++to the score. (ii) preserves "correctness dominates" by construction.
++
++## 5. Anti-cheat ordering — **cap holds; a correlated-gaming hole remains, MEDIUM**
++
++The `min(score,89)`-after-modifier ordering is correct: a capped-while-failing
++section with raw 88 +5 → 93 → min(93,89)=89, still barred from MERGE. Good, and
++the timeout case (raw 0, worst percentile → −5, clamp 0) falls out right. No
++objection to the ordering.
++
++The residual is **not** ordering, it's **correlation**: efficiency rewards doing
++*less* (fewer tokens = better tokens percentile), and the graders are
++independently known-gameable (`GRADER-REVIEW.md` caught S2 scoring 100 on inert
++code and S6 scoring 75 on a hardcoded solution). A model that slips a minimal
++inert/hardcoded solution past a weak grader *also* burns the fewest tokens — so
++it is **double-rewarded**: it passes the grader AND tops efficiency. Efficiency
++is positively correlated with the grader's own blind spot rather than
++independent of it, so it *amplifies* grader gaming instead of being orthogonal
++to it. The modifier can also reward terseness over thoroughness inside the
++passing band (a 92-correct terse solution → 97 can outrank a 95-correct thorough
++one → 95).
++
++**Fix:** gate the *positive* modifier behind `gate==pass AND score==100` (only
++provably-fully-correct work earns an efficiency bonus; the penalty side can
++still apply broadly), so "fewer tokens" can never be a reward for under-doing a
++partially-graded task. Also reconsider whether cost belongs at all (see §6),
++since $0-flat-sub cost is a routing artifact a model can "win" without being
++efficient.
++
++## 6. Tiering impact of mixing bench2 with v1 — **real defect, MEDIUM-HIGH**
++
++Today `bench_rows_for` (tier_chart.py:72) and `rank_in_tier` (:136) filter
++`source=="bench"`, so v2 rows are invisible until Phase 2 branches them — good,
++they don't silently pollute the current chart. The defect appears **after**
++Phase 2 if the leaderboard is allowed to mix:
++
++- `rank_in_tier` builds one tier list. If it includes both `bench` (pure-
++  correctness composite) and `bench2` (correctness ± up to 5 efficiency)
++  models, a v2 model that reached Frontier on **87 correctness + 5 efficiency**
++  is ranked *alongside and can outrank* a v1 model that reached Frontier on
++  **≥90 pure correctness**. The operator reading "Frontier #1" cannot see that
++  #1 got there on efficiency and is actually the *less correct* model — the
++  exact mislead this benchmark must not produce.
++- §4.5 asserts the label "doesn't get cheaper," then in the same paragraph
++  concedes a v2 Frontier only needed to be "correct AND at-or-above-median
++  efficiency." 87-correct is **not** 90-correct: the Frontier bar is lowered by
++  up to 5 correctness points for v2 rows. The claim contradicts itself.
++
++**Fix (required):** never rank/pivot `bench` and `bench2` composites in one
++list. Segregate the leaderboard by source (and by season, per §1), and label
++tiers with their formula ("Frontier·v2 (incl. efficiency)" vs "Frontier·v1").
++If a single cross-formula ranking is ever wanted, rank on **raw correctness
++composite** and show efficiency as a separate annotated column — do not let the
++efficiency-adjusted number be the sort key across formulas.
++
++---
++
++## Single highest-leverage math risk
++
++**§1 — the efficiency percentile field is never frozen.** It is the make-or-
++break property the brief flagged, and the design leaves it undefined: the score
++is relative to a field that grows over time, with no season-pin (even though §7
++pins the section sample for exactly this reason). Depending on the unspecified
++compute-timing it either mutates recorded scores retroactively (a) or freezes
++each row against an inconsistent partial field (b). Compounded by the §2 tie
++math error (percentiles floor at 0 instead of centering at 50) and small-N
++bipolarity, the advertised "bounded, reproducible ±5 nudge" is in fact neither
++bounded-in-meaning nor reproducible. Fix §1 (freeze the field to the season
++cohort) and §2 (mid-rank percentile + minimum field size) and the rest of the
++math becomes sound and shippable.
++
++---
++
++## VERDICT: SHIP-WITH-FIXES
++
++Must-fix before any `bench2` row is written or ranked:
++1. **§1** Freeze the efficiency percentile field to the season cohort; define
++   compute-timing so scores are computed once and never mutate.
++2. **§2** Mid-rank percentile that centers ties/uniform fields at 50; enforce a
++   minimum field size (≥4) below which modifier=0.
++
++Strongly recommended:
++3. **§4** Shrink to ±3 or make efficiency a within-tier tie-breaker (v1 posture)
++   so a real correctness gap can't be overturned at composite level.
++4. **§6** Never mix `bench`/`bench2` (or cross-season) composites in one
++   leaderboard; label tiers by formula.
++5. **§5** Gate the positive modifier behind `score==100` so terseness can't
++   reward under-doing a gameable grader; reconsider dropping cost entirely.
++6. **§3** Add the cross-source-isolation self-test; don't ship token-weighted
++   efficiency in a season whose tokens field is empty.
++
++The skeleton (correctness-dominant, bounded, cap-after-modifier ordering) is
++sound; the normalizer underneath it is not yet reproducible or tie-correct.
+diff --git a/fleet/benchmark/RUN-BENCHMARK.md b/fleet/benchmark/RUN-BENCHMARK.md
+index 8f59b9b..e444f94 100644
+--- a/fleet/benchmark/RUN-BENCHMARK.md
++++ b/fleet/benchmark/RUN-BENCHMARK.md
+@@ -92,3 +92,64 @@ model's state, then restarts the kickoff above. See `README.md` for the
+ 
+ See `README.md` in this directory for the full subcommand reference, the
+ composite/tier-ladder formula, and the legacy manual flow.
++
++---
++
++## Out-of-band grader daemon (#26)
++
++**The grading path has moved off the graded agent's box.** A dedicated
++`grader-daemon.py` runs as the `bench-grader` unix user and is the sole
++scorer. The agent never executes a grader, reads an answer key, or writes
++the scorecard. This closes the three trust defects from
++`fleet/ADR-BENCH-OOB-GRADING.md` §1.1:
++
++1. **Answer keys out of the subject's reach** — keys live in
++   `/home/bench-grader/keys/` (mode `0700`, owned by `bench-grader`); the
++   graded agent's user (`stack`) cannot read them.
++2. **Grading not self-driven** — the agent only drops a request into the
++   spool; the daemon (running as `bench-grader`) performs the grade.
++3. **No self-report** — the daemon is the sole writer of the versioned,
++   append-only `scorecard.v{n}.json` artifact; the agent cannot append to
++   or modify it.
++
++### Daemon flow
++
++```
++graded agent (user=stack)               grader-daemon (user=bench-grader)
++─────────────────────                   ─────────────────────────────────
++1. write req/<run>.json to              watches /var/lib/bench-grader/spool/req/
++   /var/lib/bench-grader/spool/req/     on new req/<run>.json:
++   {run, model, unit_id, kind,            a. snapshot worktree -> work/<run>/
++    worktree}                               (read-only; agent cannot tamper)
++2. poll res/<run>.json                     b. run grader from $KEYS against
++   (timeout ~600s)                            work/<run>/ (never the live WT)
++3. print res.verdict /                     c. append row to scorecard.v{n}.json
++   next_prompt                                (versioned, append-only; sole writer)
++                                           d. write res/<run>.json atomically
++                                              (verdict/score/next-prompt only)
++```
++
++### Versioned scorecard artifacts (RED-TEAM FIX #2)
++
++Every graded row is appended to `scorecard.v{n}.json` — a versioned,
++append-only JSON-lines file. The version `n` bumps when the daemon
++(re)starts, sealing the prior artifact as a **frozen, read-only snapshot**
++(`chmod 0444`) that consumers read without importing the grader. **No
++product code imports the scorecard artifact.** Consumers read frozen
++artifacts only.
++
++### Operator setup
++
++The substrate (user + keys + spool + ledger ownership) is already created.
++The operator wires the daemon as a systemd service after this daemon lands
++(see `fleet/ADR-BENCH-OOB-GRADING.md` §5). **Do NOT run step-5 systemd
++enable** — the operator wires the service after the daemon lands.
++
++### FAIL-ON-REVERT test
++
++```bash
++python3 fleet/benchmark/selftest/test_grader_daemon.py
++```
++
++This test goes RED if either the isolation (keys readable by `stack`) or
++the versioning (no `scorecard.v{n}.json` artifact) is reverted.
+diff --git a/fleet/benchmark/grader-daemon.py b/fleet/benchmark/grader-daemon.py
+new file mode 100755
+index 0000000..6442cff
+--- /dev/null
++++ b/fleet/benchmark/grader-daemon.py
+@@ -0,0 +1,636 @@
++#!/usr/bin/env python3
++"""grader-daemon.py — OUT-OF-BAND grader daemon for the Charon bench rig.
++
++Runs as the dedicated ``bench-grader`` unix user. Watches a drop-spool for
++grading requests, snapshots the requesting agent's worktree into a
++private read-only directory, runs the real-task grader for the unit
++against answer keys the graded agent cannot read, and emits a result the
++agent polls. It NEVER imports product code: the only seam between the
++grader and the rest of the rig is the *frozen, versioned, append-only*
++scorecard artifact ``scorecard.v{n}.json`` that consumers read.
++
++Threat model (fleet/ADR-BENCH-OOB-GRADING.md §1.1):
++  1. answer keys live in ``$KEYS`` (``/home/bench-grader/keys``, mode 0700);
++     the graded agent's user cannot read them.
++  2. grading is not self-driven: the agent only drops a request; the daemon
++     (running as ``bench-grader``) performs the grade.
++  3. no self-report: the agent cannot write the scorecard; the daemon is the
++     sole appender of the ``scorecard.v{n}.json`` artifact.
++
++Artifact seam (RED-TEAM FIX #2): every graded row is appended to a
++versioned, append-only JSON-lines file ``scorecard.v{n}.json``. The
++version ``n`` bumps when the daemon (re)starts, sealing the prior
++artifact as a frozen snapshot that consumers read without importing the
++grader. No product code imports this module.
++
++Usage (as ``bench-grader``):
++    python3 grader-daemon.py [--keys <dir>] [--spool <dir>] \
++        [--artifact-dir <dir>] [--poll-interval <s>] [--once] [--selftest]
++
++Path defaults (overridable via env / flags so the selftest and CI can run
++without the real ``bench-grader`` substrate):
++  CHARON_GRADER_KEYS          /home/bench-grader/keys
++  CHARON_GRADER_SPOOL         /var/lib/bench-grader/spool
++  CHARON_GRADER_ARTIFACT_DIR  <spool>/artifacts
++  CHARON_GRADER_LEDGER        /home/stack/charon-private/wt-grader/fleet/model-scorecard.tsv
++  CHARON_GRADER_GRADERS       <repo>/fleet/benchmark/graders (this dir)
++  CHARON_GRADER_UNITS         <repo>/fleet/benchmark/units.tsv
++"""
++from __future__ import annotations
++
++import contextlib
++import dataclasses
++import json
++import os
++import pwd
++import shutil
++import stat
++import subprocess
++import sys
++import tempfile
++import time
++import traceback
++from pathlib import Path
++from typing import Any, Optional
++
++# --------------------------------------------------------------------------- #
++# defaults
++# --------------------------------------------------------------------------- #
++_REPO = Path(__file__).resolve().parents[2]  # .../charon-private/wt-grader
++
++DEFAULT_KEYS = Path(os.environ.get("CHARON_GRADER_KEYS", "/home/bench-grader/keys"))
++DEFAULT_SPOOL = Path(os.environ.get("CHARON_GRADER_SPOOL", "/var/lib/bench-grader/spool"))
++DEFAULT_ARTIFACT_DIR = Path(
++    os.environ.get("CHARON_GRADER_ARTIFACT_DIR", "")
++    or str(DEFAULT_SPOOL / "artifacts")
++)
++DEFAULT_LEDGER = Path(
++    os.environ.get(
++        "CHARON_GRADER_LEDGER",
++        str(_REPO / "fleet" / "model-scorecard.tsv"),
++    )
++)
++DEFAULT_GRADERS = Path(
++    os.environ.get("CHARON_GRADER_GRADERS", str(_REPO / "fleet" / "benchmark" / "graders"))
++)
++DEFAULT_UNITS = Path(
++    os.environ.get("CHARON_GRADER_UNITS", str(_REPO / "fleet" / "benchmark" / "units.tsv"))
++)
++DEFAULT_POLL_INTERVAL = float(os.environ.get("CHARON_GRADER_POLL_INTERVAL", "2"))
++
++# JSON-lines artifact schema version. Bump when the row shape changes; the
++# daemon seals the prior ``scorecard.v{n}.json`` and starts a new one so
++# frozen consumers never see an in-flight schema change.
++ARTIFACT_SCHEMA_VERSION = 1
++
++
++def _env_path(name: str, default: Path) -> Path:
++    v = os.environ.get(name)
++    return Path(v) if v else default
++
++
++# --------------------------------------------------------------------------- #
++# errors
++# --------------------------------------------------------------------------- #
++class GraderError(Exception):
++    """Operational error surfaced to res/<run>.json as verdict=ERROR."""
++
++
++# --------------------------------------------------------------------------- #
++# daemon
++# --------------------------------------------------------------------------- #
++@dataclasses.dataclass
++class GraderDaemon:
++    keys_dir: Path = DEFAULT_KEYS
++    spool_dir: Path = DEFAULT_SPOOL
++    artifact_dir: Path = DEFAULT_ARTIFACT_DIR
++    ledger_path: Path = DEFAULT_LEDGER
++    graders_dir: Path = DEFAULT_GRADERS
++    units_path: Path = DEFAULT_UNITS
++    poll_interval: float = DEFAULT_POLL_INTERVAL
++
++    # ----- path accessors ---------------------------------------------------
++    @property
++    def req_dir(self) -> Path:
++        return self.spool_dir / "req"
++
++    @property
++    def res_dir(self) -> Path:
++        return self.spool_dir / "res"
++
++    @property
++    def work_dir(self) -> Path:
++        return self.spool_dir / "work"
++
++    @property
++    def state_dir(self) -> Path:
++        return self.spool_dir / "state"
++
++    # ----- lifecycle --------------------------------------------------------
++    def ensure_dirs(self) -> None:
++        for d in (self.req_dir, self.res_dir, self.work_dir,
++                  self.artifact_dir, self.state_dir):
++            d.mkdir(parents=True, exist_ok=True)
++
++    def run(self, once: bool = False) -> int:
++        """Watch ``req/`` for new grading requests and grade them.
++
++        Returns the process exit code (0 on clean shutdown via --once,
++        never returns normally in daemon mode).
++        """
++        self.ensure_dirs()
++        self._write_pidfile()
++        # Seal the prior artifact version at startup so a restart begins a
++        # fresh frozen file (the old one stays untouched for consumers).
++        version = self._bump_version()
++        sys.stderr.write(
++            f"[grader-daemon] started; keys={self.keys_dir} spool={self.spool_dir} "
++            f"artifacts={self.artifact_dir} scorecard.v{version}.json\n"
++        )
++        if once:
++            return self._drain_pending(version)
++        try:
++            self._loop(version)
++        except KeyboardInterrupt:
++            sys.stderr.write("[grader-daemon] interrupted, shutting down\n")
++        return 0
++
++    def _write_pidfile(self) -> None:
++        with contextlib.suppress(OSError, PermissionError):
++            (self.state_dir / "grader-daemon.pid").write_text(str(os.getpid()))
++
++    # ----- versioning (RED-TEAM FIX #2 artifact seam) ----------------------
++    def _version_file(self) -> Path:
++        return self.state_dir / "scorecard.version"
++
++    def _current_version(self) -> int:
++        f = self._version_file()
++        try:
++            return int(f.read_text().strip())
++        except (OSError, ValueError):
++            return 0
++
++    def _bump_version(self) -> int:
++        """Advance the artifact version, sealing the prior one as frozen.
++
++        Called once at daemon start. Consumers reading ``scorecard.v{old}.json``
++        see a file that is never touched again. The prior artifact is made
++        read-only (0444) so neither the daemon nor any other writer can
++        mutate it; the new version's artifact stays writable for appends.
++        """
++        n = self._current_version() + 1
++        self._version_file().parent.mkdir(parents=True, exist_ok=True)
++        old = n - 1
++        if old >= 1:
++            self._seal_artifact(old)
++        self._version_file().write_text(str(n))
++        return n
++
++    def _seal_artifact(self, version: int) -> None:
++        """Make a sealed (prior) version's artifact read-only (0444).
++
++        This is the freeze: after sealing, the file is world-readable but
++        not writable by anyone — a frozen snapshot consumers can trust.
++        """
++        path = self._artifact_path(version)
++        if path.exists():
++            with contextlib.suppress(OSError):
++                os.chmod(path, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
++
++    def _artifact_path(self, version: int) -> Path:
++        return self.artifact_dir / f"scorecard.v{version}.json"
++
++    def _append_scorecard_row(self, version: int, row: dict[str, Any]) -> Path:
++        """Append one JSON object to ``scorecard.v{n}.json`` (append-only).
++
++        Writes are atomic at the line level (open with ``O_APPEND`` so
++        concurrent writers never interleave); the daemon is the sole writer.
++        """
++        path = self._artifact_path(version)
++        path.parent.mkdir(parents=True, exist_ok=True)
++        line = json.dumps(row, separators=(",", ":"), sort_keys=True)
++        with open(path, "a", encoding="utf-8") as fh:
++            fh.write(line + "\n")
++            fh.flush()
++            os.fsync(fh.fileno())
++        return path
++
++    # ----- polling ----------------------------------------------------------
++    def _loop(self, version: int) -> None:
++        seen: set[str] = set()
++        while True:
++            version = self._drain(seen, version)
++            time.sleep(self.poll_interval)
++
++    def _drain_pending(self, version: int, seen: set[str] | None = None) -> int:
++        seen = seen if seen is not None else set()
++        return self._drain(seen, version)
++
++    def _drain(self, seen: set[str], version: int) -> int:
++        """Grade every unhandled request currently sitting in ``req/``."""
++        try:
++            entries = sorted(self.req_dir.iterdir())
++        except OSError:
++            return version
++        for entry in entries:
++            if entry.name in seen or not entry.is_file():
++                continue
++            if not entry.name.endswith(".json"):
++                continue
++            seen.add(entry.name)
++            run_id = entry.stem
++            result_version = version
++            try:
++                result_version = self.grade_one(entry, version)
++            except Exception as exc:  # never crash the loop
++                sys.stderr.write(
++                    f"[grader-daemon] grade_one({entry.name}) crashed: {exc}\n"
++                    f"{traceback.format_exc()}"
++                )
++                self._write_result(run_id, {
++                    "run": run_id,
++                    "verdict": "ERROR",
++                    "score": 0,
++                    "gate": "error",
++                    "reason": f"grader crashed: {exc}",
++                })
++        return version
++
++    # ----- grading ----------------------------------------------------------
++    def grade_one(self, req_path: Path, version: int) -> int:
++        """Grade a single request file. Writes ``res/<run>.json`` and
++        appends a row to ``scorecard.v{version}.json``.
++
++        Returns the artifact version used ( unchanged unless a future
++        rotation decision bumps it here).
++        """
++        run_id = req_path.stem
++        try:
++            req = json.loads(req_path.read_text())
++        except (OSError, json.JSONDecodeError) as exc:
++            self._write_result(run_id, {
++                "run": run_id, "verdict": "ERROR", "score": 0,
++                "gate": "error", "reason": f"bad request file: {exc}",
++            })
++            return version
++
++        run = req.get("run", run_id)
++        model = req.get("model", "<unknown>")
++        unit_id = req.get("unit_id", "<unknown>")
++        kind = req.get("kind", "red")  # red | subsession
++        worktree_src = Path(req.get("worktree", ""))
++        ts = time.time()
++
++        # Snapshot the agent's worktree into our private read-only copy so
++        # the agent cannot tamper mid-grade. ``cp -a`` preserves mtimes.
++        work_snapshot = self.work_dir / run
++        self._snapshot_worktree(worktree_src, work_snapshot)
++
++        # Resolve the grader for this unit's kind and run it. The grader
++        # source + the keys it reads are under $KEYS or this graders/ tree;
++        # the agent never executes either.
++        grader_out = self._run_grader(unit_id, kind, work_snapshot, req)
++        score = int(grader_out.get("score", 0))
++        gate = grader_out.get("gate", "fail")
++        verdict = grader_out.get("verdict",
++                                 _verdict_from_score(score))
++        reason = str(grader_out.get("reason", "")).replace("\t", " ")
++
++        # Stage lookup (provisional vs active) — same axis as bench.sh.
++        stage = self._unit_stage(unit_id)
++        work_class = req.get("work_class", kind)
++        tier = req.get("tier", "-")
++
++        # Cost / token capture (best-effort, sourced from the request or
++        # the gateway; never estimated).
++        cost_usd = req.get("cost_usd", "-")
++        tokens_in = req.get("tokens_in", "-")
++        tokens_out = req.get("tokens_out", "-")
++        corrections = req.get("corrections", 0)
++        time_s = round(time.time() - ts, 1)
++
++        result = {
++            "run": run,
++            "model": model,
++            "unit_id": unit_id,
++            "kind": kind,
++            "score": score,
++            "verdict": verdict,
++            "gate": gate,
++            "reason": reason,
++            "next_prompt": req.get("next_prompt"),
++        }
++        self._write_result(run, result)
++
++        # The versioned, append-only scorecard artifact (frozen seam).
++        row = {
++            "date": time.strftime("%Y-%m-%d", time.localtime(ts)),
++            "source": "bench-oob",
++            "ref": unit_id,
++            "work_class": work_class,
++            "tier": tier,
++            "model": model,
++            "verdict": verdict,
++            "gate": gate,
++            "score": score,
++            "time_s": time_s,
++            "cost_usd": cost_usd,
++            "corrections": corrections,
++            "note": reason,
++            "tokens_in": tokens_in,
++            "tokens_out": tokens_out,
++            "stage": stage,
++            "artifact_version": version,
++            "schema_version": ARTIFACT_SCHEMA_VERSION,
++            "run": run,
++        }
++        self._append_scorecard_row(version, row)
++
++        sys.stderr.write(
++            f"[grader-daemon] graded run={run} model={model} unit={unit_id} "
++            f"score={score} verdict={verdict} -> scorecard.v{version}.json\n"
++        )
++        return version
++
++    # ----- snapshot ---------------------------------------------------------
++    def _snapshot_worktree(self, src: Path, dst: Path) -> None:
++        if dst.exists():
++            shutil.rmtree(dst)
++        if not src.exists() or not src.is_dir():
++            raise GraderError(f"worktree not found or not a dir: {src}")
++        shutil.copytree(
++            src, dst,
++            ignore=shutil.ignore_patterns(
++                "__pycache__", ".pytest_cache", ".mypy_cache", ".hypothesis",
++                "node_modules", "dist", ".git",
++            ),
++            copy_function=shutil.copy2,
++        )
++        # Make the snapshot read-only for everyone except us. The agent's
++        # user cannot reach this dir at all (work/ is 0700 bench-grader) but
++        # defence in depth: mark each file non-writable.
++        self._mark_readonly(dst)
++
++    @staticmethod
++    def _mark_readonly(root: Path) -> None:
++        for p in root.rglob("*"):
++            try:
++                mode = p.stat().st_mode
++                os.chmod(p, mode & ~stat.S_IWRITE & ~stat.S_IWGRP & ~stat.S_IWOTH)
++            except OSError:
++                pass
++
++    # ----- grader dispatch --------------------------------------------------
++    def _run_grader(self, unit_id: str, kind: str,
++                    snapshot: Path, req: dict[str, Any]) -> dict[str, Any]:
++        kind = (kind or "red").lower()
++        if kind == "red":
++            grader_mod = "reds_replay"
++        elif kind in ("subsession", "sub-session", "sub_session"):
++            grader_mod = "subsession"
++        else:
++            grader_mod = kind
++        grader_py = self.graders_dir / f"{grader_mod}.py"
++        if not grader_py.exists():
++            raise GraderError(
++                f"no grader '{grader_mod}' for kind='{kind}' "
++                f"(unit={unit_id}); looked for {grader_py}"
++            )
++        env = dict(os.environ)
++        env["CHARON_GRADER_KEYS"] = str(self.keys_dir)
++        env["CHARON_GRADER_UNITS"] = str(self.units_path)
++        env["CHARON_GRADER_UNIT_ID"] = unit_id
++        env["CHARON_GRADER_KIND"] = kind
++        env["CHARON_GRADER_WORKTREE"] = str(snapshot)
++        env["CHARON_GRADER_REQUEST"] = json.dumps(req)
++        env["PYTHONPATH"] = (
++            str(self.graders_dir) + os.pathsep + env.get("PYTHONPATH", "")
++        )
++        for extra in ("check_cmd", "expect_green_exit", "work_class",
++                      "prefix_snapshot", "note"):
++            if extra in req:
++                env[f"CHARON_REQ_{extra.upper()}"] = str(req[extra])
++        try:
++            proc = subprocess.run(
++                [sys.executable, str(grader_py),
++                 "--worktree", str(snapshot),
++                 "--keys", str(self.keys_dir),
++                 "--unit-id", unit_id],
++                capture_output=True, text=True, timeout=600, env=env,
++            )
++        except subprocess.TimeoutExpired:
++            raise GraderError(f"grader {grader_mod} timed out for unit {unit_id}")
++        if proc.returncode != 0:
++            raise GraderError(
++                f"grader {grader_mod} exited {proc.returncode}: "
++                f"{proc.stderr.strip()[:500]}"
++            )
++        out = proc.stdout.strip().splitlines()
++        if not out:
++            raise GraderError(f"grader {grader_mod} produced no JSON output")
++        try:
++            payload = json.loads(out[-1])
++        except json.JSONDecodeError as exc:
++            raise GraderError(f"grader {grader_mod} bad JSON: {exc}; line={out[-1]}")
++        return payload
++
++    # ----- result writer ----------------------------------------------------
++    def _write_result(self, run_id: str, result: dict[str, Any]) -> None:
++        self.res_dir.mkdir(parents=True, exist_ok=True)
++        tmp = self.res_dir / f".{run_id}.tmp"
++        final = self.res_dir / f"{run_id}.json"
++        tmp.write_text(json.dumps(result, separators=(",", ":"), sort_keys=True))
++        os.replace(tmp, final)
++        try:
++            chmod_world_read(final)
++        except OSError:
++            pass
++
++    # ----- units.tsv stage lookup -------------------------------------------
++    def _unit_stage(self, unit_id: str) -> str:
++        try:
++            lines = self.units_path.read_text().splitlines()
++        except OSError:
++            return "active"
++        for ln in lines:
++            if ln.startswith("#") or not ln.strip() or "\t" not in ln:
++                continue
++            cols = ln.split("\t")
++            if cols and cols[0] == unit_id and len(cols) >= 3:
++                return cols[2] or "active"
++        return "active"
++
++
++# --------------------------------------------------------------------------- #
++# helpers
++# --------------------------------------------------------------------------- #
++def _verdict_from_score(score: int) -> str:
++    if score >= 90:
++        return "MERGE"
++    if score >= 50:
++        return "FIXES"
++    return "BLOCK"
++
++
++def chmod_world_read(p: Path) -> None:
++    mode = stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH
++    if p.exists():
++        os.chmod(p, mode)
++
++
++def _current_user() -> str:
++    try:
++        return pwd.getpwuid(os.getuid()).pw_name
++    except KeyError:
++        return str(os.getuid())
++
++
++def _keys_unreadable_by_agent(keys: Path) -> bool:
++    """True when the graded agent's user (``stack``) cannot read ``keys``.
++
++    This is the isolation invariant. The FAIL-ON-REVERT test asserts it
++    holds; reverting the substrate (chmod'ing $KEYS world-readable) would
++    flip this to False and redden the gate.
++    """
++    try:
++        keys.iterdir().__next__()
++        return False  # we could read it
++    except PermissionError:
++        return True  # exists but denied — the real isolation signal
++    except (FileNotFoundError, OSError):
++        return True  # missing = denied (substrate not set up)
++
++
++# --------------------------------------------------------------------------- #
++# CLI
++# --------------------------------------------------------------------------- #
++def _parse_args(argv: list[str]) -> dict[str, Any]:
++    out: dict[str, Any] = {}
++    it = iter(argv)
++    for a in it:
++        if a in ("--keys",):
++            out["keys_dir"] = Path(next(it))
++        elif a in ("--spool",):
++            out["spool_dir"] = Path(next(it))
++        elif a in ("--artifact-dir",):
++            out["artifact_dir"] = Path(next(it))
++        elif a in ("--ledger",):
++            out["ledger_path"] = Path(next(it))
++        elif a in ("--graders",):
++            out["graders_dir"] = Path(next(it))
++        elif a in ("--units",):
++            out["units_path"] = Path(next(it))
++        elif a == "--poll-interval":
++            out["poll_interval"] = float(next(it))
++        elif a == "--once":
++            out["once"] = True
++        elif a == "--selftest":
++            out["selftest"] = True
++        else:
++            sys.stderr.write(f"unknown arg: {a}\n")
++    return out
++
++
++def main(argv: list[str] | None = None) -> int:
++    args = _parse_args(argv or sys.argv[1:])
++    if args.pop("selftest", False):
++        return _selftest(args)
++    daemon = GraderDaemon(**args)
++    return daemon.run(once=args.get("once", False))
++
++
++def _selftest(args: dict[str, Any]) -> int:
++    """In-process smoke test of the daemon's grading + versioning path.
++
++    Sets up a temp spool + keys tree, drops a request that exercises the
++    trivial ``trivial_ok`` grader (a real-task grader that checks a file
++    exists), grades it ``--once``, and asserts:
++      1. ``res/<run>.json`` was written with the verdict.
++      2. ``scorecard.v{n}.json`` was created and contains the graded row
++         (append-only + versioned).
++      3. re-grading appends (never overwrites) and ``--keys`` the graded
++         agent cannot read is reported as permission-denied.
++    """
++    import tempfile
++    tmp = Path(tempfile.mkdtemp(prefix="grader-daemon-selftest-"))
++    try:
++        spool = tmp / "spool"
++        keys = tmp / "keys"
++        graders = tmp / "graders"
++        artifacts = spool / "artifacts"
++        worktree = tmp / "agent-worktree"
++        for d in (spool / "req", spool / "res", spool / "work", spool / "state",
++                  keys, graders, artifacts, worktree):
++            d.mkdir(parents=True)
++        # minimal units.tsv
++        units = tmp / "units.tsv"
++        units.write_text("unit_id\tkind\tstage\tpromoted_on\ntrivial_ok\tred\tprovisional\t-\n")
++        # copy the real reds_replay grader so kind="red" dispatches correctly
++        shutil.copy2(DEFAULT_GRADERS / "reds_replay.py", graders / "reds_replay.py")
++        # answer-key file: the real check_cmd that reds_replay.py will run
++        (keys / "reds-replay.tsv").write_text(
++            "unit_id\tcheck_cmd\texpect_green_exit\twork_class\tnote\n"
++            "trivial_ok\ttest -f {worktree}/flag.txt\t0\tred\ttrivial\n"
++        )
++        os.chmod(keys, 0o700)
++        # agent worktree with the flag file (a "fix")
++        (worktree / "flag.txt").write_text("done")
++
++        daemon = GraderDaemon(
++            keys_dir=keys, spool_dir=spool, artifact_dir=artifacts,
++            graders_dir=graders, units_path=units,
++        )
++        daemon.ensure_dirs()
++        v = daemon._bump_version()
++        # drop a request
++        req = {"run": "r1", "model": "test-model", "unit_id": "trivial_ok",
++               "kind": "red", "worktree": str(worktree)}
++        (spool / "req" / "r1.json").write_text(json.dumps(req))
++        seen: set[str] = set()
++        daemon._drain_pending(v, seen)
++        # assertions
++        res = json.loads((spool / "res" / "r1.json").read_text())
++        assert res["verdict"] == "MERGE", res
++        assert res["score"] == 100, res
++        v1 = artifacts / f"scorecard.v{v}.json"
++        assert v1.exists(), f"scorecard artifact missing: {v1}"
++        rows = [json.loads(l) for l in v1.read_text().splitlines() if l.strip()]
++        assert len(rows) == 1, rows
++        assert rows[0]["model"] == "test-model", rows[0]
++        assert rows[0]["score"] == 100, rows[0]
++        assert rows[0]["stage"] == "provisional", rows[0]
++        # re-grade a second run -> append (never overwrite)
++        req2 = dict(req, run="r2")
++        (spool / "req" / "r2.json").write_text(json.dumps(req2))
++        daemon._drain_pending(v, seen)
++        rows = [json.loads(l) for l in v1.read_text().splitlines() if l.strip()]
++        assert len(rows) == 2, f"append-only failed: {len(rows)} rows"
++        assert {r["run"] for r in rows} == {"r1", "r2"}, rows
++        # versioning: a restart seals v{v} and starts v{v+1}
++        v2 = daemon._bump_version()
++        assert v2 == v + 1, (v, v2)
++        assert (artifacts / f"scorecard.v{v}.json").exists()
++        # isolation: keys unreadable by "the agent" — simulate by checking
++        # the mode denies group/other read (we own it in the test, so check mode bits)
++        mode = keys.stat().st_mode
++        denied = not bool(mode & stat.S_IRGRP) and not bool(mode & stat.S_IROTH)
++        assert denied, "keys dir must not be group/other-readable"
++        # real substrate isolation check (if the real keys dir is reachable)
++        real_keys = DEFAULT_KEYS
++        real_denied = _keys_unreadable_by_agent(real_keys)
++        assert real_denied, (
++            "REAL $KEYS is readable by the graded agent — isolation reverted!"
++        )
++        print("SELFTEST OK")
++        return 0
++    except AssertionError as exc:
++        sys.stderr.write(f"SELFTEST FAILED: {exc}\n")
++        traceback.print_exc()
++        return 1
++    finally:
++        with contextlib.suppress(OSError):
++            shutil.rmtree(tmp, ignore_errors=True)
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+\ No newline at end of file
+diff --git a/fleet/benchmark/graders/reds_replay.py b/fleet/benchmark/graders/reds_replay.py
+new file mode 100644
+index 0000000..2d01431
+--- /dev/null
++++ b/fleet/benchmark/graders/reds_replay.py
+@@ -0,0 +1,154 @@
++#!/usr/bin/env python3
++"""reds_replay.py — real-task grader for replayed reds (#25 reds-replay).
++
++This grader is dispatched by ``grader-daemon.py`` (running as
++``bench-grader``). It reads the unit's ``check_cmd`` from the answer-key
++tree ``$KEYS/reds-replay.tsv`` — a file the graded agent's user cannot
++read — and runs it against the daemon's read-only snapshot of the
++agent's worktree.
++
++The ``check_cmd`` is the SAME grader used by ``fleet/reds.tsv``: it exits
++0 when the red is GONE (green) and non-zero when still RED. For a
++replayed red, the grader substitutes ``{worktree}`` in the check_cmd
++with the snapshot path so the check targets the agent's pre-fix-starting
++worktree, not ``origin/master``.
++
++CLI contract (shared with the S0-S6 graders for the daemon's dispatch):
++    python3 reds_replay.py --worktree <snapshot> --keys <keys-dir> --unit-id <id>
++emits ONE line of JSON to stdout:
++    {"score": int 0-100, "verdict": "MERGE|FIXES|BLOCK", "gate": "pass|fail", "reason": "..."}
++
++Anti-false-green guard: the pre-fix snapshot must FAIL the check (a red
++that is already green pre-fix is not a valid task). Per the ADR, that gate
++is run by curation in ``$KEYS``; this grader trusts the curated row but
++re-asserts post-fix: exit 0 = pass (MERGE, score 100), non-zero = BLOCK
++(score 0). A partial-credit future variant would live here, not in the
++daemon.
++"""
++from __future__ import annotations
++
++import json
++import os
++import shlex
++import subprocess
++import sys
++from pathlib import Path
++
++
++REDS_REPLAY_TSV = "reds-replay.tsv"
++
++# Score bands mirror bench.sh's verdict_from_score: ≥90 MERGE, ≥50 FIXES, <50
++# BLOCK. A reds-replay check is binary (pass/fail), so we map pass→100/MERGE
++# and fail→0/BLOCK. The daemon records the verdict the grader emits.
++SCORE_PASS = 100
++SCORE_FAIL = 0
++
++
++def parse_args(argv: list[str]) -> tuple[Path, Path, str]:
++    args: dict[str, str] = {"worktree": "", "keys": "", "unit-id": ""}
++    it = iter(argv)
++    for a in it:
++        if a == "--worktree":
++            args["worktree"] = next(it)
++        elif a == "--keys":
++            args["keys"] = next(it)
++        elif a == "--unit-id":
++            args["unit-id"] = next(it)
++    if not args["worktree"] or not args["keys"]:
++        print(json.dumps({
++            "score": 0, "verdict": "BLOCK", "gate": "fail",
++            "reason": f"grader usage: --worktree and --keys required (got {args})",
++        }))
++        sys.exit(2)
++    return Path(args["worktree"]).resolve(), Path(args["keys"]).resolve(), args["unit-id"]
++
++
++def _verdict(score: int) -> str:
++    if score >= 90:
++        return "MERGE"
++    if score >= 50:
++        return "FIXES"
++    return "BLOCK"
++
++
++def emit(score: int, gate: str, reason: str) -> None:
++    out = {
++        "score": max(0, min(100, int(score))),
++        "verdict": _verdict(score),
++        "gate": gate,
++        "reason": reason,
++    }
++    print(json.dumps(out))
++
++
++def _load_reds_row(keys: Path, unit_id: str) -> dict[str, str]:
++    """Read ``$KEYS/reds-replay.tsv`` and return the row for ``unit_id``.
++
++    Columns (tab-separated): unit_id, check_cmd, expect_green_exit,
++    work_class, note
++    """
++    p = keys / REDS_REPLAY_TSV
++    if not p.exists():
++        return {}
++    for ln in p.read_text().splitlines():
++        if ln.startswith("#") or not ln.strip() or "\t" not in ln:
++            continue
++        cols = ln.split("\t")
++        if len(cols) < 2:
++            continue
++        if cols[0] == unit_id:
++            return {
++                "unit_id": cols[0],
++                "check_cmd": cols[1] if len(cols) > 1 else "",
++                "expect_green_exit": cols[2] if len(cols) > 2 else "0",
++                "work_class": cols[3] if len(cols) > 3 else "red",
++                "note": cols[4] if len(cols) > 4 else "",
++            }
++    return {}
++
++
++def _run_check(check_cmd: str, worktree: Path, expect_green: str) -> tuple[bool, int, str]:
++    """Substitute ``{worktree}`` in ``check_cmd`` and run it.
++
++    Returns (passed, exit_code, combined_output).
++    """
++    # Substitute the {worktree} placeholder (the ONLY interpolation; the
++    # check_cmd is read from a 0700 keys dir the agent cannot reach, so the
++    # agent never sees the literal command).
++    cmd = check_cmd.replace("{worktree}", str(worktree))
++    try:
++        proc = subprocess.run(
++            cmd, shell=True, cwd=str(worktree),
++            capture_output=True, text=True, timeout=120,
++        )
++    except subprocess.TimeoutExpired:
++        return False, -1, f"check_cmd timed out after 120s"
++    out = (proc.stdout or "") + (proc.stderr or "")
++    # expect_green is "0" means exit 0 == green (pass). Any other value means
++    # that exit code == green. Default: 0.
++    green_code = int(expect_green) if expect_green.strip() else 0
++    passed = (proc.returncode == green_code)
++    return passed, proc.returncode, out.strip()[:400]
++
++
++def main() -> int:
++    worktree, keys, unit_id = parse_args(sys.argv[1:])
++    row = _load_reds_row(keys, unit_id)
++    check_cmd = row.get("check_cmd", "")
++    if not check_cmd:
++        return emit(SCORE_FAIL, "fail",
++                    f"no check_cmd for unit '{unit_id}' in {keys}/{REDS_REPLAY_TSV}") or 0
++
++    expect_green = row.get("expect_green_exit", "0")
++    passed, rc, out = _run_check(check_cmd, worktree, expect_green)
++    if passed:
++        emit(SCORE_PASS, "pass",
++             f"check_cmd passed (exit {rc})" + (f": {out[:120]}" if out else ""))
++    else:
++        emit(SCORE_FAIL, "fail",
++             f"check_cmd FAILED (exit {rc})" + (f": {out[:120]}" if out else ""))
++    return 0
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+\ No newline at end of file
+diff --git a/fleet/benchmark/selftest/test_grader_daemon.py b/fleet/benchmark/selftest/test_grader_daemon.py
+new file mode 100644
+index 0000000..e2539dc
+--- /dev/null
++++ b/fleet/benchmark/selftest/test_grader_daemon.py
+@@ -0,0 +1,184 @@
++#!/usr/bin/env python3
++"""FAIL-ON-REVERT test for grader-daemon.py (#26 Wave 1).
++
++Verifies the TWO invariants that make the out-of-band grading trust boundary
++real.  Removing EITHER invariant MUST cause this test to go RED:
++
++  A. ISOLATION — the graded agent's unix user (``stack``) cannot read
++     ``/home/bench-grader/keys/``.  Reverting the 0700 chmod / chown
++     bench-grader on keys makes this test FAIL (RED).
++
++  B. VERSIONED ARTIFACT — the daemon writes an append-only
++     ``scorecard.v{n}.json`` for a spooled req, and the artifact is NEVER
++     imported by product code.  Removing the versioning (e.g. a single
++     mutable ``scorecard.json``) or wiring the artifact into a product
++     import path makes this test FAIL (RED).
++
++The test runs the daemon's in-process selftest (``grader-daemon.py --selftest``)
++to exercise the end-to-end grading + versioning path, then independently
++asserts the isolation + no-product-import invariants against the real
++substrate.
++
++Usage:
++  python3 fleet/benchmark/selftest/test_grader_daemon.py
++
++Exits 0 on PASS, non-zero on FAIL.
++"""
++from __future__ import annotations
++
++import json
++import os
++import subprocess
++import sys
++import tempfile
++from pathlib import Path
++
++BENCH_DIR = Path(__file__).resolve().parent.parent
++DAEMON_PATH = BENCH_DIR / "grader-daemon.py"
++KEYS_DIR = Path("/home/bench-grader/keys")
++PRODUCT_ROOT = Path("/home/stack/code/charon")
++
++failures: list[str] = []
++
++
++def check(cond: bool, msg: str) -> None:
++    status = "OK  " if cond else "FAIL"
++    print(f"  [{status}] {msg}")
++    if not cond:
++        failures.append(msg)
++
++
++# --------------------------------------------------------------------------- #
++# Check A: isolation — stack cannot read bench-grader keys
++# --------------------------------------------------------------------------- #
++def check_A_isolation() -> None:
++    """The graded agent's user (stack) must NOT be able to read $KEYS.
++
++    This is the core isolation invariant. If keys are world-readable or
++    owned by stack, the answer key is inside the subject's reach and the
++    entire OOB grading trust boundary collapses.
++    """
++    print("\n--- Check A: isolation (KEYS unreadable by graded agent) ---")
++    try:
++        list(KEYS_DIR.iterdir())
++        check(False, f"FAIL: stack CAN read {KEYS_DIR} — isolation reverted!")
++        return
++    except PermissionError:
++        check(True, f"stack denied read of {KEYS_DIR} — isolation holds")
++    except FileNotFoundError:
++        check(False, f"{KEYS_DIR} does not exist — substrate not set up")
++        return
++    except OSError as exc:
++        check(False, f"unexpected OSError reading {KEYS_DIR}: {exc}")
++        return
++
++
++# --------------------------------------------------------------------------- #
++# Check B: daemon writes versioned scorecard.v{n}.json end-to-end
++# --------------------------------------------------------------------------- #
++def check_B_versioned_artifact() -> None:
++    """Run the daemon's selftest to verify the full grading + versioning path.
++
++    The selftest sets up a temp spool + keys tree, drops a request, grades it,
++    and asserts:
++      1. res/<run>.json was written with the verdict.
++      2. scorecard.v{n}.json was created and contains the graded row.
++      3. re-grading appends (never overwrites).
++      4. version bump seals the prior artifact and starts a new one.
++      5. keys are mode 0700 (denied to group/other).
++
++    If the versioning or append-only logic is reverted, the selftest fails.
++    """
++    print("\n--- Check B: versioned artifact (daemon selftest) ---")
++    proc = subprocess.run(
++        [sys.executable, str(DAEMON_PATH), "--selftest"],
++        capture_output=True, text=True, timeout=60,
++    )
++    stdout_tail = proc.stdout.strip().splitlines()[-1] if proc.stdout.strip() else ""
++    stderr_tail = proc.stderr.strip().splitlines()[-1] if proc.stderr.strip() else ""
++    check(proc.returncode == 0,
++          f"daemon --selftest exit={proc.returncode} stdout={stdout_tail!r} stderr={stderr_tail!r}")
++
++
++# --------------------------------------------------------------------------- #
++# Check C: no product code imports the scorecard artifact
++# --------------------------------------------------------------------------- #
++def check_C_no_product_import() -> None:
++    """No file under /home/stack/code/charon/ references ``scorecard.v``.
++
++    RED-TEAM FIX #2 (artifact seam): the versioned scorecard is NEVER
++    imported by the product. Consumers read frozen artifacts only. If a
++    product file imports or references the scorecard, the seam is breached.
++    """
++    print("\n--- Check C: no product import of scorecard artifact ---")
++    if not PRODUCT_ROOT.exists():
++        check(True, f"product root {PRODUCT_ROOT} not found — import scan skipped")
++        return
++
++    hits: list[str] = []
++    for py_file in PRODUCT_ROOT.rglob("*.py"):
++        try:
++            text = py_file.read_text(errors="ignore")
++        except OSError:
++            continue
++        if "scorecard.v" in text:
++            for i, line in enumerate(text.splitlines(), 1):
++                if "scorecard.v" in line:
++                    hits.append(f"  {py_file.relative_to(PRODUCT_ROOT)}:{i}: {line.strip()[:120]}")
++
++    if hits:
++        check(False, f"PRODUCT IMPORT FOUND for 'scorecard.v':\n" + "\n".join(hits[:10]))
++    else:
++        check(True, f"no product import of 'scorecard.v' in {PRODUCT_ROOT}")
++
++
++# --------------------------------------------------------------------------- #
++# Check D: daemon source structure (versioning + isolation references)
++# --------------------------------------------------------------------------- #
++def check_D_daemon_structure() -> None:
++    """The daemon source must contain the versioning + isolation machinery.
++
++    Removing the scorecard.v{n}.json versioning code or the keys isolation
++    check from the daemon makes this test FAIL.
++    """
++    print("\n--- Check D: daemon source structure ---")
++    text = DAEMON_PATH.read_text()
++
++    required_refs = [
++        ("scorecard.v", "versioned artifact naming"),
++        ("_bump_version", "version bump logic"),
++        ("_seal_artifact", "artifact sealing (freeze prior version)"),
++        ("_append_scorecard_row", "append-only scorecard writer"),
++        ("ARTIFACT_SCHEMA_VERSION", "artifact schema version constant"),
++        ("/home/bench-grader/keys", "real keys path"),
++        ("/var/lib/bench-grader/spool", "real spool path"),
++        ("_keys_unreadable_by_agent", "isolation invariant check"),
++    ]
++    all_ok = True
++    for ref, label in required_refs:
++        if ref not in text:
++            check(False, f"daemon source missing {ref!r} ({label})")
++            all_ok = False
++    if all_ok:
++        check(True, "daemon source contains all required versioning + isolation refs")
++
++
++def main() -> int:
++    print("=== FAIL-ON-REVERT: grader-daemon isolation + versioning (#26) ===")
++    check_A_isolation()
++    check_B_versioned_artifact()
++    check_C_no_product_import()
++    check_D_daemon_structure()
++
++    print()
++    if failures:
++        print(f"FAIL-ON-REVERT: {len(failures)} check(s) FAILED:")
++        for f in failures:
++            print(f"  - {f}")
++        return 1
++    print("FAIL-ON-REVERT: ALL CHECKS PASSED")
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+[0m
+[0m→ [0mRead fleet/benchmark/grader-daemon.py
+[0m→ [0mRead fleet/benchmark/graders/reds_replay.py
+Now I have the full diff. Let me verify the key findings against the actual files on disk and check for product imports.
+[0m→ [0mRead fleet/benchmark/selftest/test_grader_daemon.py
+[0m
+[0m$ [0mpython3 fleet/benchmark/selftest/test_grader_daemon.py 2>&1; echo "EXIT=$?"
+=== FAIL-ON-REVERT: grader-daemon isolation + versioning (#26) ===
+
+--- Check A: isolation (KEYS unreadable by graded agent) ---
+  [OK  ] stack denied read of /home/bench-grader/keys — isolation holds
+
+--- Check B: versioned artifact (daemon selftest) ---
+  [OK  ] daemon --selftest exit=0 stdout='SELFTEST OK' stderr='[grader-daemon] graded run=r2 model=test-model unit=trivial_ok score=100 verdict=MERGE -> scorecard.v1.json'
+
+--- Check C: no product import of scorecard artifact ---
+  [OK  ] no product import of 'scorecard.v' in /home/stack/code/charon
+
+--- Check D: daemon source structure ---
+  [OK  ] daemon source contains all required versioning + isolation refs
+
+FAIL-ON-REVERT: ALL CHECKS PASSED
+EXIT=0
+[0m
+[0m$ [0mcd /home/stack/charon-private/wt-grader && git diff master..HEAD -- fleet/benchmark/ | grep -nE '^\+.*import|^\+.*from ' | head -40
+131:+  dependent). So two models get modifiers built from different metric sets and
+189:+section with raw 88 +5 → 93 → min(93,89)=89, still barred from MERGE. Good, and
+313:+2. poll res/<run>.json                     b. run grader from $KEYS against
+326:+(`chmod 0444`) that consumers read without importing the grader. **No
+327:+product code imports the scorecard artifact.** Consumers read frozen
+358:+agent polls. It NEVER imports product code: the only seam between the
+373:+artifact as a frozen snapshot that consumers read without importing the
+374:+grader. No product code imports this module.
+389:+from __future__ import annotations
+391:+import contextlib
+392:+import dataclasses
+393:+import json
+394:+import os
+395:+import pwd
+396:+import shutil
+397:+import stat
+398:+import subprocess
+399:+import sys
+400:+import tempfile
+401:+import time
+402:+import traceback
+403:+from pathlib import Path
+404:+from typing import Any, Optional
+654:+        # Cost / token capture (best-effort, sourced from the request or
+904:+    import tempfile
+998:+``bench-grader``). It reads the unit's ``check_cmd`` from the answer-key
+1021:+from __future__ import annotations
+1023:+import json
+1024:+import os
+1025:+import shlex
+1026:+import subprocess
+1027:+import sys
+1028:+from pathlib import Path
+1109:+    # check_cmd is read from a 0700 keys dir the agent cannot reach, so the
+1167:+     imported by product code.  Removing the versioning (e.g. a single
+1169:+     import path makes this test FAIL (RED).
+1173:+asserts the isolation + no-product-import invariants against the real
+1181:+from __future__ import annotations
+1183:+import json
+1184:+import os
+[0m
+[0m$ [0mpython3 fleet/benchmark/grader-daemon.py --selftest 2>&1; echo "EXIT=$?"
+[grader-daemon] graded run=r1 model=test-model unit=trivial_ok score=100 verdict=MERGE -> scorecard.v1.json
+[grader-daemon] graded run=r2 model=test-model unit=trivial_ok score=100 verdict=MERGE -> scorecard.v1.json
+SELFTEST OK
+EXIT=0
+[0m
+Now let me verify key claims by running the tests and checking for product imports / isolation.
+[0m$ [0mls -la /home/bench-grader/keys/ 2>&1; echo "---"; stat -c '%A %U %G %n' /home/bench-grader/keys 2>&1; echo "---"; stat -c '%A %U %G %n' /home/bench-grader 2>&1; echo "---"; ls -la /var/lib/bench-grader/spool/ 2>&1
+ls: cannot access '/home/bench-grader/keys/': Permission denied
+---
+stat: cannot statx '/home/bench-grader/keys': Permission denied
+---
+drwxr-x--- bench-grader bench-grader /home/bench-grader
+---
+ls: cannot access '/var/lib/bench-grader/spool/': Permission denied
+[0m
+[0m$ [0mcd /home/stack/charon-private/wt-grader && git diff master..HEAD -- fleet/benchmark/ | grep -nE "^\+.*(import charon|from charon|src\.charon|src/charon)" || echo "NO PRODUCT IMPORT FOUND IN DIFF"
+NO PRODUCT IMPORT FOUND IN DIFF
+[0m
+Isolation and tests pass. Now let me verify the "no product import" claim against the actual fleet tree and check whether `reds_replay.py` truly fails-on-revert.
+[0m✱ [0mGrep "scorecard\.v"[90m in /home/stack/code/charon · 0 matches[0m
+[0m✱ [0mGrep "import charon|from charon|src\.charon|src/charon"[90m in fleet/benchmark · 8 matches[0m
+[0m
+[0m$ [0mls -la /var/lib/bench-grader/ 2>&1; echo "---spool root---"; ls -la /var/lib/bench-grader/spool 2>&1 | head -10; echo "---test write perm to req---"; touch /var/lib/bench-grader/spool/req/probe 2>&1; echo "EXIT=$?"; echo "---test read res---"; ls /var/lib/bench-grader/spool/res 2>&1
+ls: cannot open directory '/var/lib/bench-grader/': Permission denied
+---spool root---
+ls: cannot access '/var/lib/bench-grader/spool': Permission denied
+---test write perm to req---
+touch: cannot touch '/var/lib/bench-grader/spool/req/probe': Permission denied
+EXIT=1
+---test read res---
+ls: cannot access '/var/lib/bench-grader/spool/res': Permission denied
+[0m
+Let me verify the spool perms for the agent's submission path (which requires write to req/ but not read).
+[0m$ [0mcd /home/stack/charon-private/wt-grader && grep -c "fail-on-revert\|fail_on_revert\|revert" fleet/benchmark/selftest/test_grader_daemon.py; echo "---reds-replay selftest coverage---"; grep -c "red\|score=0\|BLOCK" fleet/benchmark/grader-daemon.py
+2
+---reds-replay selftest coverage---
+14
+[0m
+[0m$ [0mcd /home/stack/charon-private/wt-grader && ls fleet/ADR* 2>&1; find fleet -name "ADR*" -maxdepth 2 2>&1 | head
+fleet/ADR-BENCH-OOB-GRADING.md
+fleet/ADR-DECOMPOSED-BY-DESIGN.md
+fleet/ADR-UNIVERSAL-RESPONSE-ADAPTER.md
+fleet/ADR-BENCH-OOB-GRADING.md
+fleet/ADR-UNIVERSAL-RESPONSE-ADAPTER.md
+fleet/board/ADR-0015.md
+fleet/ADR-DECOMPOSED-BY-DESIGN.md
+[0m
+Important finding: the agent (`stack`) cannot write to `req/` or read `res/` — the spool is owned by `bench-grader` with `drwxr-x---`. Let me check the ADR for the intended submission mechanism.
+[0m✱ [0mGrep "spool|drwxr|0777|sticky|chmod|req_dir"[90m in fleet · 29 matches[0m
+[0m→ [0mRead fleet/ADR-BENCH-OOB-GRADING.md[90m [offset=290, limit=30][0m
+The ADR specifies `req/` should be mode `1733` (maildrop: write+execute, no read => stack can drop but not list). Let me verify the ADR substrate and double-check the actual perms on the spool directories.
+[0m
+[0m$ [0mstat -c '%A %U %G %n' /var/lib/bench-grader 2>&1; echo "---req---"; stat -c '%A %U %G %n' /var/lib/bench-grader/spool/req 2>&1; echo "---res---"; stat -c '%A %U %G %n' /var/lib/bench-grader/spool/res 2>&1; echo "---work---"; stat -c '%A %U %G %n' /var/lib/bench-grader/spool/work 2>&1; echo "---state---"; stat -c '%A %U %G %n' /var/lib/bench-grader/spool/state 2>&1; echo "---artifacts---"; stat -c '%A %U %G %n' /var/lib/bench-grader/spool/artifacts 2>&1
+drwx------ bench-grader bench-grader /var/lib/bench-grader
+---req---
+stat: cannot statx '/var/lib/bench-grader/spool/req': Permission denied
+---res---
+stat: cannot statx '/var/lib/bench-grader/spool/res': Permission denied
+---work---
+stat: cannot statx '/var/lib/bench-grader/spool/work': Permission denied
+---state---
+stat: cannot statx '/var/lib/bench-grader/spool/state': Permission denied
+---artifacts---
+stat: cannot statx '/var/lib/bench-grader/spool/artifacts': Permission denied
+[0m
+[0m$ [0mcd /home/stack/charon-private/wt-grader && head -5 fleet/reds.tsv 2>&1; echo "---"; ls -la fleet/reds.tsv 2>&1
+# reds.tsv — append-only REDS REGISTRY (build-rig only). One row per known red.
+# A red closes ONLY via a passing check_cmd or an explicit recorded override — never by assertion.
+# TAB-separated. Columns:
+# id	opened	severity	area	description	check_cmd	status	closed_by
+#   check_cmd: EXITS 0 when the red is GONE (green), non-zero when STILL RED.
+---
+-rw-r--r-- 1 stack stack 7953 Jul 10 08:20 fleet/reds.tsv
+[0m
+Let me check whether the agent can read check_cmds from the public repo (which would constitute a key leak), and verify the worktree path validation.
+[0m$ [0mcd /home/stack/charon-private/wt-grader && grep -rn "check_cmd\|check-cmd" fleet/reds.tsv 2>&1 | head -5; echo "---reds-replay tsv in keys (can't read but check format)---"; echo "format per reds_replay.py: unit_id, check_cmd, expect_green_exit, work_class, note"
+2:# A red closes ONLY via a passing check_cmd or an explicit recorded override — never by assertion.
+4:# id	opened	severity	area	description	check_cmd	status	closed_by
+5:#   check_cmd: EXITS 0 when the red is GONE (green), non-zero when STILL RED.
+---reds-replay tsv in keys (can't read but check format)---
+format per reds_replay.py: unit_id, check_cmd, expect_green_exit, work_class, note
+[0m
+[0m$ [0mcd /home/stack/charon-private/wt-grader && grep -n "check_cmd" fleet/reds.tsv | head -20
+2:# A red closes ONLY via a passing check_cmd or an explicit recorded override — never by assertion.
+4:# id	opened	severity	area	description	check_cmd	status	closed_by
+5:#   check_cmd: EXITS 0 when the red is GONE (green), non-zero when STILL RED.
+[0m
+[0m→ [0mRead fleet/reds.tsv[90m [limit=15][0m
+The check_cmds in `reds.tsv` ARE public and readable by the agent. Let me check if the reds-replay.tsv (in keys) contains the same check_cmds. Let me also examine the `_snapshot_worktree` path traversal concern and whether the daemon input is trusted.
+[0m→ [0mRead fleet/ADR-BENCH-OOB-GRADING.md[90m [limit=100, offset=60][0m
+[0m
+[0m$ [0mcd /home/stack/charon-private/wt-grader && python3 -c "
+from pathlib import Path
+# Simulate the daemon's path construction with a malicious 'run' field
+work_dir = Path('/var/lib/bench-grader/spool/work')
+# Agent-controlled 'run' field from request JSON
+malicious_run = '../../../../../home/bench-grader/keys'
+work_snapshot = work_dir / malicious_run
+print('work_snapshot:', work_snapshot)
+print('resolved:', work_snapshot.resolve(strict=False))
+# Would shutil.rmtree use the resolved path? Yes - it follows the OS path
+"
+work_snapshot: /var/lib/bench-grader/spool/work/../../../../../home/bench-grader/keys
+resolved: /home/bench-grader/keys
+[0m
+[0m$ [0mcd /home/stack/charon-private/wt-grader && python3 -c "
+# Check: does reds_replay.py use shell=True with the worktree path?
+# The worktree comes from --worktree CLI arg, which is daemon's work_snapshot
+# The check_cmd replaces {worktree} with the snapshot path, then runs shell=True
+# If the snapshot path contains shell metacharacters (from agent-controlled 'run'),
+# this is command injection.
+import shlex
+# Simulate: agent sends run='x\$(chmod 777 /home/bench-grader/keys)'
+run = 'x\$(chmod 777 /home/bench-grader/keys)'
+worktree = f'/var/lib/bench-grader/spool/work/{run}'
+check_cmd = 'test -f {worktree}/flag.txt'
+cmd = check_cmd.replace('{worktree}', worktree)
+print('Resulting shell command:')
+print(cmd)
+"
+Resulting shell command:
+test -f /var/lib/bench-grader/spool/work/x$(chmod 777 /home/bench-grader/keys)/flag.txt
+[0m
+Let me verify a key concern about the `run` field flowing into the worktree path.
+Two critical security findings. Let me verify both are achievable, and confirm the diff state vs the public `reds.tsv` (which contains the same check_cmd structure).
+[0m$ [0mcd /home/stack/charon-private/wt-grader && python3 -c "
+# Confirm path traversal: the grade_one method constructs work_snapshot = work_dir / run
+# where 'run' comes from the REQUEST JSON (agent-controlled).
+# Then _snapshot_worktree does: if dst.exists(): shutil.rmtree(dst)
+# Traversal: run = '../../keys' -> dst resolves to /home/bench-grader/keys -> rmtree deletes keys tree
+
+# Confirm shell injection: reds_replay._run_check runs check_cmd with shell=True
+# after substituting {worktree} with the snapshot path. If snapshot path contains
+# \$(cmd), it executes as bench-grader.
+print('Both vectors confirmed by code analysis.')
+"
+Both vectors confirmed by code analysis.
+[0m
+Now let me check the path traversal attack more concretely against `grade_one`.
+[0m→ [0mRead fleet/benchmark/grader-daemon.py[90m [limit=30, offset=260][0m
+[0m→ [0mRead fleet/benchmark/grader-daemon.py[90m [limit=25, offset=355][0m
+[0m
+[0m$ [0mcd /home/stack/charon-private/wt-grader && grep -n "self.ledger_path\|ledger" fleet/benchmark/grader-daemon.py
+107:    ledger_path: Path = DEFAULT_LEDGER
+517:        elif a in ("--ledger",):
+518:            out["ledger_path"] = Path(next(it))
+[0m
+Let me check the unsealed-current-artifact write concern, and whether `_seal_artifact` leaves the current version writable to stack.
+[0m$ [0mcd /home/stack/charon-private/wt-grader && stat -c '%A %U %G %n' fleet/model-scorecard.tsv 2>&1; echo "---"; ls -la fleet/model-scorecard.tsv
+-rw-r--r-- stack stack fleet/model-scorecard.tsv
+---
+-rw-r--r-- 1 stack stack 8088 Jul 10 08:20 fleet/model-scorecard.tsv
+[0m
+[0m$ [0mcd /home/stack/charon-private/wt-grader && find /var/lib/bench-grader -maxdepth 3 -printf '%M %U %G %p\n' 2>&1 | head -20
+drwx------ 999 989 /var/lib/bench-grader
+find: ‘/var/lib/bench-grader’: Permission denied
+[0m
+Important: `model-scorecard.tsv` is owned by `stack:stack` (mode 644), NOT `bench-grader`. The ADR §1.5 says it should be `bench-grader:bench-grader 0644`. The ledger is NOT set up per the ADR. Now let me also check the artifact_dir permissions.
+[0m$ [0mcd /home/stack/charon-private/wt-grader && python3 -c "
+import os, stat
+# DEFAULT_ARTIFACT_DIR = spool/artifacts
+# ADR says: work/ is 0700 bench-grader (agent can't reach)
+# artifacts/ is presumably 0700 bench-grader too (within the 0700 spool root)
+# BUT the res/ is 0755 (world-readable) per ADR §1.5
+# The artifact_dir is spool/artifacts — is it under the 0700 spool root? yes
+# So agent can't read it directly. BUT the scorecard is never imported by product (verified).
+print('artifact_dir is under 0700 spool root — agent cannot reach')
+print('ledger is stack-owned — MISMATCH with ADR (should be bench-grader)')
+"
+artifact_dir is under 0700 spool root — agent cannot reach
+ledger is stack-owned — MISMATCH with ADR (should be bench-grader)
+[0m
+[0m$ [0mcd /home/stack/charon-private/wt-grader && grep -n "from charon\|import charon\|src.charon\|src/charon" fleet/benchmark/grader-daemon.py fleet/benchmark/graders/reds_replay.py fleet/benchmark/selftest/test_grader_daemon.py 2>&1 || echo "NO PRODUCT IMPORTS in the 3 new files"
+NO PRODUCT IMPORTS in the 3 new files
+[0m
+Now let me complete the GATE check the REVIEW-PACKET claims passes, and verify there are no product imports among the grading files specifically.
+[0m$ [0mcd /home/stack/charon-private/wt-grader && grep -n "from charon\|import charon\|src.charon\|src/charon" fleet/benchmark/selftest/session_cost_selftest.py fleet/benchmark/lib/charon_cost.py fleet/benchmark/lib/detect_model.py 2>&1 | head
+fleet/benchmark/selftest/session_cost_selftest.py:67:                import charon.proxy as proxy_mod  # noqa: PLC0415
+fleet/benchmark/selftest/session_cost_selftest.py:127:    import charon_cost  # noqa: E402
+fleet/benchmark/selftest/session_cost_selftest.py:128:    from charon.proxy_server import GatewayProxyServer  # noqa: E402
+fleet/benchmark/lib/charon_cost.py:9:gateway process started (see charon/src/charon/proxy_server.py
+fleet/benchmark/lib/detect_model.py:107:    """Mirror charon's src/charon/proxy.py::_normalize_model_id EXACTLY:
+[0m
+The 3 new files (`grader-daemon.py`, `reds_replay.py`, `test_grader_daemon.py`) have NO product imports. The product imports exist in OTHER (pre-existing) selftest/lib files, which are out of scope for this commit. Let me update my heartbeat and finalize findings.
+[0m⚙ [0msession-bridge_update {"session_id":"mace-windu","status":"in-progress"}
+[0m
+[0m$ [0mcd /home/stack/charon-private/wt-grader && python3 -c "
+import os, shlex, shutil, pathlib
+# Verify: if agent can write to req/ (maildrop 1733), they can send a crafted request.
+# The request JSON's 'run' field:
+#   1. Flows into work_snapshot = self.work_dir / run  (path traversal -> rmtree of any bench-grader-owned dir)
+#   2. Flows into the shell command via {worktree} substitution -> shell injection
+# Both are agent-controlled 'run' in the request.
+# Path traversal vector: run = '../../keys'
+work_dir = pathlib.Path('/var/lib/bench-grader/spool/work')
+r = '../../keys'
+ws = work_dir / r
+print('dst:', ws)
+print('resolved:', ws.resolve(strict=False))
+print('rmtree target (if exists):', ws.resolve(strict=False))
+print()
+# Shell injection vector: run = 'x\$(id)'
+r2 = 'x\$(id > /tmp/pwned)'
+ws2 = work_dir / r2
+check_cmd = 'test -f {worktree}/flag.txt'
+cmd = check_cmd.replace('{worktree}', str(ws2))
+print('shell cmd:', cmd)
+"
+dst: /var/lib/bench-grader/spool/work/../../keys
+resolved: /var/lib/bench-grader/keys
+rmtree target (if exists): /var/lib/bench-grader/keys
+
+shell cmd: test -f /var/lib/bench-grader/spool/work/x$(id > /tmp/pwned)/flag.txt
+[0m
+[0m$ [0mcd /home/stack/charon-private/wt-grader && python3 -c "
+# Also: run_id (file stem from req_path.stem) is used for res/ filename,
+# but 'run' field (from JSON) is used for the worktree snapshot path and the
+# scorecard row's 'run' field. So the agent controls both via two channels:
+#   - filename of req/<run>.json -> run_id (stem) -> res/<run_id>.json
+#   - JSON body 'run' field -> work_snapshot path (traversal+injection)
+# Confirm: the test/observed logs use run=r1 but the actual attack is on the
+# JSON body's run field, not the filename.
+print('attack vector: JSON body run field, not the filename')
+"
+attack vector: JSON body run field, not the filename
+[0m
+Now I'll verify the final concerns: (1) the `_drain` re-grade loop bug, (2) the selftest's neutrality to grading-neutering, (3) any append-only concurrency.
+[0m→ [0mRead fleet/benchmark/grader-daemon.py[90m [limit=35, offset=590][0m
+[0m
+[0m$ [0mcd /home/stack/charon-private/wt-grader && python3 -c "
+# Check D is a string-presence test: it greps for '_bump_version' etc. in the source.
+# This does NOT verify the logic works—only that the symbols exist.
+# Neutering = replace _append_scorecard_row body with pass, _bump_version with return 1.
+# The selftest (Check B) would catch a neutered _append_scorecard_row IF the assertion
+# checks rows exist. Let me verify the selftest assertions.
+"
+(no output)
+[0m
+[0m$ [0mcd /home/stack/charon-private/wt-grader && python3 -c "
+# The selftest's 'fail-on-revert' for the grader logic is weak:
+# - It uses the 'trivial_ok' grader which just checks for the existence of a flag.txt file.
+# - A model could 'game' this by creating flag.txt without doing real work.
+# - More importantly: the selftest does NOT verify fail-on-revert of the actual reds_replay
+#   check_cmd logic — it only verifies the daemon's plumbing (writes scorecard, appends).
+# - The actual fail-on-revert for reds_replay would require: a snapshot that hasn't been
+#   fixed should score 0. The selftest doesn't test this (the flag.txt exists pre-fix).
+print('selftest covers daemon plumbing, not grader correctness')
+"
+selftest covers daemon plumbing, not grader correctness
+[0m
+[0m$ [0mcd /home/stack/charon-private/wt-grader && grep -n "fail-on-revert\|fail_on_revert\|revert\|RED if\|go RED\|neuter" fleet/benchmark/selftest/test_grader_daemon.py | head
+5:real.  Removing EITHER invariant MUST cause this test to go RED:
+64:        check(False, f"FAIL: stack CAN read {KEYS_DIR} — isolation reverted!")
+90:    If the versioning or append-only logic is reverted, the selftest fails.
+[0m
+[0m$ [0mcd /home/stack/charon-private/wt-grader && python3 -c "
+# Test: would Check D pass if _append_scorecard_row body were neutered (pass)?
+# Check D only greps for the symbol name. So neutering the BODY but keeping the
+# symbol would pass Check D. But Check B runs the daemon --selftest, which would
+# fail the assertion 'rows = ... ; assert len(rows) == 1' if _append_scorecard_row
+# did nothing. So Check B catches a fully-neutered writer.
+# BUT: if someone replaced score=100 with score=0 in reds_replay (or trivial_ok),
+# Check B would fail on 'assert res[\"score\"] == 100'.
+# The real gap: there's no test that reds_replay scores 0 on a non-fixed worktree.
+"
+(no output)
+[0m
+[0m$ [0mcd /home/stack/charon-private/wt-grader && grep -n "prefix_snapshot\|pre-fix\|pre_fix\|baseline" fleet/benchmark/graders/reds_replay.py fleet/benchmark/grader-daemon.py | head -20
+fleet/benchmark/graders/reds_replay.py:13:with the snapshot path so the check targets the agent's pre-fix-starting
+fleet/benchmark/graders/reds_replay.py:21:Anti-false-green guard: the pre-fix snapshot must FAIL the check (a red
+fleet/benchmark/graders/reds_replay.py:22:that is already green pre-fix is not a valid task). Per the ADR, that gate
+fleet/benchmark/grader-daemon.py:410:                      "prefix_snapshot", "note"):
+[0m
+[0m→ [0mRead fleet/benchmark/graders/reds_replay.py[90m [limit=30, offset=109][0m
+[0m
+[0m$ [0mcd /home/stack/charon-private/wt-grader && grep -n "shlex" fleet/benchmark/graders/reds_replay.py
+32:import shlex
+[0m
+[0m$ [0mcd /home/stack/charon-private/wt-grader && python3 -c "
+import shlex
+# shlex is imported but never used! The check_cmd runs via shell=True.
+# This means any shell metacharacter in the worktree path (which comes from
+# the snapshot path, which is derived from the agent-controlled 'run' field)
+# is executed by the shell as bench-grader.
+print('shlex imported at line 32 but NEVER used — shell=True is the execution path')
+"
+shlex imported at line 32 but NEVER used — shell=True is the execution path
+[0m
+[0m$ [0mcd /home/stack/charon-private/wt-grader && python3 -c "
+# res/<run>.json is written with chmod_world_read (0644) and res/ is 0755 per ADR
+# This means the graded agent can read res/<run>.json — which is INTENDED (verdict/score poll)
+# BUT it also means the agent can read OTHER models' res/<run>.json files if they know the run name
+# The run name is in the request filename, which is in the maildrop (1733: no list, but predictable?)
+# Impact: low (verdict/score/next_prompt only, no check_cmd or grader source)
+print('res/ world-readable: agent can read verdict/score (intended)')
+print('  + can read other run results if runs are guessable (low impact: verdict only)')
+"
+res/ world-readable: agent can read verdict/score (intended)
+  + can read other run results if runs are guessable (low impact: verdict only)
+[0m
+I have all evidence needed. Let me verify the `chmod_world_read` on the result file and whether the model could read other models' results.
+[0m$ [0mcd /home/stack/charon-private/wt-grader && python3 -c "
+import os, stat
+# Final check on the 'append-only' claim: _append_scorecard_row opens with 'a' mode
+# (O_APPEND). On filesystems that honor O_APPEND, writes are atomic at the line level
+# if < PIPE_BUF (4096 on Linux). The row JSON is small, so this is OK.
+# BUT: the current version's artifact is mode... what? It's created by open(path, 'a')
+# with default umask. The daemon runs as bench-grader, so umask is likely 022 -> 0644.
+# That means the artifact is world-readable (0644), in a 0700 bench-grader-owned dir.
+# Agent can't read it (dir is 0700). Good.
+# BUT: if artifact_dir is overridden (CHARON_GRAADER_ARTIFACT_DIR env), it could land
+# somewhere world-readable. The default is spool/artifacts (under 0700 spool root). OK.
+print('artifact_dir default: spool/artifacts (under 0700 spool root) — agent cannot read')
+print('  risk: env override could place it elsewhere, but that requires compromising the daemon env')
+"
+artifact_dir default: spool/artifacts (under 0700 spool root) — agent cannot read
+  risk: env override could place it elsewhere, but that requires compromising the daemon env
+[0m
+Now let me ensure the reviews directory exists and write the findings file.
+[0m$ [0mmkdir -p /home/stack/charon-private/fleet/reviews && ls -la /home/stack/charon-private/fleet/reviews/ 2>&1 | head
+total 172
+drwxr-xr-x  3 stack stack  4096 Jul 10 10:48 .
+drwxr-xr-x 14 stack stack  4096 Jul 10 10:45 ..
+-rw-r--r--  1 stack stack 15011 Jul 10 10:47 ACTUALS-REVIEW.md
+-rw-r--r--  1 stack stack  6614 Jul  5 09:35 BRANCH-TRIAGE.md
+-rw-r--r--  1 stack stack  7011 Jul 10 10:52 DECOMPOSE-REVIEW.md
+-rw-r--r--  1 stack stack  8591 Jul 10 09:17 METER-REVIEW-A.md
+-rw-r--r--  1 stack stack 14858 Jul 10 09:24 METER-REVIEW-B.md
+-rw-r--r--  1 stack stack 21106 Jul 10 08:32 METHOD-UNIFY-REVIEW-flash.md
+-rw-r--r--  1 stack stack 22207 Jul 10 09:18 POOLING-DESIGN-REVIEW-flash.md
+[0m
+[0m← [0mWrite /home/stack/charon-private/fleet/reviews/GRADER-REVIEW.md
+Wrote file successfully.
+[0m
+[0m⚙ [0msession-bridge_update {"session_id":"mace-windu","status":"done"}
+[0m⚙ [0msession-bridge_unregister {"session_id":"mace-windu"}
+[0m⚙ [0msession-bridge_release {"session_id":"mace-windu","ticket":"26"}
+**VERDICT: MERGE-WITH-FIXES (confidence HIGH).** The OOB trust boundary is architecturally sound at the substrate level (keys 0700/inaccessible by `stack`, daemon is sole grader+writer, no product import of `scorecard.v{n}.json`, versioned append-only artifact, isolation test passes live). The FAIL-ON-REVERT test reddens on the key invariants. **However, two CRITICAL security holes in request handling let a graded agent who can drop a `req/<run>.json` destroy `$KEYS` via path traversal (F1) and execute arbitrary shell as `bench-grader` via `shell=True` injection (F2)** — both root-caused to the unvalidated agent-controlled `run` field joined into the snapshot path and a shell command. Both are one-line fixes (validate `run` against `^[A-Za-z0-9_.-]+$`; use `shell=False`/`shlex.quote`). I did not commit, push, or edit any code.
+
+/home/stack/charon-private/fleet/reviews/GRADER-REVIEW.md
+[charon-run] SUCCESS on model 'glm-5.2' (rc=0)
+CHARON_RUN_RESULT=SUCCESS model=glm-5.2

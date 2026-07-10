@@ -1,0 +1,504 @@
+===== [charon-run] attempt: charon/glm-5.2 @ wt-meter =====
+[0m
+> build · glm-5.2
+[0m
+I'll start by registering my session and checking the board, then explore the relevant files.
+[0m✗ [0msession-bridge_register {"name":"obi-wan-kenobi","repo":"charon","ticket":"meter-model-provider","status":"in-progress","model":"glm-5.2"} failed
+[91m[1mError: [0m{"ok": false, "error": "session_id required"}
+[0m
+[0m$ [0mgit status && git branch --show-current
+On branch feat/meter-model-provider
+nothing to commit, working tree clean
+feat/meter-model-provider
+[0m
+[0m⚙ [0msession-bridge_register {"name":"obi-wan-kenobi","repo":"charon","session_id":"obi-wan-kenobi","status":"in-progress","ticket":"meter-model-provider","model":"glm-5.2"}
+[0m⚙ [0msession-bridge_board {"repo":"charon"}
+No conflicts. Now let me read the relevant files to understand the current state.
+[0m→ [0mRead tests/test_meter_model_provider.py
+[0m→ [0mRead src/charon/proxy.py[90m [offset=480, limit=120][0m
+[0m→ [0mRead src/charon/balance.py[90m [offset=220, limit=100][0m
+[0m
+[0m$ [0mgit log --oneline -10
+e2a9e12 METER-MODEL-PROVIDER (Wave 1): per-(model,provider) cost metering
+6096fb3 RESPONSE-ADAPTER-UNIVERSAL: universal ResponseAdapter (Identity default + Cline unwrap) on the non-stream path (#91)
+2e76d6b feat(ci): add tools/check_workflows.py action-pin/Windows-smoke/path-trigger gate (#90)
+3c82ab3 TEST-HARDEN-CONTRACT: fix anthropic self-mirroring false-green; document strict-mode gating (#92)
+249b727 NORMALIZE-CASE-QUANT-FIX: case/quant-insensitive model-id compare + catalog mismatch detector (#89)
+3b434dc BILLING-EST-COST-FIX: bill real $0 as 0, not the est_cost floor; normalizer touches content only (#88)
+319658f chore: bump 0.4.0 -> 0.4.1 (flaky-test fix; re-release)
+154966a fix(test): count status field not substring in X-Charon-Failover-Reasons assertion (flaky on ephemeral ports containing the status)
+a5894b1 chore: bump 0.3.6 -> 0.4.0 (failover P1 + proxy decompose + SR-6 cache + SR-13 auth)
+73b1c08 merge(console): SR-13 /charon/login + surface-aware auth (TOFU cookie)
+[0m
+Now let me look at the `observe` method and meter initialization to document the keying precondition accurately.
+[0m✱ [0mGrep "_model_provider_cost|_model_spend"[90m in src/charon · 12 matches[0m
+[0m→ [0mRead src/charon/proxy.py[90m [limit=80, offset=440][0m
+Now let me check the `observe` method to confirm the keying flow.
+[0m✱ [0mGrep "def observe"[90m in src/charon · 1 match[0m
+[0m→ [0mRead src/charon/proxy.py[90m [limit=70, offset=304][0m
+I have a complete understanding now. Let me verify the tests pass before making changes, then apply the four doc-only fixes.
+[0m
+[0m$ [0mPYTHONPATH=src python3 -m pytest tests/test_meter_model_provider.py -q 2>&1 | tail -5
+..................                                                       [100%]
+18 passed in 10.14s
+[0m
+All 18 pass. Now applying fix #1 (soften authoritative docstrings) + #2 (keying precondition) + #4 (Wave-2 gaps note) in proxy.py:
+[0m← [0mEdit src/charon/proxy.py
+Index: /home/stack/code/wt-meter/src/charon/proxy.py
+===================================================================
+--- /home/stack/code/wt-meter/src/charon/proxy.py
++++ /home/stack/code/wt-meter/src/charon/proxy.py
+@@ -515,18 +515,41 @@
+ def model_provider_cost(self, model: str, provider: str) -> float:
+     """Cumulative metered cost for one (model, provider) pair (METER-MODEL-
+     PROVIDER Wave 1). Returns 0.0 for a never-seen entry (never raises).
+ 
+-    This is the authoritative per-route spend figure: cost-rank routing and
+-    drain-then-park read from here instead of fabricating an est_cost floor.
+-    The key is ``(requested_model, provider_label)`` — the model id as seen
+-    by the router's pool and the upstream provider's label."""
++    WAVE-2 DEFERRED: this ledger WILL be read by Wave-2 cost-rank routing
++    and drain-then-park to get actual per-route spend instead of an
++    est_cost floor. Caller wiring (provider=route.label in forwarder.py)
++    is deferred to Wave 2, so this ledger is EMPTY under real traffic
++    today — only tests exercise it directly.
++
++    Keying precondition: ``model`` MUST be the EXACT ``requested_model``
++    string passed to ``observe()`` — NOT a normalized, prefix-stripped, or
++    aliased form. The meter stores entries ONLY for observations that
++    passed a non-None ``provider``; ``provider=None`` observations advance
++    the global ``_usage`` counter but are NOT metered per-route.
++
++    KNOWN-WAVE2-GAPS (deliberately deferred consistency items so callers
++    do not ingest this meter blindly in Wave 2):
++    (a) Negative/refund costs are passed through UNGUARDED (no
++        ``max(..., 0.0)`` clamp) — matching the global ``_usage`` counter.
++        Clamping only here would BREAK the sum(meter)==cumulative_usage
++        delta-zero invariant; the guard is intentionally omitted.
++    (b) ``unpriced`` responses contribute 0 to this meter while the
++        spend-limiter records an est_cost floor — the two ledgers diverge
++        on unpriced routes BY DESIGN. Wave-2 cost-rank routing must NOT
++        ingest this meter blindly without reconciling the unpriced gap."""
+     with self._lock:
+         return self._model_provider_cost.get((model, provider), 0.0)
+ 
+ def all_model_provider_costs(self) -> dict[tuple[str, str], float]:
+     """Return a read-only snapshot of all per-(model, provider) metered costs
+-    (METER-MODEL-PROVIDER Wave 1)."""
++    (METER-MODEL-PROVIDER Wave 1).
++
++    WAVE-2 DEFERRED: caller wiring (provider=route.label in forwarder.py)
++    is deferred to Wave 2, so this ledger is EMPTY under real traffic
++    today. See ``model_provider_cost`` for the keying precondition and
++    known Wave-2 gaps."""
+     with self._lock:
+         return dict(self._model_provider_cost)
+ 
+ def take_delta(self) -> Usage:
+
+[0m
+Now fix #1 (soften authoritative docstring) in balance.py:
+[0m← [0mEdit src/charon/balance.py
+Index: /home/stack/code/wt-meter/src/charon/balance.py
+===================================================================
+--- /home/stack/code/wt-meter/src/charon/balance.py
++++ /home/stack/code/wt-meter/src/charon/balance.py
+@@ -248,10 +248,18 @@
+ def model_spend(self, model: str, provider: str) -> float:
+     """Cumulative metered spend for one (model, provider) pair (METER-MODEL-
+     PROVIDER Wave 1). Returns 0.0 for a never-seen entry (never raises).
+ 
+-    Read by cost-rank routing and drain-then-park to get actual model-level
+-    burn rate instead of fabricating an est_cost floor."""
++    WAVE-2 DEFERRED: this ledger WILL be read by Wave-2 cost-rank routing
++    and drain-then-park to get actual model-level burn rate instead of
++    an est_cost floor. Caller wiring (provider=route.label in
++    forwarder.py) is deferred to Wave 2, so this ledger is EMPTY under
++    real traffic today.
++
++    Keying precondition: ``model`` MUST be the EXACT model id passed to
++    ``record_spend(model=...)`` — NOT a normalized, prefix-stripped, or
++    aliased form. Entries exist ONLY for calls that passed a non-None
++    ``model``; ``model=None`` calls are NOT metered per-pair."""
+     with self._lock:
+         return self._model_spend.get((model, provider), 0.0)
+ 
+ def should_drain(self, provider: str) -> bool:
+
+[0m
+Now softening the authoritative present-tense claim in `record()` (proxy.py ~line 457) and `observe()` (~line 331):
+[0m← [0mEdit src/charon/proxy.py
+Index: /home/stack/code/wt-meter/src/charon/proxy.py
+===================================================================
+--- /home/stack/code/wt-meter/src/charon/proxy.py
++++ /home/stack/code/wt-meter/src/charon/proxy.py
+@@ -454,11 +454,12 @@
+ cost. Purely additive: the global counter's behavior is unchanged whether
+ or not ``session`` is given.
+ 
+ ``provider`` (METER-MODEL-PROVIDER Wave 1) optionally also folds the same
+-usage into the per-(model, provider) ledger so cost-rank routing and
+-drain-then-park can read actual metered spend instead of fabricating an
+-est_cost floor."""
++usage into the per-(model, provider) ledger so Wave-2 cost-rank routing
++and drain-then-park can read actual metered spend instead of an
++est_cost floor. Caller wiring (provider=route.label) is deferred to
++Wave 2, so this ledger is EMPTY under real traffic today."""
+ with self._lock:
+     if obs.failover:
+         # record under the requested model — the router excludes by model id.
+         self._exhausted[obs.requested_model] = obs
+
+[0m
+[0m← [0mEdit src/charon/proxy.py
+Index: /home/stack/code/wt-meter/src/charon/proxy.py
+===================================================================
+--- /home/stack/code/wt-meter/src/charon/proxy.py
++++ /home/stack/code/wt-meter/src/charon/proxy.py
+@@ -327,11 +327,14 @@
+ is still recorded so the next request skips it.
+ 
+ ``provider`` is the upstream provider label (e.g. ``"deepseek"``,
+ ``"openrouter"``). When set, the cost is also folded into the per-(model,
+-provider) ledger (METER-MODEL-PROVIDER Wave 1) so cost-rank routing and
+-drain-then-park can read actual metered spend instead of fabricating an
+-est_cost floor. Omitted / None → global counter only (backward-compatible).
++provider) ledger (METER-MODEL-PROVIDER Wave 1) so Wave-2 cost-rank
++routing and drain-then-park can read actual metered spend instead of
++an est_cost floor. Omitted / None → global counter only
++(backward-compatible). Caller wiring (provider=route.label in
++forwarder.py) is deferred to Wave 2, so this ledger is EMPTY under
++real traffic today — only tests exercise it directly.
+ 
+ ``observe`` = ``classify`` (pure) + ``record`` (mutate). The gateway's
+ in-request failover loop calls them separately, so it can classify an
+ attempt, decide whether to serve it, then bill usage only for the one it
+
+[0m
+Now also soften the same present-tense claim in `record_spend()` (balance.py ~line 226):
+[0m← [0mEdit src/charon/balance.py
+Index: /home/stack/code/wt-meter/src/charon/balance.py
+===================================================================
+--- /home/stack/code/wt-meter/src/charon/balance.py
++++ /home/stack/code/wt-meter/src/charon/balance.py
+@@ -223,10 +223,12 @@
+ For poll providers or unconfigured providers this is a no-op (their
+ balance is authoritative — we don't double-count).
+ 
+ ``model`` (METER-MODEL-PROVIDER Wave 1) optionally also tracks per-model
+-spend on this provider so cost-rank routing can read actual model-level
+-burn rate instead of fabricating an est_cost floor."""
++spend on this provider so Wave-2 cost-rank routing can read actual
++model-level burn rate instead of an est_cost floor. Caller wiring
++(provider=route.label in forwarder.py) is deferred to Wave 2, so this
++ledger is EMPTY under real traffic today."""
+ usd = float(usd)
+ if usd <= 0.0:
+     return  # negative/zero spend is ignored
+ cfg = self._config.get(provider)
+
+[0m
+Now fix #3 — add header note to the test file:
+[0m← [0mEdit tests/test_meter_model_provider.py
+Index: /home/stack/code/wt-meter/tests/test_meter_model_provider.py
+===================================================================
+--- /home/stack/code/wt-meter/tests/test_meter_model_provider.py
++++ /home/stack/code/wt-meter/tests/test_meter_model_provider.py
+@@ -1,6 +1,12 @@
+ """METER-MODEL-PROVIDER Wave 1 — real per-(model, provider) cost metering.
+ 
++NOTE: ``forwarder.py`` caller-wiring (setting ``provider=route.label`` on
++``observe()``/``record_spend()`` calls) is DEFERRED to Wave 2. The
++per-(model, provider) meter is therefore EMPTY under real traffic today.
++These tests exercise the metering mechanism directly via explicit
++``provider=`` arguments — they do not reflect any production call site.
++
+ Replaces est_cost fabrication with authoritative ACTUAL metered cost per request
+ keyed by (model, provider). Includes the metering-invariant canary harness
+ (replay a recorded request stream through the new meter and assert cost-total
+ delta == 0 vs the prior path + credential-shape invariance) and the
+
+[0m
+[0m✱ [0mGrep "fabricating an est_cost floor"[90m in . · 2 matches[0m
+Now let me verify nothing else needs softening, and confirm tests still pass.
+[0m
+[0m$ [0mPYTHONPATH=src python3 -m pytest tests/test_meter_model_provider.py -q 2>&1 | tail -5
+..................                                                       [100%]
+18 passed in 10.13s
+[0m
+[0m→ [0mRead src/charon/proxy.py[90m [limit=6, offset=287][0m
+All 18 tests pass. Let me check those two remaining inline comments at ~289/172 — they're the field declaration comments.
+[0m→ [0mRead src/charon/balance.py[90m [limit=6, offset=170][0m
+These two field-level inline comments carry the same authoritative present-tense claim. Let me soften them too for consistency:
+[0m
+[0m← [0mEdit src/charon/proxy.py
+Index: /home/stack/code/wt-meter/src/charon/proxy.py
+===================================================================
+--- /home/stack/code/wt-meter/src/charon/proxy.py
++++ /home/stack/code/wt-meter/src/charon/proxy.py
+@@ -283,11 +283,12 @@
+ self._model_pricing = model_pricing or {}
+ # Per-(model, provider) cumulative cost (METER-MODEL-PROVIDER Wave 1).
+ # Keyed by (requested_model, provider_label); tracks the real metered
+ # cost_usd folded in by ``record()`` when both ``provider`` and
+-# ``count_usage`` are truthy. This is the authoritative per-route spend
+-# ledger — every cost-rank and drain-then-park decision reads from here
+-# instead of fabricating an est_cost floor.
++# ``count_usage`` are truthy. This is the per-route spend ledger — Wave-2
++# cost-rank and drain-then-park decisions WILL read from here instead of
++# an est_cost floor. Caller wiring (provider=route.label) is deferred to
++# Wave 2, so this ledger is EMPTY under real traffic today.
+ self._model_provider_cost: dict[tuple[str, str], float] = {}
+ # Per-session cumulative usage (SESSION-COST), keyed by the caller-supplied
+ # ``X-Charon-Session`` id (proxy_server.py). Purely additive bookkeeping
+ # alongside ``_usage`` — never read for routing/billing decisions, so this
+
+[0m
+[0m← [0mEdit src/charon/balance.py
+Index: /home/stack/code/wt-meter/src/charon/balance.py
+===================================================================
+--- /home/stack/code/wt-meter/src/charon/balance.py
++++ /home/stack/code/wt-meter/src/charon/balance.py
+@@ -166,11 +166,12 @@
+ 
+ self._fixed_balances: dict[str, float] = {}
+ self._counters: dict[str, int] = {}
+ # Per-(model, provider) metered spend (METER-MODEL-PROVIDER Wave 1).
+-# Accumulated by ``record_spend(provider, usd, model=...)`` so cost-rank
+-# routing and drain-then-park can read actual model-level burn rate
+-# instead of fabricating an est_cost floor.
++# Accumulated by ``record_spend(provider, usd, model=...)`` so Wave-2
++# cost-rank routing and drain-then-park can read actual model-level burn
++# rate instead of an est_cost floor. Caller wiring is deferred to Wave 2,
++# so this ledger is EMPTY under real traffic today.
+ self._model_spend: dict[tuple[str, str], float] = {}
+ 
+ for provider, cfg in self._config.items():
+     if cfg.get("mode") == "fixed":
+
+[0m
+[0m$ [0mls AGENTS.md 2>/dev/null && grep -iE "lint|typecheck|ruff|mypy" AGENTS.md 2>/dev/null; echo "---"; ls pyproject.toml setup.cfg .ruff.toml Makefile 2>/dev/null
+---
+Makefile
+pyproject.toml
+[0m
+Now let me run the tests once more and run lint/typecheck if available.
+[0m$ [0mPYTHONPATH=src python3 -m pytest tests/test_meter_model_provider.py -q 2>&1 | tail -5
+..................                                                       [100%]
+18 passed in 10.12s
+[0m
+[0m$ [0mgrep -iE "lint|typecheck|ruff|mypy" pyproject.toml Makefile 2>/dev/null | head -20
+pyproject.toml:dev = ["pytest>=8", "ruff>=0.4", "mypy>=1.9", "pip-audit>=2.7", "httpx>=0.27"]
+pyproject.toml:[tool.ruff]
+pyproject.toml:[tool.ruff.lint]
+pyproject.toml:[tool.mypy]
+pyproject.toml:[[tool.mypy.overrides]]
+pyproject.toml:[[tool.mypy.overrides]]
+pyproject.toml:[[tool.mypy.overrides]]
+Makefile:.PHONY: install dev test lint type boundary version audit demo all clean
+Makefile:lint:
+Makefile:	ruff check src tests tools
+Makefile:	mypy src/charon
+Makefile:all: boundary version lint type test
+Makefile:	rm -rf .charon .pytest_cache .mypy_cache **/__pycache__ build dist *.egg-info
+[0m
+Lint and typecheck are available. Let me run them (ruff check + mypy) against the changed files.
+[0m$ [0mruff check src/charon/proxy.py src/charon/balance.py tests/test_meter_model_provider.py 2>&1 | tail -20
+All checks passed!
+[0m
+[0m$ [0mmypy src/charon/proxy.py src/charon/balance.py 2>&1 | tail -20
+Success: no issues found in 2 source files
+[0m
+Ruff and mypy both clean. Let me do a final review of the diff before commit.
+[0m$ [0mgit diff --stat
+src/charon/balance.py              | 25 ++++++++++++-----
+ src/charon/proxy.py                | 56 ++++++++++++++++++++++++++++----------
+ tests/test_meter_model_provider.py |  6 ++++
+ 3 files changed, 66 insertions(+), 21 deletions(-)
+[0m
+[0m$ [0mgit diff
+diff --git a/src/charon/balance.py b/src/charon/balance.py
+index 54a8ee1..9b210b3 100644
+--- a/src/charon/balance.py
++++ b/src/charon/balance.py
+@@ -167,9 +167,10 @@ class BalanceTracker:
+         self._fixed_balances: dict[str, float] = {}
+         self._counters: dict[str, int] = {}
+         # Per-(model, provider) metered spend (METER-MODEL-PROVIDER Wave 1).
+-        # Accumulated by ``record_spend(provider, usd, model=...)`` so cost-rank
+-        # routing and drain-then-park can read actual model-level burn rate
+-        # instead of fabricating an est_cost floor.
++        # Accumulated by ``record_spend(provider, usd, model=...)`` so Wave-2
++        # cost-rank routing and drain-then-park can read actual model-level burn
++        # rate instead of an est_cost floor. Caller wiring is deferred to Wave 2,
++        # so this ledger is EMPTY under real traffic today.
+         self._model_spend: dict[tuple[str, str], float] = {}
+ 
+         for provider, cfg in self._config.items():
+@@ -224,8 +225,10 @@ class BalanceTracker:
+         balance is authoritative — we don't double-count).
+ 
+         ``model`` (METER-MODEL-PROVIDER Wave 1) optionally also tracks per-model
+-        spend on this provider so cost-rank routing can read actual model-level
+-        burn rate instead of fabricating an est_cost floor."""
++        spend on this provider so Wave-2 cost-rank routing can read actual
++        model-level burn rate instead of an est_cost floor. Caller wiring
++        (provider=route.label in forwarder.py) is deferred to Wave 2, so this
++        ledger is EMPTY under real traffic today."""
+         usd = float(usd)
+         if usd <= 0.0:
+             return  # negative/zero spend is ignored
+@@ -249,8 +252,16 @@ class BalanceTracker:
+         """Cumulative metered spend for one (model, provider) pair (METER-MODEL-
+         PROVIDER Wave 1). Returns 0.0 for a never-seen entry (never raises).
+ 
+-        Read by cost-rank routing and drain-then-park to get actual model-level
+-        burn rate instead of fabricating an est_cost floor."""
++        WAVE-2 DEFERRED: this ledger WILL be read by Wave-2 cost-rank routing
++        and drain-then-park to get actual model-level burn rate instead of
++        an est_cost floor. Caller wiring (provider=route.label in
++        forwarder.py) is deferred to Wave 2, so this ledger is EMPTY under
++        real traffic today.
++
++        Keying precondition: ``model`` MUST be the EXACT model id passed to
++        ``record_spend(model=...)`` — NOT a normalized, prefix-stripped, or
++        aliased form. Entries exist ONLY for calls that passed a non-None
++        ``model``; ``model=None`` calls are NOT metered per-pair."""
+         with self._lock:
+             return self._model_spend.get((model, provider), 0.0)
+ 
+diff --git a/src/charon/proxy.py b/src/charon/proxy.py
+index e21de9c..68753ed 100644
+--- a/src/charon/proxy.py
++++ b/src/charon/proxy.py
+@@ -284,9 +284,10 @@ class GatewayProxy:
+         # Per-(model, provider) cumulative cost (METER-MODEL-PROVIDER Wave 1).
+         # Keyed by (requested_model, provider_label); tracks the real metered
+         # cost_usd folded in by ``record()`` when both ``provider`` and
+-        # ``count_usage`` are truthy. This is the authoritative per-route spend
+-        # ledger — every cost-rank and drain-then-park decision reads from here
+-        # instead of fabricating an est_cost floor.
++        # ``count_usage`` are truthy. This is the per-route spend ledger — Wave-2
++        # cost-rank and drain-then-park decisions WILL read from here instead of
++        # an est_cost floor. Caller wiring (provider=route.label) is deferred to
++        # Wave 2, so this ledger is EMPTY under real traffic today.
+         self._model_provider_cost: dict[tuple[str, str], float] = {}
+         # Per-session cumulative usage (SESSION-COST), keyed by the caller-supplied
+         # ``X-Charon-Session`` id (proxy_server.py). Purely additive bookkeeping
+@@ -328,9 +329,12 @@ class GatewayProxy:
+ 
+         ``provider`` is the upstream provider label (e.g. ``"deepseek"``,
+         ``"openrouter"``). When set, the cost is also folded into the per-(model,
+-        provider) ledger (METER-MODEL-PROVIDER Wave 1) so cost-rank routing and
+-        drain-then-park can read actual metered spend instead of fabricating an
+-        est_cost floor. Omitted / None → global counter only (backward-compatible).
++        provider) ledger (METER-MODEL-PROVIDER Wave 1) so Wave-2 cost-rank
++        routing and drain-then-park can read actual metered spend instead of
++        an est_cost floor. Omitted / None → global counter only
++        (backward-compatible). Caller wiring (provider=route.label in
++        forwarder.py) is deferred to Wave 2, so this ledger is EMPTY under
++        real traffic today — only tests exercise it directly.
+ 
+         ``observe`` = ``classify`` (pure) + ``record`` (mutate). The gateway's
+         in-request failover loop calls them separately, so it can classify an
+@@ -455,9 +459,10 @@ class GatewayProxy:
+         or not ``session`` is given.
+ 
+         ``provider`` (METER-MODEL-PROVIDER Wave 1) optionally also folds the same
+-        usage into the per-(model, provider) ledger so cost-rank routing and
+-        drain-then-park can read actual metered spend instead of fabricating an
+-        est_cost floor."""
++        usage into the per-(model, provider) ledger so Wave-2 cost-rank routing
++        and drain-then-park can read actual metered spend instead of an
++        est_cost floor. Caller wiring (provider=route.label) is deferred to
++        Wave 2, so this ledger is EMPTY under real traffic today."""
+         with self._lock:
+             if obs.failover:
+                 # record under the requested model — the router excludes by model id.
+@@ -516,16 +521,39 @@ class GatewayProxy:
+         """Cumulative metered cost for one (model, provider) pair (METER-MODEL-
+         PROVIDER Wave 1). Returns 0.0 for a never-seen entry (never raises).
+ 
+-        This is the authoritative per-route spend figure: cost-rank routing and
+-        drain-then-park read from here instead of fabricating an est_cost floor.
+-        The key is ``(requested_model, provider_label)`` — the model id as seen
+-        by the router's pool and the upstream provider's label."""
++        WAVE-2 DEFERRED: this ledger WILL be read by Wave-2 cost-rank routing
++        and drain-then-park to get actual per-route spend instead of an
++        est_cost floor. Caller wiring (provider=route.label in forwarder.py)
++        is deferred to Wave 2, so this ledger is EMPTY under real traffic
++        today — only tests exercise it directly.
++
++        Keying precondition: ``model`` MUST be the EXACT ``requested_model``
++        string passed to ``observe()`` — NOT a normalized, prefix-stripped, or
++        aliased form. The meter stores entries ONLY for observations that
++        passed a non-None ``provider``; ``provider=None`` observations advance
++        the global ``_usage`` counter but are NOT metered per-route.
++
++        KNOWN-WAVE2-GAPS (deliberately deferred consistency items so callers
++        do not ingest this meter blindly in Wave 2):
++        (a) Negative/refund costs are passed through UNGUARDED (no
++            ``max(..., 0.0)`` clamp) — matching the global ``_usage`` counter.
++            Clamping only here would BREAK the sum(meter)==cumulative_usage
++            delta-zero invariant; the guard is intentionally omitted.
++        (b) ``unpriced`` responses contribute 0 to this meter while the
++            spend-limiter records an est_cost floor — the two ledgers diverge
++            on unpriced routes BY DESIGN. Wave-2 cost-rank routing must NOT
++            ingest this meter blindly without reconciling the unpriced gap."""
+         with self._lock:
+             return self._model_provider_cost.get((model, provider), 0.0)
+ 
+     def all_model_provider_costs(self) -> dict[tuple[str, str], float]:
+         """Return a read-only snapshot of all per-(model, provider) metered costs
+-        (METER-MODEL-PROVIDER Wave 1)."""
++        (METER-MODEL-PROVIDER Wave 1).
++
++        WAVE-2 DEFERRED: caller wiring (provider=route.label in forwarder.py)
++        is deferred to Wave 2, so this ledger is EMPTY under real traffic
++        today. See ``model_provider_cost`` for the keying precondition and
++        known Wave-2 gaps."""
+         with self._lock:
+             return dict(self._model_provider_cost)
+ 
+diff --git a/tests/test_meter_model_provider.py b/tests/test_meter_model_provider.py
+index a299b1c..4b63773 100644
+--- a/tests/test_meter_model_provider.py
++++ b/tests/test_meter_model_provider.py
+@@ -1,5 +1,11 @@
+ """METER-MODEL-PROVIDER Wave 1 — real per-(model, provider) cost metering.
+ 
++NOTE: ``forwarder.py`` caller-wiring (setting ``provider=route.label`` on
++``observe()``/``record_spend()`` calls) is DEFERRED to Wave 2. The
++per-(model, provider) meter is therefore EMPTY under real traffic today.
++These tests exercise the metering mechanism directly via explicit
++``provider=`` arguments — they do not reflect any production call site.
++
+ Replaces est_cost fabrication with authoritative ACTUAL metered cost per request
+ keyed by (model, provider). Includes the metering-invariant canary harness
+ (replay a recorded request stream through the new meter and assert cost-total
+[0m
+Diff is clean — all four fixes applied, no runtime logic touched, REVIEW-PACKET.md untouched. Now committing with the specified message.
+[0m$ [0mgit add src/charon/proxy.py src/charon/balance.py tests/test_meter_model_provider.py && git commit -m "METER-MODEL-PROVIDER: soften authoritative docstrings + document deferred wiring / Wave-2 gaps (review adjudication)" && git rev-parse HEAD
+[feat/meter-model-provider 38ce351] METER-MODEL-PROVIDER: soften authoritative docstrings + document deferred wiring / Wave-2 gaps (review adjudication)
+ 3 files changed, 66 insertions(+), 21 deletions(-)
+38ce3513bd7704d9d025f730da2e2b5417716c57
+[0m
+Committed. Now updating the board to done and releasing.
+[0m⚙ [0msession-bridge_update {"session_id":"obi-wan-kenobi","status":"done"}
+Done. Doc-only fixes applied — all 4 adjudication items, no runtime logic touched:
+
+1. **Softened authoritative present-tense docstrings** (proxy.py: `model_provider_cost`, `all_model_provider_costs`, `record`, `observe`, field comment at L287; balance.py: `model_spend`, `record_spend`, field comment at L170) → future/deferred "WILL be read" + "EMPTY under real traffic today" phrasing.
+2. **Documented keying precondition** on `model_provider_cost()`, `all_model_provider_costs()`, and `model_spend()` — `model` must be the EXACT `requested_model`/`record_spend` string; `provider=None`/`model=None` advance the global counter but are NOT metered per-route.
+3. **Added header note** to `tests/test_meter_model_provider.py` — forwarder.py caller-wiring deferred to Wave 2, meter EMPTY in real traffic, tests exercise the mechanism directly.
+4. **Added KNOWN-WAVE2-GAPS comment** in `model_provider_cost()` docstring — (a) negative/refund costs passed through unguarded (guarding would break the delta-zero invariant), (b) unpriced responses diverge from the spend-limiter's est_cost floor by design.
+
+**Verified**: all 18 tests pass, ruff clean, mypy clean.
+
+```
+commit 38ce3513bd7704d9d025f730da2e2b5417716c57 (HEAD -> feat/meter-model-provider)
+METER-MODEL-PROVIDER: soften authoritative docstrings + document deferred wiring / Wave-2 gaps (review adjudication)
+```
+
+New commit SHA: `38ce3513bd7704d9d025f730da2e2b5417716c57`
+[charon-run] SUCCESS on model 'glm-5.2' (rc=0)
+CHARON_RUN_RESULT=SUCCESS model=glm-5.2
