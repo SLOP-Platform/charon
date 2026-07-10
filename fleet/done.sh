@@ -23,7 +23,9 @@ REPO_SLUG="$(git -C "$CHARON_REPO" remote get-url origin 2>/dev/null | sed -E 's
 canon(){ local w="$1" f b; for f in "$BOARD"/*.md "$BOARD"/archive/*.md; do [ -e "$f" ] || continue
   b="$(basename "$f" .md)"; [ "${b,,}" = "${w,,}" ] && { echo "$b"; return 0; }; done
   echo "done.sh: no board ticket matching '$w'" >&2; return 1; }
-meta(){ awk -F': ' -v k="$1" '$1==k{sub(/^[^:]*: ?/,"");print;exit}' "$2" 2>/dev/null; }
+# best-effort field read: a MISSING file (e.g. an archived-only ticket has no active board/<id>.md)
+# must yield "" and exit 0, NOT abort the script under `set -e` before the archive-path fallback runs.
+meta(){ awk -F': ' -v k="$1" '$1==k{sub(/^[^:]*: ?/,"");print;exit}' "$2" 2>/dev/null || true; }
 
 # merged PR number for head-branch <1>. Fixture hook DONE_MERGED_SRC wins (offline test).
 merged_pr_for_branch(){
