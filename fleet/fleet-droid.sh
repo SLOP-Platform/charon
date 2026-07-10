@@ -39,7 +39,10 @@ case "$MODEL" in frontier) MODEL=opus;; strong) MODEL=sonnet;; economy) MODEL=ha
 DROID="$TIER-$$"; current=""; empties=0
 # Release the in-flight claim if the tab is Ctrl-C'd / killed (no stuck tickets).
 cleanup(){ if [ -n "${current:-}" ] && [ ! -e "$FLEET/state/submitted/$current" ]; then
-  bash "$FLEET/release.sh" "$current" >/dev/null 2>&1 || true; fi; }
+  bash "$FLEET/release.sh" "$current" >/dev/null 2>&1 || true; fi
+  # Drop this run's loop-guard counters (per-run scratch); durable quarantine markers under
+  # state/loop-guard/<id> PERSIST for the manager to inspect + clear.
+  rm -rf "$FLEET/state/loop-guard/runs/$DROID" 2>/dev/null || true; }
 trap 'cleanup; echo "[$DROID] stood down."; exit 130' INT TERM
 trap cleanup EXIT
 wmsg=""; [ "$WAIT_MIN" -gt 0 ] && wmsg=", wait=${WAIT_MIN}m retries=${RETRIES} patience=${PATIENCE}"
@@ -88,7 +91,14 @@ $spec"
     # Release for retry rather than pushing an empty branch.
     if [ -z "$(git -C "$wt" log --oneline "origin/master..$branch" 2>/dev/null)" ]; then
       echo "[$DROID] $id produced NO commits and NO changes — releasing for retry (nothing to publish)."
-      bash "$FLEET/release.sh" "$id" || true; current=""; continue
+      bash "$FLEET/release.sh" "$id" || true; current=""
+      # LOOP-GUARD: count this zero-commit release. After N (default 2) of the SAME id in this
+      # run, loop-guard.sh quarantines it (claim.sh then skips it) so we can't spin forever on
+      # a parked/blocked/bad-prompt ticket and starve the next ready one. It prints the
+      # escalation itself and exits 2 on quarantine.
+      bash "$FLEET/loop-guard.sh" record "$id" "$DROID" \
+        || echo "[$DROID] LOOP-GUARD: $id quarantined for this board — skipping it from now on."
+      continue
     fi
     # Drop any stale remote branch from a prior/closed PR so the push fast-forwards, then
     # push + open the DRAFT PR. If either fails, fall through: submit.sh grounds on a real
@@ -113,6 +123,10 @@ $spec"
     fi
   else
     bash "$FLEET/release.sh" "$id" || true; current=""
+    # LOOP-GUARD: a non-zero exit is also a zero-commit release — count it so repeated
+    # hard failures on the SAME id are quarantined rather than re-claimed forever.
+    bash "$FLEET/loop-guard.sh" record "$id" "$DROID" \
+      || echo "[$DROID] LOOP-GUARD: $id quarantined for this board (repeated non-zero exits) — skipping it from now on."
     echo "[$DROID] $id session exited non-zero — released for retry."
   fi
 done

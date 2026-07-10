@@ -196,6 +196,29 @@ detect_repo_drift(){
   detect_repo_drift_one "$CHARON_REPO" "charon"
 }
 
+# claim-loop signature: the fleet-droid loop-guard writes a durable state/loop-guard/<id>
+# marker when the SAME id was claimed+released with ZERO commits >= N times (the
+# claim -> no-op -> release -> re-claim spin that starved the board on 2026-07-09). Any such
+# marker is an active, unregistered risk: a ticket a droid could not make progress on.
+detect_claim_loop(){
+  local lg="$HERE/state/loop-guard" list count
+  [ -d "$lg" ] || { echo "clean: claim-loop (no loop-guard quarantines)"; return 0; }
+  list=""
+  for f in "$lg"/*; do
+    [ -f "$f" ] || continue   # skips runs/ dir + per-run counters
+    list="$list
+$(basename "$f"): $(head -1 "$f" 2>/dev/null)"
+  done
+  list="$(printf '%s\n' "$list" | grep -v '^$')"
+  count=0; [ -n "$list" ] && count="$(printf '%s\n' "$list" | grep -c .)"
+  if [ "$count" -gt 0 ]; then
+    report_hits "claim-loop (droid re-claimed+released same id with 0 commits — quarantined)" "$count" "$list"
+    echo "    -> manager: fix the block (park the ticket / correct its deps or prompt), then 'fleet/loop-guard.sh clear <id>'"
+  else
+    echo "clean: claim-loop (no loop-guard quarantines)"
+  fi
+}
+
 detect_health(){
   local vb="$HERE/validate_board.sh"
   [ -f "$vb" ] || { echo "health: validate_board.sh not found at $vb"; return 0; }
@@ -237,6 +260,7 @@ cmd_detect(){
   detect_untracked_drift
   detect_secret_scan
   detect_repo_drift
+  detect_claim_loop
   detect_wci_contention
   if [ $full -eq 1 ]; then
     detect_health

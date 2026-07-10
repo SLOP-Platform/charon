@@ -31,6 +31,17 @@ for pass in $passes; do
     [ -e "$STATE/claims/$id" ] && continue
     [ -e "$STATE/submitted/$id" ] && continue
     [ -e "$STATE/done/$id" ] && continue
+    # PARK: a ticket explicitly parked in its board file is STAGED, not claimable (gated on
+    # an operator/manager decision). Recognize the clean field `parked: true` and, as a
+    # fallback, a `note:` whose text contains PARKED. Data-only under the flock (meta = awk;
+    # no Python spawned), matching the existing style. This is the fix for the claim-loop:
+    # BENCH-OOB-GRADING carried `note: PARKED` but no marker, so it was offered forever.
+    case "$(meta parked "$f" | tr 'A-Z' 'a-z')" in true|yes|1) continue;; esac
+    case "$(meta note "$f")" in *PARKED*) continue;; esac
+    # LOOP-GUARD quarantine: fleet-droid.sh parks an id here after repeated zero-commit
+    # re-claims (the claim -> refuse/no-op -> release -> re-claim spin). Manager clears it
+    # via fleet/loop-guard.sh clear <id>. (release.sh does NOT remove this marker.)
+    [ -e "$STATE/loop-guard/$id" ] && continue
     ttier="$(meta tier "$f")"; trank=$(rank "$ttier")
     [ "$trank" -le "$drank" ] || continue
     if [ "$pass" = own ]; then [ "$ttier" = "$TIER" ] || continue

@@ -51,14 +51,28 @@ for f in sorted(glob.glob(os.path.join(board, "*.md"))):
         "deps": [d.strip() for d in field(f, "depends_on").split(",") if d.strip()],
         "owns": [o.strip() for o in field(f, "owns").split(",") if o.strip()],
         "work_class": field(f, "work_class"),
+        "note": field(f, "note"),
+        "parked_field": field(f, "parked"),
+        "build_after": field(f, "build-after"),
         "just": just,
         "depbuild": depbuild,
     }
 ids = {t.lower(): t for t in tickets}
+# .md.parked files are NOT scanned as tickets, but build-after may reference them.
+parked_files = {os.path.basename(f)[:-len(".md.parked")].lower()
+                for f in glob.glob(os.path.join(board, "*.md.parked"))}
+
+def is_parked(d):
+    # Matches claim.sh's park rule EXACTLY: explicit `parked: true` field OR a `note:`
+    # whose text contains PARKED. A parked ticket is staged, not live.
+    return (d["parked_field"].strip().lower() in ("true", "yes", "1")
+            or "PARKED" in d["note"].upper())
 red, info, wci = [], [], []
 
 # 1. prompt files exist
 for t, d in tickets.items():
+    if is_parked(d):
+        continue  # a parked ticket may legitimately not have its prompt written yet
     if d["prompt"] and not os.path.exists(d["prompt"]):
         red.append(f"missing-prompt: {t} -> {d['prompt']}")
 
@@ -80,6 +94,8 @@ except Exception as e:
     red.append(f"work-class-check-failed: could not import capability/grades.py — {e}")
 if _VALID_WORK_CLASSES is not None:
     for t, d in tickets.items():
+        if is_parked(d):
+            continue  # parked = staged, not live; exempt from the live-ticket work_class gate
         wc = d["work_class"]
         if not wc:
             red.append(f"work-class-missing: {t} has no 'work_class:' field "
@@ -109,6 +125,11 @@ def ordered(a, b):  # one runs strictly before the other?
     return reaches(a, b) or reaches(b, a)
 def is_done(t):
     return os.path.exists(os.path.join(fleet, "state", "done", t))
+def inactive(t):
+    # Not live: already done OR staged/parked. Both are exempt from the "live ticket must be
+    # fully claimable" checks (work_class, D&S, owns-collision, WCI, missing-prompt) — a
+    # parked ticket may legitimately have an unwritten prompt / provisional owns.
+    return is_done(t) or is_parked(tickets[t])
 
 # 4. owns partition. A collision is only a LAUNCH RISK if >=2 of the owners are
 # not-done (could still run concurrently). Done/done or done/live pairs already
@@ -122,7 +143,7 @@ for p, owners in sorted(path_owners.items()):
     if "*" in p:
         info.append(f"glob-owns (can't partition, verify by hand): {p} <- {' '.join(owners)}")
         continue
-    live = [o for o in owners if not is_done(o)]
+    live = [o for o in owners if not inactive(o)]
     unsequenced = [(a, b) for i, a in enumerate(live) for b in live[i+1:] if not ordered(a, b)]
     if len(live) >= 2 and unsequenced:
         pairs = ", ".join(f"{a}|{b}" for a, b in unsequenced)
@@ -153,7 +174,7 @@ def owns_overlap(a, b):  # any shared path or glob match either direction
 # (disjoint owns != a dependency — a disjoint dep must be JUSTIFIED, not assumed.)
 # Only live (not-done) dependents matter: a done ticket's dep blocks nothing now.
 for t, d in tickets.items():
-    if is_done(t):
+    if inactive(t):
         continue
     for dep in d["deps"]:
         x = ids.get(dep.lower())
@@ -168,13 +189,52 @@ for t, d in tickets.items():
 
 # WCI-2. Redundancy: two live tickets declaring the IDENTICAL non-empty owns set
 # (likely duplicate/contradictory work). Same-branch duplicates = check 3 above.
-live = sorted(t for t in tickets if not is_done(t))
+live = sorted(t for t in tickets if not inactive(t))
 for i, a in enumerate(live):
     for b in live[i+1:]:
         oa, ob = set(tickets[a]["owns"]), set(tickets[b]["owns"])
         if oa and oa == ob:
             red.append(f"WCI redundancy: {a} and {b} declare the IDENTICAL owns set "
                        f"({', '.join(sorted(oa))}) — likely duplicate/contradictory work")
+
+# ===== PARK consistency (claim-loop root cause, 2026-07-09) =====
+# The claim -> no-commit -> release -> re-claim spin happened because BENCH-OOB-GRADING was
+# PARKED (note: PARKED) but had NO clean signal claim.sh honored and NO state marker, so it
+# was offered forever. Enforce that parked tickets are represented so claim.sh + validator +
+# humans agree, and that build-after sequencing (which claim.sh does NOT enforce) can't let a
+# ticket be claimed ahead of its predecessor.
+for t, d in tickets.items():
+    if is_done(t):
+        continue
+    parked = is_parked(d)
+    # PARK-1: a parked ticket must not also hold an active claim (a droid claimed a parked
+    # ticket — the exact runtime symptom of the loop). PARKED-but-claimable made concrete.
+    if parked and os.path.exists(os.path.join(fleet, "state", "claims", t)):
+        red.append(f"parked-but-claimed: {t} is PARKED yet has an active state/claims/{t} "
+                   f"marker — a droid claimed a parked ticket (claim-loop risk). Release it "
+                   f"(fleet/release.sh {t}) or un-park the ticket.")
+    # PARK-2: parked-by-note-only is fragile (a prose typo silently un-parks it). Require the
+    # explicit `parked: true` field so claim.sh + validator + humans all agree. This is the
+    # exact inconsistency that caused the loop (BENCH-OOB relied on note text alone).
+    if parked and d["parked_field"].strip().lower() not in ("true", "yes", "1"):
+        red.append(f"parked-note-only: {t} is parked via a 'note:' containing PARKED but has "
+                   f"no explicit 'parked: true' field — add 'parked: true' (note text is a "
+                   f"fragile park signal).")
+    # PARK-3: claim.sh honors depends_on but NOT build-after. A live (non-parked) ticket whose
+    # build-after predecessor is not yet done would be claimed prematurely — park it, or
+    # convert build-after -> depends_on if it is a genuine hard prereq.
+    if not parked and d["build_after"]:
+        ba = re.split(r"[,\s]+", d["build_after"].strip())[0].strip().lower()
+        if ba:
+            ba_id = ids.get(ba)
+            ba_done = ba_id is not None and is_done(ba_id)
+            ba_parked = ba in parked_files or (ba_id is not None and is_parked(tickets[ba_id]))
+            if not ba_done:
+                red.append(f"build-after-unenforced: {t} has build-after '{ba}' which is "
+                           f"{'PARKED' if ba_parked else 'not done'}, but {t} is NOT parked — "
+                           f"claim.sh ignores build-after, so {t} would be claimed ahead of it. "
+                           f"Park {t} ('parked: true') or convert build-after -> depends_on if "
+                           f"it is a hard prereq.")
 
 # D&S. STANDING RULE (mechanized): every LIVE ticket must self-document Dependencies
 # & Sequence so a FRESH processor (no project history) can order it + avoid collisions.
@@ -184,7 +244,7 @@ for i, a in enumerate(live):
 import re as _re
 _DS = _re.compile(r"##\s*dependencies\s*&\s*sequence", _re.I)
 for t, d in tickets.items():
-    if is_done(t):
+    if inactive(t):
         continue
     p = d["prompt"]
     if not p or not os.path.exists(p):
