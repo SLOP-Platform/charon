@@ -10,7 +10,12 @@ set -uo pipefail   # deliberately NOT -e: a red check_cmd exits non-zero — tha
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TSV="$HERE/reds.tsv"
 VALIDATE_BOARD="$HERE/validate_board.sh"
+VERIFY_MERGED_SH="$HERE/verify-merged.sh"
 BOARD_RED_ID="board-validator-red"
+# shared merge-verification helper (verify_merged) — the ONE source of truth for G2/G3a.
+FLEET="$HERE"
+# shellcheck source=/dev/null
+source "$HERE/_lib.sh"
 TODAY="$(date +%F)"
 TAB=$'\t'
 
@@ -293,22 +298,79 @@ detect_needs_push(){
     [ -n "$rid" ] || continue
     run_check "$chk" && cmd_close "$rid" --override "auto: needs-push landed" >/dev/null 2>&1 || true
   done
-  # (2) per live marker: stale (ticket already done) -> clear; else ensure a blocking red.
+  # (2) per live marker: clear ONLY when the ticket is MERGE-VERIFIED (HIGH #1 fix); else keep the
+  #     blocking red. A `done` marker is NOT proof-of-merge — a false/legacy done must NEVER again
+  #     silently delete the guard protecting committed-but-unlanded work. `done` + `needs-push` +
+  #     NOT-verified is the exact contradiction danger case: keep the guard, let a human resolve.
   local m id rid n=0
   for m in "$NEEDS_PUSH_DIR"/*; do
     [ -f "$m" ] || continue
     id="$(basename "$m")"; rid="$(_np_red_id "$id")"
-    if [ -e "$DONE_DIR/$id" ]; then
+    if [ -e "$DONE_DIR/$id" ] && verify_merged "$id"; then
       rm -f "$m"
-      [ "$(_red_status "$rid")" = open ] && cmd_close "$rid" --override "auto: ticket done; stale needs-push cleared" >/dev/null 2>&1 || true
-      echo "needs-push: $id already done — stale marker cleared"
+      [ "$(_red_status "$rid")" = open ] && cmd_close "$rid" --override "auto: merge-verified; stale needs-push cleared" >/dev/null 2>&1 || true
+      echo "needs-push: $id merge-verified — stale marker cleared"
       continue
     fi
+    [ -e "$DONE_DIR/$id" ] && \
+      echo "needs-push: $id has BOTH done + needs-push but is NOT merge-verified — keeping guard (contradiction: verify the PR actually merged)"
     n=$((n+1))
     _np_red_ensure_open "$rid" "$id" "$m"
     echo "needs-push: $id STRANDED — AUTO-REGISTERED red '$rid' (blocks preflight until landed: fleet/land-needs-push.sh $id)"
   done
   [ "$n" -eq 0 ] && echo "clean: needs-push (no stranded markers)"
+  return 0
+}
+
+# --- done_merge_gate: G2 BACKFILL detector — "a done marker can't lie" (DONE-AUDIT 2026-07-10).
+# For EVERY state/done/<id> marker, re-run the merge-verification (verify_merged) rather than
+# trusting the marker's mere existence. A marker that FAILS verification AUTO-REGISTERS a blocking
+# P1 reds.tsv red 'done-unmerged-<id>' whose check_cmd re-runs verify-merged.sh, so it SELF-CLOSES
+# the instant the ticket actually lands. Identical machinery to detect_needs_push/board_gate: it
+# lands in reds.tsv BEFORE cmd_scan, so a lying done marker BLOCKS preflight exactly like a red
+# board. Offline-tolerant (verify_merged prefers local git checks). Override markers are a RECORDED
+# exception (not a lie) -> surfaced, never red. This closes the bypass that stranded
+# CI-WORKFLOW-POLICY-GATE and fired 32x historically.
+_dm_red_id(){ printf 'done-unmerged-%s' "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\{1,\}/-/g; s/^-//; s/-$//')"; }
+_dm_red_ensure_open(){
+  local rid="$1" id="$2" st; st="$(_red_status "$rid")"
+  if [ -z "$st" ]; then
+    cmd_add "$rid" P1 gate \
+      "done marker for $id is NOT merge-verified — refuse to trust it; land/prove it (done.sh $id --merged-sha <sha>) or override, or it blocks preflight" \
+      "bash '$VERIFY_MERGED_SH' '$id'" >/dev/null 2>&1 || true
+  elif [ "$st" = closed ]; then
+    local tmp; tmp="$(mktemp)"
+    awk -F"$TAB" -v OFS="$TAB" -v id="$rid" \
+      '/^#/{print;next} $1==id{$7="open";$8=""} {print}' "$TSV" > "$tmp" && mv "$tmp" "$TSV"
+  fi
+}
+done_merge_gate(){
+  [ -d "$DONE_DIR" ] || { echo "clean: done-merge-gate (no done markers)"; return 0; }
+  # (1) auto-close any done-unmerged-* red whose ticket now verifies merged.
+  awk -F"$TAB" '$7=="open" && $1 ~ /^done-unmerged-/{print $1 "\t" $6}' "$TSV" | \
+  while IFS="$TAB" read -r rid chk; do
+    [ -n "$rid" ] || continue
+    run_check "$chk" && cmd_close "$rid" --override "auto: done marker now merge-verified" >/dev/null 2>&1 || true
+  done
+  # (2) per done marker: override -> surface; verified -> ok; else -> blocking red.
+  local m id rid unmerged=0 ov=0
+  for m in "$DONE_DIR"/*; do
+    [ -f "$m" ] || continue
+    id="$(basename "$m")"; rid="$(_dm_red_id "$id")"
+    if grep -q 'override:' "$m" 2>/dev/null; then
+      ov=$((ov+1)); echo "done-merge-gate: $id closed by OPERATOR OVERRIDE —$(sed -n 's/.*override:/ /p' "$m" | head -1)"
+      [ "$(_red_status "$rid")" = open ] && cmd_close "$rid" --override "auto: override recorded on marker" >/dev/null 2>&1 || true
+      continue
+    fi
+    if verify_merged "$id"; then
+      [ "$(_red_status "$rid")" = open ] && cmd_close "$rid" --override "auto: done marker merge-verified" >/dev/null 2>&1 || true
+      continue
+    fi
+    unmerged=$((unmerged+1))
+    _dm_red_ensure_open "$rid" "$id"
+    echo "done-merge-gate: $id done but NOT merge-verified — AUTO-REGISTERED blocking red '$rid' (prove: done.sh $id --merged-sha <sha>, or override)"
+  done
+  [ "$unmerged" -eq 0 ] && echo "done-merge-gate: clean ($ov override(s); all other done markers merge-verified)"
   return 0
 }
 
@@ -357,7 +419,7 @@ show_operator_actions(){
 # functions above are exposed with NO side effects.
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 case "${1:-scan}" in
-  scan|"") bash "$HERE/reconcile-merged.sh"; bash "$HERE/retire-done.sh"; board_gate; detect_needs_push; cmd_scan; scan_rc=$?; cmd_detect; show_operator_actions; exit $scan_rc ;;
+  scan|"") bash "$HERE/reconcile-merged.sh"; board_gate; done_merge_gate; detect_needs_push; bash "$HERE/retire-done.sh"; cmd_scan; scan_rc=$?; cmd_detect; show_operator_actions; exit $scan_rc ;;
   add)     shift; cmd_add "$@" ;;
   close)   shift; cmd_close "$@" ;;
   list)    shift; cmd_list "$@" ;;

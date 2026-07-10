@@ -1,71 +1,100 @@
 #!/usr/bin/env bash
 # reconcile-merged.sh — AUTO-`done` ON MERGE (fleet build-rig only).
 #
-# MECHANIZES the #2 fragility: done.sh correctly REFUSES a premature close, but the manager must
-# REMEMBER to run it after every merge; a forgotten close freezes every dependent (the board
-# stalls, retire-done never fires). This is the safety-net that removes the memory step.
+# MECHANIZES fragility #2 AND the Wave-A HIGH #2 fix: map each MERGED PR back to its board ticket by
+# VERIFIED MERGE / `owns`-file OVERLAP — NOT a bare branch-name string match — and close it through
+# the HARDENED done.sh with the discovered `--merged-sha`, so the marker carries REAL proof (never
+# the old `--no-verify`). This kills two hazards at once:
+#   * branch-name reuse can no longer mis-close a re-created ticket (an old merged PR with the same
+#     short branch name — e.g. `feat/tick` — would have string-matched the NEW open ticket), and
+#   * a merge whose branch DRIFTED from the board meta (SR-1 case) now still auto-closes via owns.
 #
-# For every MERGED PR head-branch, map it back to its board ticket and — if that ticket is not
-# already state/done/<id> — run done.sh --no-verify for it (the merge is already proven, so no
-# need to re-check the PR). Idempotent: a ticket already done is skipped. Safe to run every
-# preflight. Called from preflight.sh's scan path, same shape as retire-done.sh.
+# Per-PR mapping precedence:  1) board `branch:` == PR head-branch, else  2) `owns:` files OVERLAP
+# the PR's changed files. Close: done.sh <id> --merged-sha <mergeSha> (proof written into marker).
 #
-# Network-tolerant: if `gh` is unavailable/offline the merged-branch list is empty and this is a
-# clean no-op (never blocks preflight).
+# Network-tolerant: gh missing/offline -> empty list -> clean no-op (never blocks preflight).
 #
-# TEST HOOK: set RECONCILE_MERGED_SRC=<file> (one head-branch per line) to inject a fixture list
-# instead of calling `gh` — see fleet/tests/reconcile-merged.test.sh. Keeps the mapping+close
-# logic exercisable offline.
+# TEST HOOK: RECONCILE_MERGED_SRC=<file>, TSV "<branch>\t<mergeSha>\t<f1,f2,..>\t<pr#>" (fields after
+# <branch> optional) injects the merged-PR set instead of gh. DONE_CHARON_REPO / RECONCILE_DONE_SH /
+# RECONCILE_REPO_SLUG override the product repo, done.sh path, and slug for isolated tests.
 set -uo pipefail
 FLEET="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BOARD="$FLEET/board"; DONE="$FLEET/state/done"
-REPO_SLUG="${RECONCILE_REPO_SLUG:-SLOP-Platform/charon}"
+BOARD="$FLEET/board"; DONE="$FLEET/state/done"; TAB=$'\t'
+CHARON_REPO="${DONE_CHARON_REPO:-/home/stack/code/charon}"
+REPO_SLUG="${RECONCILE_REPO_SLUG:-$(git -C "$CHARON_REPO" remote get-url origin 2>/dev/null | sed -E 's#(git@[^:]*:|https?://[^/]*/)##; s/\.git$//')}"
+[ -n "$REPO_SLUG" ] || REPO_SLUG="SLOP-Platform/charon"
 DONE_SH="${RECONCILE_DONE_SH:-$FLEET/done.sh}"
 
-meta(){ awk -F': ' -v k="$1" '$1==k{sub(/^[^:]*: ?/,"");print;exit}' "$2"; }
+meta(){ awk -F': ' -v k="$1" '$1==k{sub(/^[^:]*: ?/,"");print;exit}' "$2" 2>/dev/null; }
 
-# merged head-branches, one per line. Fixture file wins (offline test); else gh.
-merged_branches(){
+# merged PRs as TSV "branch\tsha\tfiles\tpr". Fixture wins (offline); else gh.
+merged_prs(){
   if [ -n "${RECONCILE_MERGED_SRC:-}" ]; then
     [ -f "$RECONCILE_MERGED_SRC" ] && grep -v '^[[:space:]]*$' "$RECONCILE_MERGED_SRC" || true
     return 0
   fi
   command -v gh >/dev/null 2>&1 || return 0
   gh pr list --repo "$REPO_SLUG" --state merged --limit 200 \
-     --json headRefName -q '.[].headRefName' 2>/dev/null || true
+     --json headRefName,mergeCommit,files,number \
+     -q '.[] | [.headRefName, (.mergeCommit.oid // ""), ([.files[].path]|join(",")), (.number|tostring)] | @tsv' \
+     2>/dev/null || true
 }
 
-# branch -> board ticket id (active board OR archive). Empty if none maps.
-ticket_for_branch(){
-  local want="$1" f b
+# do comma-list <1> and comma-list <2> share any path?  0 = yes.
+_overlap(){
+  local a="$1" b="$2" x y; local IFS=','
+  for x in $a; do
+    x="$(printf '%s' "$x" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"; [ -n "$x" ] || continue
+    for y in $b; do
+      y="$(printf '%s' "$y" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"; [ -n "$y" ] || continue
+      [ "$x" = "$y" ] && return 0
+    done
+  done
+  return 1
+}
+
+# map a merged PR (head-branch, changed-files) -> board ticket id. Branch-meta match FIRST, then
+# owns-file overlap (branch drifted). Empty if none maps.
+ticket_for_pr(){
+  local want_branch="$1" pr_files="$2" f b ownsf
   for f in "$BOARD"/*.md "$BOARD"/archive/*.md; do
     [ -e "$f" ] || continue
-    b="$(meta branch "$f")"
-    [ "$b" = "$want" ] || continue
+    b="$(meta branch "$f")"; [ -n "$b" ] && [ "$b" = "$want_branch" ] || continue
     basename "$f" .md; return 0
+  done
+  [ -n "$pr_files" ] || return 1
+  for f in "$BOARD"/*.md "$BOARD"/archive/*.md; do
+    [ -e "$f" ] || continue
+    ownsf="$(meta owns "$f")"; [ -n "$ownsf" ] || continue
+    if _overlap "$ownsf" "$pr_files"; then basename "$f" .md; return 0; fi
   done
   return 1
 }
 
 mkdir -p "$DONE"
 reconciled=0; seen=0
-while IFS= read -r br; do
-  [ -n "$br" ] || continue
+while IFS="$TAB" read -r branch sha files pr; do
+  [ -n "${branch:-}" ] || continue
   seen=$((seen+1))
-  id="$(ticket_for_branch "$br")" || continue      # merged branch with no board ticket -> ignore
-  [ -e "$DONE/$id" ] && continue                    # already done -> idempotent no-op
-  echo "reconcile-merged: $br is MERGED but $id is not done — auto-closing (merge proven)."
-  # --no-verify: the merge is already proven by the merged-PR listing; skip the gh re-check.
-  if bash "$DONE_SH" "$id" --no-verify; then
-    reconciled=$((reconciled+1))
+  id="$(ticket_for_pr "$branch" "${files:-}")" || continue   # no board ticket maps -> ignore
+  [ -e "$DONE/$id" ] && continue                             # already done -> idempotent no-op
+  echo "reconcile-merged: merged PR (branch=$branch) maps to $id — auto-closing WITH proof."
+  rc=0
+  if [ -n "${sha:-}" ]; then
+    bash "$DONE_SH" "$id" --merged-sha "$sha" || rc=$?
   else
-    echo "reconcile-merged: WARNING — done.sh failed for $id (see above)." >&2
+    # no merge sha available -> hand done.sh a proven merged-branch list so it writes merged:#pr proof.
+    tmpsrc="$(mktemp)"; printf '%s\t%s\n' "$branch" "${pr:-0}" > "$tmpsrc"
+    DONE_MERGED_SRC="$tmpsrc" bash "$DONE_SH" "$id" || rc=$?
+    rm -f "$tmpsrc"
   fi
-done < <(merged_branches)
+  if [ "$rc" -eq 0 ]; then reconciled=$((reconciled+1))
+  else echo "reconcile-merged: WARNING — done.sh failed for $id (rc=$rc; see above)." >&2; fi
+done < <(merged_prs)
 
 if [ "$reconciled" -gt 0 ]; then
-  echo "reconcile-merged: auto-closed $reconciled merged-but-open ticket(s)."
+  echo "reconcile-merged: auto-closed $reconciled merged-but-open ticket(s) with recorded proof."
 else
-  echo "reconcile-merged: clean (no merged ticket left open; scanned $seen merged branch(es))."
+  echo "reconcile-merged: clean (no merged ticket left open; scanned $seen merged PR(s))."
 fi
 exit 0

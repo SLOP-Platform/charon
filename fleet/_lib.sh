@@ -16,3 +16,83 @@ deps_done(){ local raw="${1:-}" d dc; [ -n "$raw" ] || return 0
     dc="$(canon "$d" 2>/dev/null)" || dc="$d"
     [ -e "$FLEET_LIB_STATE/done/$dc" ] || return 1
   done; return 0; }
+
+# --- verify_merged <id>: THE ONE source of truth for "is <id> genuinely LANDED in the product
+# repo's origin/master" (G1 done.sh, G2 preflight done_merge_gate, G3a detect_needs_push, G3b
+# reconcile-merged, G3c retire-done). Replaces the old "trust that a `done` marker exists" logic
+# that let a lying marker delete the needs-push guard / cascade unblocks over stranded work.
+#
+# Proof precedence (LOCAL/offline checks first, so a full-board sweep does not hammer the network):
+#   1. marker carries `merged:<sha>`  -> sha is an ancestor of the product origin/master (git, local)
+#   2. `owns:` files are all present in origin/master (git cat-file, local — the audit's content test)
+#   3. marker carries `merged:#<pr>`  -> that PR is merged (gh, network)
+#   4. board `branch:` has a merged PR (gh, network)
+# Returns 0 = merge-verified, 1 = NOT verified. NEVER errors out (each step is guarded), so it is
+# safe to call from a `set -e` script AS A CONDITION (always `if verify_merged ...; then`).
+#
+# TEST HOOK: VERIFY_MERGED_FIXTURE=<file> — when set, returns 0 iff <id> appears (case-insensitive,
+# whole line) in that file. Keeps every gate exercisable fully offline. VERIFY_MERGED_REPO overrides
+# the product-repo path (default /home/stack/code/charon).
+VERIFY_MERGED_REPO_DEFAULT="/home/stack/code/charon"
+_vm_meta(){ awk -F': ' -v k="$1" '$1==k{sub(/^[^:]*: ?/,"");print;exit}' "$2" 2>/dev/null; }
+_vm_repo(){ printf '%s' "${VERIFY_MERGED_REPO:-$VERIFY_MERGED_REPO_DEFAULT}"; }
+_vm_slug(){ git -C "$(_vm_repo)" remote get-url origin 2>/dev/null \
+              | sed -E 's#(git@[^:]*:|https?://[^/]*/)##; s/\.git$//'; }
+_vm_sha_in_master(){ git -C "$(_vm_repo)" merge-base --is-ancestor "$1" origin/master 2>/dev/null; }
+_vm_pr_merged(){
+  command -v gh >/dev/null 2>&1 || return 1
+  local slug m; slug="$(_vm_slug)"; [ -n "$slug" ] || return 1
+  m="$(gh pr view "$1" --repo "$slug" --json mergedAt -q '.mergedAt' 2>/dev/null || true)"
+  [ -n "$m" ] && [ "$m" != "null" ]
+}
+_vm_branch_merged(){
+  command -v gh >/dev/null 2>&1 || return 1
+  local slug n; slug="$(_vm_slug)"; [ -n "$slug" ] || return 1
+  n="$(gh pr list --repo "$slug" --head "$1" --state merged --json number -q '.[0].number' 2>/dev/null || true)"
+  [ -n "$n" ]
+}
+# every comma-separated `owns:` path exists in origin/master. Empty owns is NOT a positive proof.
+_vm_owns_present(){
+  local repo owns="$1" p any=0; repo="$(_vm_repo)"
+  local IFS=','
+  for p in $owns; do
+    p="$(printf '%s' "$p" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    [ -n "$p" ] || continue
+    any=1
+    git -C "$repo" cat-file -e "origin/master:$p" 2>/dev/null || return 1
+  done
+  [ "$any" -eq 1 ]
+}
+verify_merged(){
+  local id="$1"
+  if [ -n "${VERIFY_MERGED_FIXTURE:-}" ]; then
+    [ -f "$VERIFY_MERGED_FIXTURE" ] && grep -qix -- "$id" "$VERIFY_MERGED_FIXTURE" 2>/dev/null
+    return $?
+  fi
+  local marker="$FLEET_LIB_STATE/done/$id" proof val=""
+  local bfile="$FLEET_LIB_BOARD/$id.md"
+  [ -f "$bfile" ] || bfile="$FLEET_LIB_BOARD/archive/$id.md"
+  # 1. local: marker-carried sha ancestry
+  if [ -f "$marker" ]; then
+    proof="$(grep -oE 'merged:#?[0-9a-fA-F]+' "$marker" 2>/dev/null | head -1)"
+    val="${proof#merged:}"; val="${val#\#}"
+    if printf '%s' "$val" | grep -qiE '^[0-9a-f]{7,40}$'; then
+      _vm_sha_in_master "$val" && return 0
+    fi
+  fi
+  # 2. local: owns-content present in origin/master (Phase-1 fallback; tightened in Phase 4)
+  if [ -f "$bfile" ]; then
+    local owns; owns="$(_vm_meta owns "$bfile")"
+    [ -n "$owns" ] && _vm_owns_present "$owns" && return 0
+  fi
+  # 3. network: marker-carried PR number is merged
+  if printf '%s' "$val" | grep -qE '^[0-9]+$'; then
+    _vm_pr_merged "$val" && return 0
+  fi
+  # 4. network: board branch has a merged PR
+  if [ -f "$bfile" ]; then
+    local branch; branch="$(_vm_meta branch "$bfile")"
+    [ -n "$branch" ] && [ "$branch" != "n/a" ] && _vm_branch_merged "$branch" && return 0
+  fi
+  return 1
+}

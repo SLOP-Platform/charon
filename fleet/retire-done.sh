@@ -16,12 +16,30 @@
 set -uo pipefail
 FLEET="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DONE="$FLEET/state/done"; BOARD="$FLEET/board"; ARCHIVE="$BOARD/archive"
+# shellcheck source=/dev/null
+source "$FLEET/_lib.sh"   # verify_merged — G3c: never retire an UNVERIFIED done marker off the board.
 [ -d "$DONE" ] || { echo "retire-done: no state/done dir — nothing to do"; exit 0; }
 mkdir -p "$ARCHIVE"
+
+# G3c guard: a marker is safe to retire (archive board + remove worktree) ONLY when it is
+# merge-verified OR carries an explicit operator override. An unverified `done` over stranded/
+# unlanded work must stay VISIBLE on the active board (and its worktree kept) so preflight's
+# done_merge_gate red is actionable, never hidden by archival.
+retire_safe(){
+  local mk="$1" tid="$2"
+  grep -q 'override:' "$mk" 2>/dev/null && return 0
+  verify_merged "$tid" && return 0
+  return 1
+}
+
 n=0
 for m in "$DONE"/*; do
   [ -f "$m" ] || continue
   id="$(basename "$m")"
+  if ! retire_safe "$m" "$id"; then
+    echo "  HELD (not retired): $id — done marker NOT merge-verified (see preflight done-merge-gate: done-unmerged-*)"
+    continue
+  fi
   if [ -f "$BOARD/$id.md" ]; then
     if git -C "$FLEET" mv "board/$id.md" "board/archive/$id.md" 2>/dev/null; then :; else
       mv "$BOARD/$id.md" "$ARCHIVE/$id.md"; fi
@@ -45,6 +63,7 @@ if [ -f "$FLEET/leak-guard.sh" ]; then
     [ -f "$m" ] || continue
     id="$(basename "$m")"; wt="$CHARON-fleet-$id"
     [ -e "$wt" ] || continue
+    retire_safe "$m" "$id" || { echo "  worktree kept: $wt — $id done marker NOT merge-verified"; continue; }
     if safe_worktree_remove "$CHARON" "$wt" "$id" "$NPDIR"; then
       wtn=$((wtn+1)); echo "  worktree removed: $wt (ticket done)"
     fi
