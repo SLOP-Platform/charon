@@ -297,7 +297,7 @@ cmd_detect(){
 }
 
 case "${1:-scan}" in
-  scan|"") board_gate; cmd_scan; scan_rc=$?; cmd_detect; exit $scan_rc ;;
+  scan|"") bash "$HERE/retire-done.sh"; board_gate; cmd_scan; scan_rc=$?; cmd_detect; exit $scan_rc ;;
   add)     shift; cmd_add "$@" ;;
   close)   shift; cmd_close "$@" ;;
   list)    shift; cmd_list "$@" ;;

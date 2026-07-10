@@ -61,6 +61,15 @@ ids = {t.lower(): t for t in tickets}
 # .md.parked files are NOT scanned as tickets, but build-after may reference them.
 parked_files = {os.path.basename(f)[:-len(".md.parked")].lower()
                 for f in glob.glob(os.path.join(board, "*.md.parked"))}
+# DONE tickets are retired off the active board (board/archive/ via retire-done.sh) but
+# remain valid depends_on targets — a dependency satisfied by COMPLETED work is satisfied,
+# not "no such ticket". Without this, archiving done tickets would falsely red every active
+# ticket that depends on shipped work.
+done_ids = {os.path.basename(f).lower()
+            for f in glob.glob(os.path.join(fleet, "state", "done", "*"))}
+# Retired tickets live in board/archive/ — a valid (non-orphan) home for a done marker.
+archived_ids = {os.path.basename(f)[:-3].lower()
+                for f in glob.glob(os.path.join(board, "archive", "*.md"))}
 
 def is_parked(d):
     # Matches claim.sh's park rule EXACTLY: explicit `parked: true` field OR a `note:`
@@ -79,7 +88,7 @@ for t, d in tickets.items():
 # 2. depends_on valid
 for t, d in tickets.items():
     for dep in d["deps"]:
-        if dep.lower() not in ids:
+        if dep.lower() not in ids and dep.lower() not in done_ids:
             red.append(f"bad-dep: {t} depends_on '{dep}' (no such ticket)")
 
 # 2b. work_class required + valid (capability/assign.py's auto-resolve source; see D&S
@@ -156,6 +165,9 @@ for p, owners in sorted(path_owners.items()):
 for sub in ("claims", "submitted", "done"):
     for m in glob.glob(os.path.join(fleet, "state", sub, "*")):
         mid = os.path.basename(m)
+        # a done marker whose ticket has been retired to board/archive/ is NOT an orphan
+        if sub == "done" and mid.lower() in archived_ids:
+            continue
         if mid not in tickets:
             red.append(f"orphan-marker: state/{sub}/{mid} matches no board ticket")
 

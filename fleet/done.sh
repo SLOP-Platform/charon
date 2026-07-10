@@ -23,3 +23,6 @@ if [ "${2:-}" != "--no-verify" ]; then
 fi
 mkdir -p "$S/done"; date -u +%FT%TZ > "$S/done/$id"; rm -f "$S/submitted/$id" "$S/claims/$id"
 echo "done $id (dependents unblocked)"
+# MECHANIZED CLOSURE: retire the just-completed ticket off the active board so done
+# tickets can never accumulate as "active" (90 had piled up before this was mechanized).
+bash "$FLEET/retire-done.sh"
