@@ -14,3 +14,5 @@ scope: |
   GATEWAY-PROGRAM §1.4-8. Consumes the (model x work_class) matrix schema from CAPABILITY-ENGINE
   matrix.py and grades from ACTUALS-LEDGER. Difficulty ladder = future ticket (data captured now).
 ds: Wave 2. AFTER matrix.py (CAPABILITY-ENGINE) + ACTUALS-LEDGER. New files, disjoint.
+
+park-reason: consumes parked CAPABILITY-ENGINE (model x work_class matrix) + ACTUALS-LEDGER; cannot start until CAPABILITY-ENGINE is built/un-parked. Un-park together.

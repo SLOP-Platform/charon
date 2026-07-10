@@ -2,7 +2,8 @@ tier: economy
 difficulty: 1  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
 work_class: docs
 branch: feat/fragility-tickets
-depends_on:
+depends_on: DIFFICULTY-SCHEMA
+real-dep: DIFFICULTY-SCHEMA (shared fleet/board/ writes — sequence to avoid concurrent board mutations)
 owns: /home/stack/charon-private/fleet/board/
 accept: ls /home/stack/charon-private/fleet/board/PROVIDER-PROBE-FIX.md /home/stack/charon-private/fleet/board/ACTION-PIN-POLICY.md /home/stack/charon-private/fleet/board/DOCKER-SMOKE-CLEANUP.md /home/stack/charon-private/fleet/board/CI-WORKFLOW-POLICY-GATE.md
 prompt: /home/stack/charon-private/prompts/fragility-tickets.md

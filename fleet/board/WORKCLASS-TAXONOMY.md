@@ -1,6 +1,6 @@
 tier: strong
 difficulty: 3
-work_class: engine
+work_class: greenfield-feature
 branch: feat/workclass-taxonomy
 depends_on:
 owns: src/charon/capability/taxonomy.py, tools/check_no_rig_import.py, tests/test_workclass_taxonomy.py

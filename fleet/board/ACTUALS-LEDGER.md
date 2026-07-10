@@ -1,6 +1,6 @@
 tier: strong
 difficulty: 3
-work_class: engine
+work_class: greenfield-feature
 branch: feat/actuals-ledger
 depends_on:
 owns: src/charon/capability/actuals.py, src/charon/capability/scorecard.py, tests/test_actuals_ledger.py
