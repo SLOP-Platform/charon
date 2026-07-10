@@ -281,6 +281,13 @@ class GatewayProxy:
         self._usage = Usage()
         self._delta_seen = Usage()
         self._model_pricing = model_pricing or {}
+        # Per-(model, provider) cumulative cost (METER-MODEL-PROVIDER Wave 1).
+        # Keyed by (requested_model, provider_label); tracks the real metered
+        # cost_usd folded in by ``record()`` when both ``provider`` and
+        # ``count_usage`` are truthy. This is the authoritative per-route spend
+        # ledger — every cost-rank and drain-then-park decision reads from here
+        # instead of fabricating an est_cost floor.
+        self._model_provider_cost: dict[tuple[str, str], float] = {}
         # Per-session cumulative usage (SESSION-COST), keyed by the caller-supplied
         # ``X-Charon-Session`` id (proxy_server.py). Purely additive bookkeeping
         # alongside ``_usage`` — never read for routing/billing decisions, so this
@@ -302,6 +309,7 @@ class GatewayProxy:
         body: dict | None = None,
         expected_model: str | None = None,
         count_usage: bool = True,
+        provider: str | None = None,
     ) -> ProxyObservation:
         """Classify one upstream response and fold it into proxy state (atomically).
 
@@ -318,12 +326,18 @@ class GatewayProxy:
         never receives that response (ADR-0005 R10a, double-counting fix). Exclusion
         is still recorded so the next request skips it.
 
+        ``provider`` is the upstream provider label (e.g. ``"deepseek"``,
+        ``"openrouter"``). When set, the cost is also folded into the per-(model,
+        provider) ledger (METER-MODEL-PROVIDER Wave 1) so cost-rank routing and
+        drain-then-park can read actual metered spend instead of fabricating an
+        est_cost floor. Omitted / None → global counter only (backward-compatible).
+
         ``observe`` = ``classify`` (pure) + ``record`` (mutate). The gateway's
         in-request failover loop calls them separately, so it can classify an
         attempt, decide whether to serve it, then bill usage only for the one it
         actually returns to the client."""
         obs = self.classify(requested_model, status, headers, body, expected_model)
-        self.record(obs, count_usage=count_usage)
+        self.record(obs, count_usage=count_usage, provider=provider)
         return obs
 
     def classify(
@@ -428,7 +442,7 @@ class GatewayProxy:
         self._model_pricing = model_pricing or {}
 
     def record(self, obs: ProxyObservation, *, count_usage: bool = True,
-              session: str | None = None) -> None:
+              session: str | None = None, provider: str | None = None) -> None:
         """Fold a classified observation into proxy state (atomically). Exclusion is
         always recorded on failover; usage is folded only when ``count_usage`` (the
         attempt was actually served to the client — ADR-0005 R10a).
@@ -438,7 +452,12 @@ class GatewayProxy:
         session id — so concurrent gateway traffic tagged with a different session
         id (or untagged, ``session=None``) never pollutes this one's cumulative
         cost. Purely additive: the global counter's behavior is unchanged whether
-        or not ``session`` is given."""
+        or not ``session`` is given.
+
+        ``provider`` (METER-MODEL-PROVIDER Wave 1) optionally also folds the same
+        usage into the per-(model, provider) ledger so cost-rank routing and
+        drain-then-park can read actual metered spend instead of fabricating an
+        est_cost floor."""
         with self._lock:
             if obs.failover:
                 # record under the requested model — the router excludes by model id.
@@ -451,6 +470,10 @@ class GatewayProxy:
                     cost_usd=self._usage.cost_usd + u.cost_usd,
                     latency_ms=self._usage.latency_ms + u.latency_ms,
                 )
+                if provider is not None:
+                    key = (obs.requested_model, provider)
+                    self._model_provider_cost[key] = (
+                        self._model_provider_cost.get(key, 0.0) + u.cost_usd)
                 if session is not None:
                     prev = self._session_usage.get(session, Usage())
                     is_new = session not in self._session_usage
@@ -488,6 +511,23 @@ class GatewayProxy:
             if session in self._session_usage:
                 self._session_usage.move_to_end(session)
             return self._session_usage.get(session, Usage())
+
+    def model_provider_cost(self, model: str, provider: str) -> float:
+        """Cumulative metered cost for one (model, provider) pair (METER-MODEL-
+        PROVIDER Wave 1). Returns 0.0 for a never-seen entry (never raises).
+
+        This is the authoritative per-route spend figure: cost-rank routing and
+        drain-then-park read from here instead of fabricating an est_cost floor.
+        The key is ``(requested_model, provider_label)`` — the model id as seen
+        by the router's pool and the upstream provider's label."""
+        with self._lock:
+            return self._model_provider_cost.get((model, provider), 0.0)
+
+    def all_model_provider_costs(self) -> dict[tuple[str, str], float]:
+        """Return a read-only snapshot of all per-(model, provider) metered costs
+        (METER-MODEL-PROVIDER Wave 1)."""
+        with self._lock:
+            return dict(self._model_provider_cost)
 
     def take_delta(self) -> Usage:
         """Atomically return usage since the last call (so a backend can attribute

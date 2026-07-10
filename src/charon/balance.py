@@ -14,7 +14,8 @@ network, no external deps.  Per-reason counters like ``quota.py``.
 
 Public API:
   ``remaining(provider) -> float|None``
-  ``record_spend(provider, usd)``
+  ``record_spend(provider, usd, model=None)``
+  ``model_spend(model, provider) -> float``
   ``should_drain(provider) -> bool``   (positive balance -> route-first)
   ``is_drained(provider, floor=0.0) -> bool``  (approx 0 -> demote/skip)
 """
@@ -165,6 +166,11 @@ class BalanceTracker:
 
         self._fixed_balances: dict[str, float] = {}
         self._counters: dict[str, int] = {}
+        # Per-(model, provider) metered spend (METER-MODEL-PROVIDER Wave 1).
+        # Accumulated by ``record_spend(provider, usd, model=...)`` so cost-rank
+        # routing and drain-then-park can read actual model-level burn rate
+        # instead of fabricating an est_cost floor.
+        self._model_spend: dict[tuple[str, str], float] = {}
 
         for provider, cfg in self._config.items():
             if cfg.get("mode") == "fixed":
@@ -210,21 +216,43 @@ class BalanceTracker:
 
         return None
 
-    def record_spend(self, provider: str, usd: float) -> None:
+    def record_spend(self, provider: str, usd: float,
+                     model: str | None = None) -> None:
         """Decrement a fixed provider's tracked balance by *usd*.
 
         For poll providers or unconfigured providers this is a no-op (their
         balance is authoritative — we don't double-count).
-        """
+
+        ``model`` (METER-MODEL-PROVIDER Wave 1) optionally also tracks per-model
+        spend on this provider so cost-rank routing can read actual model-level
+        burn rate instead of fabricating an est_cost floor."""
         usd = float(usd)
         if usd <= 0.0:
             return  # negative/zero spend is ignored
         cfg = self._config.get(provider)
         if cfg is None or cfg.get("mode") != "fixed":
+            if model is not None:
+                with self._lock:
+                    key = (model, provider)
+                    self._model_spend[key] = (
+                        self._model_spend.get(key, 0.0) + usd)
             return
         with self._lock:
             cur = self._fixed_balances.get(provider, 0.0)
             self._fixed_balances[provider] = max(cur - usd, 0.0)
+            if model is not None:
+                key = (model, provider)
+                self._model_spend[key] = (
+                    self._model_spend.get(key, 0.0) + usd)
+
+    def model_spend(self, model: str, provider: str) -> float:
+        """Cumulative metered spend for one (model, provider) pair (METER-MODEL-
+        PROVIDER Wave 1). Returns 0.0 for a never-seen entry (never raises).
+
+        Read by cost-rank routing and drain-then-park to get actual model-level
+        burn rate instead of fabricating an est_cost floor."""
+        with self._lock:
+            return self._model_spend.get((model, provider), 0.0)
 
     def should_drain(self, provider: str) -> bool:
         """True if *provider* has a positive remaining balance → route-first.
