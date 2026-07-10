@@ -41,6 +41,55 @@ _BANNED_UA_PREFIXES = ("python-urllib", "python-requests")
 _STREAM_HEAD_CAP = 65536
 
 
+def _spend_to_record(obs, est_cost: float) -> float:
+    """Amount to bill the spend limiter for a served 200 response.
+
+    The provider's METERED cost is authoritative whenever it is KNOWN — including a
+    real ``$0`` from a free-tier or flat-subscription route (a flat/free provider
+    ALWAYS reports ``cost==0``). Billing the pre-flight ``est_cost`` floor on those
+    $0 responses is the phantom-spend bug that inflated ``spend.json`` to the
+    fictional ~$223: the old ``cost if cost > 0 else est_cost`` substituted the
+    fabricated floor (``request_bytes/4 · $1.5e-6``) on EVERY free/flat completion.
+
+    Distinguish by ``obs.cost_source``:
+      * ``free`` / ``provider(0)`` — provider reported a real $0 → record 0.0.
+      * ``provider`` / ``computed`` — a real charge → record it verbatim.
+      * ``unpriced`` (usage present, no cost field, no stored pricing) or no usage
+        block at all — GENUINELY unknown → keep the ``est_cost`` floor so an
+        uncosted call still advances the universal monthly cap (SR-7). This is the
+        ONLY case the floor is substituted.
+    """
+    if obs.usage is None or obs.cost_source == "unpriced":
+        return est_cost
+    return obs.usage.cost_usd
+
+
+def _normalize_message_content(body_bytes: bytes, normalizer) -> bytes:
+    """Run the post-response normalizer over ONLY ``choices[0].message.content``,
+    never the whole JSON envelope.
+
+    ``STANDARDIZE_MD`` is a regex pass over its input string; handed the full
+    serialized body it rewrites the envelope itself (heading/fence/blank-line
+    regexes firing on JSON punctuation, ids, or a fenced code block embedded in the
+    content). The normalizer is specified to touch message content alone, so parse
+    the body, rewrite just the assistant content string, and re-serialize. Anything
+    unparseable or content-less passes through byte-for-byte (never corrupt a body
+    we can't safely address)."""
+    try:
+        obj = json.loads(body_bytes)
+    except (ValueError, TypeError):
+        return body_bytes
+    try:
+        message = obj["choices"][0]["message"]
+        content = message["content"]
+    except (KeyError, IndexError, TypeError):
+        return body_bytes
+    if not isinstance(content, str):
+        return body_bytes
+    message["content"] = normalizer.normalize(content, NormalizeMode.STANDARDIZE_MD)
+    return json.dumps(obj).encode()
+
+
 def _build_upstream_req(handler, srv, route: UpstreamRoute, orig_bj: dict,
                         raw_body: bytes) -> urllib.request.Request:
     """Build the upstream request for ONE attempt from the ORIGINAL request —
@@ -294,10 +343,8 @@ def forward_with_failover(handler, srv) -> None:
                 # ── post-response hooks ──────────────────────────
                 cost = obs.usage.cost_usd if obs.usage else 0.0
                 if srv.response_normalizer is not None:
-                    body_bytes = srv.response_normalizer.normalize(
-                        body_bytes.decode(errors="replace"),
-                        NormalizeMode.STANDARDIZE_MD,
-                    ).encode()
+                    body_bytes = _normalize_message_content(
+                        body_bytes, srv.response_normalizer)
                 # NEVER cache a served downgrade — the cache-HIT path can't disclose
                 # X-Charon-Downgrade, so a cached downgrade would silently re-serve the
                 # wrong model for the whole TTL (DTC BLOCKER #1).
@@ -312,7 +359,7 @@ def forward_with_failover(handler, srv) -> None:
                     srv.quality_scorer.record(
                         route.label, 0, success=not obs.pseudo_success, tokens=0)
                 if srv.spend_limiter is not None:
-                    srv.spend_limiter.record(cost if cost > 0 else est_cost)
+                    srv.spend_limiter.record(_spend_to_record(obs, est_cost))
                 handler._send_resp_headers(200, ctype, route.label, failovers, obs.pseudo_success)
                 handler._write(body_bytes)
                 srv.note_request(requested, route.label, 200, cost, failovers)
@@ -397,7 +444,7 @@ def forward_with_failover(handler, srv) -> None:
                 srv.semantic_cache.set(cache_key, full_bytes, rhdrs, ttl=3600)
             cost = served_obs.usage.cost_usd if served_obs.usage else 0.0
             if srv.spend_limiter is not None:
-                srv.spend_limiter.record(cost if cost > 0 else est_cost)
+                srv.spend_limiter.record(_spend_to_record(served_obs, est_cost))
             srv.note_request(requested, route.label, 200, cost, failovers)
             return
         finally:
