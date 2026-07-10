@@ -42,7 +42,7 @@
   (reverting the shim → wrapped body → no `choices`, cost 0 → RED).
 - Full gate: `ruff` OK · `mypy` OK (172 files) · `charon gate` all checks OK · full suite
   1315 passed.
-- Product-standalone: no `/home/stack`/fleet/SLOP/runner refs in `src/` or config.
+- Product-standalone: no home-path/fleet/SLOP/runner refs in `src/` or config.
 
 ## Adversarial notes (money-path)
 - Cost metering: with the adapter, the unwrapped inner `usage.cost` flows through
