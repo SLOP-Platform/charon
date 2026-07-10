@@ -133,7 +133,9 @@ def main() -> None:
 
     proxy = GatewayProxyServer(
         upstream_base=f"http://{up_host}:{up_port}",
-        api_key="k", model_ids=["m"])
+        api_key="k",
+        model_ids=["m"],
+    )
     proxy.serve_in_thread()
 
     failures: list[str] = []

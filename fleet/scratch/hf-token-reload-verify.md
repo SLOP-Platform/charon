@@ -13,7 +13,7 @@ config or scope error. No restart was performed (per instructions).
   `secrets.apply_to_env()` → `load_config(state_dir=setup_dir)` →
   `server.apply_routes(...)`.
 - `load_config` → `_route_from_spec` (gateway.py:104-106) bakes
-  `api_key=os.environ.get(key_env)` into each `UpstreamRoute` **at reload
+  the `os.environ.get(key_env)` value into each `UpstreamRoute`'s `api_key` **at reload
   time**, and that baked value is what's used per-request
   (proxy_server.py:547-548). So a reload *does* re-read `os.environ` fresh
   each time — routing is not the problem.
