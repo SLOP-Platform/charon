@@ -75,6 +75,7 @@ mechanical, prefer the mechanism (hook / gate / launcher flag) over recall.
 - Merge gate = the FULL CI gate (ruff + mypy + `PYTHONPATH=src python3 -m charon.cli gate`), NEVER pytest-alone. A decompose merge passed pytest but was CI-red this session — pytest-green is not merge-green. `[merge-gate-is-full-ci-not-pytest]`
 - Every build/fix MUST add a test that FAILS on revert (exercises the change). Green tests hid 6 real defects this session; a test that still passes when the change is reverted proves nothing. `[tests-must-fail-on-revert]`
 - Money-path / security / core changes get an INDEPENDENT adversarial review before merge — not the builder's self-report. Self-reports lie; review the branch diff. `[independent-review-before-merge-on-critical]`
+- **Push protocol (LEVER-GATED — do not hand pushes to the operator by reflex).** The manager pushes via `fleet/land-push.sh <branch> [repo]` (raw `git push` / `git -C … push` are deny-listed; `--force` / `--no-verify` / `git reset --hard` are FORBIDDEN). `land-push.sh` self-gates on the AUTONOMOUS lever (`state/AUTONOMOUS`): lever **ON** (operator put the session in Autonomous mode via `autonomous.sh on`) → push WITHOUT asking; lever **OFF** → ASK first, giving the operator the exact push command. CHECK the lever before deciding — do NOT flatly refuse and dump every push on the operator when it is ON (that wasted a whole session 2026-07-10; the stale "operator pushes" handoff line masked the lever). `[always-give-exact-command]`
 
 ---
 
