@@ -21,6 +21,7 @@ live via ``charon doctor`` (no real network in these unit tests).
 """
 from __future__ import annotations
 
+import re
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -232,8 +233,18 @@ def _is_unsupported_model(body: dict | None, status: int) -> bool:
         body, _UNSUPPORTED_BODY_PATTERNS)
 
 
+# Trailing quantization suffixes a provider may append to an otherwise-identical
+# model id (``glm-5.2-fp8`` vs pool ``glm-5.2``). Matched at the END of the final
+# path segment (post-lowercasing) so the compare is case-insensitive AND
+# quant-insensitive: fp8/fp16/fp32, bf16, int8/int4, and the GGUF ``q<n>[_...]``
+# family (``q4_k_m``, ``q5_0``). Stripped repeatedly to fold rare stacked suffixes.
+_QUANT_SUFFIX = re.compile(
+    r"-(?:fp8|fp16|fp32|bf16|int8|int4|q\d+(?:[._][0-9a-z]+)*)$")
+
+
 def _normalize_model_id(model_id: str | None) -> str:
-    """Normalize a model id by taking the FINAL path segment for comparison.
+    """Normalize a model id for the pseudo-success compare: FINAL path segment,
+    lower-cased, with any trailing quantization suffix stripped.
 
     Providers namespace the same model variously — "accounts/fireworks/models/
     deepseek-v4-pro" and bare "deepseek-v4-pro" are the same model. Comparing the
@@ -241,10 +252,22 @@ def _normalize_model_id(model_id: str | None) -> str:
     Stripping only the FIRST segment left multi-segment ids prefixed
     ("fireworks/models/deepseek-v4-pro" != "deepseek-v4-pro"), false-flagging
     honest 200s as silent downgrades and triggering a discard-and-rebill
-    (double-billing, SR-1)."""
+    (double-billing, SR-1).
+
+    Beyond the namespace, the SAME model is echoed with cosmetic case variance
+    ("Kimi-K2.7-Code" vs pool "kimi-k2.7-code") or a quant tag ("GLM-5.2-FP8" vs
+    "glm-5.2"). Left as-is those diff from the expected id, false-flag a
+    ``pseudo_success`` and serve a spurious ``X-Charon-Downgrade`` on an honest 200
+    (why a working provider scores 0/4). Lower-case + quant-strip folds them
+    together WITHOUT touching the final-segment rsplit that SR-1 depends on."""
     if not model_id:
         return ""
-    return model_id.rsplit("/", 1)[-1]
+    seg = model_id.rsplit("/", 1)[-1].lower()
+    prev = ""
+    while prev != seg:
+        prev = seg
+        seg = _QUANT_SUFFIX.sub("", seg)
+    return seg
 
 
 class GatewayProxy:
