@@ -101,6 +101,7 @@ def _route_from_spec(spec: dict, providers_cfg: dict) -> UpstreamRoute | None:
         key_env = spec.get("key_env") or preset.key_env
         strip_v1: bool | None = preset.strip_v1
         wire = str(spec.get("wire") or preset.wire)  # per-model override wins
+        adapter = str(spec.get("adapter") or preset.adapter or "") or None
     else:
         base = spec.get("upstream_base")
         if not base:
@@ -108,6 +109,7 @@ def _route_from_spec(spec: dict, providers_cfg: dict) -> UpstreamRoute | None:
         key_env = spec.get("key_env")
         strip_v1 = spec.get("strip_v1")  # explicit only; else server default
         wire = str(spec.get("wire") or providers.WIRE_OPENAI)
+        adapter = str(spec.get("adapter") or "") or None
     return UpstreamRoute(
         upstream_base=str(base),
         api_key=os.environ.get(key_env) if key_env else None,
@@ -115,6 +117,7 @@ def _route_from_spec(spec: dict, providers_cfg: dict) -> UpstreamRoute | None:
         provider=prov,
         strip_v1=strip_v1,
         wire=wire,
+        adapter=adapter,
     )
 
 

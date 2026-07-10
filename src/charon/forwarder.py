@@ -21,6 +21,7 @@ from .netutil import BROWSER_UA
 from .providers import WIRE_ANTHROPIC
 from .proxy_response import _extract, _pre_flight_estimate
 from .request_normalizer import normalize_messages as _normalize_request_messages
+from .response_adapters import get_adapter
 from .response_normalizer import NormalizeMode
 
 if TYPE_CHECKING:  # annotation-only; a runtime import would re-form the proxy_server cycle
@@ -242,6 +243,10 @@ def forward_with_failover(handler, srv) -> None:
         okey = route.pool_id or requested  # exclusion/observe key (orchestrator compat)
         expected = route.upstream_model or requested or None
         req = _build_upstream_req(handler, srv, route, orig_bj, raw_body)
+        # Resolve the response-shape adapter for THIS attempt (IDENTITY unless the
+        # provider declares one). Every call site is guarded by `if route.adapter`
+        # so the default path is provably byte-identical (never re-encodes).
+        adapter = get_adapter(route.adapter)
 
         try:
             resp = urllib.request.urlopen(req, timeout=srv.fwd_timeout)
@@ -309,6 +314,10 @@ def forward_with_failover(handler, srv) -> None:
                 relay_retry_after = (
                     min(obs.retry_after or srv.default_cooldown, srv.max_cooldown_s)
                     if status in (402, 429, 503) else None)
+                if route.adapter:  # canonicalize the error envelope on the terminal
+                    canon_err = adapter.normalize_error(obs_body)  # relay (guarded)
+                    if canon_err is not obs_body:
+                        body_bytes = json.dumps(canon_err).encode()
                 handler._send_resp_headers(status, ctype, route.label, failovers, False,
                                         retry_after=relay_retry_after)
                 handler._write(body_bytes)
@@ -318,7 +327,12 @@ def forward_with_failover(handler, srv) -> None:
             # ---- 200, non-streaming: buffer, then check for a silent downgrade ----
             if not is_stream:
                 body_bytes = handler._drain(resp)
-                observed = _extract(body_bytes, ctype)
+                if route.adapter:  # IDENTITY path stays byte-identical (guarded)
+                    parsed = _extract(body_bytes, ctype)  # {} on non-JSON
+                    canon = adapter.normalize_response(parsed)
+                    if canon is not parsed:  # only re-encode if it actually changed
+                        body_bytes = json.dumps(canon).encode()
+                observed = _extract(body_bytes, ctype)  # now sees top-level model+usage
                 obs = srv.observer.classify(okey, 200, rhdrs, observed, expected_model=expected)
                 # ── genuine silent downgrade (obs.pseudo_success) ─────────────
                 # Operator toggle `failover_on_downgrade` (default False):

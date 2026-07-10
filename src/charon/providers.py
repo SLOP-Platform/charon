@@ -43,6 +43,11 @@ class ProviderPreset:
     # breakpoint injected; "openai" routes are NEVER touched. Provider-agnostic (a
     # per-provider marker, not a hardcoded model list).
     wire: str = WIRE_OPENAI
+    # Response-shape adapter key (see response_adapters.py): the name of the adapter
+    # that maps this provider's non-OpenAI response shape into canonical OpenAI shape.
+    # None (the default) → the IDENTITY passthrough (byte-identical). Provider-agnostic
+    # (a per-provider marker, declared not detected — mirrors ``wire``).
+    adapter: str | None = None
     note: str = ""
 
 
@@ -72,6 +77,16 @@ PRESETS: dict[str, ProviderPreset] = {
         "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY",
         downgrade_prone=True,
         note="Free tiers can silently route to a different model — failover-guarded."),
+    # Cline Pass — cheap-first leg. Its NON-streaming /chat/completions responses come
+    # back wrapped as {"data": <openai obj>, "success": true} with no top-level
+    # choices/model/usage, so it declares adapter="cline" to unwrap them (streaming is
+    # already canonical). NOTE: the base has no /models endpoint, so the setup-time
+    # key probe that GETs /models false-fails — verify the key another way.
+    "cline-pass": ProviderPreset(
+        "https://api.cline.bot/api/v1", "CLINE_PASS_API_KEY",
+        strip_v1=True, adapter="cline",
+        note="Cline Pass — non-stream bodies are wrapped ({data,success}); adapter="
+             "'cline' unwraps them. No /models endpoint (setup key probe false-fails)."),
     # NanoGPT / ZAI — base URLs verified live via `providers test` (2026-06-26):
     # nano-gpt.com/api/v1 → 200 from /models; api.z.ai/api/paas/v4 → 401 (needs key).
     # The full chat-completion contract is still pending a real key.
@@ -271,7 +286,7 @@ def resolve(name: str, overrides: dict | None = None) -> ProviderPreset:
                 f"({', '.join(sorted(PRESETS))}) and no base_url override given")
         base = ProviderPreset(base_url=str(overrides["base_url"]))
     fields = {}
-    for k in ("base_url", "key_env", "strip_v1", "downgrade_prone", "wire"):
+    for k in ("base_url", "key_env", "strip_v1", "downgrade_prone", "wire", "adapter"):
         if k in overrides and overrides[k] is not None:
             fields[k] = overrides[k]
     return replace(base, **fields) if fields else base

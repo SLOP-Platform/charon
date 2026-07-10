@@ -182,6 +182,8 @@ class UpstreamRoute:
     provider: str | None = None  # display label for failover visibility (X-Charon-Provider)
     strip_v1: bool | None = None  # per-provider quirk; None → use the server default
     wire: str = WIRE_OPENAI  # upstream wire format (SR-6): WIRE_OPENAI | WIRE_ANTHROPIC
+    adapter: str | None = None  # response-shape adapter key (response_adapters.py);
+    #                             None → IDENTITY passthrough (byte-identical relay)
 
     @property
     def label(self) -> str:
