@@ -29,6 +29,8 @@ Fleet	F16	designed	next	autonomous-ttl	time-box unattended runs
 Fleet	F17	designed	next	scorecard-auto-append	record model scores automatically
 Fleet	F18	designed	next	auto-log-model-lies	log models that claim false success
 Fleet	F19	not-started	next	bridge-unregister-trap	unregister the bridge on exit
+Fleet	F24	building	now	fleet-gate-repoint	gate runs fleet tests not product ones
+Fleet	F25	designed	next	repo-decl-central	declare product vs fleet repo once
 Security	S1	done	-	email-scrub	remove operator email from repo
 Security	S2	done	-	enforce-public-clean	keep private info out of repo
 Security	S4	building	now	scrub-name+name-guard	remove leaked name, block its return
