@@ -30,4 +30,25 @@ for m in "$DONE"/*; do
 done
 if [ "$n" -gt 0 ]; then echo "retire-done: archived $n done ticket(s) off the active board"
 else echo "retire-done: clean (no done ticket left on the active board)"; fi
+
+# WORKTREE CLEANUP (guarded, #3): a done ticket's PR is merged, so its `charon-fleet-<id>`
+# worktree's commits are in master and it is safe to remove — this also feeds the force-remove-
+# destroys-needs-push hazard when left around. safe_worktree_remove (leak-guard.sh) REFUSES to
+# remove any worktree that still has a live state/needs-push/<id> marker, so committed-but-
+# unlanded work is never destroyed. Idempotent: no-op when the worktree is already gone.
+CHARON="/home/stack/code/charon"
+NPDIR="$FLEET/state/needs-push"
+if [ -f "$FLEET/leak-guard.sh" ]; then
+  source "$FLEET/leak-guard.sh"
+  wtn=0
+  for m in "$DONE"/*; do
+    [ -f "$m" ] || continue
+    id="$(basename "$m")"; wt="$CHARON-fleet-$id"
+    [ -e "$wt" ] || continue
+    if safe_worktree_remove "$CHARON" "$wt" "$id" "$NPDIR"; then
+      wtn=$((wtn+1)); echo "  worktree removed: $wt (ticket done)"
+    fi
+  done
+  [ "$wtn" -gt 0 ] && echo "retire-done: cleaned $wtn done-ticket worktree(s)"
+fi
 exit 0

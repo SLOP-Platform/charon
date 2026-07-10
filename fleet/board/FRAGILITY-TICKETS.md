@@ -27,3 +27,15 @@ scope: Turn the fragility sweep findings (HANDOFF-2026-07-04-v2 §"Sub-session o
   src/charon/config.py, src/charon/discover.py. tier strong.
   This is a documentation/ticket-creation task, not a build task. Suggested agent: this
   session (manager) or glm-5.2 (economy) — mechanical ticket writing.
+
+## Fragility-wave-A mechanizations landed (2026-07-10)
+- MECH-1 Worktree-leak guard — launcher pre-creates the worktree off origin/master + post-session
+  leak detector (`fleet/leak-guard.sh`: leak_worktree_setup/leak_detect/leak_capture/safe_worktree_remove,
+  wired into `fleet/fleet-droid.sh`). Test: `fleet/tests/worktree-leak-guard.test.sh`.
+- MECH-2 Auto-`done` on merge — `fleet/reconcile-merged.sh` maps merged PR branches to tickets and
+  runs done.sh for any not-yet-done; wired into `fleet/preflight.sh` scan path (safety-net).
+  Test: `fleet/tests/reconcile-merged.test.sh`.
+- MECH-3 Surface+protect needs-push — `detect_needs_push` in `fleet/preflight.sh` auto-registers a
+  reds.tsv red per stranded marker (blocks preflight until landed); `safe_worktree_remove`
+  (leak-guard.sh) refuses to remove a worktree with a live needs-push marker, used by
+  `fleet/retire-done.sh`. Test: `fleet/tests/needs-push-gate.test.sh`.

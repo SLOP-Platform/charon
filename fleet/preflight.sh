@@ -262,6 +262,56 @@ board_gate(){
   fi
 }
 
+# --- detect_needs_push: MECHANIZES [never-ignore-preexisting-issues] for STRANDED PUSHES (#3).
+# submit.sh writes state/needs-push/<id> when a droid committed work but no PR opened, and a
+# later re-claim's `git worktree remove --force` can DESTROY that committed work (CI-WORKFLOW-
+# POLICY-GATE sat stranded since 2026-07-09). This AUTO-REGISTERS a tracked reds.tsv red per live
+# marker (identical machinery to board_gate) so a stranded push BLOCKS preflight until landed —
+# it can no longer be silently missed. The red self-closes when the marker goes away (landed).
+# A marker whose ticket is already state/done (merged) is stale cruft -> cleaned + red closed.
+NEEDS_PUSH_DIR="$HERE/state/needs-push"
+DONE_DIR="$HERE/state/done"
+_red_status(){ awk -F"$TAB" -v id="$1" '$1==id{print $7; exit}' "$TSV"; }
+_np_red_id(){ printf 'needs-push-%s' "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\{1,\}/-/g; s/^-//; s/-$//')"; }
+_np_red_ensure_open(){
+  local rid="$1" id="$2" marker="$3" st; st="$(_red_status "$rid")"
+  if [ -z "$st" ]; then
+    cmd_add "$rid" P1 gate \
+      "needs-push STRANDED: $id committed but unlanded — land it (fleet/land-needs-push.sh $id) or it blocks preflight" \
+      "test ! -e '$marker'" >/dev/null 2>&1 || true
+  elif [ "$st" = closed ]; then
+    local tmp; tmp="$(mktemp)"
+    awk -F"$TAB" -v OFS="$TAB" -v id="$rid" \
+      '/^#/{print;next} $1==id{$7="open";$8=""} {print}' "$TSV" > "$tmp" && mv "$tmp" "$TSV"
+  fi
+}
+detect_needs_push(){
+  [ -d "$NEEDS_PUSH_DIR" ] || { echo "clean: needs-push (no markers)"; return 0; }
+  # (1) auto-close any needs-push-* red whose marker is gone (the work landed).
+  awk -F"$TAB" '$7=="open" && $1 ~ /^needs-push-/{print $1 "\t" $6}' "$TSV" | \
+  while IFS="$TAB" read -r rid chk; do
+    [ -n "$rid" ] || continue
+    run_check "$chk" && cmd_close "$rid" --override "auto: needs-push landed" >/dev/null 2>&1 || true
+  done
+  # (2) per live marker: stale (ticket already done) -> clear; else ensure a blocking red.
+  local m id rid n=0
+  for m in "$NEEDS_PUSH_DIR"/*; do
+    [ -f "$m" ] || continue
+    id="$(basename "$m")"; rid="$(_np_red_id "$id")"
+    if [ -e "$DONE_DIR/$id" ]; then
+      rm -f "$m"
+      [ "$(_red_status "$rid")" = open ] && cmd_close "$rid" --override "auto: ticket done; stale needs-push cleared" >/dev/null 2>&1 || true
+      echo "needs-push: $id already done — stale marker cleared"
+      continue
+    fi
+    n=$((n+1))
+    _np_red_ensure_open "$rid" "$id" "$m"
+    echo "needs-push: $id STRANDED — AUTO-REGISTERED red '$rid' (blocks preflight until landed: fleet/land-needs-push.sh $id)"
+  done
+  [ "$n" -eq 0 ] && echo "clean: needs-push (no stranded markers)"
+  return 0
+}
+
 # WCI high-contention-file advisory: a file owned by >= N tickets is a DECOMPOSE
 # CANDIDATE (collision metric -> refactor trigger). Informational; never fails preflight.
 # Delegates to wci-contention.sh (fleet/WCI-METHOD.md). Top line surfaced here; run the
@@ -303,11 +353,15 @@ show_operator_actions(){
   return 0
 }
 
+# Dispatch ONLY when run directly. When SOURCED (fleet/tests/needs-push-gate.test.sh) the
+# functions above are exposed with NO side effects.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 case "${1:-scan}" in
-  scan|"") bash "$HERE/retire-done.sh"; board_gate; cmd_scan; scan_rc=$?; cmd_detect; show_operator_actions; exit $scan_rc ;;
+  scan|"") bash "$HERE/reconcile-merged.sh"; bash "$HERE/retire-done.sh"; board_gate; detect_needs_push; cmd_scan; scan_rc=$?; cmd_detect; show_operator_actions; exit $scan_rc ;;
   add)     shift; cmd_add "$@" ;;
   close)   shift; cmd_close "$@" ;;
   list)    shift; cmd_list "$@" ;;
   detect)  shift; cmd_detect "$@" ;;
   *) echo "usage: $0 {scan|add <id> <sev> <area> \"<desc>\" \"<check>\"|close <id> [--override r|--evidence t]|list [open|closed|all]|detect [--full]}" >&2; exit 1 ;;
 esac
+fi
