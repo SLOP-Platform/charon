@@ -1068,3 +1068,113 @@ def test_flag_off_leaves_anthropic_body_unenriched() -> None:
 def test_upstream_route_wire_defaults_openai() -> None:
     assert UpstreamRoute("http://x/v1").wire == "openai"
     assert UpstreamRoute("http://x/v1", wire="anthropic").wire == "anthropic"
+
+
+# ── RESPONSE-ADAPTER-UNIVERSAL: per-provider response-shape adapter ──────────
+
+class _ClineWrappedUpstream(http.server.BaseHTTPRequestHandler):
+    """Emulates cline-pass: a NON-streaming 200 whose body is wrapped as
+    {"data": <openai obj>, "success": true} with NO top-level choices/usage."""
+    def log_message(self, *a) -> None:
+        pass
+
+    def do_POST(self) -> None:
+        length = int(self.headers.get("Content-Length") or 0)
+        body = json.loads(self.rfile.read(length) or b"{}")
+        inner = {
+            "id": "cmpl-cline",
+            "object": "chat.completion",
+            "model": body.get("model"),
+            "choices": [{"index": 0,
+                         "message": {"role": "assistant", "content": "unwrapped-ok"},
+                         "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 9, "completion_tokens": 4, "cost": 0.03},
+        }
+        payload = json.dumps({"data": inner, "success": True}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+
+def test_proxy_nonstream_cline_shaped_upstream_returns_openai_body(
+        monkeypatch, tmp_path) -> None:
+    """FAIL-ON-REVERT: a route with adapter='cline' unwraps a wrapped Cline body so
+    the CLIENT sees top-level `choices` AND real usage/cost is metered. Revert the
+    shim → the served body lacks `choices` and cost records 0 → RED."""
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    from charon.spend_limits import SpendLimiter
+
+    up = _Threaded(("127.0.0.1", 0), _ClineWrappedUpstream)
+    threading.Thread(target=up.serve_forever, daemon=True).start()
+    base = f"http://{up.server_address[0]}:{up.server_address[1]}"
+
+    limiter = SpendLimiter(monthly_limit_usd=100.0)
+    proxy = GatewayProxyServer(
+        routes={"cline-model": UpstreamRoute(base, "k", adapter="cline")},
+        spend_limiter=limiter)
+    proxy.serve_in_thread()
+    try:
+        status, body = _post(proxy.url + "/v1/chat/completions", {"model": "cline-model"})
+        assert status == 200
+        # client-observable body is the canonical OpenAI object (top-level choices)
+        assert "choices" in body and "data" not in body
+        assert body["choices"][0]["message"]["content"] == "unwrapped-ok"
+        # real usage/cost was metered (revert → wrapped body → cost 0 → this fails)
+        assert limiter._spent_usd > 0
+    finally:
+        proxy.shutdown()
+        up.shutdown()
+
+
+class _ByteExactUpstream(http.server.BaseHTTPRequestHandler):
+    """Returns a canonical body with unusual spacing so any re-encode changes bytes."""
+    PAYLOAD = (b'{"id":"x", "object":"chat.completion",  "model":"m",'
+               b'"choices":[{"index":0,"message":{"role":"assistant","content":"ok"},'
+               b'"finish_reason":"stop"}],"usage":{"prompt_tokens":1}}')
+
+    def log_message(self, *a) -> None:
+        pass
+
+    def do_POST(self) -> None:
+        length = int(self.headers.get("Content-Length") or 0)
+        self.rfile.read(length)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(self.PAYLOAD)))
+        self.end_headers()
+        self.wfile.write(self.PAYLOAD)
+
+
+def test_identity_provider_body_byte_identical() -> None:
+    """The default (no-adapter) path relays the upstream body BYTE-for-byte — the
+    IDENTITY guard never re-encodes."""
+    up = _Threaded(("127.0.0.1", 0), _ByteExactUpstream)
+    threading.Thread(target=up.serve_forever, daemon=True).start()
+    base = f"http://{up.server_address[0]}:{up.server_address[1]}"
+
+    proxy = GatewayProxyServer(routes={"m": UpstreamRoute(base, "k")})  # adapter=None
+    proxy.serve_in_thread()
+    try:
+        status, _hdrs, raw = _post_full(proxy.url + "/v1/chat/completions", {"model": "m"})
+        assert status == 200
+        assert raw == _ByteExactUpstream.PAYLOAD  # byte-identical, no re-serialize
+    finally:
+        proxy.shutdown()
+        up.shutdown()
+
+
+def test_cline_pass_config_flows_adapter_to_route() -> None:
+    """Config-flow: `provider: cline-pass` compiles to an UpstreamRoute whose
+    .adapter == 'cline' (guards the wire-style plumbing end-to-end)."""
+    from charon.gateway import _build_routes_and_pools
+
+    registry = {"glm": {"provider": "cline-pass", "upstream_model": "glm-5.2"}}
+    routes, _pools, _ids = _build_routes_and_pools(registry, {})
+    assert routes["glm"].adapter == "cline"
+
+
+def test_upstream_route_adapter_defaults_none() -> None:
+    assert UpstreamRoute("http://x/v1").adapter is None
+    assert UpstreamRoute("http://x/v1", adapter="cline").adapter == "cline"
