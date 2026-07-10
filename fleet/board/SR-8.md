@@ -1,4 +1,5 @@
 tier: strong
+difficulty: 3  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
 work_class: greenfield-feature
 branch: feat/sr-8-dead-module-decision
 depends_on: SR-2, SR-7

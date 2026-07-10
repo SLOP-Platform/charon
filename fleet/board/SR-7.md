@@ -1,4 +1,5 @@
 tier: strong
+difficulty: 3  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
 work_class: money-path
 branch: feat/sr-7-spend-cap-hardening
 depends_on: SR-2, SR-5

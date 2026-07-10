@@ -1,4 +1,6 @@
+retired: superseded-by GATEWAY-PROGRAM (synthetic ranker RETIRED per 3-reviewer adjudication 2026-07-10)
 tier: strong
+difficulty: 3  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
 work_class: tests
 branch: feat/bench-aggregate-n
 depends_on: BENCH-PROVISIONAL-SCORING

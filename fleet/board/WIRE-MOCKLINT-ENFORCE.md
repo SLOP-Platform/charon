@@ -1,4 +1,5 @@
 tier: standard
+difficulty: 2  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
 work_class: ci-infra
 branch: feat/wire-mocklint-enforce
 depends_on: TEST-HARDEN-CONTRACT

@@ -1,4 +1,5 @@
 tier: frontier
+difficulty: 5  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
 work_class: frontend
 branch: feat/console-provider-mgmt
 depends_on:

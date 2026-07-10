@@ -3,6 +3,7 @@
 >   money-path dispatch), coupled by construction. REVISIT-TRIGGER below (OpenAI-format
 >   client needs an Anthropic-only provider) is UNMET. Remains PARKED; do NOT launch.
 tier: frontier
+difficulty: 5  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
 branch: feat/sr-6-phase2-openai-anthropic-translation
 depends_on: SR-6
 real-dep: SR-6 build (single-owner file proxy_server.py + shared module translate.py) — Phase-2 grows

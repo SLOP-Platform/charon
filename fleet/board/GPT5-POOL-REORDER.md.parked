@@ -1,4 +1,6 @@
+liveops-keep-2026-07-10: NOT moot; keep patching live /data/pools.json drift until POOLS-SIMPLIFICATION ships (red-team fix #9).
 tier: economy
+difficulty: 1  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
 rebase-after: PROXY-FAILOVER-FIX (parked 2026-07-08 — depends_on INC-401-FAILOVER which was parked to let the Phase-1 failover fix land solo. Un-park + rebase with INC-401-FAILOVER after the failover fix merges.)
 work_class: routing
 branch: feat/gpt-5-pool-reorder

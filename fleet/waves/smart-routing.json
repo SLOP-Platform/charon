@@ -1,0 +1,215 @@
+{
+  "mission": "Route work to providers by cost, performance, and availability to the right tier of agent without quality loss or work interruption regardless of session balance, token caps, funds, or provider outages.",
+
+  "waves": [
+    {
+      "name": "T0-failover",
+      "seq": 0,
+      "goal": "Core failover — exhaustion detection, billing-aware switching, pool config. Must land before any wiring.",
+      "owner": ["yoda", "rey-skywalker"],
+      "files": ["src/charon/proxy.py", "src/charon/proxy_server.py", "src/charon/gateway.py", "src/charon/config.py", "src/charon/cli.py", "tests/test_proxy.py", "tests/test_gateway.py"],
+      "tickets": [
+        {"id": "T0-A", "name": "EXHAUST", "desc": "Expand exhaustion detection (body patterns, billing errors)"},
+        {"id": "T0-B", "name": "BILLING", "desc": "Fix OpenCode 401 false-negative for billing exhaustion"},
+        {"id": "T0-C", "name": "POOL-CONFIG", "desc": "Pool/fallback auto-config + doctor warnings"},
+        {"id": "T0-D", "name": "PROBE", "desc": "Probe provider error codes catalog"}
+      ]
+    },
+    {
+      "name": "B1",
+      "seq": 1,
+      "goal": "Ship 8 self-contained gateway infrastructure modules. Importable, unit-testable, gate-green. Zero proxy_server.py touch.",
+      "owner": ["mace-windu", "qui-gon-jinn"],
+      "files": ["src/charon/types.py", "src/charon/cache.py", "src/charon/request_inspector.py", "src/charon/response_normalizer.py", "src/charon/guardrails.py", "src/charon/quality_scorer.py", "src/charon/observability.py", "src/charon/spend_limits.py", "src/charon/discover.py"],
+      "tickets": [
+        {"id": "T0.1", "name": "TYPES", "desc": "Shared dataclasses + enums for all gateway modules"},
+        {"id": "T0.3", "name": "CACHE", "desc": "Prompt LRU cache with TTL expiry"},
+        {"id": "T0.4", "name": "INSPECT", "desc": "Request inspector: images, tools, token count"},
+        {"id": "T0.7", "name": "NORM", "desc": "Response normalizer: 4 modes"},
+        {"id": "T0.8", "name": "GUARD", "desc": "Guardrails: PII + keyword blocking"},
+        {"id": "T0.9", "name": "QUALITY", "desc": "Quality scorer: EWMA + reliability"},
+        {"id": "T0.10", "name": "OBSERVE", "desc": "Observability: 4 export targets"},
+        {"id": "COST-SPEN", "name": "SPEND", "desc": "Spend cap enforcement + monthly reset"},
+        {"id": "COST-DISC", "name": "DISCOVER", "desc": "Provider model discovery + cost map"}
+      ]
+    },
+    {
+      "name": "B2",
+      "seq": 2,
+      "goal": "Wire B1 modules into gateway request pipeline on top of yoda failover loop.",
+      "owner": ["mace-windu", "qui-gon-jinn"],
+      "depends_on": "T0-failover",
+      "files": ["src/charon/proxy_server.py", "src/charon/gateway.py", "src/charon/cli.py"],
+      "tickets": [
+        {"id": "B2.1", "name": "WIRE-CACHE", "desc": "Wire cache + normalizer into proxy_server.py"},
+        {"id": "B2.2", "name": "WIRE-GUARD", "desc": "Wire guardrails into proxy_server.py"},
+        {"id": "B2.3", "name": "WIRE-OBSERVE", "desc": "Wire observability into proxy_server.py"},
+        {"id": "B2.4", "name": "WIRE-INSPECT", "desc": "Wire inspector into gateway.py + proxy_server.py"},
+        {"id": "B2.5", "name": "WIRE-CLI", "desc": "CLI surface for all B1+B2 features"}
+      ]
+    },
+    {
+      "name": "B3",
+      "seq": 3,
+      "goal": "Advanced features — session affinity, speculative execution, consensus, virtual keys, policy composition.",
+      "owner": ["mace-windu", "qui-gon-jinn"],
+      "depends_on": "B2",
+      "files": ["src/charon/proxy_server.py", "src/charon/gateway.py", "src/charon/config.py", "src/charon/cli.py"],
+      "tickets": [
+        {"id": "B3.1", "name": "SESSION", "desc": "Session affinity (X-Session-ID pinning)"},
+        {"id": "B3.2", "name": "SPECULATE", "desc": "Speculative execution (race N providers)"},
+        {"id": "B3.3", "name": "CONSENSUS", "desc": "Consensus routing (cross-provider verify)"},
+        {"id": "B3.4", "name": "VKEYS", "desc": "Virtual keys (scoped API key mgmt)"},
+        {"id": "B3.5", "name": "POLICY", "desc": "Policy composition (routing policies)"}
+      ]
+    },
+    {
+      "name": "ATC-fixes",
+      "seq": 1,
+      "goal": "ATC audit fixes: 9 items across cli.py, connect.py, secrets.py, gitleaks, intake.py, recommend.py.",
+      "owner": ["obi-wan-kenobi", "luke-skywalker"],
+      "files": ["src/charon/cli.py", "src/charon/connect.py", "src/charon/secrets.py", ".gitleaks.toml", "src/charon/intake.py", "src/charon/recommend.py", "tests/test_connect_gui.py"],
+      "tickets": [
+        {"id": "ATC-001", "name": "BODY-DROP", "desc": "Add body field to _load_plan in cli.py"},
+        {"id": "ATC-003", "name": "TOKEN-MASK", "desc": "Mask raw token in connect.py"},
+        {"id": "ATC-006", "name": "SECRETS", "desc": "Expand _SENSITIVE_ENV blocklist"},
+        {"id": "ATC-007", "name": "GITLEAKS", "desc": "Tighten gitleaks allowlist regex"},
+        {"id": "ATC-008", "name": "INTAKE", "desc": "Fix DEFAULT_TIER to canonical name"},
+        {"id": "ATC-009", "name": "ANTHROPIC", "desc": "Abstract _is_anthropic vendor coupling"},
+        {"id": "ATC-013", "name": "RECOMMEND", "desc": "Add heuristic rot comment"},
+        {"id": "ATC-015", "name": "GATEWAY", "desc": "Move _invocation_name to shared module"}
+      ]
+    },
+    {
+      "name": "Phase-D",
+      "seq": 4,
+      "goal": "OpenRouter swarm import — 400+ models with pricing, 3-stage fuzzy matching, bulk import into Charon registry.",
+      "owner": ["rey-skywalker"],
+      "depends_on": "B1",
+      "files": ["src/charon/discover.py", "src/charon/providers.py", "src/charon/cli.py", "tests/test_discover.py"],
+      "prompt": "/home/stack/charon-private/prompts/phase-d-openrouter.md",
+      "accept": "PYTHONPATH=src python3 -m pytest tests/test_discover.py -v -q",
+      "tickets": [
+        {"id": "D.1", "name": "OR-API", "desc": "Fetch and parse OpenRouter /models response"},
+        {"id": "D.2", "name": "FUZZY", "desc": "3-stage fuzzy match: exact, prefix-strip, alias-map"},
+        {"id": "D.3", "name": "IMPORT", "desc": "Bulk import with dry-run, auto-import exact, review fuzzy"},
+        {"id": "D.4", "name": "PRICING", "desc": "Map OpenRouter pricing to cost_input/cost_output"},
+        {"id": "D.5", "name": "CLI-OR", "desc": "charon discover --openrouter [--dry-run]"}
+      ]
+    },
+    {
+      "name": "B2.5",
+      "seq": 5,
+      "goal": "CLI surface for gateway modules — cache stats/clear, spend limits show/set, quality show/reset, guardrails show/add, normalizer show.",
+      "owner": ["luke-skywalker"],
+      "depends_on": "B2",
+      "files": ["src/charon/cli.py", "tests/test_cli.py"],
+      "prompt": "prompts/phase-b25-cli.md",
+      "tickets": [
+        {"id": "CLI.1", "name": "CACHE-CLI", "desc": "charon cache stats + cache clear"},
+        {"id": "CLI.2", "name": "LIMITS-CLI", "desc": "charon limits show + limits set --monthly"},
+        {"id": "CLI.3", "name": "QUALITY-CLI", "desc": "charon quality show + quality reset"},
+        {"id": "CLI.4", "name": "GUARD-CLI", "desc": "charon guardrails show + guardrails add"},
+        {"id": "CLI.5", "name": "NORM-CLI", "desc": "charon norm show"}
+      ]
+    },
+    {
+      "name": "SR-W1",
+      "seq": 10,
+      "goal": "P0 — fix the namespaced-id false-downgrade double-bill. Ships ALONE ahead of everything (whole SR series builds on this classify() correction).",
+      "files": ["src/charon/proxy.py", "tests/test_proxy_downgrade.py"],
+      "tickets": [
+        {"id": "SR-1", "name": "NS-DOWNGRADE", "desc": "P0: compare FINAL path segment in _normalize_model_id so namespaced echoes aren't false pseudo_success (stops discard+rebill)"}
+      ]
+    },
+    {
+      "name": "SR-W2",
+      "seq": 11,
+      "goal": "Serve genuine downgrades instead of discard-and-rebill (+ cache streaming 200s), cache correctness/stats, doc fix, pricing/cost visibility. SR-3/SR-4/SR-5 run parallel; SR-2 is the sole proxy_server.py owner.",
+      "depends_on": "SR-W1",
+      "files": ["src/charon/proxy_server.py", "src/charon/cache.py", "tests/test_cache.py", "src/charon/config.py", "src/charon/discover.py", "src/charon/providers.py", "/home/stack/charon-private/fleet/SMART-ROUTING.md"],
+      "tickets": [
+        {"id": "SR-2", "name": "SERVE-DOWNGRADE", "desc": "Serve genuine downgrade w/ X-Charon-Downgrade header (no rebill) + cache streaming 200s. depends_on SR-1."},
+        {"id": "SR-3", "name": "CACHE-CORRECT", "desc": "Keep exact-SHA-256 keying (doc why fuzzy is unsafe) + hit/miss stats via charon cache stats"},
+        {"id": "SR-4", "name": "DOC-FIX", "desc": "DOC-ONLY: mark SpeculativeExecutor/ConsensusRouter constructed-not-wired in SMART-ROUTING.md §1/§5"},
+        {"id": "SR-5", "name": "PRICING", "desc": "Capture pricing on discover/import + per-token fallback so cost>0; flag unknown-pricing in status. Prereq for SR-7."}
+      ]
+    },
+    {
+      "name": "SR-W3",
+      "seq": 12,
+      "goal": "Anthropic prompt-cache + OpenAI->Anthropic translation (DESIGN-GATED), spend-cap hardening, wire-or-remove dead modules (DECISION-GATED). Strict chain SR-6 -> SR-7 -> SR-8 — all sequence on proxy_server.py.",
+      "depends_on": "SR-W2",
+      "files": ["src/charon/translate.py", "src/charon/proxy_server.py", "src/charon/spend_limits.py", "src/charon/consensus.py", "src/charon/speculative_execution.py", "src/charon/request_inspector.py", "src/charon/session_affinity.py", "src/charon/virtual_keys.py", "src/charon/observability.py"],
+      "tickets": [
+        {"id": "SR-6", "name": "ANTHROPIC-CACHE", "desc": "DESIGN-GATED: OpenAI->Anthropic body translation + cache_control breakpoint injection. depends_on SR-2."},
+        {"id": "SR-7", "name": "SPEND-CAP", "desc": "Record estimated cost even when computed cost is 0 so the universal monthly cap can't be bypassed. depends_on SR-2, SR-6, SR-5."},
+        {"id": "SR-8", "name": "DEAD-MODULES", "desc": "DECISION-GATED: recommend wire/remove/leave-marked per dead module, then implement. Speculative/consensus opt-in+OFF. depends_on SR-2, SR-6, SR-7."}
+      ]
+    },
+    {
+      "name": "SR-W4",
+      "seq": 13,
+      "goal": "Deploy hygiene — enforce a HARD single-producer rule so the deploy can never drift. Infra-only, independent of the SR code chain; owns compose/release/Dockerfile (disjoint from every SR code ticket). NON-NEGOTIABLE: deploy docker-compose.yml has EXACTLY ONE producer (never both build: and image:). Only DECISION-GATED choice = WHICH single source (RECOMMENDED image-only/CI sole producer vs ALTERNATIVE build-only).",
+      "files": ["docker-compose.yml", ".github/workflows/release.yml", "Dockerfile"],
+      "tickets": [
+        {"id": "SR-10", "name": "DEPLOY-HYGIENE", "desc": "HARD RULE: deploy docker-compose.yml has exactly ONE producer, never both build:+image: (no path to run a divergent build). DECISION-GATED which source (RECOMMENDED image-only, CI sole producer, immutable/digest-pinned tags / ALTERNATIVE build-only). Semver tags never :latest, release.yml publishes on tag push, bake CHARON_BUILD_SHA build-arg. depends_on none. RIDER: /charon/status SHA surfacing folds into SR-2 (proxy_server.py owner), NOT here."}
+      ]
+    },
+    {
+      "name": "SR-W5",
+      "seq": 14,
+      "goal": "CI hygiene — mechanize GitHub Actions SHA-pin version bumps via Dependabot. Infra-only, independent of the SR code chain; owns a SINGLE NEW file (.github/dependabot.yml), disjoint from every SR code ticket, from SR-10 (compose/release/Dockerfile), and from CI1 (workflow files). Touches no workflow. Clears the Node-20 deprecations WITHOUT weakening the SHA-pin supply-chain posture (Dependabot bumps SHA->new SHA, never SHA->floating tag, and rewrites the # vX comment). github-actions ecosystem ONLY (docker/pip deliberately excluded). PR-only, no auto-merge.",
+      "files": [".github/dependabot.yml"],
+      "tickets": [
+        {"id": "SR-11", "name": "DEPENDABOT-ACTIONS", "desc": "Add .github/dependabot.yml (github-actions ecosystem only; weekly, grouped, PR-only/no auto-merge) so SHA-pinned actions + their # vX comments stop going stale — clears Node-20 deprecations while preserving SHA-pinning (bump SHA->new SHA, rewrite comment). Excludes docker (Dockerfile base is a build-arg re-resolved fresh at release) + pip (open >= ranges, no lockfile => near-no-op). depends_on none. FOLLOW-ON (not here): optional actor-aware runs-on hardening owns .github/workflows/*.yml."}
+      ]
+    },
+    {
+      "name": "SR-W6",
+      "seq": 15,
+      "goal": "Restore the opencode-zen built-in provider preset dropped from source (v0.2.0 image had it, tag/source lost it). Mechanical preset add on src/charon/providers.py + tests/test_providers.py — sequences AFTER SR-5 because SR-5 is the live single-owner of providers.py.",
+      "depends_on": "SR-W2",
+      "files": ["src/charon/providers.py", "tests/test_providers.py"],
+      "tickets": [
+        {"id": "SR-12", "name": "PROVIDER-ZEN", "desc": "Re-add opencode-zen preset (https://opencode.ai/zen/v1, key_env OPENCODE_ZEN_KEY) so configs stop crash-looping with 'unknown provider opencode-zen' + needing a base_url band-aid; keep opencode-go alongside. OPTIONAL: neuralwatt preset (operator-decides). depends_on SR-5 (real-dep: shared single-owner file providers.py). tier economy."}
+      ]
+    },
+    {
+      "name": "SR-W7",
+      "seq": 16,
+      "goal": "Consumption half of SR-5 — multiply captured per-token pricing by actual tokens so usage.cost_usd stops reading 0 for providers that don't echo a cost, and feed the SAME computed cost to the spend-limiter pre-flight estimate + record. Money-path math. Sole new proxy.py+proxy_server.py owner after the SR-2 -> SR-6 -> SR-7 -> SR-8 -> TIER-SELECT chain; owns only the spend-limiter CALL SITES in proxy_server.py, never spend_limits.py (SR-7).",
+      "depends_on": "SR-W3",
+      "files": ["src/charon/proxy.py", "src/charon/proxy_server.py"],
+      "tickets": [
+        {"id": "SR-5b", "name": "COST-WIRE", "desc": "When the provider reports NO cost, compute cost_usd = tokens_in*cost_input + tokens_out*cost_output from SR-5's stored pricing (coordinate the canonical unit with SR-5); use the same computed cost in the proxy_server.py pre-flight estimate (~:657, was hardcoded) + spend_limiter.record (~:777, was the provider number). Distinguish unknown/unpriced (0+flag) from priced-at-0. depends_on SR-5 (real-dep: build — pricing must be captured first), SR-2 + TIER-SELECT (real-dep: single-owner file proxy_server.py). tier strong."}
+      ]
+    },
+    {
+      "name": "SR-W8",
+      "seq": 17,
+      "goal": "Friendly session login for the /charon/* web console (AUTH-GUI-DESIGN.md Option C — TOFU signed session cookie). /v1/* Bearer auth stays byte-for-byte unchanged; the session cookie authorizes /charon/* ONLY. New CHARON_SESSION_KEY secret (auto-generated, decoupled from the gateway token). Stdlib-only. Sequences AFTER the whole SR proxy_server.py chain + SR-5b; scoped to proxy_server.py + cli.py (secrets.py/gateway.py touchpoints coordinated as a follow-on).",
+      "depends_on": "SR-W7",
+      "files": ["src/charon/proxy_server.py", "src/charon/cli.py"],
+      "tickets": [
+        {"id": "SR-13", "name": "GUI-AUTH", "desc": "Add /charon/login page (paste token into a form once, not the URL) + `charon login` CLI printing a click-once pre-authed URL + a 30-day HMAC-signed HttpOnly charon_sess cookie authorizing /charon/* ONLY. /v1/* Bearer auth unchanged (opencode/ACP/LAN clients unaffected). CHARON_SESSION_KEY in secrets.json, decoupled from the gateway token. Surface-aware dispatch refactor of the single auth gate. depends_on SR-2 + SR-5b (real-dep: single-owner file proxy_server.py) + pending token->secrets.json rotation. tier strong."}
+      ]
+    },
+    {
+      "name": "RFL",
+      "seq": 18,
+      "goal": "RelayFreeLLM-inspired feature parity (source: RELAYFREELLM-COMPARISON.md). Proactive free-tier quota tracking (TOP), chat playground, finish image-aware routing, inline limit editor, opt-in extractive context compaction. proxy_server.py is a SINGLE-WRITER bottleneck: RFL-1->RFL-3->RFL-2->RFL-4 form a strict linear chain AFTER the current tail SR-13; RFL-5 owns a NEW module only (disjoint, parallel). Model routing: DeepSeek V4-Pro (strong) for the mechanical/well-specced units; Claude Opus 4.8 (frontier) reserved for RFL-5 (breaks the transparent-proxy invariant, mutates user content, must be gated). Stdlib-only; all features additive/backward-compatible; RFL-5 OFF by default.",
+      "depends_on": "SR-W8",
+      "files": ["src/charon/quota.py", "src/charon/proxy_server.py", "src/charon/context_shaper.py", "tests/test_quota.py", "tests/test_image_routing.py", "tests/test_chat_playground.py", "tests/test_limit_editor.py", "tests/test_context_shaper.py"],
+      "tickets": [
+        {"id": "RFL-1", "name": "QUOTA-TRACK", "desc": "TOP PICK (R1): proactive free-tier quota tracking — stdlib deque sliding-window RPM/TPM/RPD per (provider,model) + pre-flight can_handle()/get_wait_time(); skip a provider that would 429 instead of burning request+429. New src/charon/quota.py + failover call site in proxy_server.py. depends_on SR-13 (real-dep: single-owner proxy_server.py). Agent: DeepSeek V4-Pro (strong). Effort M."},
+        {"id": "RFL-3", "name": "IMG-ROUTE", "desc": "R3: finish image-aware routing — exclude non-vision models when has_images (detection + vision meta already exist). proxy_server.py _handle exclude step. depends_on RFL-1 (real-dep: single-owner proxy_server.py). Agent: DeepSeek V4-Pro (strong). Effort S."},
+        {"id": "RFL-2", "name": "CHAT-UI", "desc": "R2: /chat playground page in the console (SSE streaming, shows which provider/model served, model picker), inline self-contained HTML/JS, reuse console token gate. depends_on RFL-3 (real-dep: single-owner proxy_server.py). Agent: DeepSeek V4-Pro (strong). Effort S/M."},
+        {"id": "RFL-4", "name": "LIMIT-EDIT", "desc": "R4: inline limit editor + hot-reload in console (edit RPM/TPM/RPD/cooldown, apply without restart) — pairs with RFL-1. Token-gated POST + in-memory config write + persist. depends_on RFL-2 (real-dep: single-owner proxy_server.py) + RFL-1 (real-dep: functional — edits RFL-1's limits). Agent: DeepSeek V4-Pro (strong). Effort S/M."},
+        {"id": "RFL-5", "name": "CTX-COMPACT", "desc": "R5 EXPERIMENTAL/OPT-IN, OFF by default: stdlib extractive TF + reservoir context compaction for long chats on small-context free models; MUST NOT mutate user messages by default (conflicts with transparent-proxy design), stateless/in-request, disclosed. Ships src/charon/context_shaper.py MODULE only; proxy_server.py wiring is a follow-on rider. depends_on none (disjoint new module). Agent: Claude Opus 4.8 (frontier) — the one design-heavy/tricky pick. Effort M/L."}
+      ]
+    }
+  ],
+
+  "note_SR-9": "SR-9 (Batch API routing — 50% off non-interactive work) is DELIBERATELY NOT a gateway ticket. Batch/async token-economy routing belongs in the obol/orchestration layer — see PLAN-PORTABLE-ORCHESTRATION-STORE.md (token-economy section). Cross-referenced here so it isn't re-scoped as a gateway fix."
+}

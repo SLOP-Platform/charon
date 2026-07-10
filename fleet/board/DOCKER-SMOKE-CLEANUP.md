@@ -1,4 +1,5 @@
 tier: economy
+difficulty: 1  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
 work_class: ci-infra
 branch: chore/docker-smoke-cleanup
 depends_on: ACTION-PIN-POLICY

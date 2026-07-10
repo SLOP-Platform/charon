@@ -1,4 +1,5 @@
 tier: sonnet
+difficulty: 2  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
 work_class: refactor
 branch: feat/review-log-fragments
 depends_on:
