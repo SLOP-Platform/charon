@@ -70,10 +70,13 @@ class ActualsLedger:
     """Append-only JSONL store of real outcomes, keyed by (model, work_class).
 
     Crash-safe: a torn trailing line is skipped on read, never misinterpreted.
+    A corrupt line in the middle of the file is skipped (and counted in
+    ``skipped_corrupt``) so later valid rows are not lost.
     """
 
     def __init__(self, path: Path) -> None:
         self._path = path
+        self.skipped_corrupt = 0
         path.parent.mkdir(parents=True, exist_ok=True)
 
     def append(self, row: ActualRow) -> None:
@@ -87,19 +90,34 @@ class ActualsLedger:
             os.fsync(fh.fileno())
 
     def read(self) -> list[ActualRow]:
-        """Read all rows; a torn trailing line is skipped, not misread."""
+        """Read all rows; a torn trailing line is skipped, not misread.
+
+        A corrupt line in the MIDDLE of the file is skipped and reading
+        continues so later valid rows are not lost; the count is left in
+        ``self.skipped_corrupt``.
+        """
         if not self._path.exists():
+            self.skipped_corrupt = 0
             return []
+        skipped = 0
         out: list[ActualRow] = []
-        for raw in self._path.read_text().splitlines():
+        lines = self._path.read_text().splitlines()
+        n = len(lines)
+        for idx, raw in enumerate(lines):
             raw = raw.strip()
             if not raw:
                 continue
             try:
                 d = json.loads(raw)
             except json.JSONDecodeError:
-                break
+                # Last line torn during write -> tolerate silently, stop.
+                if idx == n - 1:
+                    break
+                # Mid-file corruption -> skip it, keep later rows.
+                skipped += 1
+                continue
             out.append(ActualRow.from_dict(d))
+        self.skipped_corrupt = skipped
         return out
 
     def query(

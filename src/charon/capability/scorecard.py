@@ -2,9 +2,14 @@
 last-known-good fallback reader.
 
 Each freeze cycle writes a versioned, timestamped artifact. The reader returns
-the LATEST FROZEN artifact but falls back to the last-known-good if the latest
-is missing or corrupt. This module must NOT import the rig grader
-(fleet/benchmark) — it only reads/writes artifacts by path.
+the LATEST FROZEN artifact (only if it is GOOD) and otherwise falls back to the
+last-known-good seq — which is a DIFFERENT seq than a bad latest. This module
+must NOT import the rig grader (fleet/benchmark) — it only reads/writes
+artifacts by path.
+
+NOTE (Wave-2, out of scope here): bool-coercion of gate fields (F5) and
+concurrency/locking around freeze (F6) are LOW severity and intentionally not
+addressed in this pass.
 """
 from __future__ import annotations
 
@@ -35,12 +40,24 @@ class ScorecardRow:
 
 @dataclass
 class ScorecardArtifact:
-    """A frozen scorecard at a point in time."""
+    """A frozen scorecard at a point in time.
+
+    A scorecard is GOOD when it passed the gate AND the fail-on-revert check
+    (``gate_pass`` and ``fail_on_revert_pass`` both true). The LKG pointer only
+    advances to a GOOD scorecard; a bad latest leaves LKG at the prior good seq.
+    """
 
     seq: int
     timestamp: float
     rows: list[ScorecardRow]
     metadata: dict = field(default_factory=dict)
+    gate_pass: bool = True
+    fail_on_revert_pass: bool = True
+
+    @property
+    def is_good(self) -> bool:
+        """True when the scorecard passed gate AND fail-on-revert."""
+        return self.gate_pass and self.fail_on_revert_pass
 
     def to_dict(self) -> dict:
         return {
@@ -57,6 +74,8 @@ class ScorecardArtifact:
                 for r in self.rows
             ],
             "metadata": self.metadata,
+            "gate_pass": self.gate_pass,
+            "fail_on_revert_pass": self.fail_on_revert_pass,
         }
 
     @classmethod
@@ -79,6 +98,8 @@ class ScorecardArtifact:
             timestamp=float(d["timestamp"]),
             rows=rows,
             metadata=dict(d.get("metadata", {})),
+            gate_pass=bool(d.get("gate_pass", True)),
+            fail_on_revert_pass=bool(d.get("fail_on_revert_pass", True)),
         )
 
 
@@ -101,7 +122,13 @@ class ScorecardStore:
     # --------------------------------------------------------------- writers
 
     def freeze(self, artifact: ScorecardArtifact) -> ScorecardArtifact:
-        """Write a scorecard artifact and update latest + lkg pointers."""
+        """Write a scorecard artifact and update latest (+LKG when GOOD).
+
+        The latest pointer always advances to the new seq. The LKG pointer
+        advances ONLY when the new scorecard is GOOD (passed gate AND
+        fail-on-revert). A bad scorecard leaves LKG at the prior good seq, so
+        the reader's fallback is genuinely a *different* seq than latest.
+        """
         seq_str = str(artifact.seq).zfill(7)
         payload = json.dumps(artifact.to_dict(), indent=2)
         artifact_path = self._root / f"{SCORECARD_PREFIX}{seq_str}.json"
@@ -110,35 +137,36 @@ class ScorecardStore:
         tmp.replace(artifact_path)
 
         self._write_pointer(LATEST_FILENAME, seq_str)
-        self._write_pointer(LKG_FILENAME, seq_str)
+        if artifact.is_good:
+            self._write_pointer(LKG_FILENAME, seq_str)
         return artifact
 
     # --------------------------------------------------------------- readers
 
     def read_latest(self) -> ScorecardArtifact | None:
-        """Return the latest frozen scorecard, with LKG fallback.
+        """Return the latest GOOD scorecard, with LKG fallback.
 
-        RED-TEAM FIX #2: if the latest artifact is missing or corrupt, returns
-        the last-known-good artifact. If LKG also fails (e.g. both point at the
-        same corrupt artifact), scans backward from LKG-1 for any readable
-        artifact. Returns None only when ALL artifacts are absent or corrupt.
+        If the latest artifact is readable AND good (passed gate AND
+        fail-on-revert), return it. Otherwise fall back to the LKG seq — the
+        last GOOD artifact — which must be a DIFFERENT seq than a bad latest.
+        A non-numeric or missing LKG pointer is treated as "no LKG" (F2).
+        Returns None only when no GOOD artifact is recoverable.
         """
-        latest = self._read_pointer(LATEST_FILENAME)
+        latest = self._safe_parse_seq(self._read_pointer(LATEST_FILENAME))
         if latest is not None:
-            artifact = self._read_artifact(latest)
-            if artifact is not None:
+            artifact = self._read_artifact(str(latest).zfill(7))
+            if artifact is not None and artifact.is_good:
                 return artifact
 
-        lkg = self._read_pointer(LKG_FILENAME)
+        lkg = self._safe_parse_seq(self._read_pointer(LKG_FILENAME))
         if lkg is not None:
-            artifact = self._read_artifact(lkg)
-            if artifact is not None:
+            artifact = self._read_artifact(str(lkg).zfill(7))
+            if artifact is not None and artifact.is_good:
                 return artifact
-            # Scan backward from LKG-1 until we find a readable artifact.
-            lkg_int = int(lkg)
-            for candidate in range(lkg_int - 1, 0, -1):
+            # Scan backward from LKG-1 until we find a GOOD readable artifact.
+            for candidate in range(lkg - 1, 0, -1):
                 art = self._read_artifact(str(candidate).zfill(7))
-                if art is not None:
+                if art is not None and art.is_good:
                     return art
 
         return None
@@ -149,20 +177,30 @@ class ScorecardStore:
         return self._read_artifact(seq_str)
 
     def latest_seq(self) -> int | None:
-        """Return the latest sequence number from the latest pointer, or None."""
-        raw = self._read_pointer(LATEST_FILENAME)
-        if raw is None:
-            return None
-        return int(raw)
+        """Return the latest sequence number from the latest pointer, or None.
+
+        A non-numeric pointer (F2) is treated as missing.
+        """
+        return self._safe_parse_seq(self._read_pointer(LATEST_FILENAME))
 
     def lkg_seq(self) -> int | None:
-        """Return the last-known-good sequence number, or None."""
-        raw = self._read_pointer(LKG_FILENAME)
-        if raw is None:
-            return None
-        return int(raw)
+        """Return the last-known-good sequence number, or None.
+
+        A non-numeric pointer (F2) is treated as missing.
+        """
+        return self._safe_parse_seq(self._read_pointer(LKG_FILENAME))
 
     # -------------------------------------------------------------- internal
+
+    @staticmethod
+    def _safe_parse_seq(raw: str | None) -> int | None:
+        """Parse a pointer string to an int; bad/missing -> None (never raise)."""
+        if raw is None:
+            return None
+        try:
+            return int(raw)
+        except (ValueError, TypeError):
+            return None
 
     def _artifact_path(self, seq_str: str) -> Path:
         return self._root / f"{SCORECARD_PREFIX}{seq_str}.json"
