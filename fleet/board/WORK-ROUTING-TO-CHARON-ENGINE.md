@@ -64,3 +64,10 @@ note: |
   subsession-model-and-token-policy, charon-own-work-engine, charon-pools-redesign.
   Artifacts to fold in: scratchpad/charon-run.sh, the 3 REVIEW-PACKET.md examples from PRs
   #90/#92/#93 this session.
+
+harden-scope: charon-run.sh FALSE-FAILOVER fix. The limit-detector greps the model's ENTIRE stdout for
+  words like "exhausted / no capacity / rate limit / over quota", so any job whose OUTPUT legitimately
+  discusses limits (e.g. a routing/failover code review) false-positives as a provider limit — needlessly
+  failing over to the next model and marking the job EXHAUSTED though the work SUCCEEDED (observed
+  2026-07-10; likely also polluted the provider-exhaustion-ledger). FIX: gate failover on opencode's
+  actual exit signal / a structured marker, NOT free-text stdout. This launcher is owned here.

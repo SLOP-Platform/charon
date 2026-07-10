@@ -7,12 +7,12 @@ real-dep: METER-MODEL-PROVIDER build (single-owner file src/charon/proxy.py) —
   third dimension (session tag) to the SAME per-(model,provider) meter key introduced by
   METER-MODEL-PROVIDER; it MUST rebase onto that diff and never write proxy.py concurrently.
   Shared-file sequencing, JUSTIFIED.
-real-dep: forwarder provider-wiring (the deferred Wave-2 step METER-MODEL-PROVIDER's reviews flagged —
-  `provider=route.label` into the forwarder record()/observe() sites, also a prerequisite of
-  COST-RANK-AUTO / DRAIN-THEN-PARK). Until that wiring lands the meter is EMPTY under real traffic, so a
-  session tag has nothing to attach to. This ticket is BLOCKED-UNTIL-USEFUL by that wiring even though
-  it can be built against the meter API beforehand. NOTE: if the forwarder provider-wiring is not yet
-  its own ticket, file it (candidate: METER-CALLER-WIRE) so this dependency is not dangling.
+real-dep: METER-MODEL-PROVIDER Wave-2 caller-wiring (`provider=route.label` into forwarder.py — see
+  METER-MODEL-PROVIDER `wave2-scope`, which absorbed the former standalone "METER-CALLER-WIRE"). Until
+  that wiring lands the meter is EMPTY under real traffic, so a session tag has nothing to attach to. This
+  ticket is BLOCKED-UNTIL-USEFUL by that Wave-2 step even though it can be built against the meter API
+  beforehand. The wiring is the shared prerequisite of COST-RANK-AUTO / DRAIN-THEN-PARK too — sequenced in
+  METER-MODEL-PROVIDER, not a dangling dep.
 owns: src/charon/proxy.py, src/charon/proxy_server.py, tests/test_meter_session_tag.py
 owns-status: PROVISIONAL — confirm the session-tag ingress point (a request header or per-key label the
   client sends) at activation; it may be cleaner to carry the tag on the ProxyObservation than to thread
