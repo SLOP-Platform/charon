@@ -7,6 +7,11 @@ Scans test files and enforces:
   (b) Every test function has a docstring (WARNING)
   (c) Parametrize usage ratio >= 1 per 10 test functions (WARNING)
   (d) No test function exceeds 50 lines (WARNING)
+  (e) Self-mirroring-mock: an inline upstream-mock body shaped like a canonical
+      OpenAI response, whose assertions only read INSIDE `choices`/`usage` and
+      never check the top-level contract itself (WARNING) -- the pattern
+      behind the cline-envelope blind spot (see
+      tests/test_provider_response_contract.py, the fixture to use instead).
 
 Stdlib only. Exit 0 on clean, 1 on error violations.
 Warnings are printed but do not affect exit code unless --strict.
@@ -55,6 +60,99 @@ def _function_line_count(node: ast.FunctionDef | ast.AsyncFunctionDef) -> int:
     if end is None:
         return sys.maxsize
     return end - node.lineno + 1
+
+
+def _defines_inline_http_mock_handler(tree: ast.AST) -> bool:
+    """True if the file authors its own upstream-mock HTTP handler (a
+    `do_POST`/`do_GET` method) -- the recognizable shape of a hand-rolled
+    proxy/forwarder-facing mock, as opposed to a shared fixture."""
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name in ("do_POST", "do_GET"):
+                return True
+    return False
+
+
+def _dict_has_key(node: ast.Dict, key: str) -> bool:
+    return any(isinstance(k, ast.Constant) and k.value == key for k in node.keys)
+
+
+def _authors_canonical_choices_body(tree: ast.AST) -> bool:
+    """True if some dict literal in the file hand-authors a `choices`-shaped
+    body -- the self-mirroring mock (mirrors the very shape the product
+    assumes, so it can never present a foreign envelope)."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Dict) and _dict_has_key(node, "choices"):
+            return True
+    return False
+
+
+def _reads_inside_choices(tree: ast.AST) -> bool:
+    """True if some subscript chain reads INSIDE `choices` (e.g.
+    `body["choices"][0]["message"]["content"]`) rather than only checking the
+    top-level key's presence/shape."""
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.value, ast.Subscript)
+            and isinstance(node.value.slice, ast.Constant)
+            and node.value.slice.value == "choices"
+        ):
+            return True
+    return False
+
+
+def _asserts_top_level_contract(tree: ast.AST) -> bool:
+    """True if the file asserts the client-observable top-level contract --
+    presence/shape of `choices`/`usage` WITHOUT diving inside (e.g.
+    `"choices" in body`, `body.get("usage")`, `isinstance(body["usage"], dict)`
+    ) -- the pattern the parametrized provider-response-contract fixture uses
+    (tests/test_provider_response_contract.py)."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Compare):
+            for op in node.ops:
+                if isinstance(op, (ast.In, ast.NotIn)):
+                    left = node.left
+                    if isinstance(left, ast.Constant) and left.value in (
+                        "choices", "usage",
+                    ):
+                        return True
+        if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant):
+            if node.slice.value == "usage":
+                return True
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr == "get" and node.args:
+                arg0 = node.args[0]
+                if isinstance(arg0, ast.Constant) and arg0.value in (
+                    "choices", "usage",
+                ):
+                    return True
+    return False
+
+
+def _check_self_mirroring_mock(tree: ast.AST, path: Path) -> list[str]:
+    """(e) Flag a proxy/forwarder test that authors its own canonical
+    `choices`-shaped upstream mock and only ever asserts INSIDE `choices`,
+    never on the top-level `choices`/`usage` contract itself -- the exact
+    blind spot that let the cline non-stream envelope defect pass green
+    (fleet/scratch/test-gap-audit.md, Q1/Q4)."""
+    if not _defines_inline_http_mock_handler(tree):
+        return []
+    if not _authors_canonical_choices_body(tree):
+        return []
+    if not _reads_inside_choices(tree):
+        return []
+    if _asserts_top_level_contract(tree):
+        return []
+    return [
+        f"{path}: self-mirroring mock -- authors an inline `choices`-shaped "
+        "upstream body and only asserts content INSIDE `choices`/`usage`, "
+        "never the top-level contract itself. A foreign envelope (e.g. "
+        "cline's {\"data\":..,\"success\":true}) would pass this test "
+        "unnoticed. Prefer the parametrized fixture in "
+        "tests/test_provider_response_contract.py, or add a top-level "
+        "`\"choices\" in body` / `body.get(\"usage\")` assertion."
+    ]
 
 
 def _class_test_methods(
@@ -136,6 +234,9 @@ def check_file(path: Path) -> tuple[list[str], list[str]]:
                 f"{path}:{fn.lineno}: test function {fn.name!r} "
                 f"is {lines} lines (max {_MAX_LINES})"
             )
+
+    # (e) Self-mirroring-mock
+    warnings.extend(_check_self_mirroring_mock(tree, path))
 
     return errors, warnings
 

@@ -183,6 +183,95 @@ class TestSyntaxError:
         assert "syntax error" in errors[0]
 
 
+class TestSelfMirroringMock:
+    """FAIL-ON-REVERT: the class-killer for the cline-envelope blind spot
+    (fleet/scratch/test-gap-audit.md Q1/Q4) -- a test that authors its own
+    canonical `choices`-shaped mock and only ever reads INSIDE `choices` can
+    never present a foreign envelope, so a shape bug sails through green.
+    RED without the rule (this class didn't exist), GREEN with it, RED again
+    on revert of `_check_self_mirroring_mock`."""
+
+    _MOCK_HANDLER = (
+        "import http.server\n"
+        "class _Mock(http.server.BaseHTTPRequestHandler):\n"
+        "    def do_POST(self):\n"
+        "        body = {\n"
+        "            'id': 'chatcmpl-1', 'object': 'chat.completion',\n"
+        "            'choices': [{'message': {'content': 'hi'}}],\n"
+        "        }\n"
+        "        self._write(body)\n"
+    )
+
+    def test_check_test_patterns_flags_self_mirroring_mock(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "test_proxy_mirror.py").write_text(
+            self._MOCK_HANDLER
+            + "def test_forwards_content():\n"
+            + '    """Drives a request through the mock proxy."""\n'
+            + "    body = {'choices': [{'message': {'content': 'hi'}}]}\n"
+            + "    assert body['choices'][0]['message']['content'] == 'hi'\n"
+        )
+        errors, warnings = M.check_file(tmp_path / "test_proxy_mirror.py")
+        assert errors == []
+        mirror_warnings = [w for w in warnings if "self-mirroring mock" in w]
+        assert len(mirror_warnings) == 1, (
+            "self-mirroring-mock rule did not fire on an inline canonical "
+            "`choices` mock whose only assertion reads inside `choices`"
+        )
+
+    def test_top_level_contract_assertion_not_flagged(
+        self, tmp_path: Path
+    ) -> None:
+        """The nudge doesn't fire once the test also asserts the
+        client-observable top-level contract (the pattern
+        tests/test_provider_response_contract.py uses)."""
+        (tmp_path / "test_proxy_contract.py").write_text(
+            self._MOCK_HANDLER
+            + "def test_forwards_content():\n"
+            + '    """Drives a request through the mock proxy."""\n'
+            + "    body = {'choices': [{'message': {'content': 'hi'}}]}\n"
+            + "    assert 'choices' in body\n"
+            + "    assert body['choices'][0]['message']['content'] == 'hi'\n"
+        )
+        errors, warnings = M.check_file(tmp_path / "test_proxy_contract.py")
+        assert errors == []
+        mirror_warnings = [w for w in warnings if "self-mirroring mock" in w]
+        assert mirror_warnings == []
+
+    def test_no_inline_mock_handler_not_flagged(self, tmp_path: Path) -> None:
+        """A test with no hand-rolled `do_POST`/`do_GET` mock (e.g. one using
+        a shared fixture) is out of scope for this nudge."""
+        (tmp_path / "test_no_mock.py").write_text(
+            "def test_reads_choices():\n"
+            '    """Uses a shared fixture, not an inline mock handler."""\n'
+            "    body = {'choices': [{'message': {'content': 'hi'}}]}\n"
+            "    assert body['choices'][0]['message']['content'] == 'hi'\n"
+        )
+        errors, warnings = M.check_file(tmp_path / "test_no_mock.py")
+        assert errors == []
+        mirror_warnings = [w for w in warnings if "self-mirroring mock" in w]
+        assert mirror_warnings == []
+
+    def test_mock_without_choices_key_not_flagged(self, tmp_path: Path) -> None:
+        """An inline mock handler that doesn't hand-author a `choices` shape
+        (e.g. a non-2xx error stub) isn't the self-mirroring pattern."""
+        (tmp_path / "test_error_mock.py").write_text(
+            "import http.server\n"
+            "class _Mock(http.server.BaseHTTPRequestHandler):\n"
+            "    def do_POST(self):\n"
+            "        self._write({'error': {'message': 'boom'}})\n"
+            "def test_error_relayed():\n"
+            '    """Drives an error response through the mock proxy."""\n'
+            "    body = {'error': {'message': 'boom'}}\n"
+            "    assert body['error']['message'] == 'boom'\n"
+        )
+        errors, warnings = M.check_file(tmp_path / "test_error_mock.py")
+        assert errors == []
+        mirror_warnings = [w for w in warnings if "self-mirroring mock" in w]
+        assert mirror_warnings == []
+
+
 class TestClassTestMethods:
     def test_class_method_warns_on_missing_docstring(self, tmp_path: Path) -> None:
         (tmp_path / "test_cls.py").write_text(
