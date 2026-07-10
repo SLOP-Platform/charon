@@ -1,0 +1,39 @@
+tier: strong
+work_class: refactor
+branch: refactor/gateway-routing-decompose
+depends_on:
+owns: src/charon/gateway.py, src/charon/routing_policy.py, tests/test_routing_policy.py
+accept: PYTHONPATH=src python3 -m pytest tests/test_gateway.py tests/test_routing_policy.py -v -q
+  # Behavior-preserving: the FULL existing gateway route-build + sort suite stays green unchanged; the
+  # new routing_policy.py re-exports/facades the moved symbols so no other import breaks.
+prompt: /home/stack/charon-private/prompts/gateway-routing-decompose.md   # author at activation
+scope: >-
+  FUTURE LEVER — DO NOT BUILD unless the trigger below fires. gateway.py is a confirmed god-file
+  (14 board owners, ~623 lines). WCI ANALYSIS (2026-07-09 designed-work plan): the gateway.py
+  contention among the current feature set resolves WITHOUT decomposition, because the dominant
+  collisions are a GENUINE SERIAL money-path dependency chain (DRAIN-ROUTING -> COST-RANK-AUTO ->
+  POOLS-SIMPLIFICATION), which decomposition cannot parallelize (they depend on each other's
+  semantics, not just the file), plus a few eligibility filters (CAPABILITY-ENGINE,
+  FREE-TIER-QUOTA-SPILL, DRAIN-THEN-PARK) that are cheaply single-writer-per-wave. The critical-path
+  floor is set by that real dependency chain, NOT by file contention, so a decompose would NOT lower
+  wall-clock — and it is a money-path-risky refactor. Per WCI-METHOD Step 3 ("KEEP genuinely-coupled
+  work serial; do not force-split money-path just to parallelize"), we DEFER it and TRACK the trigger.
+  IF/WHEN it fires: extract the route ELIGIBILITY pipeline (a registry of predicate filters:
+  has-balance, has-quota-remaining, capability-fits, not-parked, not-cooled) AND the cheapest-first
+  ORDERING call out of gateway.py into src/charon/routing_policy.py via behavior-preserving VERBATIM
+  moves + facade re-exports (suite green per commit); then future eligibility features re-slice onto
+  disjoint filter modules and parallelize by construction. ADVERSARIAL review (money-path routing is
+  where the split hides regressions).
+
+## Dependencies & sequence
+depends_on: none.
+TRIGGER (do NOT build until met): >= 2 NEW logically-INDEPENDENT gateway.py features arrive AFTER this
+  batch (i.e. beyond CAPABILITY-ENGINE / FREE-TIER-QUOTA-SPILL / DRAIN-THEN-PARK, which are handled
+  single-writer-per-wave). Until then the serial-wave schedule is cheaper and lower-risk.
+wave: N/A — off the main schedule; a documented, tracked refactor trigger (mechanizes WCI Step 3's
+  "turn the collision metric into a refactor trigger" without a premature split).
+concurrency: if ever built, it MONOPOLIZES gateway.py for its wave (no concurrent gateway.py writer).
+recommended-model: strong tier for the mechanical verbatim moves + facade; ADVERSARIAL review on the
+  routing/ordering module.
+note: PARKED — deliberately staged as a NON-scheduled future lever, NOT a launchable unit. Records the
+  WCI god-file decision so we do not re-derive it. Filed 2026-07-09 by the WCI designed-work plan.

@@ -1,0 +1,47 @@
+tier: strong
+work_class: bugfix
+branch: fix/openrouter-flakiness
+depends_on: NORMALIZE-CASE-QUANT-FIX
+real-dep: NORMALIZE-CASE-QUANT-FIX build (single-owner file src/charon/proxy.py) — that ticket is a
+  live writer of proxy.py (the _normalize_model_id fix). This ticket edits the same file's error
+  classifier (_body_text_lower), so it rebases onto NORMALIZE's proxy.py, never a concurrent second
+  writer. Shared-file sequencing, JUSTIFIED (not merge-order-only).
+owns: src/charon/proxy.py, tests/test_proxy_openrouter_wrap.py
+accept: PYTHONPATH=src python3 -m pytest tests/test_proxy_openrouter_wrap.py -v -q
+  # FAIL-ON-REVERT: a test feeds a REAL OpenRouter-wrapped body
+  #   {"error":{"message":"Provider returned error","metadata":{"raw":"...Invalid model..."}}}
+  #   and asserts unsupported -> DROP -> failover FIRES. Reverting the _body_text_lower flatten
+  #   makes the classifier see only "Provider returned error" (matches no pattern) -> no DROP ->
+  #   the test FAILS. That is the regression guard.
+prompt: /home/stack/charon-private/prompts/openrouter-flakiness-fix.md   # author at activation
+scope: >-
+  CLASS-3 DRAIN-BLOCKER. OpenRouter's ~1/10 success rate blocks draining its $9.90 finite prepaid
+  credit (see memory charon-drain-then-park-provider-class). ROOT CAUSE (located, fleet
+  HANDOFF-2026-07-04-v2 #20): OpenRouter is a gateway-of-gateways and nests the REAL upstream error
+  as a stringified-JSON under error.metadata.raw. proxy.py `_body_text_lower` (~:115) only inspects
+  error.message/code/type + detail + top-level message — it NEVER reads error.metadata.raw. So an
+  OpenRouter response like {"error":{"message":"Provider returned error","metadata":{"raw":
+  "...Invalid model..."}}} is seen only as "Provider returned error" (matches no unsupported/
+  exhaustion pattern) -> no DROP -> no failover -> the client eats the error instead of routing to a
+  leg that has the model. FIX: extend _body_text_lower to FLATTEN nested/wrapped error fields — at
+  minimum parse+include the stringified JSON at error.metadata.raw; ideally recurse any nested
+  str/dict under `error` so wrapped errors from ANY proxy-of-proxy (OpenRouter + similar) classify
+  correctly. Keep the existing SR-1 namespaced-id compare + the NORMALIZE case/quant fix intact
+  (rebase onto them). This is a classifier fix ONLY — no routing/spend/security-boundary change.
+
+## Dependencies & sequence
+depends_on: NORMALIZE-CASE-QUANT-FIX (shared-file proxy.py single-writer; rebase after it merges).
+real-dep: (see above) — shared-file sequencing on proxy.py, JUSTIFIED.
+consumers/enables: DRAIN-ROUTING + DRAIN-THEN-PARK — a reliable OpenRouter leg is a prerequisite for
+  the credit-drain-first flip (memory: "flip to credit-drain-first once NORMALIZE-CASE-QUANT-FIX +
+  the openrouter fix land"). Bleed-stopper: land it EARLY (Wave 1) so credit-drain can be enabled.
+wave: WAVE 1 — first proxy.py writer after NORMALIZE (in flight). Disjoint from CAPABILITY-ENGINE
+  (gateway/config/providers) and RFL-2 (proxy_server.py), so it runs concurrently with them.
+concurrency: shares proxy.py with NORMALIZE (before) and METER-MODEL-PROVIDER (after) — NOT
+  parallel-safe with those; disjoint from every other Wave-1 lane.
+recommended-model: strong tier (DeepSeek V4-Pro or equivalent) — a well-located, mechanical
+  classifier-flatten fix with a clear regression test; no design ambiguity. Reserve frontier for
+  money-path design work.
+note: PARKED — staged so no droid claims ahead of manager gating. Un-park + author the prompt at
+  activation (after NORMALIZE-CASE-QUANT-FIX merges). Standard review (not money-path — classifier
+  only). Filed 2026-07-09 by the WCI designed-work plan.

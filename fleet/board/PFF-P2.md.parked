@@ -1,0 +1,47 @@
+tier: frontier
+work_class: money-path
+branch: feat/pff-p2-cross-model-substitution
+depends_on: DRAIN-ROUTING
+real-dep: DRAIN-ROUTING build (single-owner file src/charon/proxy_server.py) — DRAIN is the last
+  cost-chain writer of proxy_server.py's serve loop before this ticket; PFF-P2 extends the SAME serve
+  loop (chain_for / serve) to substitute a same-tier sibling, so it rebases onto DRAIN's
+  proxy_server.py, never a concurrent second writer. Shared-file sequencing, JUSTIFIED. Phase-1
+  failover (PROXY-FAILOVER-FIX P1) already merged, so the P1->P2 sequence-internal prereq is satisfied.
+owns: src/charon/proxy_server.py, tests/test_pff_p2_substitution.py
+owns-note: OWNS TRIMMED to proxy_server.py — the model_tier reverse index is built by READING
+  config.load_tiers() + gateway._tier_pools() (both already exist post-TIER-SELECT), so this ticket
+  does NOT need to WRITE gateway.py. Keeping owns to proxy_server.py makes PFF-P2 DISJOINT from the
+  gateway.py cost chain (COST-RANK/POOLS/FREE-TIER/DRAIN-THEN-PARK) so it can run concurrently with
+  them. If activation reveals a required gateway.py write, add it then and re-sequence — but prefer a
+  read-only tier-pool consumption.
+accept: PYTHONPATH=src python3 -m pytest tests/test_pff_p2_substitution.py -v -q
+  # FAIL-ON-REVERT: with the feature flag ON, a request whose own pool is exhausted is served by a
+  # same-tier sibling (model_tier reverse index from tiers.json) and the substitution is announced via
+  # X-Charon-* headers; with the flag OFF (default) the exhausted pool returns the terminal 503 as
+  # today (no substitution). Reverting the substitution branch fails the flag-ON assertion.
+prompt: /home/stack/charon-private/prompts/pff-p2.md   # author at activation
+scope: >-
+  Phase 2 of the failover design (PROXY-FAILOVER-FIX design-of-record). Cross-model / cross-tier
+  substitution on the proxy serve path, OPT-IN DEFAULT-OFF (this is why work_class=money-path). When a
+  model's own pool is exhausted, substitute a same-tier sibling using a model_tier reverse index built
+  from tiers.json (config.load_tiers) over the already-cheapest-first-compiled tier pool
+  (gateway._tier_pools); extend chain_for / the serve loop and ANNOUNCE the substitution in the
+  X-Charon-* response headers (least-surprise contract). Gate behind a config flag, default OFF; only
+  enable after operator confirms the least-surprise contract + that tiers.json is populated in prod.
+  This is the LEG-SWAP ACTUATOR that FREE-TIER-QUOTA-SPILL's smart-switch-timing calls (the forecast
+  is METER's signal; the swap mechanism is THIS ticket).
+
+## Dependencies & sequence
+depends_on: DRAIN-ROUTING (proxy_server.py single-writer hand-off — rebase after it).
+real-dep: DRAIN-ROUTING (shared-file proxy_server.py; see above). PROXY-FAILOVER-FIX P1 = merged.
+consumers: FREE-TIER-QUOTA-SPILL (uses PFF-P2 as the leg-swap actuator for its ride-it-out /
+  switch-at-boundary timing) — annotation only, no owns overlap.
+wave: WAVE 4 — after DRAIN-ROUTING (proxy_server.py free). Runs CONCURRENTLY with COST-RANK-AUTO
+  (gateway.py/config.py) because PFF-P2's trimmed owns (proxy_server.py) are disjoint from COST-RANK's.
+concurrency: shares proxy_server.py with RFL-2/RFL-4 (before) and DRAIN-ROUTING (before) — NOT
+  parallel-safe with those; disjoint from the gateway.py cost chain and the bench track.
+recommended-model: frontier (Claude Opus 4.8) — money-path serve-loop change with a least-surprise
+  header contract and a default-off flag; design-sensitive. ADVERSARIAL review before merge.
+note: PARKED — staged; new ticket carving Phase 2 out of PROXY-FAILOVER-FIX (P1 shipped). Un-park +
+  author the prompt at activation, AFTER the operator decision on the least-surprise substitution
+  contract. Filed 2026-07-09 by the WCI designed-work plan.
