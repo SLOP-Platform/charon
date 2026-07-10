@@ -1,5 +1,11 @@
 """METER-MODEL-PROVIDER Wave 1 — real per-(model, provider) cost metering.
 
+NOTE: ``forwarder.py`` caller-wiring (setting ``provider=route.label`` on
+``observe()``/``record_spend()`` calls) is DEFERRED to Wave 2. The
+per-(model, provider) meter is therefore EMPTY under real traffic today.
+These tests exercise the metering mechanism directly via explicit
+``provider=`` arguments — they do not reflect any production call site.
+
 Replaces est_cost fabrication with authoritative ACTUAL metered cost per request
 keyed by (model, provider). Includes the metering-invariant canary harness
 (replay a recorded request stream through the new meter and assert cost-total

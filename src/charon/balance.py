@@ -167,9 +167,10 @@ class BalanceTracker:
         self._fixed_balances: dict[str, float] = {}
         self._counters: dict[str, int] = {}
         # Per-(model, provider) metered spend (METER-MODEL-PROVIDER Wave 1).
-        # Accumulated by ``record_spend(provider, usd, model=...)`` so cost-rank
-        # routing and drain-then-park can read actual model-level burn rate
-        # instead of fabricating an est_cost floor.
+        # Accumulated by ``record_spend(provider, usd, model=...)`` so Wave-2
+        # cost-rank routing and drain-then-park can read actual model-level burn
+        # rate instead of an est_cost floor. Caller wiring is deferred to Wave 2,
+        # so this ledger is EMPTY under real traffic today.
         self._model_spend: dict[tuple[str, str], float] = {}
 
         for provider, cfg in self._config.items():
@@ -224,8 +225,10 @@ class BalanceTracker:
         balance is authoritative — we don't double-count).
 
         ``model`` (METER-MODEL-PROVIDER Wave 1) optionally also tracks per-model
-        spend on this provider so cost-rank routing can read actual model-level
-        burn rate instead of fabricating an est_cost floor."""
+        spend on this provider so Wave-2 cost-rank routing can read actual
+        model-level burn rate instead of an est_cost floor. Caller wiring
+        (provider=route.label in forwarder.py) is deferred to Wave 2, so this
+        ledger is EMPTY under real traffic today."""
         usd = float(usd)
         if usd <= 0.0:
             return  # negative/zero spend is ignored
@@ -249,8 +252,16 @@ class BalanceTracker:
         """Cumulative metered spend for one (model, provider) pair (METER-MODEL-
         PROVIDER Wave 1). Returns 0.0 for a never-seen entry (never raises).
 
-        Read by cost-rank routing and drain-then-park to get actual model-level
-        burn rate instead of fabricating an est_cost floor."""
+        WAVE-2 DEFERRED: this ledger WILL be read by Wave-2 cost-rank routing
+        and drain-then-park to get actual model-level burn rate instead of
+        an est_cost floor. Caller wiring (provider=route.label in
+        forwarder.py) is deferred to Wave 2, so this ledger is EMPTY under
+        real traffic today.
+
+        Keying precondition: ``model`` MUST be the EXACT model id passed to
+        ``record_spend(model=...)`` — NOT a normalized, prefix-stripped, or
+        aliased form. Entries exist ONLY for calls that passed a non-None
+        ``model``; ``model=None`` calls are NOT metered per-pair."""
         with self._lock:
             return self._model_spend.get((model, provider), 0.0)
 

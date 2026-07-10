@@ -284,9 +284,10 @@ class GatewayProxy:
         # Per-(model, provider) cumulative cost (METER-MODEL-PROVIDER Wave 1).
         # Keyed by (requested_model, provider_label); tracks the real metered
         # cost_usd folded in by ``record()`` when both ``provider`` and
-        # ``count_usage`` are truthy. This is the authoritative per-route spend
-        # ledger — every cost-rank and drain-then-park decision reads from here
-        # instead of fabricating an est_cost floor.
+        # ``count_usage`` are truthy. This is the per-route spend ledger — Wave-2
+        # cost-rank and drain-then-park decisions WILL read from here instead of
+        # an est_cost floor. Caller wiring (provider=route.label) is deferred to
+        # Wave 2, so this ledger is EMPTY under real traffic today.
         self._model_provider_cost: dict[tuple[str, str], float] = {}
         # Per-session cumulative usage (SESSION-COST), keyed by the caller-supplied
         # ``X-Charon-Session`` id (proxy_server.py). Purely additive bookkeeping
@@ -328,9 +329,12 @@ class GatewayProxy:
 
         ``provider`` is the upstream provider label (e.g. ``"deepseek"``,
         ``"openrouter"``). When set, the cost is also folded into the per-(model,
-        provider) ledger (METER-MODEL-PROVIDER Wave 1) so cost-rank routing and
-        drain-then-park can read actual metered spend instead of fabricating an
-        est_cost floor. Omitted / None → global counter only (backward-compatible).
+        provider) ledger (METER-MODEL-PROVIDER Wave 1) so Wave-2 cost-rank
+        routing and drain-then-park can read actual metered spend instead of
+        an est_cost floor. Omitted / None → global counter only
+        (backward-compatible). Caller wiring (provider=route.label in
+        forwarder.py) is deferred to Wave 2, so this ledger is EMPTY under
+        real traffic today — only tests exercise it directly.
 
         ``observe`` = ``classify`` (pure) + ``record`` (mutate). The gateway's
         in-request failover loop calls them separately, so it can classify an
@@ -455,9 +459,10 @@ class GatewayProxy:
         or not ``session`` is given.
 
         ``provider`` (METER-MODEL-PROVIDER Wave 1) optionally also folds the same
-        usage into the per-(model, provider) ledger so cost-rank routing and
-        drain-then-park can read actual metered spend instead of fabricating an
-        est_cost floor."""
+        usage into the per-(model, provider) ledger so Wave-2 cost-rank routing
+        and drain-then-park can read actual metered spend instead of an
+        est_cost floor. Caller wiring (provider=route.label) is deferred to
+        Wave 2, so this ledger is EMPTY under real traffic today."""
         with self._lock:
             if obs.failover:
                 # record under the requested model — the router excludes by model id.
@@ -516,16 +521,39 @@ class GatewayProxy:
         """Cumulative metered cost for one (model, provider) pair (METER-MODEL-
         PROVIDER Wave 1). Returns 0.0 for a never-seen entry (never raises).
 
-        This is the authoritative per-route spend figure: cost-rank routing and
-        drain-then-park read from here instead of fabricating an est_cost floor.
-        The key is ``(requested_model, provider_label)`` — the model id as seen
-        by the router's pool and the upstream provider's label."""
+        WAVE-2 DEFERRED: this ledger WILL be read by Wave-2 cost-rank routing
+        and drain-then-park to get actual per-route spend instead of an
+        est_cost floor. Caller wiring (provider=route.label in forwarder.py)
+        is deferred to Wave 2, so this ledger is EMPTY under real traffic
+        today — only tests exercise it directly.
+
+        Keying precondition: ``model`` MUST be the EXACT ``requested_model``
+        string passed to ``observe()`` — NOT a normalized, prefix-stripped, or
+        aliased form. The meter stores entries ONLY for observations that
+        passed a non-None ``provider``; ``provider=None`` observations advance
+        the global ``_usage`` counter but are NOT metered per-route.
+
+        KNOWN-WAVE2-GAPS (deliberately deferred consistency items so callers
+        do not ingest this meter blindly in Wave 2):
+        (a) Negative/refund costs are passed through UNGUARDED (no
+            ``max(..., 0.0)`` clamp) — matching the global ``_usage`` counter.
+            Clamping only here would BREAK the sum(meter)==cumulative_usage
+            delta-zero invariant; the guard is intentionally omitted.
+        (b) ``unpriced`` responses contribute 0 to this meter while the
+            spend-limiter records an est_cost floor — the two ledgers diverge
+            on unpriced routes BY DESIGN. Wave-2 cost-rank routing must NOT
+            ingest this meter blindly without reconciling the unpriced gap."""
         with self._lock:
             return self._model_provider_cost.get((model, provider), 0.0)
 
     def all_model_provider_costs(self) -> dict[tuple[str, str], float]:
         """Return a read-only snapshot of all per-(model, provider) metered costs
-        (METER-MODEL-PROVIDER Wave 1)."""
+        (METER-MODEL-PROVIDER Wave 1).
+
+        WAVE-2 DEFERRED: caller wiring (provider=route.label in forwarder.py)
+        is deferred to Wave 2, so this ledger is EMPTY under real traffic
+        today. See ``model_provider_cost`` for the keying precondition and
+        known Wave-2 gaps."""
         with self._lock:
             return dict(self._model_provider_cost)
 
