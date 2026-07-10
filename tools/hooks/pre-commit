@@ -18,4 +18,7 @@ if [ "${#staged[@]}" -eq 0 ]; then
   exit 0
 fi
 
-exec python3 tools/check_public_clean.py "${staged[@]}"
+# --staged: scan the STAGED index blob (git show :<path>), not the working tree,
+# so partial staging (git add -p, stage-then-edit) can neither slip a leak
+# through nor false-red a clean commit.
+exec python3 tools/check_public_clean.py --staged "${staged[@]}"

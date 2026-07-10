@@ -92,3 +92,53 @@ The pre-commit hook was verified the same way (staged internal-IP token
   paired with the existing inline-waiver escape hatch) would close that hole —
   deferred to avoid committing a personal local-part into the public guard
   source and to keep this change in-scope.
+
+---
+
+## Adversarial-review follow-up (H1 + M1/M2/M3)
+
+Branch `feat/public-clean-enforce`, applying `PUBLIC-CLEAN-ENFORCE-ADVERSARIAL.md`.
+
+### H1 / TASK-K — personal given-name scrub + mechanized catch
+- Scrubbed the personal given name from **6 tracked files**: `LICENSE:3`
+  (`(c) 2026 <name> (Nnyan)` → `(c) 2026 Nnyan`) and `docs/adr/0001..0005`
+  (`Deciders: <name> (…operator)` → `Nnyan (…operator)`). `git grep` now returns
+  only the detection-pattern line, which is inline-waived.
+- **Mechanized:** added a case-insensitive `\b<name>\b` pattern to `_PATTERNS`
+  (desc `personal given name`), with the pattern line inline-waived so the guard
+  source itself stays public-clean. Fail-on-revert tests: `test_flags_personal_given_name`
+  (+ case-insensitive) red on plant, `test_personal_given_name_removed_is_clean`
+  greens on the public handle. Verified: deleting the pattern reds the plant tests.
+
+### M1 — fail-closed git enumeration
+- `_tracked_files()` now **raises** on non-zero `git ls-files` rc AND on an empty
+  result, instead of returning `[]` (which made `scan_tracked` pass vacuously).
+- Test `test_tracked_files_fails_closed_outside_git` drives `_tracked_files()`
+  directly (not via `_scan_rel_paths`), asserting it raises outside a repo;
+  `test_tracked_files_enumeration_is_nonempty` asserts `pyproject.toml` is in the
+  set. Verified: reverting to `return []` reds the fail-closed test.
+
+### M2 — pre-commit scans the STAGED blob, not the working tree
+- Added `_staged_content()` (`git show :<path>`) + `check_staged_paths()`, and a
+  `--staged` mode in `main()`; the hook now calls `check_public_clean.py --staged`.
+  Detection core refactored into shared `_scan_content()` so worktree and staged
+  reads can't diverge. `git add -p` / stage-then-edit can no longer slip a leak
+  through or false-red a clean commit.
+- Tests `test_staged_scan_reads_index_not_worktree` (staged leak + clean worktree
+  → flagged) and `test_staged_scan_ignores_unstaged_worktree_leak` (clean stage +
+  dirty worktree → clean). Verified: reverting to a worktree read reds both.
+
+### M3 — waiver path documented
+- `CONTRIBUTING.md` gains a "Public-clean guard" section documenting both escape
+  hatches (inline `public-clean: allow` + the `tools/.public-clean-exceptions.json`
+  content-keyed ledger), "add only after review", with the staged-scan note.
+
+### Full gate (this worktree)
+- `ruff check src tests tools` → **All checks passed**
+- `mypy src/charon tools tests` → **Success, no issues**
+- `PYTHONPATH=src python3 -m charon.cli gate` → **all 6 checks OK** (public-clean OK)
+- `PYTHONPATH=src python3 -m pytest -q` → **1421 passed, 1 xfailed, 1 xpassed**
+
+Out of scope / unchanged: L1 (author-line email — build-box `git config`, operator
+fix), L2 (this review note stripped pre-merge per repo convention), L3 (gate lint
+scope), and the email-address pattern follow-up above.

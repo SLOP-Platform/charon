@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
+import pytest
 from tools.check_public_clean import (
     _EXCEPTIONS_PATH,
     _PATTERNS,
     _load_exceptions,
     _scan_rel_paths,
+    _tracked_files,
     check_file,
     check_paths,
+    check_staged_paths,
     scan_tracked,
 )
 
@@ -103,6 +107,39 @@ def test_flags_hex_40_or_more(tmp_path: Path) -> None:
 def test_hex_shorter_than_40_is_ok(tmp_path: Path) -> None:
     f = tmp_path / "ok.yml"
     f.write_text("short: ab12cd34ef567890ab12cd34ef5678\n")
+    v = check_file(f)
+    assert len(v) == 0
+
+
+# ── personal given name (mechanized name scrub) ───────────────────────────────
+#
+# The given name is assembled at runtime so THIS test file stays public-clean
+# while still exercising the detector against the full literal token.
+
+_GIVEN_NAME = "Raf" + "ael"
+
+
+def test_flags_personal_given_name(tmp_path: Path) -> None:
+    """Red-on-plant: a tracked file carrying the personal given name is flagged."""
+    f = tmp_path / "credits.md"
+    f.write_text(f"Authored by {_GIVEN_NAME}.\n")
+    v = check_file(f)
+    assert len(v) == 1
+    assert "given name" in v[0]
+
+
+def test_personal_given_name_case_insensitive(tmp_path: Path) -> None:
+    f = tmp_path / "credits.md"
+    f.write_text(f"by {_GIVEN_NAME.upper()}\n")
+    v = check_file(f)
+    assert len(v) == 1
+
+
+def test_personal_given_name_removed_is_clean(tmp_path: Path) -> None:
+    """Green-on-remove: replacing the name with the public handle clears it —
+    reverting the scrub (name back in a tracked file) reds the guard again."""
+    f = tmp_path / "credits.md"
+    f.write_text("Authored by Nnyan.\n")
     v = check_file(f)
     assert len(v) == 0
 
@@ -304,3 +341,73 @@ def test_repo_scan_catches_a_planted_leak(tmp_path: Path) -> None:
     v = _scan_rel_paths([str(leak)], _load_exceptions())
     assert len(v) == 1
     assert "home path" in v[0]
+
+
+# ── M1: fail-closed git enumeration (no silent no-op) ─────────────────────────
+#
+# These exercise _tracked_files() directly — NOT via _scan_rel_paths — so a
+# refactor that makes git-enumeration return [] (turning scan_tracked into a
+# vacuous pass) is caught here rather than sailing through green.
+
+
+def test_tracked_files_enumeration_is_nonempty() -> None:
+    """_tracked_files() must actually enumerate the repo. A known-tracked file
+    must be present, so an empty/no-op enumeration reds instead of letting
+    scan_tracked pass vacuously with 'public-clean OK'."""
+    files = _tracked_files()
+    assert files, "_tracked_files() returned no files — scan_tracked would pass vacuously"
+    assert "pyproject.toml" in files
+
+
+def test_tracked_files_fails_closed_outside_git(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Outside a git repo (or on any git error) enumeration must RAISE, not
+    return [] — fail-closed so the gate exits non-zero instead of green."""
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(RuntimeError):
+        _tracked_files()
+
+
+# ── M2: pre-commit scans the STAGED blob, not the working tree ────────────────
+
+
+def _init_repo(path: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=path, check=True)
+
+
+# IP assembled at runtime so THIS test file stays public-clean while the on-disk
+# fixture blob carries a full internal-IP token.
+_LEAK_LINE = 'HOST = "10.0.' + '0.9"\n'
+
+
+def test_staged_scan_reads_index_not_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A leak that is staged (git add) but scrubbed from the working copy must
+    still be caught — the hook gates what will actually be committed. Reverting
+    to a working-tree read makes this file read clean and reds this test."""
+    _init_repo(tmp_path)
+    conf = tmp_path / "conf.py"
+    conf.write_text(_LEAK_LINE)
+    subprocess.run(["git", "add", "conf.py"], cwd=tmp_path, check=True)
+    conf.write_text('HOST = "localhost"\n')  # working tree now clean
+    monkeypatch.chdir(tmp_path)
+    v = check_staged_paths(["conf.py"], {})
+    assert len(v) == 1
+    assert "internal IP" in v[0]
+
+
+def test_staged_scan_ignores_unstaged_worktree_leak(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The mirror case: a clean staged blob with an unstaged working-tree leak
+    must NOT false-red the commit. A working-tree read would flag it and fail."""
+    _init_repo(tmp_path)
+    conf = tmp_path / "conf.py"
+    conf.write_text('HOST = "localhost"\n')
+    subprocess.run(["git", "add", "conf.py"], cwd=tmp_path, check=True)
+    conf.write_text(_LEAK_LINE)  # unstaged working-tree leak
+    monkeypatch.chdir(tmp_path)
+    v = check_staged_paths(["conf.py"], {})
+    assert len(v) == 0
