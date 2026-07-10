@@ -296,8 +296,15 @@ cmd_detect(){
   return 0
 }
 
+show_operator_actions(){
+  echo "--- OPERATOR ACTIONS (things the manager needs YOU to do/decide) ---"
+  bash "$HERE/pending.sh" list
+  echo "--- end operator actions ---"
+  return 0
+}
+
 case "${1:-scan}" in
-  scan|"") bash "$HERE/retire-done.sh"; board_gate; cmd_scan; scan_rc=$?; cmd_detect; exit $scan_rc ;;
+  scan|"") bash "$HERE/retire-done.sh"; board_gate; cmd_scan; scan_rc=$?; cmd_detect; show_operator_actions; exit $scan_rc ;;
   add)     shift; cmd_add "$@" ;;
   close)   shift; cmd_close "$@" ;;
   list)    shift; cmd_list "$@" ;;
