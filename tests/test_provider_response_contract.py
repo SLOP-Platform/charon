@@ -248,7 +248,11 @@ def test_every_preset_has_a_declared_shape_fixture() -> None:
         name for name, preset in providers.PRESETS.items()
         if preset.wire in _NATIVE_WIRE_SHAPE_FIXTURES
     }
-    undeclared = set(providers.PRESETS.keys()) - _OPENAI_SHAPE_PRESETS - native_wire_presets
+    # cline-pass is declared via a dedicated adapter fixture in `_shape_fixture_for`
+    # (_cline_wrapped_shape); it is neither OpenAI-wire nor a native-wire preset, so
+    # exclude it here rather than false-flag it once it lands in providers.PRESETS.
+    undeclared = (set(providers.PRESETS.keys()) - _OPENAI_SHAPE_PRESETS
+                  - native_wire_presets - {_CLINE_PRESET_NAME})
     assert not undeclared, (
         f"preset(s) {sorted(undeclared)} have no declared raw-shape fixture -- "
         "add them to _OPENAI_SHAPE_PRESETS (or a dedicated adapter case) in "
