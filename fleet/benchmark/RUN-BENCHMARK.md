@@ -92,3 +92,34 @@ model's state, then restarts the kickoff above. See `README.md` for the
 
 See `README.md` in this directory for the full subcommand reference, the
 composite/tier-ladder formula, and the legacy manual flow.
+
+## Out-of-band grading (grader-daemon) — TRUST BOUNDARY
+
+Real-task grading (reds-replay, real sub-session actuals) is performed
+OUT-OF-BAND by the **grader-daemon** running as the dedicated ``bench-grader``
+unix user. You (the graded agent) are NOT the grader and CANNOT self-grade.
+
+**The agent must NOT:**
+- Read files under ``/home/bench-grader/keys/`` — permission-denied by design.
+- Write to ``/var/lib/bench-grader/spool/req/`` directly — bench.sh does that.
+- Append rows to ``model-scorecard.tsv`` — owned by bench-grader, unwritable
+  by the agent.
+- Attempt to execute graders or check_cmds — these live out of your reach.
+
+**What the agent DOES:**
+- Drive ``bench.sh start`` / ``bench.sh grade`` as before.
+- ``bench.sh grade`` drops a request into the daemon's spool (write-only from
+  the agent's perspective) and polls for the result. The daemon — not you —
+  runs the grader, records the score, and appends to the ledger.
+
+**Scorecard artifacts:** The daemon writes **versioned, append-only**
+``scorecard.v{n}.json`` artifacts in ``fleet/benchmark/``. These are NEVER
+imported by product code. Consumers read frozen artifacts only. The version
+number (``scorecard.version``) increments when grading logic changes.
+This is the RED-TEAM FIX #2 artifact seam — collapsing it (removing versioning
+or making the artifact product-importable) breaks the trust boundary and is
+caught by ``selftest/test_grader_daemon.py``.
+
+**Daemon lifecycle:** Started by the operator as ``bench-grader`` once
+(substrate setup in ``fleet/ADR-BENCH-OOB-GRADING.md`` §5). The agent never
+starts, stops, or touches the daemon.
