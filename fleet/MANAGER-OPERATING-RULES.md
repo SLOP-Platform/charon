@@ -28,6 +28,7 @@ mechanical, prefer the mechanism (hook / gate / launcher flag) over recall.
 - For any action the operator must run themselves (push, login, open a tab): give the literal copy-pasteable command, not a description. `[always-give-exact-command]`
 - Droid launch commands are always given with flags: `fleet-droid.sh <tier> --wait 3 --retries 10`, never the bare form. `[droid-launch-with-wait-retry-flags]`
 - At every handoff, give a one-liner copy-pasteable prompt to bootstrap the next session. `[manager-gives-new-session-prompt]`
+- **Handoffs are MECHANIZED, not memory.** Before ending a session, the handoff file MUST pass `bash fleet/handoff-check.sh <file>` (required sections present; every referenced SHA/path/script exists; committed-SHA claim real) — a non-zero exit means the handoff is incomplete/inaccurate, fix it before handing off. Prefer generating the machine-state block via `fleet/handoff.sh` rather than hand-typing facts. Poor/inaccurate/incomplete handoffs are a recurring failure; the gate is the fix. `[mechanized-handoff-gate]`
 - "TL" → one plain-language line per ACTIVE ticket; skip done/parked. `[tl-terse-status-command]`
 
 ## 3. DELEGATION (primary stays lean; workers write to disk)
