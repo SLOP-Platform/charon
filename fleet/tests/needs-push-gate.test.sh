@@ -69,6 +69,29 @@ check "e2 blocking red stays open" "$(red_status needs-push-tick-z)" "open"
 rc=0; cmd_scan >/dev/null 2>&1 || rc=$?
 check "e3 gate BLOCKS on the unverified contradiction" "$rc" "1"
 
+echo "== (f) HIGH #1: done + needs-push + owns-files-EXIST but NOT positively merged -> guard KEPT =="
+# The exact reproduced data-loss path: a ticket owning a PRE-EXISTING product file (e.g. proxy.py)
+# with a bare/lying `done` marker + a live needs-push guard over committed-but-unlanded work. The
+# owns file EXISTS in origin/master (true for ~40 live tickets), so the reverted code declared it
+# "merged" via owns-content and `rm -f`'d the guard. verify_merged must now require POSITIVE proof;
+# owns-present alone must NEVER delete the guard. (No `branch:` meta -> fully offline, no gh call.)
+unset VERIFY_MERGED_FIXTURE
+P="$(mktemp -d)"; git -C "$P" init -q
+mkdir -p "$P/src"; echo x > "$P/src/proxy.py"
+git -C "$P" -c user.email=t@t -c user.name=t add -A
+git -C "$P" -c user.email=t@t -c user.name=t commit -q -m base
+git -C "$P" update-ref refs/remotes/origin/master "$(git -C "$P" rev-parse HEAD)"
+export VERIFY_MERGED_REPO="$P"
+printf 'tier: economy\nowns: src/proxy.py\n' > "$D/board/TICK-PXY.md"   # owns EXISTS, no branch meta
+: > "$D/state/needs-push/TICK-PXY"
+: > "$D/state/done/TICK-PXY"                                            # bare/lying done, no proof
+detect_needs_push >/dev/null 2>&1
+[ -e "$D/state/needs-push/TICK-PXY" ] && ok "f1 owns-present is NOT proof: guard KEPT (no silent rm -f)" \
+                                      || bad "f1 owns-present is NOT proof: guard KEPT (H1 DATA-LOSS reachable!)"
+check "f2 blocking red stays open on the owns-present contradiction" "$(red_status needs-push-tick-pxy)" "open"
+unset VERIFY_MERGED_REPO
+rm -rf "$P"
+
 rm -rf "$D"
 echo
 echo "--- $PASS passed, $FAIL failed ---"

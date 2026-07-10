@@ -69,6 +69,20 @@ rc=0; run_reconcile || rc=$?
 [ -e "$d/state/done/TICK-A" ] && ok "e TICK-A stays done" || bad "e TICK-A stays done"
 [ -e "$d/state/done/TICK-B" ] && bad "e TICK-B stays open" || ok "e TICK-B stays open"
 
+# (f) HIGH #2: a DRIFTED merged PR (matches no board branch) whose changed file is owned by MORE THAN
+# ONE ticket is AMBIGUOUS — owns-overlap cannot prove WHICH ticket landed, so NEITHER may be auto-closed
+# (the reverted "first glob match wins" would mis-close the alphabetically-first owner onto un-landed
+# work with a real merged:<sha>). Reverting the >1-owner refusal closes TICK-SH1 -> this test fails.
+echo "== (f) HIGH #2: drifted PR on a file owned by >1 ticket -> NEITHER auto-closed (ambiguous) =="
+printf 'tier: economy\nbranch: feat/sh1-planned\nowns: src/shared.py\nwork_class: docs\n' > "$d/board/TICK-SH1.md"
+printf 'tier: economy\nbranch: feat/sh2-planned\nowns: src/shared.py\nwork_class: docs\n' > "$d/board/TICK-SH2.md"
+printf 'feat/DRIFTED-SHARED\t%s\tsrc/shared.py\t205\n' "$SHA" > "$d/ambig.tsv"
+RECONCILE_MERGED_SRC="$d/ambig.tsv" bash "$d/reconcile-merged.sh" >/dev/null 2>&1
+[ -e "$d/state/done/TICK-SH1" ] && bad "f SH1 NOT auto-closed on ambiguous shared-owner overlap" \
+                                || ok "f SH1 NOT auto-closed on ambiguous shared-owner overlap"
+[ -e "$d/state/done/TICK-SH2" ] && bad "f SH2 NOT auto-closed on ambiguous shared-owner overlap" \
+                                || ok "f SH2 NOT auto-closed on ambiguous shared-owner overlap"
+
 rm -rf "$d" "$P"
 echo
 echo "--- $PASS passed, $FAIL failed ---"

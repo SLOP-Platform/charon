@@ -22,22 +22,47 @@ deps_done(){ local raw="${1:-}" d dc; [ -n "$raw" ] || return 0
 # reconcile-merged, G3c retire-done). Replaces the old "trust that a `done` marker exists" logic
 # that let a lying marker delete the needs-push guard / cascade unblocks over stranded work.
 #
-# Proof precedence (LOCAL/offline checks first, so a full-board sweep does not hammer the network):
+# POSITIVE proof precedence (LOCAL/offline checks first, so a full-board sweep does not hammer net):
 #   1. marker carries `merged:<sha>`  -> sha is an ancestor of the product origin/master (git, local)
-#   2. `owns:` files are all present in origin/master (git cat-file, local — the audit's content test)
-#   3. marker carries `merged:#<pr>`  -> that PR is merged (gh, network)
-#   4. board `branch:` has a merged PR (gh, network)
-# Returns 0 = merge-verified, 1 = NOT verified. NEVER errors out (each step is guarded), so it is
-# safe to call from a `set -e` script AS A CONDITION (always `if verify_merged ...; then`).
+#   2. marker carries `merged:#<pr>`  -> that PR is merged (gh, network)
+#   3. board `branch:` has a merged PR (gh, network)
+# Returns 0 = merge-verified (POSITIVE proof), 1 = NOT verified. NEVER errors out (each step is
+# guarded), so it is safe to call from a `set -e` script AS A CONDITION (always `if verify_merged ...`).
+#
+# H1 FIX (2026-07-10 adversarial review): `owns:`-content-present is NO LONGER a positive proof here.
+# `owns` files merely EXISTING in origin/master is TRUE for ~every ticket that modifies a pre-existing
+# file (proxy.py, config.py, …) whether or not THIS ticket's change landed — a false positive. That
+# weak signal was gating DESTRUCTIVE actions (deleting the needs-push guard, worktree remove, G2
+# auto-close), so a bare/lying `done` on an existing-file ticket could disarm the guard over stranded
+# committed work. owns-content now lives in verify_merged_owns_advisory() and may ONLY drive an
+# ADVISORY (informational, non-blocking) — never a destructive decision.
 #
 # TEST HOOK: VERIFY_MERGED_FIXTURE=<file> — when set, returns 0 iff <id> appears (case-insensitive,
 # whole line) in that file. Keeps every gate exercisable fully offline. VERIFY_MERGED_REPO overrides
 # the product-repo path (default /home/stack/code/charon).
 VERIFY_MERGED_REPO_DEFAULT="/home/stack/code/charon"
+VERIFY_MERGED_SLUG_DEFAULT="SLOP-Platform/charon"   # M1 fallback when the local remote is absent
 _vm_meta(){ awk -F': ' -v k="$1" '$1==k{sub(/^[^:]*: ?/,"");print;exit}' "$2" 2>/dev/null; }
 _vm_repo(){ printf '%s' "${VERIFY_MERGED_REPO:-$VERIFY_MERGED_REPO_DEFAULT}"; }
-_vm_slug(){ git -C "$(_vm_repo)" remote get-url origin 2>/dev/null \
-              | sed -E 's#(git@[^:]*:|https?://[^/]*/)##; s/\.git$//'; }
+# M1: never return an empty slug (a missing/renamed local product repo would silently disable the
+# gh proofs); fall back to the known product slug so a stale/absent local ref cannot brick verification.
+_vm_slug(){ local s; s="$(git -C "$(_vm_repo)" remote get-url origin 2>/dev/null \
+              | sed -E 's#(git@[^:]*:|https?://[^/]*/)##; s/\.git$//')"
+            [ -n "$s" ] && printf '%s' "$s" || printf '%s' "$VERIFY_MERGED_SLUG_DEFAULT"; }
+# M1: single best-effort refresh of the product origin/master ref so a STALE local ref cannot
+# false-negative a freshly-merged ticket. Best-effort only (offline/no-remote -> no-op). Skipped in
+# the offline fixture mode. Call ONCE per gate pass (not per-marker) to avoid hammering the network.
+_vm_refresh(){
+  [ -n "${VERIFY_MERGED_FIXTURE:-}" ] && return 0
+  git -C "$(_vm_repo)" fetch origin master --quiet 2>/dev/null || true
+}
+# _verification_available: can we actually PROVE a merge right now? Fixture mode = deterministic/yes.
+# Else we need gh for the PR/branch proofs; if gh is absent the network proofs cannot run, so a
+# not-locally-proven marker is "unverifiable", NOT "positively unmerged" (M1/M2 — degrade to advisory).
+_verification_available(){
+  [ -n "${VERIFY_MERGED_FIXTURE:-}" ] && return 0
+  command -v gh >/dev/null 2>&1
+}
 _vm_sha_in_master(){ git -C "$(_vm_repo)" merge-base --is-ancestor "$1" origin/master 2>/dev/null; }
 _vm_pr_merged(){
   command -v gh >/dev/null 2>&1 || return 1
@@ -63,6 +88,9 @@ _vm_owns_present(){
   done
   [ "$any" -eq 1 ]
 }
+# verify_merged: POSITIVE merge proof ONLY (sha-ancestry OR a merged PR). This is what gates every
+# DESTRUCTIVE / irreversible decision (needs-push guard delete, worktree remove, retire-off-board,
+# G2 done-unmerged auto-close). owns-content is deliberately NOT consulted here (see H1 note above).
 verify_merged(){
   local id="$1"
   if [ -n "${VERIFY_MERGED_FIXTURE:-}" ]; then
@@ -80,19 +108,26 @@ verify_merged(){
       _vm_sha_in_master "$val" && return 0
     fi
   fi
-  # 2. local: owns-content present in origin/master (Phase-1 fallback; tightened in Phase 4)
-  if [ -f "$bfile" ]; then
-    local owns; owns="$(_vm_meta owns "$bfile")"
-    [ -n "$owns" ] && _vm_owns_present "$owns" && return 0
-  fi
-  # 3. network: marker-carried PR number is merged
+  # 2. network: marker-carried PR number is merged
   if printf '%s' "$val" | grep -qE '^[0-9]+$'; then
     _vm_pr_merged "$val" && return 0
   fi
-  # 4. network: board branch has a merged PR
+  # 3. network: board branch has a merged PR
   if [ -f "$bfile" ]; then
     local branch; branch="$(_vm_meta branch "$bfile")"
     [ -n "$branch" ] && [ "$branch" != "n/a" ] && _vm_branch_merged "$branch" && return 0
   fi
   return 1
+}
+# verify_merged_owns_advisory <id>: ADVISORY-ONLY signal (H1). 0 iff every `owns:` path exists in
+# origin/master. This is a WEAK signal (true for any existing-file ticket regardless of whether THIS
+# ticket landed) — it may ONLY drive an informational, NON-blocking advisory and MUST NEVER authorize
+# a destructive action. In deterministic fixture mode it returns 1 (verify_merged fully controls).
+verify_merged_owns_advisory(){
+  [ -n "${VERIFY_MERGED_FIXTURE:-}" ] && return 1
+  local id="$1"; local bfile="$FLEET_LIB_BOARD/$id.md"
+  [ -f "$bfile" ] || bfile="$FLEET_LIB_BOARD/archive/$id.md"
+  [ -f "$bfile" ] || return 1
+  local owns; owns="$(_vm_meta owns "$bfile")"
+  [ -n "$owns" ] && _vm_owns_present "$owns"
 }

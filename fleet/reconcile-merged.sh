@@ -53,8 +53,15 @@ _overlap(){
   return 1
 }
 
-# map a merged PR (head-branch, changed-files) -> board ticket id. Branch-meta match FIRST, then
-# owns-file overlap (branch drifted). Empty if none maps.
+# map a merged PR (head-branch, changed-files) -> board ticket id. Precedence:
+#   1) CERTAIN: board `branch:` == PR head-branch (an exact, unique meta link) -> close.
+#   2) owns-file overlap, but ONLY when EXACTLY ONE board ticket overlaps (unambiguous) -> close.
+# HIGH #2 FIX (2026-07-10 adversarial review): when a drifted PR's changed file is owned by MORE THAN
+# ONE ticket (common under WCI — proxy.py/config.py/gateway.py are each owned by 2-5 tickets), the old
+# "first glob match wins" auto-closed the ALPHABETICALLY-FIRST owner — the WRONG ticket — writing a
+# real `merged:<sha>` onto un-landed work (which then survives every downstream gate). owns-overlap is
+# therefore only trusted when it is UNAMBIGUOUS; an ambiguous (>1-owner) overlap is SURFACED for manual
+# resolution and NEVER auto-closed. Empty (no map / ambiguous) -> return 1.
 ticket_for_pr(){
   local want_branch="$1" pr_files="$2" f b ownsf
   for f in "$BOARD"/*.md "$BOARD"/archive/*.md; do
@@ -63,11 +70,19 @@ ticket_for_pr(){
     basename "$f" .md; return 0
   done
   [ -n "$pr_files" ] || return 1
+  local matches="" cnt=0 id
   for f in "$BOARD"/*.md "$BOARD"/archive/*.md; do
     [ -e "$f" ] || continue
     ownsf="$(meta owns "$f")"; [ -n "$ownsf" ] || continue
-    if _overlap "$ownsf" "$pr_files"; then basename "$f" .md; return 0; fi
+    if _overlap "$ownsf" "$pr_files"; then
+      id="$(basename "$f" .md)"; matches="$matches $id"; cnt=$((cnt+1))
+    fi
   done
+  if [ "$cnt" -eq 1 ]; then
+    printf '%s' "${matches# }"; return 0
+  elif [ "$cnt" -gt 1 ]; then
+    echo "reconcile-merged: AMBIGUOUS — merged PR (branch=$want_branch) owns-overlaps $cnt tickets:${matches} — NOT auto-closing (a shared owned file cannot prove WHICH ticket landed; resolve by hand)." >&2
+  fi
   return 1
 }
 

@@ -96,12 +96,15 @@ printf '2026-01-01T00:00:00Z\tmerged:%s\tbranch:feat/v\n' "$GOODSHA" > "$vd/stat
 verify_merged VS && ok "vm sha-proof marker verifies" || bad "vm sha-proof marker verifies"
 printf '2026-01-01T00:00:00Z\tmerged:%s\tbranch:feat/v\n' "$BADSHA" > "$vd/state/done/VS"
 verify_merged VS && bad "vm non-ancestor sha does NOT verify" || ok "vm non-ancestor sha does NOT verify"
-# owns-content proof (no sha in marker; owns file present in origin/master)
-printf 'tier: economy\nbranch: feat/o\nowns: src/present.py\n' > "$vd/board/VO.md"
+# H1: owns-content is ADVISORY-ONLY — it is NOT a positive merge proof. verify_merged (which gates
+# every DESTRUCTIVE action) must NOT verify on owns-present; the weak signal lives in the advisory fn.
+# (no branch: line -> keeps this hermetic: verify_merged falls through with no gh/network call.)
+printf 'tier: economy\nowns: src/present.py\n' > "$vd/board/VO.md"
 : > "$vd/state/done/VO"
-verify_merged VO && ok "vm owns-present verifies (content fallback)" || bad "vm owns-present verifies"
-printf 'tier: economy\nbranch: feat/o\nowns: src/absent.py\n' > "$vd/board/VO.md"
-verify_merged VO && bad "vm missing owns file does NOT verify" || ok "vm missing owns file does NOT verify"
+verify_merged VO && bad "vm owns-present is NOT a positive proof (H1)" || ok "vm owns-present is NOT a positive proof (H1)"
+verify_merged_owns_advisory VO && ok "vm owns-present drives the ADVISORY signal" || bad "vm owns-present drives the ADVISORY signal"
+printf 'tier: economy\nowns: src/absent.py\n' > "$vd/board/VO.md"
+verify_merged_owns_advisory VO && bad "vm missing owns file -> no advisory" || ok "vm missing owns file -> no advisory"
 unset FLEET
 rm -rf "$vd"
 

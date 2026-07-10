@@ -292,6 +292,7 @@ _np_red_ensure_open(){
 }
 detect_needs_push(){
   [ -d "$NEEDS_PUSH_DIR" ] || { echo "clean: needs-push (no markers)"; return 0; }
+  _vm_refresh   # M1: refresh the product ref once so a stale local ref cannot mis-decide the clear.
   # (1) auto-close any needs-push-* red whose marker is gone (the work landed).
   awk -F"$TAB" '$7=="open" && $1 ~ /^needs-push-/{print $1 "\t" $6}' "$TSV" | \
   while IFS="$TAB" read -r rid chk; do
@@ -346,14 +347,19 @@ _dm_red_ensure_open(){
 }
 done_merge_gate(){
   [ -d "$DONE_DIR" ] || { echo "clean: done-merge-gate (no done markers)"; return 0; }
-  # (1) auto-close any done-unmerged-* red whose ticket now verifies merged.
+  _vm_refresh   # M1: one best-effort fetch so a stale local ref cannot false-negative a fresh merge.
+  local can_verify=1; _verification_available || can_verify=0
+  # (1) auto-close any done-unmerged-* red whose ticket now verifies merged (POSITIVE proof only).
   awk -F"$TAB" '$7=="open" && $1 ~ /^done-unmerged-/{print $1 "\t" $6}' "$TSV" | \
   while IFS="$TAB" read -r rid chk; do
     [ -n "$rid" ] || continue
     run_check "$chk" && cmd_close "$rid" --override "auto: done marker now merge-verified" >/dev/null 2>&1 || true
   done
-  # (2) per done marker: override -> surface; verified -> ok; else -> blocking red.
-  local m id rid unmerged=0 ov=0
+  # (2) per done marker: override -> surface; POSITIVELY verified -> ok; owns-content-present -> weak
+  #     ADVISORY (informational, non-blocking — H1: owns-present is NOT proof, never blocks/closes on
+  #     it); cannot verify (gh/network down) -> ONE 'verification-unavailable' advisory (M1/M2, not a
+  #     per-marker blocking red); otherwise (no proof, no owns, verification available) -> blocking red.
+  local m id rid unmerged=0 ov=0 adv=0 unavail=0
   for m in "$DONE_DIR"/*; do
     [ -f "$m" ] || continue
     id="$(basename "$m")"; rid="$(_dm_red_id "$id")"
@@ -366,11 +372,20 @@ done_merge_gate(){
       [ "$(_red_status "$rid")" = open ] && cmd_close "$rid" --override "auto: done marker merge-verified" >/dev/null 2>&1 || true
       continue
     fi
+    if verify_merged_owns_advisory "$id"; then
+      adv=$((adv+1))
+      echo "done-merge-gate: $id — owns-content present in origin/master but THIS ticket's merge is NOT positively proven (ADVISORY, weak, NOT blocking). Prove it: done.sh $id --merged-sha <sha>."
+      continue
+    fi
+    if [ "$can_verify" -eq 0 ]; then
+      unavail=$((unavail+1)); continue
+    fi
     unmerged=$((unmerged+1))
     _dm_red_ensure_open "$rid" "$id"
     echo "done-merge-gate: $id done but NOT merge-verified — AUTO-REGISTERED blocking red '$rid' (prove: done.sh $id --merged-sha <sha>, or override)"
   done
-  [ "$unmerged" -eq 0 ] && echo "done-merge-gate: clean ($ov override(s); all other done markers merge-verified)"
+  [ "$unavail" -gt 0 ] && echo "done-merge-gate: verification-unavailable — gh/network absent; $unavail done marker(s) could not be positively checked (ADVISORY, NOT blocking; re-run when online)."
+  [ "$unmerged" -eq 0 ] && echo "done-merge-gate: clean ($ov override(s), $adv owns-advisory, $unavail unverifiable; all other done markers merge-verified)"
   return 0
 }
 
