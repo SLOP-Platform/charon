@@ -9,8 +9,9 @@
 #   fleet/report.sh --terse    one line per item, flat (greppable)
 #
 # Data:  fleet/state/ROADMAP.tsv   (override with ROADMAP_TSV=/path for tests)
-# Fields (tab-separated): project<TAB>id<TAB>status<TAB>name<TAB>goal
+# Fields (tab-separated): project<TAB>id<TAB>status<TAB>phase<TAB>name<TAB>goal
 # status: done in-review building queued designed parked not-started
+# phase:  done -> "-"   building -> "now"   everything else -> "next"
 #
 # Output is ASCII except the status dots. Program numbers are assigned by
 # project order-of-first-appearance. Reverting the renderer breaks
@@ -44,14 +45,16 @@ function dot(s) {
 /^[[:space:]]*#/ { next }   # comment lines
 /^[[:space:]]*$/ { next }   # blank lines
 {
-  proj=$1; id=$2; st=$3; name=$4; goal=$5
+  proj=$1; id=$2; st=$3; phase=$4; name=$5; goal=$6
   if (!(proj in seen)) { seen[proj]=1; order[++np]=proj }
   n = ++cnt[proj]
-  P[proj,n,"id"]=id; P[proj,n,"st"]=st; P[proj,n,"name"]=name; P[proj,n,"goal"]=goal
+  P[proj,n,"id"]=id; P[proj,n,"st"]=st; P[proj,n,"phase"]=phase
+  P[proj,n,"name"]=name; P[proj,n,"goal"]=goal
   tally[st]++
-  if (length(id)   > widID)   widID   = length(id)
-  if (length(name) > widName) widName = length(name)
-  if (length(proj) > widProj) widProj = length(proj)
+  if (length(id)    > widID)    widID    = length(id)
+  if (length(name)  > widName)  widName  = length(name)
+  if (length(proj)  > widProj)  widProj  = length(proj)
+  if (length(phase) > widPhase) widPhase = length(phase)
 }
 END {
   if (np == 0) { print "report.sh: ROADMAP has no rows" > "/dev/stderr"; exit 1 }
@@ -60,8 +63,9 @@ END {
     for (i=1; i<=np; i++) {
       proj = order[i]
       for (n=1; n<=cnt[proj]; n++) {
-        printf "%s %-*s %-*s %-*s  %s\n", \
-          dot(P[proj,n,"st"]), widProj, proj, widID, P[proj,n,"id"], \
+        printf "%s  %-*s  %-*s  %-*s   %-*s   %s\n", \
+          dot(P[proj,n,"st"]), widPhase, P[proj,n,"phase"], \
+          widProj, proj, widID, P[proj,n,"id"], \
           widName, P[proj,n,"name"], P[proj,n,"goal"]
       }
     }
@@ -75,8 +79,9 @@ END {
     hdr = sprintf("PROGRAM %d — %s", i, toupper(proj))
     printf "\n%s\n", hdr
     for (n=1; n<=cnt[proj]; n++) {
-      printf "    %s %-*s %-*s  %s\n", \
-        dot(P[proj,n,"st"]), widID, P[proj,n,"id"], \
+      printf "    %s  %-*s  %-*s   %-*s   %s\n", \
+        dot(P[proj,n,"st"]), widPhase, P[proj,n,"phase"], \
+        widID, P[proj,n,"id"], \
         widName, P[proj,n,"name"], P[proj,n,"goal"]
     }
   }

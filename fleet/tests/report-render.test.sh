@@ -24,11 +24,11 @@ hasnt(){ local label="$1" needle="$2" hay; hay="$(cat)"
 FIX="$(mktemp)"
 cat > "$FIX" <<'TSV'
 # comment line — must be skipped
-Alpha	A1	done	first-thing	do the first thing
+Alpha	A1	done	-	first-thing	do the first thing
 
-Alpha	A2	building	second-thing	do the second thing
-Beta	B9	parked	beta-thing	the beta thing
-Alpha	A3	not-started	third-thing	do the third thing
+Alpha	A2	building	now	second-thing	do the second thing
+Beta	B9	parked	next	beta-thing	the beta thing
+Alpha	A3	not-started	next	third-thing	do the third thing
 TSV
 
 export ROADMAP_TSV="$FIX"
@@ -37,10 +37,16 @@ echo "== full grouped mode =="
 FULL="$(bash "$REPORT")"
 printf '%s' "$FULL" | has  "program 1 header is first project"  "PROGRAM 1 — ALPHA"
 printf '%s' "$FULL" | has  "program 2 header is second project" "PROGRAM 2 — BETA"
-printf '%s' "$FULL" | has  "known done row w/ green dot"         "🟢 A1 first-thing"
-printf '%s' "$FULL" | has  "building row w/ orange dot"          "🟠 A2 second-thing"
-printf '%s' "$FULL" | has  "parked row under Beta w/ brown dot"  "🟤 B9 beta-thing"
-printf '%s' "$FULL" | has  "not-started row w/ white dot"        "⚪ A3 third-thing"
+# phase column: done -> '-', building -> 'now', everything else -> 'next' (its own aligned column)
+printf '%s' "$FULL" | has  "done row: green dot + '-' phase"     "🟢  -"
+printf '%s' "$FULL" | has  "building row: orange dot + 'now'"    "🟠  now"
+printf '%s' "$FULL" | has  "parked row: brown dot + 'next'"      "🟤  next"
+printf '%s' "$FULL" | has  "not-started row: white dot + 'next'" "⚪  next"
+# wide id->name gap (>=3 spaces) proves the widened column spacing is in effect
+printf '%s' "$FULL" | has  "done row body, wide id/name gap"     "A1   first-thing"
+printf '%s' "$FULL" | has  "building row body"                   "A2   second-thing"
+printf '%s' "$FULL" | has  "parked row body under Beta"          "B9   beta-thing"
+printf '%s' "$FULL" | has  "not-started row body"                "A3   third-thing"
 printf '%s' "$FULL" | has  "totals footer present"               "Totals:"
 printf '%s' "$FULL" | hasnt "comment line not rendered"          "comment line"
 
@@ -49,7 +55,7 @@ ORDER="$(printf '%s\n' "$FULL" | grep -oE 'A[0-9]|B[0-9]' | tr '\n' ' ')"
 case "$ORDER" in "A1 A2 A3 B9 "*) ok "input order preserved (A1 A2 A3 B9)";; *) bad "input order (got: $ORDER)";; esac
 
 # grouping: the Beta header comes AFTER all Alpha rows
-a_last="$(printf '%s\n' "$FULL" | grep -n 'A3 third-thing' | head -1 | cut -d: -f1)"
+a_last="$(printf '%s\n' "$FULL" | grep -n 'A3 .*third-thing' | head -1 | cut -d: -f1)"
 b_hdr="$(printf '%s\n' "$FULL" | grep -n 'PROGRAM 2 — BETA' | head -1 | cut -d: -f1)"
 [ -n "$a_last" ] && [ -n "$b_hdr" ] && [ "$b_hdr" -gt "$a_last" ] \
   && ok "Beta group renders after all Alpha rows" \
@@ -58,7 +64,8 @@ b_hdr="$(printf '%s\n' "$FULL" | grep -n 'PROGRAM 2 — BETA' | head -1 | cut -d
 echo "== terse mode =="
 TERSE="$(bash "$REPORT" --terse)"
 printf '%s' "$TERSE" | hasnt "terse has no PROGRAM headers" "PROGRAM"
-printf '%s' "$TERSE" | has   "terse row carries project + id" "Alpha A1 first-thing"
+printf '%s' "$TERSE" | has   "terse row carries project + id" "Alpha  A1   first-thing"
+printf '%s' "$TERSE" | has   "terse row carries phase column" "🟢  -"
 printf '%s' "$TERSE" | has   "terse row for Beta"             "Beta"
 tcount="$(printf '%s\n' "$TERSE" | grep -cE '^.+ (Alpha|Beta) ')"
 [ "$tcount" -eq 4 ] && ok "terse prints one line per item (4)" || bad "terse line count (got $tcount)"

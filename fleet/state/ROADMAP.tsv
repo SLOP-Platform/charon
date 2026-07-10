@@ -1,43 +1,45 @@
 # Charon fleet roadmap — canonical source of truth for status/handoff reports.
-# One row per item. Tab-separated. Fields: project<TAB>id<TAB>status<TAB>name<TAB>goal
+# One row per item. Tab-separated. Fields: project<TAB>id<TAB>status<TAB>phase<TAB>name<TAB>goal
 # status: done in-review building queued designed parked not-started
+# phase:  done -> "-"   building -> "now"   everything else -> "next"
+# goal:   plain-language outcome, <= 6 words, no status words (the dot carries status).
 # Program numbers are assigned by project order-of-first-appearance; rows render in input order.
 # Edit this file to move an item; fleet/report.sh re-renders the canonical format from it.
-Fleet	F1	done	worktree-leak-guard	stop droid work leaking into the main checkout
-Fleet	F2	done	auto-done-on-merge	auto-close a ticket when its PR merges
-Fleet	F3	done	needs-push-gate	block session end while work is unpushed
-Fleet	F4	done	end-session-gate	gate session end on a clean board + green tests
-Fleet	F5	done	checkin-in-submit	fold a check-in into every submit
-Fleet	F6	done	deploy-key-derive	derive deploy keys instead of hardcoding them
-Fleet	F7	done	board-correctness	validate board-state invariants
-Fleet	F8	done	refuse-unverified-done	refuse "done" without a verified merge
-Fleet	F9	done	done-unmerged-red	flag done-but-unmerged tickets red
-Fleet	F10	done	retire-done-ordering	retire done markers in a stable order
-Fleet	F20	building	report-renderer	one canonical status/handoff report format
-Fleet	F11	queued	work-optimizer	schedule for max concurrency, no redundancy
-Fleet	F12	queued	auto-close	auto-close stale/landed tickets
-Fleet	F13	queued	recurrence-auditor	detect recurring failures and mechanize fixes
-Fleet	F14	queued	detector-lifecycle	manage the lifecycle of drift detectors
-Fleet	F15	designed	worktree-cleanup	reap orphaned worktrees safely
-Fleet	F16	designed	autonomous-ttl	time-box autonomous runs with a TTL
-Fleet	F17	designed	scorecard-auto-append	auto-append model-scorecard rows
-Fleet	F18	designed	auto-log-model-lies	auto-log false self-reported successes
-Fleet	F19	not-started	bridge-unregister-trap	trap-unregister the bridge session on exit
-Security	S1	done	email-scrub	scrub the operator email from the public repo
-Security	S2	done	enforce-public-clean	enforce no private info in the public repo
-Security	S4	building	scrub-name+name-guard	scrub a leaked name and guard reintroduction
-Security	S5	designed	guard-pre-flight	pre-flight guard for secret/PII leaks
-Security	S3	not-started	history-purge	purge sensitive data from git history
-Bridge	B1	done	phase-0-1-substrate	durable-bridge phase 0-1 substrate (uncommitted)
-Bridge	B2	designed	phase-2-active	durable-bridge phase 2 active push-notify
-Bridge	B3	not-started	roci-coordinator	stand up Rocinante as durable coordinator
-Bridge	B4	parked	benchmark-v2	outcome-based benchmark v2
-Bridge	B5	designed	obol-adr-0008	portable orchestration store (obol), ADR-0008
-Bridge	B6	designed	work-engine-d10	promote the work-engine (D10) in-tree
-Backlog	K1	designed	pools-redesign	collapse pools into tier-sets + grades table
-Backlog	K2	designed	meter-wave-2	real cost meter, wave 2
-Backlog	K3	designed	grader-secfix	out-of-band grader security hardening
-Backlog	K4	designed	bench-oob-reds-replay	reds-replay out-of-band grading benchmark
-Backlog	K5	designed	work-routing-to-charon	route eligible work through the Charon gateway
-Backlog	K6	parked	drain-then-park	drain prepaid credit then auto-park providers
-Backlog	K7	parked	chutes-commandcode-keys	acquire Chutes/CommandCode API keys + plans
+Fleet	F1	done	-	worktree-leak-guard	stop droid work leaking into main
+Fleet	F2	done	-	auto-done-on-merge	close tickets when PRs merge
+Fleet	F3	done	-	needs-push-gate	block exit with unpushed work
+Fleet	F4	done	-	end-session-gate	require clean board before exit
+Fleet	F5	done	-	checkin-in-submit	check in on every submit
+Fleet	F6	done	-	deploy-key-derive	derive deploy keys, never hardcode
+Fleet	F7	done	-	board-correctness	keep the board state valid
+Fleet	F8	done	-	refuse-unverified-done	reject unmerged work as complete
+Fleet	F9	done	-	done-unmerged-red	flag unmerged tickets claiming completion
+Fleet	F10	done	-	retire-done-ordering	retire finished tickets in order
+Fleet	F20	building	now	report-renderer	one canonical fleet status report
+Fleet	F11	queued	next	work-optimizer	schedule work for max parallelism
+Fleet	F12	queued	next	auto-close	close stale and landed tickets
+Fleet	F13	queued	next	recurrence-auditor	catch repeat failures automatically
+Fleet	F14	queued	next	detector-lifecycle	keep drift detectors current
+Fleet	F15	designed	next	worktree-cleanup	clean up orphaned worktrees
+Fleet	F16	designed	next	autonomous-ttl	time-box unattended runs
+Fleet	F17	designed	next	scorecard-auto-append	record model scores automatically
+Fleet	F18	designed	next	auto-log-model-lies	log models that claim false success
+Fleet	F19	not-started	next	bridge-unregister-trap	unregister the bridge on exit
+Security	S1	done	-	email-scrub	remove operator email from repo
+Security	S2	done	-	enforce-public-clean	keep private info out of repo
+Security	S4	building	now	scrub-name+name-guard	remove leaked name, block its return
+Security	S5	designed	next	guard-pre-flight	catch secret leaks before push
+Security	S3	not-started	next	history-purge	erase secrets from git history
+Bridge	B1	done	-	phase-0-1-substrate	lay the bridge foundation
+Bridge	B2	designed	next	phase-2-active	push notifications across sessions
+Bridge	B3	not-started	next	roci-coordinator	run a durable session coordinator
+Bridge	B4	parked	next	benchmark-v2	rank models by real outcomes
+Bridge	B5	designed	next	obol-adr-0008	one portable orchestration store
+Bridge	B6	designed	next	work-engine-d10	move the work engine in-tree
+Backlog	K1	designed	next	pools-redesign	collapse pools into model tiers
+Backlog	K2	designed	next	meter-wave-2	measure real spend per call
+Backlog	K3	designed	next	grader-secfix	harden the grader against tampering
+Backlog	K4	designed	next	bench-oob-reds-replay	grade models on past failures
+Backlog	K5	designed	next	work-routing-to-charon	route work through the gateway
+Backlog	K6	parked	next	drain-then-park	spend prepaid credit, then pause
+Backlog	K7	parked	next	chutes-commandcode-keys	get missing provider API keys
