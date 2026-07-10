@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# @covers: public-clean
 """Public-clean lint — prevent personal/internal info from leaking into the public repo."""
 from __future__ import annotations
 
@@ -81,22 +82,48 @@ def _tracked_files() -> list[str]:
     return [f for f in result.stdout.split("\0") if f]
 
 
-def main() -> int:
-    exceptions = _load_exceptions()
+def _scan_rel_paths(rels: list[str], exceptions: dict[str, set[str]]) -> list[str]:
+    """Scan an explicit list of repo-relative paths, skipping the exceptions ledger.
+
+    The exceptions ledger itself necessarily restates the exact,
+    already-elsewhere-exempted line content it waives (that's the whole point
+    of content-based matching — see _load_exceptions). None of that text is a
+    *new* disclosure: it is verbatim what was already reviewed and allowed at
+    its original location. Scanning the ledger against itself would just re-flag
+    its own bookkeeping, so it is excluded — the same way a detect-secrets
+    baseline file is excluded from its own secret scan.
+    """
     all_v: list[str] = []
     exceptions_rel = str(_EXCEPTIONS_PATH)
-    for rel in sorted(_tracked_files()):
+    for rel in rels:
         if rel == exceptions_rel:
-            # The exceptions ledger itself necessarily restates the exact,
-            # already-elsewhere-exempted line content it waives (that's the
-            # whole point of content-based matching — see _load_exceptions).
-            # None of that text is a *new* disclosure: it is verbatim what
-            # was already reviewed and allowed at its original location.
-            # Scanning the ledger against itself would just re-flag its own
-            # bookkeeping, so it is excluded — the same way a detect-secrets
-            # baseline file is excluded from its own secret scan.
             continue
         all_v.extend(check_file(Path(rel), exceptions))
+    return all_v
+
+
+def scan_tracked(exceptions: dict[str, set[str]] | None = None) -> list[str]:
+    """Scan every git-tracked file for personal/internal leaks.
+
+    Single source of truth for the whole-repo scan: both ``main()`` (the
+    CLI/gate/CI entrypoint) and the pytest repo-scan regression test call this,
+    so the tree the gate enforces and the tree the tests assert on can never
+    drift apart.
+    """
+    if exceptions is None:
+        exceptions = _load_exceptions()
+    return _scan_rel_paths(sorted(_tracked_files()), exceptions)
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    exceptions = _load_exceptions()
+    if argv:
+        # Explicit paths (e.g. the pre-commit hook passes staged files) — scan
+        # just those. Still honours the exceptions ledger and inline waivers.
+        all_v = _scan_rel_paths(argv, exceptions)
+    else:
+        all_v = scan_tracked(exceptions)
     if all_v:
         print("PUBLIC-CLEAN VIOLATION — personal/internal info found:", file=sys.stderr)
         for v in all_v:

@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Public-clean pre-commit hook — blocks a commit that would stage personal or
+# internal info (internal IPs, home paths, rig/host names, hex secrets) into
+# this PUBLIC repo. Dependency-free: uses only git + the stdlib scanner, so it
+# works without installing the third-party `pre-commit` framework.
+#
+# Install (one time, from the repo root):
+#   git config core.hooksPath tools/hooks
+#
+# Bypass a single commit (use sparingly — the same guard also runs in CI):
+#   git commit --no-verify
+set -euo pipefail
+
+# Only scan files staged for this commit (Added/Copied/Modified), so the hook
+# stays fast and never flags untouched history.
+mapfile -t staged < <(git diff --cached --name-only --diff-filter=ACM)
+if [ "${#staged[@]}" -eq 0 ]; then
+  exit 0
+fi
+
+exec python3 tools/check_public_clean.py "${staged[@]}"

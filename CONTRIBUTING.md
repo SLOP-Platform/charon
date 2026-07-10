@@ -9,13 +9,19 @@ Thank you for your interest in contributing!
    ```
    pip install -e '.[dev,service]'
    ```
-3. Run the gate locally before pushing:
+3. Install the public-clean pre-commit hook (one time — this is a **public**
+   repo, so the hook blocks a commit that would stage personal/internal info):
+   ```
+   git config core.hooksPath tools/hooks
+   ```
+4. Run the gate locally before pushing:
    ```
    PYTHONPATH=src python3 -m pytest -q
    ruff check src tests tools
    mypy src/charon tools tests
    python3 tools/check_boundary.py src
    python3 tools/check_version.py
+   python3 tools/check_public_clean.py
    python3 tools/check_decisions.py --check
    ```
 

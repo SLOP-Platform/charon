@@ -6,8 +6,10 @@ from tools.check_public_clean import (
     _EXCEPTIONS_PATH,
     _PATTERNS,
     _load_exceptions,
+    _scan_rel_paths,
     check_file,
     check_paths,
+    scan_tracked,
 )
 
 
@@ -265,3 +267,40 @@ def test_green_proof_clean_file(tmp_path: Path) -> None:
     f.write_text("import os\nprint('hello')\n")
     v = check_file(f)
     assert len(v) == 0
+
+
+# ── whole-repo scan (real tracked tree) ───────────────────────────────────────
+#
+# The unit tests above exercise the detector on synthetic fixtures. These two
+# close the "tests never scan the real repo" gap: they run the SAME scan the
+# CI gate runs (scan_tracked) against this checkout's git-tracked files, so a
+# personal/internal token that lands in a real tracked file fails `pytest`
+# (hence CI) — not just the standalone `charon gate` step.
+
+
+def test_tracked_tree_is_public_clean() -> None:
+    """The whole git-tracked tree must contain no unallowlisted personal or
+    internal info. If a leak is committed, this fails and NAMES the offending
+    file:line — this is the regression guard that makes the gate real. Revert
+    the wiring (delete this test) and a leaked token would sail through pytest.
+    """
+    violations = scan_tracked()
+    assert not violations, (
+        "personal/internal info found in tracked files "
+        "(add an allowlist entry only after review):\n  " + "\n  ".join(violations)
+    )
+
+
+def test_repo_scan_catches_a_planted_leak(tmp_path: Path) -> None:
+    """Proof the whole-repo scan actually catches a leak: feed the same scan
+    path a file carrying a personal token and confirm it is flagged. Guards
+    against a future refactor that silently turns scan_tracked into a no-op
+    (which would make test_tracked_tree_is_public_clean pass vacuously).
+    """
+    leak = tmp_path / "leak.py"
+    # Assemble the token at runtime so THIS test file stays public-clean while
+    # the fixture file on disk carries the full internal home-path token.
+    leak.write_text("HOME = '/home/" + "stack/secret'\n")
+    v = _scan_rel_paths([str(leak)], _load_exceptions())
+    assert len(v) == 1
+    assert "home path" in v[0]
