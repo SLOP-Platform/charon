@@ -328,6 +328,10 @@ def build_server(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> 
         policy_router=cfg.policy_router,
         balance_tracker=cfg.balance_tracker,
     )
+    # R3 capability-matrix injection: default deny table (openrouter/novita
+    # reasoning-incapable). Optional attribute — forwarder.py reads it via
+    # getattr with None fallback so direct-server tests are unaffected.
+    server.capability_matrix = routing_policy.CapabilityMatrix()
     if setup_dir is not None:
         server.setup_handler = make_setup_handler(server, setup_dir)
     return server
