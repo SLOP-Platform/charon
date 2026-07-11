@@ -129,3 +129,10 @@ Backlog	K14	parked	next	dogfood	end-to-end out-of-tree dogfood run	Wave C — co
 Backlog	K15	parked	next	ohmypi-assess	research omp integration feasibility	Wave C — connect & dogfood
 Backlog	K16	parked	next	bench-reds-replay	replay real reds as benchmark tasks	Wave D — benchmark remnants
 Backlog	K17	parked	next	dtc-6	parametrize repeating test functions	Wave D — benchmark remnants
+Keystone	KS1	done	-	mvp-core	stdlib core + 3 gates + module contract + reuse-check + verify-self (built/reviewed/fixed/verified)	Wave A — foundation
+Keystone	KS2	building	next	doctrine-gates	no_vacuous/no_skip_game/no_pipe_mask/fail_loud/leak_guard (mechanize green-is-not-proof)	Wave A — foundation
+Keystone	KS3	designed	next	graphify-real	real Graphify integration + `ksf module add graphify` (full pillar B)	Wave B — capability
+Keystone	KS4	designed	next	inert-code-gate	catch UNREGISTERED-inert via AST reachability (the real BalanceTracker case; NO half-measure)	Wave B — capability
+Keystone	KS5	designed	next	live-charon-dogfood	point KSF at LIVE Charon as the final dogfood; surface real inert/dead code	Wave C — apply & deploy
+Keystone	KS6	designed	next	deploy-github	GitHub-clean (leak_guard) + push; decide repo home	Wave C — apply & deploy
+Keystone	KS7	designed	next	slop-integration	analyze+plan KSF adoption into SLOP/mediastack; reconcile with ms-enforce	Wave D — propagate
