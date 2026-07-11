@@ -5,51 +5,32 @@
 Read and fully follow /home/stack/charon-private/fleet/SESSION-HANDOFF-plo-koon.md — you are the fresh Charon fleet MANAGER
 ```
 
-## STATE — WHAT SHIPPED AND LANDED THIS SESSION
+## ⚡ ACTIVE DIRECTIVES (honor immediately)
+- **ALL sub-sessions run on NeuralWatt** until the sub expires: `opencode run --model charon/glm-5.2-nw` (or `kimi-k2.6-nw`). These are NW-primary (fallback opencode-go only if NW is unreachable). Both were added to the opencode charon model map this session. DRAIN the 6 kWh included allotment **until 7/23 03:30 UTC**; AFTER that, keep using NW to drain the **$22 PAYG** at $10/kWh (does not expire); park NW only when $22 hits ~$0. Reminder routine set: `trig_01U4mjVGBm8VRK3hFTMMLNCE` (fires 7/23 03:30 UTC).
+- **HARD project priority (default sequencing):** ROUTER > BRIDGE > FLEET > SECURITY > BACKLOG. Overrides that jump the queue: acute security incident, a dependency that blocks a higher item, a hard deadline, a broken rig/gate. (In MANAGER-OPERATING-RULES.)
+- **Fold, don't proliferate:** every new ticket folds into one of the 5 Projects; new project only on a STRONG case + re-analysis. Mechanized by PROJECT-MEMBERSHIP-GATE ticket.
 
-Everything below is **merged to master and pushed** (I pushed/merged via `land-push.sh` — the AUTONOMOUS lever is ON; see push protocol in GOTCHAS). No pending pushes/merges remain.
-
-- **Fleet master `beef03e`** (Nnyan/charon-private):
-  - **F22** — `done.sh` no longer aborts on archive-only tickets (`set -e`/`meta` fix) + fail-on-revert tests; closed the **4 P1 done-unmerged reds** (3 `--override` fleet-infra, TIER-SELECT `--merged-sha c4c4189`).
-  - **F21 + F24** — fleet gate is now `fleet/gate.sh` (runs the fleet `*.test.sh` + ADVISORY shellcheck), not product pytest/ruff; benchmark excluded via root `conftest.py`. Gate GREEN (10 tests).
-  - **F23 Phase 1** — session-end deploy harness (`fleet/deploy-session-end.sh`, advisory/tag-if-behind, no-hang timeouts) + tests; wired into `fleet/end-session.sh`. Live no-op smoke test green.
-  - **Doctrine** — MANAGER-OPERATING-RULES §9 (token-economy is DEFAULT) + §8 (push is LEVER-GATED, not operator-only). Streamed **F25** (repo-decl-central) + **F26** (shellcheck-clean).
-- **Product master `700a45d`** (SLOP-Platform/charon): **PR #94 merged** — S1/S2/S4 public-clean enforce; review artifact stripped (`45d8af7`) per convention.
+## STATE — SHIPPED THIS SESSION (all committed + pushed; fleet master `e945926`)
+- **ROUTER project created (priority #1), R1–R17** — the cost/capability routing brain. Design of record: `fleet/state/ROUTER-DESIGN.md` (price-sorted cheapest-first; fail over on exhausted/problem/slow; capability matrix incl. openrouter✗reasoning; North Star = throttle-as-backpressure + degradation alert + auto-recover on refill; two-bucket NeuralWatt funding; balance source = poll the provider's own usage API; R17 pricing-limits-checker). Free-tier order (R15) done: `fleet/state/FREE-TIER-ORDER-REVIEW.md`; verified limits: `fleet/FREE-TIER-ROUTING.md`.
+- **Roadmap is now WAVED** (Projects → Waves → tickets) for all 5 projects in `fleet/state/ROADMAP.tsv`; `fleet/report.sh` renders it and **`fleet/end-session.sh` prints it on screen at close**. (The prior session's "new format" was lost because the wave data never persisted — restored this session.)
+- **NeuralWatt reframed correctly:** $20/mo Basic sub = 6 kWh included (use-or-lose, resets 7/23) + separate $22 PAYG at $10/kWh. Break-even vs PAYG ≈ 2 kWh/mo; do NOT resubscribe post-7/16 (renews to PAYG parity); evaluate the new FLEX (latency-tolerant) tier for async fleet work.
+- Doctrine added: token-economy DEFAULT, lever-gated push, session-end roadmap print, HARD priority, fold-don't-proliferate.
 
 ## FIRST ACTIONS — NEXT (priority order)
+0. `bash fleet/preflight.sh`; register on the session-bridge under a NEW Jedi name. Launch ALL sub-work on `charon/glm-5.2-nw` (NeuralWatt).
+1. **APPLY THE STAGED FOLD.** A Charon sub-session is producing `fleet/state/ROADMAP.tsv.new` (folds the 53 auditor tickets into the 5 projects, BENCH-OOB-GRADING→ROUTER, deletes 5, projects in priority order, waves assigned). When it lands: VERIFY (row count vs old, `ROADMAP_TSV=fleet/state/ROADMAP.tsv.new bash fleet/report.sh` renders, no ticket lost), then `mv` it over `fleet/state/ROADMAP.tsv`, ADD rows for PROJECT-MEMBERSHIP-GATE and WEB-ROADMAP-GENERATOR (FLEET), confirm the 5 deletes moved to `fleet/board/retired/`, commit + push. Proposal + rationale: `fleet/state/NON-PROJECT-AUDIT.md`.
+2. **ROUTER (top priority)** — start the critical path: R4 meter-wire → R5 cost-rank-auto → R2 router-core + R3 capability-matrix (see ROUTER-DESIGN.md). R11 drain-then-park is what makes the NeuralWatt balance-drain automatic.
+3. **WEB-ROADMAP-GENERATOR** (FLEET) — persistent self-refreshing web roadmap (regenerate HTML from ROADMAP.tsv + republish the Artifact at session end). Artifact url: 255411a5-edda-46c1-aded-a23b6d53811d.
+4. Then BRIDGE (portable work-engine B5/B6/B7), FLEET polish, etc., per priority.
 
-0. Run `/home/stack/charon-private/fleet/preflight.sh`; register on the session-bridge under a NEW Jedi name.
-1. `bash /home/stack/charon-private/fleet/report.sh` to confirm state (F20/F21/F22/F24 done, F23 building, F25/F26 designed). Nothing to merge — it all landed.
-2. **STARTUP-CONTEXT-DIET (F28) — OPERATOR ASK, do early.** Audit everything a session ingests at boot + the work process; cut context/token cost (slim MANAGER-OPERATING-RULES, roll up old handoffs, tighten preflight, demote verbose memories to pointers), set a STARTUP BUDGET + a regression check. Rigor is NOT trimmed. Ticket: `fleet/board/STARTUP-CONTEXT-DIET.md`.
-3. **WORK-CONVERGE-REVIEW (B7) — OPERATOR ASK, dedicated review session.** Compare how SLOP (mediastack) vs Charon (fleet rig) get work done; take best-of-both; design ONE MODULAR, PORTABLE "get-work-done" tool reusable across projects (engine vs project-specific config) so there is never >1 way. Feeds B5/B6. Ticket: `fleet/board/WORK-CONVERGE-REVIEW.md`.
-4. **F23 Phase 2 (CD)** — CI builds a **git-describe** image (`vX.Y.Z-N-gSHA`) on every GREEN master push; extend `/home/stack/charon-private/fleet/deploy.sh` tag-guard to accept it; harness compares describe versions + deploys latest-if-behind; GHCR retention; gateway reports its running version. Spans the PUBLIC product repo → **PR to SLOP-Platform/charon** (keep deploy IP/host/keys in the rig, NEVER the product repo).
-5. **B2 durable-bridge Phase 2 — NOW UNBLOCKED.** Roci SSH prereq ALREADY MET: `ssh rocinante` works (user stack, key `~/.ssh/mediastack`). Designs: `/home/stack/charon-private/fleet/DURABLE-BRIDGE-REVIEW-v2.md`, `/home/stack/charon-private/fleet/state/BRIDGE-ROBUSTNESS-INVESTIGATION.md`.
-6. **F25** repo-decl-central, **F26** shellcheck-clean (rig-only, designed). Then remaining backlog per `report.sh`.
-
-## GOTCHAS (avoid re-discovering / DENIED)
-
-- **Push is LEVER-GATED, not operator-only.** Push via `/home/stack/charon-private/fleet/land-push.sh <branch> [repo]` (raw `git push` / `git -C … push` are deny-listed; `--force`/`--no-verify`/`reset --hard` FORBIDDEN). It self-gates on `state/AUTONOMOUS`: ON → push without asking; OFF → ask first + give the operator the command. CHECK the lever — do NOT reflexively hand pushes over (that wasted this session before the fix).
-- **Roci SSH: use `ssh rocinante`** (aliased in `~/.ssh/config`: user stack, key mediastack) — NOT bare `ssh stack@10.0.1.51` (no key → denied). Rootless SSH was already set up.
-- **Two repos**: PRODUCT `/home/stack/code/charon` (public SLOP-Platform/charon); FLEET `/home/stack/charon-private` (private Nnyan/charon-private). Rig tools must state WHICH repo they mean (root of a bug-class — F25).
-- `done.sh`: done-merge gate checks the PRODUCT repo, so FLEET-infra tickets need `--override "<reason>"`. Archived tickets now close (F22).
-- Fleet gate = `fleet/gate.sh` (fleet bash tests + ADVISORY shellcheck). shellcheck non-blocking (F26 cleans the ~40 style/false-positive findings).
-- Charon Gateway LIVE at `10.0.1.60:8080` (4-LOM). Route sub-work via `opencode run --model charon/<curated-id>`; `free-groq` unusable (8k TPM). 4-LOM SSH needs `-i ~/.ssh/4lom`.
-
-## OPEN OPERATOR ACTIONS
-
-- **None blocking.** All pushes/merges landed this session. Optional: review the F23 Phase-2 plan before I open the product-CI PR (it touches public CI/GHCR).
+## GOTCHAS
+- Push is LEVER-GATED: `bash fleet/land-push.sh <branch> [repo]` (lever ON → pushes; raw `git push` denied; `--force`/`reset` forbidden).
+- Two repos: PRODUCT `/home/stack/code/charon` (public SLOP-Platform/charon); FLEET `/home/stack/charon-private` (private).
+- `charon/glm-5.2-nw` failed at first because it wasn't in opencode's curated map — now added. If a `-nw` model errors "UnknownError", confirm it's in `~/.config/opencode/opencode.json` provider.charon.models.
+- Roci SSH: `ssh rocinante` (NOT bare stack@10.0.1.51). 4-LOM SSH: `-i ~/.ssh/4lom`. Gateway: `10.0.1.60:8080`. Access is auto-reported at boot by `fleet/access-check.sh` (in preflight).
 
 ## SESSION-BRIDGE
-
-Was `plo-koon` (unregistered at first close; session continued for merges). Next session registers under a NEW Jedi name (stale sessions auto-purge after 600s).
-
-## Key findings / decisions
-
-- **Push authority already existed** (land-push.sh + AUTONOMOUS lever ON) — a stale "operator pushes" handoff line masked it and cost a session; fixed in §8 doctrine.
-- **Roci SSH already set up** — `ssh rocinante` works; B2 prereq met (earlier "denied" was wrong invocation).
-- **F23 design DECIDED**: deploy only if master advanced + CI green; advisory on failure; git-describe version; build on every green master push. `deploy.sh` already does /data backup + health-verify + auto-rollback.
-- Product/fleet split is load-bearing but implicitly coupled → wrong-repo bug class (F25).
+Was `plo-koon` (unregistered). Next session registers under a NEW Jedi name.
 
 ## Open questions
-
-None blocking. F23 Phase-2 build-trigger + version form confirmed (every green push, git-describe).
+None blocking. The staged fold + the two un-rowed tickets (PROJECT-MEMBERSHIP-GATE, WEB-ROADMAP-GENERATOR) get their ROADMAP rows when the fold is applied (action 1).
