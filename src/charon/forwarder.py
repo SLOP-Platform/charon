@@ -319,6 +319,12 @@ def forward_with_failover(handler, srv) -> None:
 
     for i, route in enumerate(ordered):
         more = i < len(ordered) - 1
+        # Option A: slow provider is a FAILOVER trigger, not a sort key.
+        if srv.is_slow_provider(route):
+            failovers.append({"provider": route.label, "status": "slow",
+                              "reason": "latency exceeds threshold"})
+            if more:
+                continue
         okey = route.pool_id or requested  # exclusion/observe key (orchestrator compat)
         expected = route.upstream_model or requested or None
         req = _build_upstream_req(handler, srv, route, orig_bj, raw_body)

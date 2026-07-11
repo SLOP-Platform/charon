@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -162,11 +163,14 @@ def test_gateway_path_does_not_import_engine_transitively() -> None:
         "]; "
         "print(json.dumps(leaked))"
     )
+    env = dict(os.environ)
+    env["PYTHONPATH"] = "src"
     result = subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
         check=True,
+        env=env,
     )
     leaked: list[str] = json.loads(result.stdout)
     assert not leaked, (

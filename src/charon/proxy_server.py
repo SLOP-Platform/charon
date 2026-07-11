@@ -647,7 +647,9 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
             lat = self.latency_tracker.latency_ms(route.label)
             return float(lat) if lat is not None else float("inf")
 
-        fresh.sort(key=_lat_sort_key)
+        # Option A: fresh stays in the incoming cost-sorted order (R2 already
+        # applied cheapest-first).  Latency is a health/failover signal, NOT a
+        # primary promotion signal.  (R8 tests now assert this design.)
         # R8 fix: stable composite-key sort — cooldown is PRIMARY, latency tiebreaks.
         cooled.sort(key=lambda r: (self._cooldown.get(r.upstream_base, 0.0), _lat_sort_key(r)))
         return fresh + cooled

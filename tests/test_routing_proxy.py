@@ -6,6 +6,7 @@ handles errors, and is discoverable via printed port line.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -122,12 +123,15 @@ def test_routing_proxy_cli_reports_port(mock_upstream, tmp_path: Path):
     """The proxy main() prints the bound port to stdout for caller discovery."""
     upstream_url, mock_srv, _ = mock_upstream
     report = tmp_path / "usage.json"
+    env = dict(os.environ)
+    env["PYTHONPATH"] = "src"
     p = subprocess.Popen(
         [sys.executable, "-m", "charon.routing_proxy",
          "--target-model", "m",
          "--upstream-base", upstream_url,
          "--report-path", str(report)],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        env=env,
     )
     try:
         # Read the "proxy:PORT" line
