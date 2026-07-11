@@ -85,6 +85,25 @@ check "g1f removed --no-verify rejected (exit 2)" "$rc" "2"
 [ -e "$d/state/done/TICK-G" ] && bad "g1f no marker via --no-verify" || ok "g1f no marker via --no-verify"
 rm -rf "$d"
 
+# g1g: ARCHIVED-only ticket (no active board/<id>.md, only board/archive/<id>.md) — --override must
+#      still close. REGRESSION: meta() reading the absent active-board file must not abort done.sh
+#      under `set -e` before the archive-path fallback / override logic runs. Every done-gate-flagged
+#      ticket is archive-only, so this is the path that actually matters in production.
+d="$(g1)"; mv "$d/board/TICK-G.md" "$d/board/archive/TICK-G.md"
+rc=0; bash "$d/done.sh" TICK-G --override "archived-only close" >/dev/null 2>&1 || rc=$?
+check "g1g override closes an archive-only ticket (exit 0)" "$rc" "0"
+grep -q "override:archived-only close" "$d/state/done/TICK-G" 2>/dev/null \
+  && ok "g1g marker written for archive-only ticket" || bad "g1g marker written for archive-only ticket"
+rm -rf "$d"
+
+# g1h: ARCHIVED-only ticket — the --merged-sha path also works (branch:/owns: read from archive).
+d="$(g1)"; mv "$d/board/TICK-G.md" "$d/board/archive/TICK-G.md"
+rc=0; bash "$d/done.sh" TICK-G --merged-sha "$GOODSHA" >/dev/null 2>&1 || rc=$?
+check "g1h merged-sha closes an archive-only ticket (exit 0)" "$rc" "0"
+grep -q "merged:$GOODSHA" "$d/state/done/TICK-G" 2>/dev/null \
+  && ok "g1h archive-only marker carries merged:<sha>" || bad "g1h archive-only marker carries merged:<sha>"
+rm -rf "$d"
+
 # ============================ verify_merged ============================
 echo "== verify_merged =="
 vd="$(mktemp -d)"; export FLEET="$vd"; mkdir -p "$vd/board/archive" "$vd/state/done"

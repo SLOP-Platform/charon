@@ -24,6 +24,8 @@
 #   END_SESSION_GIT=<git-bin>       stub the git binary so the commit is recorded, not performed
 #   END_SESSION_HANDOFF_SH=<path>   stub the machine-state generator (avoid the slow real gate)
 #   END_SESSION_CHECK_SH=<path>     point at a stub/real handoff-check
+#   END_SESSION_DEPLOY_HOOK=<path>  stub the session-end deploy harness source
+#   SESSION_END_DEPLOY_SH=<path>    stub the deploy binary called by the deploy harness
 #   END_SESSION_PRIV=<repo>         repo to commit the handoff into (default /home/stack/charon-private)
 #   END_SESSION_FILE=<path>         explicit handoff file (default SESSION-HANDOFF-<session>.md)
 set -uo pipefail
@@ -33,6 +35,7 @@ PRIV="${END_SESSION_PRIV:-/home/stack/charon-private}"
 GIT_BIN="${END_SESSION_GIT:-git}"
 HANDOFF_SH="${END_SESSION_HANDOFF_SH:-$FLEET/handoff.sh}"
 CHECK_SH="${END_SESSION_CHECK_SH:-$FLEET/handoff-check.sh}"
+DEPLOY_HOOK="${END_SESSION_DEPLOY_HOOK:-$FLEET/deploy-session-end.sh}"
 
 say(){ printf '%s\n' "$*"; }
 
@@ -100,6 +103,12 @@ end_session(){
     say "end-session: commit FAILED — session NOT closed (nothing to hand off)."
     return 1
   fi
+  # Advisory only: deploy failures/unreachable infrastructure must never strand close.
+  if [ -f "$DEPLOY_HOOK" ]; then
+    # shellcheck source=/dev/null
+    source "$DEPLOY_HOOK"
+    session_end_deploy || true
+  fi
   say ""
   say "end-session: SESSION CLOSED. Handoff committed."
   return 0
@@ -123,6 +132,7 @@ selftest(){
 
   local D; D="$(mktemp -d)"
   cp "$SRC/end-session.sh" "$D/end-session.sh"
+  cp "$SRC/deploy-session-end.sh" "$D/deploy-session-end.sh"
 
   # recording git stub — records intent, performs NO real commit.
   cat > "$D/git-stub.sh" <<'STUB'
@@ -142,6 +152,7 @@ GEN
   # stub checkers
   printf '#!/usr/bin/env bash\nexit 0\n' > "$D/check-pass.sh"; chmod +x "$D/check-pass.sh"
   printf '#!/usr/bin/env bash\nexit 1\n' > "$D/check-fail.sh"; chmod +x "$D/check-fail.sh"
+  printf '# id\topened\tsev\tarea\tdesc\tcheck\tstatus\tclosed_by\n' > "$D/reds.tsv"
 
   local ES="$D/end-session.sh"
   export GITLOG="$D/git.log"
@@ -154,8 +165,19 @@ GEN
     END_SESSION_CHECK_SH="$1" \
     END_SESSION_PRIV="$D" \
     END_SESSION_FILE="$D/HO.md" \
+    END_SESSION_DEPLOY_HOOK="$D/deploy-session-end.sh" \
+    FLEET="$D" \
+    SESSION_END_REDS_TSV="$D/reds.tsv" \
+    SESSION_END_LATEST_TAG_CMD="printf '%s\\n' 'v9.9.9'" \
+    SESSION_END_RUNNING_TAG_CMD="printf '%s\\n' 'ghcr.io/slop-platform/charon:v9.9.9'" \
+    SESSION_END_CI_GREEN_CMD="printf '%s\\n' 'completed success'" \
+    SESSION_END_DEPLOY_SH="$D/deploy-stub.sh" \
     bash "$ES" "${@:2}"
   }
+
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$1" >> "$DEPLOYLOG"\nexit 0\n' > "$D/deploy-stub.sh"
+  chmod +x "$D/deploy-stub.sh"
+  export DEPLOYLOG="$D/deploy.log"
 
   echo "== (A) wiring: check FAIL -> REFUSE, no commit =="
   echo "handoff" > "$D/HO.md"
@@ -172,6 +194,7 @@ GEN
   grep -q 'commit' "$GITLOG" && ok "B2 commit invoked on pass" || bad "B2 commit invoked on pass"
   grep -q 'add' "$GITLOG"    && ok "B3 add invoked on pass"    || bad "B3 add invoked on pass"
   case "$out" in *CLOSED*) ok "B4 prints SESSION CLOSED";; *) bad "B4 prints SESSION CLOSED";; esac
+  [ -s "$DEPLOYLOG" ] && bad "B5 no deploy when 4-LOM already current" || ok "B5 no deploy when 4-LOM already current"
 
   echo "== (C) real handoff-check.sh + a deliberately-INCOMPLETE handoff -> REFUSE, no commit =="
   {
