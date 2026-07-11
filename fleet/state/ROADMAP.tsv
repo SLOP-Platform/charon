@@ -137,3 +137,12 @@ Keystone	KS5	designed	next	live-charon-dogfood	point KSF at LIVE Charon as the f
 Keystone	KS6	designed	next	deploy-github	GitHub-clean (leak_guard) + push; decide repo home	Wave C — apply & deploy
 Keystone	KS7	designed	next	slop-integration	analyze+plan KSF adoption into SLOP/mediastack; reconcile with ms-enforce	Wave D — propagate
 Keystone	KS8	designed	next	coverage-goal	coverage_ssot tracks % + classifies every rule mechanized/guidance/GAP; FAIL on mechanizable-rule-with-no-gate; goal=100% where logical	Wave A — foundation
+Keystone	KS9	designed	next	lens-test-integrity	static-only-is-a-gap + dead-code + test-behavior-not-structure + mutation-testing	Wave E — gate library (pluggable, per-project logical)
+Keystone	KS10	designed	next	lens-no-duplicate-impl	one-canonical-path / no duplicate implementations (structural anti-rediscovery)	Wave E — gate library (pluggable, per-project logical)
+Keystone	KS11	designed	next	lens-design-apo sd	complexity cap + module-size cap (deep modules, APoSD pillar D)	Wave E — gate library (pluggable, per-project logical)
+Keystone	KS12	designed	next	lens-code-quality	type-discipline + lint/format clean (conditional: typed lang)	Wave E — gate library (pluggable, per-project logical)
+Keystone	KS13	designed	next	lens-security	secrets-scan (gitleaks) + SAST (bandit/semgrep)	Wave E — gate library (pluggable, per-project logical)
+Keystone	KS14	designed	next	lens-supply-chain	dependency-pin + CVE scan (trivy/pip-audit); pin CI actions/images	Wave E — gate library (pluggable, per-project logical)
+Keystone	KS15	designed	next	lens-robustness	fresh-install/zero-data-never-500 + idempotency + test-independence (random order)	Wave E — gate library (pluggable, per-project logical)
+Keystone	KS16	designed	next	lens-artifact-integrity	hermetic standalone build+install+health + deterministic/reproducible build (deploy proof)	Wave E — gate library (pluggable, per-project logical)
+Keystone	KS17	designed	next	lens-change-discipline	ADR/decision-record (-> state-store) + migration-discipline (if DB) + surface-boundary	Wave E — gate library (pluggable, per-project logical)
