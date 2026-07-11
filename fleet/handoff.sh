@@ -68,9 +68,7 @@ echo '```'
 echo "### Gate"
 echo '```'
 GATE_RC=0
-gate_out="$( { PYTHONPATH=src python3 -m pytest -q --no-header 2>&1; } )" || GATE_RC=$?
-printf '%s\n' "$gate_out" | tail -3
-gate_out="$( { ruff check src tests 2>&1; } )" || GATE_RC=$?
+gate_out="$( { FLEET="${FLEET:-/home/stack/charon-private/fleet}"; bash "$FLEET/gate.sh" 2>&1; } )" || GATE_RC=$?
 printf '%s\n' "$gate_out" | tail -3
 echo '```'
 
