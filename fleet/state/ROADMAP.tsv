@@ -136,3 +136,4 @@ Keystone	KS4	designed	next	inert-code-gate	catch UNREGISTERED-inert via AST reac
 Keystone	KS5	designed	next	live-charon-dogfood	point KSF at LIVE Charon as the final dogfood; surface real inert/dead code	Wave C — apply & deploy
 Keystone	KS6	designed	next	deploy-github	GitHub-clean (leak_guard) + push; decide repo home	Wave C — apply & deploy
 Keystone	KS7	designed	next	slop-integration	analyze+plan KSF adoption into SLOP/mediastack; reconcile with ms-enforce	Wave D — propagate
+Keystone	KS8	designed	next	coverage-goal	coverage_ssot tracks % + classifies every rule mechanized/guidance/GAP; FAIL on mechanizable-rule-with-no-gate; goal=100% where logical	Wave A — foundation
