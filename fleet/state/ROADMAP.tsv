@@ -53,11 +53,11 @@ Router	R42	parked	next	pff-p2	opt-in cross-model substitution	Wave 8 — capabil
 Bridge	B1	done	-	phase-0-1-substrate	lay the bridge foundation	Wave A — substrate
 Bridge	B2	designed	next	phase-2-active	push notifications across sessions	Wave B — active bridge
 Bridge	B3	not-started	next	roci-coordinator	run a durable session coordinator	Wave B — active bridge
+Bridge	B8	parked	next	durable-bridge-phase-2	bridge daemon watch and renewal	Wave B — active bridge
 Bridge	B5	designed	next	obol-adr-0008	one portable orchestration store	Wave C — portable engine
 Bridge	B6	designed	next	work-engine-d10	move the work engine in-tree	Wave C — portable engine
 Bridge	B7	designed	next	work-converge-review	one modular work tool (SLOP+Charon)	Wave C — portable engine
 Bridge	B4	parked	next	benchmark-v2	rank models by real outcomes	Wave D — ranking
-Bridge	B8	parked	next	durable-bridge-phase-2	bridge daemon watch and renewal	Wave E — durable bridge & writeback
 Bridge	B9	parked	next	dsgn-writeback	design ticket write-back sink	Wave E — durable bridge & writeback
 Fleet	F1	done	-	worktree-leak-guard	stop droid work leaking into main	Wave A — droid isolation
 Fleet	F2	done	-	auto-done-on-merge	close tickets when PRs merge	Wave A — droid isolation
