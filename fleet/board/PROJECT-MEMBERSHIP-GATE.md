@@ -2,7 +2,7 @@ tier: economy
 difficulty: 2
 work_class: rig-meta
 branch: feat/project-membership-gate
-depends_on:
+depends_on: DIFFICULTY-SCHEMA
 owns: /home/stack/charon-private/fleet/validate_board.sh, /home/stack/charon-private/fleet/state/ROADMAP.tsv
 accept: |
   validate_board.sh flags (RED) any LIVE ticket (board/*.md, not parked/retired) that is NOT present as a

@@ -94,7 +94,7 @@ for t, d in tickets.items():
 # HARD FAIL: the sequencing it encodes can never be satisfied. (Correctness check b.)
 for t, d in tickets.items():
     for dep in d["deps"]:
-        if dep.lower() not in ids and dep.lower() not in done_ids and dep.lower() not in archived_ids:
+        if dep.lower() not in ids and dep.lower() not in done_ids and dep.lower() not in archived_ids and dep.lower() not in parked_files:
             red.append(f"bad-dep: {t} depends_on '{dep}' (no such ticket)")
 
 # 2c. self-dependency — a ticket that depends_on itself can never be scheduled. HARD FAIL.

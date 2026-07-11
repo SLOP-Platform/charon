@@ -2,7 +2,7 @@ tier: strong
 difficulty: 3
 work_class: money-path
 branch: feat/pricing-limits-checker
-depends_on:
+depends_on: PROVIDER-PROBE-FIX
 owns: fleet/pricing-limits-check.sh, fleet/state/provider-pricing-limits.tsv, src/charon/gateway.py
 accept: |
   A MECHANIZED checker (run on a schedule / at preflight) that:

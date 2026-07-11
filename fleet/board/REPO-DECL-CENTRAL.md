@@ -2,7 +2,7 @@ tier: economy
 difficulty: 2
 work_class: ci-infra
 branch: feat/repo-decl-central
-depends_on:
+depends_on: HANDOFF-PIPEFAIL
 owns: /home/stack/charon-private/fleet/_lib.sh, /home/stack/charon-private/fleet/handoff.sh, /home/stack/charon-private/fleet/retire-done.sh, /home/stack/charon-private/fleet/handoff-check.sh, /home/stack/charon-private/fleet/land-needs-push.sh
 accept: |
   ONE canonical declaration of the two repos, sourced everywhere. Add to _lib.sh:

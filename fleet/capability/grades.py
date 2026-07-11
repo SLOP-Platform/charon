@@ -138,6 +138,7 @@ def scores_tie(score_a: float, band_a: float | None,
 WORK_CLASSES: tuple[str, ...] = (
     "money-path", "routing", "ci-infra", "refactor", "bugfix",
     "tests", "greenfield-feature", "docs", "frontend",
+    "rig-meta", "design-review",
 )
 GENERALIST = "generalist"
 

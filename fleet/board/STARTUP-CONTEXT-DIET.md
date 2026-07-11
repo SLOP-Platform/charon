@@ -2,7 +2,7 @@ tier: strong
 difficulty: 3
 work_class: rig-meta
 branch: feat/startup-context-diet
-depends_on:
+depends_on: REPO-DECL-CENTRAL
 owns: /home/stack/charon-private/fleet/MANAGER-OPERATING-RULES.md, /home/stack/charon-private/fleet/handoff.sh, /home/stack/charon-private/fleet/handoff-check.sh, /home/stack/charon-private/fleet/preflight.sh, /home/stack/charon-private/fleet/START-SESSION.md
 accept: |
   AUDIT everything that loads/reads at session start + the work process, and cut context/token cost
