@@ -47,11 +47,11 @@ Security	S5	designed	next	guard-pre-flight	catch secret leaks before push
 Security	S3	not-started	next	history-purge	erase secrets from git history
 Bridge	B1	done	-	phase-0-1-substrate	lay the bridge foundation
 Bridge	B2	designed	next	phase-2-active	push notifications across sessions
-Bridge	B3	not-started	next	roci-coordinator	run a durable session coordinator
-Bridge	B4	parked	next	benchmark-v2	rank models by real outcomes
 Bridge	B5	designed	next	obol-adr-0008	one portable orchestration store
 Bridge	B6	designed	next	work-engine-d10	move the work engine in-tree
 Bridge	B7	designed	next	work-converge-review	one modular work tool (SLOP+Charon)
+Bridge	B4	parked	next	benchmark-v2	rank models by real outcomes
+Bridge	B3	not-started	next	roci-coordinator	run a durable session coordinator
 Backlog	K1	designed	next	pools-redesign	collapse pools into model tiers
 Backlog	K2	designed	next	meter-wave-2	measure real spend per call
 Backlog	K3	designed	next	grader-secfix	harden the grader against tampering
