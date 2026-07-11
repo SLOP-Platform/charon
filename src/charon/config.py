@@ -192,7 +192,8 @@ def _check_id(kind: str, name: str) -> None:
 
 
 def add_provider(name: str, *, base_url: str | None = None, key_env: str | None = None,
-                 strip_v1: bool | None = None, downgrade_prone: bool | None = None) -> Path:
+                 strip_v1: bool | None = None, downgrade_prone: bool | None = None,
+                 max_context: int | None = None, max_concurrency: int | None = None) -> Path:
     """Persist a provider override (base_url/key_env/quirks) to ``providers.json`` so
     a custom provider works without hand-edited config. Merges into any existing
     entry. Stores no secret value."""
@@ -204,7 +205,8 @@ def add_provider(name: str, *, base_url: str | None = None, key_env: str | None 
     provs = load_providers()
     entry = dict(provs.get(name) or {})
     for k, v in (("base_url", base_url), ("key_env", key_env),
-                 ("strip_v1", strip_v1), ("downgrade_prone", downgrade_prone)):
+                 ("strip_v1", strip_v1), ("downgrade_prone", downgrade_prone),
+                 ("max_context", max_context), ("max_concurrency", max_concurrency)):
         if v is not None:
             entry[k] = v
     provs[name] = entry

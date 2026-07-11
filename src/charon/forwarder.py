@@ -217,9 +217,32 @@ def forward_with_failover(handler, srv) -> None:
                 "Capability exclusion would strand request (model=%s cap=%s); "
                 "using full chain instead.", requested, cap)
 
+    # ── R7 capability-engine: max_context / max_concurrency eligibility ───
+    # Compute a single pre-flight token estimate (reused by spend cap above).
+    est_tokens = max(len(raw_body) // 4, 100)
+    if len(chain) > 0:
+        eligible = []
+        for r in chain:
+            skip_reason: str | None = None
+            mc = getattr(r, "max_context", None)
+            if mc is not None and est_tokens > mc:
+                skip_reason = "max_context"
+            mconc = getattr(r, "max_concurrency", None)
+            if mconc is not None and srv.inflight_count(r) >= mconc:
+                skip_reason = "max_concurrency"
+            if skip_reason is None:
+                eligible.append(r)
+        if eligible:
+            chain = eligible
+        else:
+            # CRITICAL SAFETY: all routes excluded by hard limits → fall back, warn
+            import logging
+            logging.getLogger("charon.forwarder").warning(
+                "Capability engine would strand request (model=%s est_tokens=%d); "
+                "using full chain instead.", requested, est_tokens)
+
     # ── spend cap check (before any upstream call) ──────────────────
     if srv.spend_limiter is not None:
-        est_tokens = max(len(raw_body) // 4, 100)
         est_cost = _pre_flight_estimate(requested, est_tokens, srv)
         dec = srv.spend_limiter.check(est_cost)
         if not dec.allowed:
@@ -304,6 +327,8 @@ def forward_with_failover(handler, srv) -> None:
         # so the default path is provably byte-identical (never re-encodes).
         adapter = get_adapter(route.adapter)
 
+        # R7: track in-flight for max_concurrency awareness
+        srv.inflight_inc(route)
         start = time.monotonic()
         try:
             resp = urllib.request.urlopen(req, timeout=srv.fwd_timeout)
@@ -311,6 +336,7 @@ def forward_with_failover(handler, srv) -> None:
         except urllib.error.HTTPError as exc:
             resp, status, rhdrs = exc, exc.code, dict(exc.headers)
         except Exception:  # provider unreachable → fail over (don't 502 outright)
+            srv.inflight_dec(route)
             srv.observer.record(srv.observer.classify(okey, 503, {}, {},
                                 expected_model=expected), count_usage=False, session=session_id,
                                 provider=route.label)
@@ -536,6 +562,7 @@ def forward_with_failover(handler, srv) -> None:
             srv.note_request(requested, route.label, 200, cost, failovers)
             return
         finally:
+            srv.inflight_dec(route)
             try:  # release the upstream socket/fd promptly (don't lean on GC)
                 resp.close()
             except Exception:

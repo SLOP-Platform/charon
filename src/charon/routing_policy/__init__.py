@@ -49,6 +49,10 @@ __all__ = [
 ]
 
 
+def _int_or_none(v: object) -> int | None:
+    return int(v) if isinstance(v, int) and v > 0 else None
+
+
 def route_from_spec(spec: dict, providers_cfg: dict,
                      *, model_id: str | None = None) -> _UpstreamRoute | None:
     """One registry entry → UpstreamRoute. A ``provider`` reference (P3) resolves
@@ -63,6 +67,12 @@ def route_from_spec(spec: dict, providers_cfg: dict,
         strip_v1: bool | None = preset.strip_v1
         wire = str(spec.get("wire") or preset.wire)  # per-model override wins
         adapter = str(spec.get("adapter") or preset.adapter or "") or None
+        max_context = _int_or_none(spec.get("context_window") or spec.get("max_context"))
+        if max_context is None:
+            max_context = preset.max_context
+        max_concurrency = _int_or_none(spec.get("max_concurrency"))
+        if max_concurrency is None:
+            max_concurrency = preset.max_concurrency
     else:
         base = spec.get("upstream_base")
         if not base:
@@ -71,6 +81,8 @@ def route_from_spec(spec: dict, providers_cfg: dict,
         strip_v1 = spec.get("strip_v1")  # explicit only; else server default
         wire = str(spec.get("wire") or _providers_mod.WIRE_OPENAI)
         adapter = str(spec.get("adapter") or "") or None
+        max_context = _int_or_none(spec.get("context_window") or spec.get("max_context"))
+        max_concurrency = _int_or_none(spec.get("max_concurrency"))
     import os
 
     return _UpstreamRoute(
@@ -82,6 +94,8 @@ def route_from_spec(spec: dict, providers_cfg: dict,
         wire=wire,
         adapter=adapter,
         model_id=model_id,
+        max_context=max_context,
+        max_concurrency=max_concurrency,
     )
 
 
