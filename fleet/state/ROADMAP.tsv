@@ -9,49 +9,6 @@
 # ORDER CONVENTION (2026-07-10 agreed): within each WAVE, status-progression —
 #   done -> building(now) -> queued -> designed -> parked -> not-started, ascending id within a status.
 # PROJECT + WAVE order = order-of-first-appearance; rows render in input order. Edit here, re-render.
-Fleet	F1	done	-	worktree-leak-guard	stop droid work leaking into main	Wave A — droid isolation
-Fleet	F2	done	-	auto-done-on-merge	close tickets when PRs merge	Wave A — droid isolation
-Fleet	F3	done	-	needs-push-gate	block exit with unpushed work	Wave A — droid isolation
-Fleet	F4	done	-	end-session-gate	require clean board before exit	Wave B — session gates
-Fleet	F5	done	-	checkin-in-submit	check in on every submit	Wave B — session gates
-Fleet	F6	done	-	deploy-key-derive	derive deploy keys, never hardcode	Wave B — session gates
-Fleet	F7	done	-	board-correctness	keep the board state valid	Wave B — session gates
-Fleet	F8	done	-	refuse-unverified-done	reject unmerged work as complete	Wave C — done validation
-Fleet	F9	done	-	done-unmerged-red	flag unmerged tickets claiming completion	Wave C — done validation
-Fleet	F10	done	-	retire-done-ordering	retire finished tickets in order	Wave C — done validation
-Fleet	F20	done	-	report-renderer	one canonical fleet status report	Wave D — gate & reporting
-Fleet	F21	done	-	gate-exclude-goldens	drop benchmark fixtures from the gate	Wave D — gate & reporting
-Fleet	F22	done	-	done-close-archived	record merge-proof on archived tickets	Wave D — gate & reporting
-Fleet	F24	done	-	fleet-gate-repoint	gate runs fleet tests not product ones	Wave D — gate & reporting
-Fleet	F27	done	-	access-check	probe+report host access at boot	Wave D — gate & reporting
-Fleet	F11	queued	next	work-optimizer	schedule work for max parallelism	Wave E — automation brains
-Fleet	F12	queued	next	auto-close	close stale and landed tickets	Wave E — automation brains
-Fleet	F13	queued	next	recurrence-auditor	catch repeat failures automatically	Wave E — automation brains
-Fleet	F14	queued	next	detector-lifecycle	keep drift detectors current	Wave E — automation brains
-Fleet	F23	building	now	session-end-deploy	auto-update 4-LOM at session close	Wave F — session lifecycle
-Fleet	F28	queued	next	startup-context-diet	cut startup context and token cost	Wave F — session lifecycle
-Fleet	F16	designed	next	autonomous-ttl	time-box unattended runs	Wave F — session lifecycle
-Fleet	F19	not-started	next	bridge-unregister-trap	unregister the bridge on exit	Wave F — session lifecycle
-Fleet	F15	designed	next	worktree-cleanup	clean up orphaned worktrees	Wave G — quality & hygiene
-Fleet	F17	designed	next	scorecard-auto-append	record model scores automatically	Wave G — quality & hygiene
-Fleet	F18	designed	next	auto-log-model-lies	log models that claim false success	Wave G — quality & hygiene
-Fleet	F25	designed	next	repo-decl-central	declare product vs fleet repo once	Wave G — quality & hygiene
-Fleet	F26	designed	next	shellcheck-clean	make fleet scripts shellcheck-clean	Wave G — quality & hygiene
-Security	S1	done	-	email-scrub	remove operator email from repo	Wave A — scrub & enforce
-Security	S2	done	-	enforce-public-clean	keep private info out of repo	Wave A — scrub & enforce
-Security	S4	building	now	scrub-name+name-guard	remove leaked name, block its return	Wave A — scrub & enforce
-Security	S5	designed	next	guard-pre-flight	catch secret leaks before push	Wave B — preflight & history
-Security	S3	not-started	next	history-purge	erase secrets from git history	Wave B — preflight & history
-Bridge	B1	done	-	phase-0-1-substrate	lay the bridge foundation	Wave A — substrate
-Bridge	B2	designed	next	phase-2-active	push notifications across sessions	Wave B — active bridge
-Bridge	B3	not-started	next	roci-coordinator	run a durable session coordinator	Wave B — active bridge
-Bridge	B5	designed	next	obol-adr-0008	one portable orchestration store	Wave C — portable engine
-Bridge	B6	designed	next	work-engine-d10	move the work engine in-tree	Wave C — portable engine
-Bridge	B7	designed	next	work-converge-review	one modular work tool (SLOP+Charon)	Wave C — portable engine
-Bridge	B4	parked	next	benchmark-v2	rank models by real outcomes	Wave D — ranking
-Backlog	K3	designed	next	grader-secfix	harden the grader against tampering	Wave A — grader & keys
-Backlog	K4	designed	next	bench-oob-reds-replay	grade models on past failures	Wave A — grader & keys
-Backlog	K7	parked	next	chutes-commandcode-keys	get missing provider API keys	Wave A — grader & keys
 Router	R1	done	-	meter-model-provider	real per-call cost sensor	Wave 1 — sense (meter)
 Router	R4	designed	next	meter-wire	wire real cost into decisions	Wave 1 — sense (meter)
 Router	R5	designed	next	cost-rank-auto	sort pools by metered cost	Wave 1 — sense (meter)
@@ -68,3 +25,101 @@ Router	R11	parked	next	drain-then-park	spend prepaid credit then pause	Wave 3 �
 Router	R12	parked	next	drain-routing	route to drain credit first	Wave 3 — act (policies)
 Router	R13	parked	next	pools-simplification	cut the pool sprawl	Wave 3 — act (policies)
 Router	R14	parked	next	meter-session-tag	attribute spend to a session	Wave 3 — act (policies)
+Router	R18	designed	next	provider-probe-fix	fix provider key probe validation	Wave 4 — provider integration
+Router	R19	designed	next	provider-url-helper	unify provider URL construction helper	Wave 4 — provider integration
+Router	R20	parked	next	openrouter-flakiness-fix	flatten openrouter wrapped error fields	Wave 4 — provider integration
+Router	R21	parked	next	longcat-provider	add longcat provider integration	Wave 4 — provider integration
+Router	R22	parked	next	cooldown-fix3	audit cooldown retry-after edge cases	Wave 4 — provider integration
+Router	R23	parked	next	provider-flatrate	add flat-rate cheap providers	Wave 4 — provider integration
+Router	R24	parked	next	sr-12	restore opencode-zen provider preset	Wave 4 — provider integration
+Router	R25	parked	next	catalog-sync-drift	sync catalog and detect drift	Wave 5 — catalog & pricing
+Router	R26	parked	next	catalog-reconcile-gpt5	reconcile catalog with live routing	Wave 5 — catalog & pricing
+Router	R27	parked	next	catalog-search-curate	search and curate model catalog	Wave 5 — catalog & pricing
+Router	R28	parked	next	nanogpt-primary-review	review nanogpt primary routing policy	Wave 5 — catalog & pricing
+Router	R29	designed	next	rfl-5	optional context compaction for long chats	Wave 6 — RFL console
+Router	R30	parked	next	rfl-3	image-aware provider routing filter	Wave 6 — RFL console
+Router	R31	parked	next	rfl-2	chat playground and served-model view	Wave 6 — RFL console
+Router	R32	parked	next	rfl-4	console limit editor with hot-reload	Wave 6 — RFL console
+Router	R33	designed	next	sr-4	fix smart-routing doc inaccuracies	Wave 7 — SR routing
+Router	R34	designed	next	sr-3	cache correctness and status counters	Wave 7 — SR routing
+Router	R35	parked	next	gateway-routing-decompose	tracked gateway routing decompose trigger	Wave 7 — SR routing
+Router	R36	parked	next	zen-drift-cleanup	clean live zen model config drift	Wave 7 — SR routing
+Router	R37	parked	next	sr-6-phase2	bidirectional openai anthropic translation	Wave 7 — SR routing
+Router	R38	parked	next	gpt5-pool-reorder	reorder live gpt-5 pool order	Wave 7 — SR routing
+Router	R39	designed	next	workclass-taxonomy	classify tasks into work classes	Wave 8 — capability & quality
+Router	R40	parked	next	explore-promote	risk-gated model explore and promote	Wave 8 — capability & quality
+Router	R41	parked	next	bench-oob-grading	out-of-band benchmark grading integrity	Wave 8 — capability & quality
+Router	R42	parked	next	pff-p2	opt-in cross-model substitution	Wave 8 — capability & quality
+Bridge	B1	done	-	phase-0-1-substrate	lay the bridge foundation	Wave A — substrate
+Bridge	B2	designed	next	phase-2-active	push notifications across sessions	Wave B — active bridge
+Bridge	B3	not-started	next	roci-coordinator	run a durable session coordinator	Wave B — active bridge
+Bridge	B5	designed	next	obol-adr-0008	one portable orchestration store	Wave C — portable engine
+Bridge	B6	designed	next	work-engine-d10	move the work engine in-tree	Wave C — portable engine
+Bridge	B7	designed	next	work-converge-review	one modular work tool (SLOP+Charon)	Wave C — portable engine
+Bridge	B4	parked	next	benchmark-v2	rank models by real outcomes	Wave D — ranking
+Bridge	B8	parked	next	durable-bridge-phase-2	bridge daemon watch and renewal	Wave E — durable bridge & writeback
+Bridge	B9	parked	next	dsgn-writeback	design ticket write-back sink	Wave E — durable bridge & writeback
+Fleet	F1	done	-	worktree-leak-guard	stop droid work leaking into main	Wave A — droid isolation
+Fleet	F2	done	-	auto-done-on-merge	close tickets when PRs merge	Wave A — droid isolation
+Fleet	F3	done	-	needs-push-gate	block exit with unpushed work	Wave A — droid isolation
+Fleet	F4	done	-	end-session-gate	require clean board before exit	Wave B — session gates
+Fleet	F5	done	-	checkin-in-submit	check in on every submit	Wave B — session gates
+Fleet	F6	done	-	deploy-key-derive	derive deploy keys, never hardcode	Wave B — session gates
+Fleet	F7	done	-	board-correctness	keep the board state valid	Wave B — session gates
+Fleet	F8	done	-	refuse-unverified-done	reject unmerged work as complete	Wave C — done validation
+Fleet	F9	done	-	done-unmerged-red	flag unmerged tickets claiming completion	Wave C — done validation
+Fleet	F10	done	-	retire-done-ordering	retire finished tickets in order	Wave C — done validation
+Fleet	F20	done	-	report-renderer	one canonical fleet status report	Wave D — gate & reporting
+Fleet	F21	done	-	gate-exclude-goldens	drop benchmark fixtures from the gate	Wave D — gate & reporting
+Fleet	F22	done	-	done-close-archived	record merge-proof on archived tickets	Wave D — gate & reporting
+Fleet	F24	done	-	fleet-gate-repoint	gate runs fleet tests not product ones	Wave D — gate & reporting
+Fleet	F27	done	-	access-check	probe+report host access at boot	Wave D — gate & reporting
+Fleet	F44	designed	next	web-roadmap-generator	self-refreshing web roadmap from ROADMAP.tsv	Wave D — gate & reporting
+Fleet	F11	queued	next	work-optimizer	schedule work for max parallelism	Wave E — automation brains
+Fleet	F12	queued	next	auto-close	close stale and landed tickets	Wave E — automation brains
+Fleet	F13	queued	next	recurrence-auditor	catch repeat failures automatically	Wave E — automation brains
+Fleet	F14	queued	next	detector-lifecycle	keep drift detectors current	Wave E — automation brains
+Fleet	F23	building	now	session-end-deploy	auto-update 4-LOM at session close	Wave F — session lifecycle
+Fleet	F28	queued	next	startup-context-diet	cut startup context and token cost	Wave F — session lifecycle
+Fleet	F16	designed	next	autonomous-ttl	time-box unattended runs	Wave F — session lifecycle
+Fleet	F19	not-started	next	bridge-unregister-trap	unregister the bridge on exit	Wave F — session lifecycle
+Fleet	F15	designed	next	worktree-cleanup	clean up orphaned worktrees	Wave G — quality & hygiene
+Fleet	F17	designed	next	scorecard-auto-append	record model scores automatically	Wave G — quality & hygiene
+Fleet	F18	designed	next	auto-log-model-lies	log models that claim false success	Wave G — quality & hygiene
+Fleet	F25	designed	next	repo-decl-central	declare product vs fleet repo once	Wave G — quality & hygiene
+Fleet	F26	designed	next	shellcheck-clean	make fleet scripts shellcheck-clean	Wave G — quality & hygiene
+Fleet	F29	parked	next	post-gateway-wci-decompose	post-gateway file decompose wave	Wave G — quality & hygiene
+Fleet	F30	designed	next	difficulty-schema	enforce difficulty field on tickets	Wave H — board & gate
+Fleet	F31	designed	next	wire-mocklint-enforce	enforce fabricated-mock lint in gate	Wave H — board & gate
+Fleet	F43	designed	next	project-membership-gate	gate: new tickets fold into a project	Wave H — board & gate
+Fleet	F32	parked	next	board-reds-triage	triage pre-existing board reds	Wave H — board & gate
+Fleet	F33	parked	next	workclass-backfill-review	review low-confidence workclass backfills	Wave H — board & gate
+Fleet	F34	designed	next	docker-smoke-cleanup	fix docker smoke cleanup trap	Wave I — CI & actions
+Fleet	F35	designed	next	sr-11	mechanize actions version bumps	Wave I — CI & actions
+Fleet	F36	parked	next	sr-10	enforce single-producer deploy hygiene	Wave I — CI & actions
+Fleet	F37	parked	next	test-exercises-change-guard	pre-push hook and fail-on-revert guard	Wave I — CI & actions
+Fleet	F38	designed	next	handoff-mechanize	mechanize handoff generation and checking	Wave J — handoff & doctrine
+Fleet	F39	designed	next	handoff-pipefail	fix masked gate failure in handoff	Wave J — handoff & doctrine
+Fleet	F40	parked	next	coordinator-doctrine-rollout	roll out coordinator doctrine v2	Wave J — handoff & doctrine
+Fleet	F41	parked	next	atc	final adversarial audit of build waves	Wave K — review policy
+Fleet	F42	parked	next	frontier-review-policy	design frontier review policy spec	Wave K — review policy
+Security	S1	done	-	email-scrub	remove operator email from repo	Wave A — scrub & enforce
+Security	S2	done	-	enforce-public-clean	keep private info out of repo	Wave A — scrub & enforce
+Security	S4	building	now	scrub-name+name-guard	remove leaked name, block its return	Wave A — scrub & enforce
+Security	S5	designed	next	guard-pre-flight	catch secret leaks before push	Wave B — preflight & history
+Security	S3	not-started	next	history-purge	erase secrets from git history	Wave B — preflight & history
+Security	S6	parked	next	secret-hotrotate	hot-rotate secrets without restart	Wave C — secrets & guardrails
+Security	S7	parked	next	push-guard-gitc-harden	harden destructive git -C bypass	Wave C — secrets & guardrails
+Backlog	K3	designed	next	grader-secfix	harden the grader against tampering	Wave A — grader & keys
+Backlog	K4	designed	next	bench-oob-reds-replay	grade models on past failures	Wave A — grader & keys
+Backlog	K7	parked	next	chutes-commandcode-keys	get missing provider API keys	Wave A — grader & keys
+Backlog	K8	designed	next	tool-repair-mutating	fix mutating tool-repair behavior	Wave B — product UX
+Backlog	K9	parked	next	gui-svelte-build	rewrite console as svelte spa	Wave B — product UX
+Backlog	K10	parked	next	ux-polish	batch first-run ux polish nits	Wave B — product UX
+Backlog	K11	parked	next	tier-recs	setup wizard model recommendations	Wave B — product UX
+Backlog	K12	parked	next	cwd-config-verify	verify blocked acp config path	Wave B — product UX
+Backlog	K13	parked	next	connect-omp-wsl	fix omp config on wsl connect	Wave C — connect & dogfood
+Backlog	K14	parked	next	dogfood	end-to-end out-of-tree dogfood run	Wave C — connect & dogfood
+Backlog	K15	parked	next	ohmypi-assess	research omp integration feasibility	Wave C — connect & dogfood
+Backlog	K16	parked	next	bench-reds-replay	replay real reds as benchmark tasks	Wave D — benchmark remnants
+Backlog	K17	parked	next	dtc-6	parametrize repeating test functions	Wave D — benchmark remnants
