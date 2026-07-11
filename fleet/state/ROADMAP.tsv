@@ -14,7 +14,7 @@ Router	R4	done	-	meter-wire	wire real cost into decisions	Wave 1 — sense (mete
 Router	R5	done	-	cost-rank-auto	sort pools by metered cost	Wave 1 — sense (meter)
 Router	R2	done	-	router-core	price-sorted order + smart failover	Wave 2 — decide (brain)
 Router	R3	done	-	capability-matrix	which providers serve what + quirks	Wave 2 — decide (brain)
-Router	R7	designed	next	capability-engine	one brain for routing	Wave 2 — decide (brain)
+Router	R7	done	-	capability-engine	one brain for routing	Wave 2 — decide (brain)
 Router	R8	done	-	latency-signal	fail over slow providers	Wave 2 — decide (brain)
 Router	R9	designed	next	work-routing-to-charon	route fleet work through gateway	Wave 3 — act (policies)
 Router	R15	designed	next	free-tier-order	adversarial best-order given exact limits	Wave 3 — act (policies)
