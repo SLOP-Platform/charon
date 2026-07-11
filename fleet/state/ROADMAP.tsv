@@ -10,16 +10,16 @@
 #   done -> building(now) -> queued -> designed -> parked -> not-started, ascending id within a status.
 # PROJECT + WAVE order = order-of-first-appearance; rows render in input order. Edit here, re-render.
 Router	R1	done	-	meter-model-provider	real per-call cost sensor	Wave 1 — sense (meter)
-Router	R4	designed	next	meter-wire	wire real cost into decisions	Wave 1 — sense (meter)
-Router	R5	designed	next	cost-rank-auto	sort pools by metered cost	Wave 1 — sense (meter)
-Router	R2	designed	next	router-core	price-sorted order + smart failover	Wave 2 — decide (brain)
-Router	R3	designed	next	capability-matrix	which providers serve what + quirks	Wave 2 — decide (brain)
+Router	R4	done	-	meter-wire	wire real cost into decisions	Wave 1 — sense (meter)
+Router	R5	done	-	cost-rank-auto	sort pools by metered cost	Wave 1 — sense (meter)
+Router	R2	done	-	router-core	price-sorted order + smart failover	Wave 2 — decide (brain)
+Router	R3	done	-	capability-matrix	which providers serve what + quirks	Wave 2 — decide (brain)
 Router	R7	designed	next	capability-engine	one brain for routing	Wave 2 — decide (brain)
-Router	R8	designed	next	latency-signal	fail over slow providers	Wave 2 — decide (brain)
+Router	R8	done	-	latency-signal	fail over slow providers	Wave 2 — decide (brain)
 Router	R9	designed	next	work-routing-to-charon	route fleet work through gateway	Wave 3 — act (policies)
 Router	R15	designed	next	free-tier-order	adversarial best-order given exact limits	Wave 3 — act (policies)
 Router	R16	designed	next	graceful-degrade	throttle+alert+auto-recover on refill	Wave 3 — act (policies)
-Router	R17	designed	next	pricing-limits-checker	verify limits+pricing, alert on change	Wave 3 — act (policies)
+Router	R17	done	-	pricing-limits-checker	verify limits+pricing, alert on change	Wave 3 — act (policies)
 Router	R10	parked	next	free-tier-quota-spill	spill when a tier caps	Wave 3 — act (policies)
 Router	R11	parked	next	drain-then-park	spend prepaid credit then pause	Wave 3 — act (policies)
 Router	R12	parked	next	drain-routing	route to drain credit first	Wave 3 — act (policies)
@@ -84,8 +84,8 @@ Fleet	F28	queued	next	startup-context-diet	cut startup context and token cost	Wa
 Fleet	F16	designed	next	autonomous-ttl	time-box unattended runs	Wave F — session lifecycle
 Fleet	F19	not-started	next	bridge-unregister-trap	unregister the bridge on exit	Wave F — session lifecycle
 Fleet	F15	designed	next	worktree-cleanup	clean up orphaned worktrees	Wave G — quality & hygiene
-Fleet	F17	designed	next	scorecard-auto-append	record model scores automatically	Wave G — quality & hygiene
-Fleet	F18	designed	next	auto-log-model-lies	log models that claim false success	Wave G — quality & hygiene
+Fleet	F17	done	-	scorecard-auto-append	record model scores automatically	Wave G — quality & hygiene
+Fleet	F18	done	-	auto-log-model-lies	log models that claim false success	Wave G — quality & hygiene
 Fleet	F25	designed	next	repo-decl-central	declare product vs fleet repo once	Wave G — quality & hygiene
 Fleet	F26	designed	next	shellcheck-clean	make fleet scripts shellcheck-clean	Wave G — quality & hygiene
 Fleet	F29	parked	next	post-gateway-wci-decompose	post-gateway file decompose wave	Wave G — quality & hygiene
@@ -99,7 +99,7 @@ Fleet	F35	designed	next	sr-11	mechanize actions version bumps	Wave I — CI & ac
 Fleet	F36	parked	next	sr-10	enforce single-producer deploy hygiene	Wave I — CI & actions
 Fleet	F37	parked	next	test-exercises-change-guard	pre-push hook and fail-on-revert guard	Wave I — CI & actions
 Fleet	F38	designed	next	handoff-mechanize	mechanize handoff generation and checking	Wave J — handoff & doctrine
-Fleet	F39	designed	next	handoff-pipefail	fix masked gate failure in handoff	Wave J — handoff & doctrine
+Fleet	F39	done	-	handoff-pipefail	fix masked gate failure in handoff	Wave J — handoff & doctrine
 Fleet	F40	parked	next	coordinator-doctrine-rollout	roll out coordinator doctrine v2	Wave J — handoff & doctrine
 Fleet	F41	parked	next	atc	final adversarial audit of build waves	Wave K — review policy
 Fleet	F42	parked	next	frontier-review-policy	design frontier review policy spec	Wave K — review policy
