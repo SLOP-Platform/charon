@@ -6,10 +6,11 @@ failover is a routing decision — not a hardcoded fallback. The data lives on d
 (``.charon/models.json`` + ``.charon/pools.json``), so the operator tunes pools
 without a redeploy and never edits code (INV-P0).
 
-The pool is sorted **free-first, then cheapest-first** (`(not free, cost_rank)`,
-a *stable* sort so hand-authored order breaks ties) — this is the operator's
-"minimize cost, keep working" policy expressed as data. ``code_safe`` lets a
-role refuse providers that train on / leak proprietary code.
+The pool is sorted **free-first, then by cost-class priority, then cheapest-first**
+(`(not free, cost_class_priority, cost_rank)`, a *stable* sort so hand-authored
+order breaks ties) — this is the operator's "minimize cost, keep working" policy
+expressed as data. ``code_safe`` lets a role refuse providers that train on /
+leak proprietary code.
 """
 from __future__ import annotations
 
@@ -17,7 +18,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from .routing_policy.cost_rank import derived_cost_rank
+from .routing_policy.cost_rank import cost_class_priority, derived_cost_rank
 
 
 class PoolConfigError(RuntimeError):
@@ -34,6 +35,8 @@ class PoolEntry:
     cost_rank: int  # lower = cheaper; the cost-first sort key
     code_safe: bool  # defensible for proprietary code (no-train + jurisdiction)
     free: bool  # genuinely $0 (free-first sort key)
+    cost_class: str | None = None  # e.g. "free-daily", "prepaid", "metered", "premium"
+    cost_class_priority: int = 4  # lower = preferred; derived from cost_class
     upstream_base: str | None = None  # OpenAI-compat base the observing proxy forwards to
     key_env: str | None = None  # env var holding the upstream key (proxy injects it)
     upstream_model: str | None = None  # real model id at the upstream, if it differs
@@ -44,15 +47,28 @@ class PoolEntry:
         return f"{self.agent}:{self.model}"
 
 
-def _entry_from_registry(model_id: str, spec: dict) -> PoolEntry:
+def _entry_from_registry(
+    model_id: str,
+    spec: dict,
+    metered_costs: dict[tuple[str, str], float] | None = None,
+) -> PoolEntry:
     try:
+        provider = spec.get("provider") or ""
+        metered = (
+            metered_costs.get((model_id, provider))
+            if metered_costs else None
+        )
+        cc = spec.get("cost_class")
+        cc_str = str(cc).strip().lower() if isinstance(cc, str) else None
         return PoolEntry(
             agent=str(spec["agent"]),
             model=model_id,
             cost_tier=str(spec.get("cost_tier", "ptk")),
-            cost_rank=derived_cost_rank(spec),
+            cost_rank=derived_cost_rank(spec, metered_cost=metered),
             code_safe=bool(spec.get("code_safe", False)),
             free=bool(spec.get("free", False)),
+            cost_class=cc_str,
+            cost_class_priority=cost_class_priority(spec),
             upstream_base=spec.get("upstream_base"),
             key_env=spec.get("key_env"),
             upstream_model=spec.get("upstream_model"),
@@ -62,12 +78,22 @@ def _entry_from_registry(model_id: str, spec: dict) -> PoolEntry:
 
 
 
-def load_pools(state_dir: Path) -> dict[str, list[PoolEntry]]:
+def load_pools(
+    state_dir: Path,
+    metered_costs: dict[tuple[str, str], float] | None = None,
+) -> dict[str, list[PoolEntry]]:
     """Build ``role -> [PoolEntry]`` from ``models.json`` + ``pools.json``.
 
-    Each role's list is sorted free-first then cost_rank (stable). A pool that
-    names a model absent from the registry is a LOUD config error, never a silent
-    drop."""
+    Each role's list is sorted free-first, then by cost-class priority
+    (cheaper funding classes first), then by cost_rank (stable). A pool that
+    names a model absent from the registry is a LOUD config error, never a
+    silent drop.
+
+    ``metered_costs`` is an optional mapping ``(model_id, provider) → cost_usd``
+    from the live R4 meter.  When present, the metered cost OVERRIDES the
+    configured ``cost_input``/``cost_output`` for rank derivation; when absent
+    the configured fallback is used.
+    """
     state_dir = Path(state_dir)
     models_path = state_dir / "models.json"
     pools_path = state_dir / "pools.json"
@@ -89,9 +115,10 @@ def load_pools(state_dir: Path) -> dict[str, list[PoolEntry]]:
                 raise PoolConfigError(
                     f"pool {role!r} names model {mid!r} not in models.json"
                 )
-            entries.append(_entry_from_registry(mid, registry[mid]))
-        # free-first, then cheapest-first; stable → hand order breaks ties.
-        entries.sort(key=lambda e: (not e.free, e.cost_rank))
+            entries.append(_entry_from_registry(mid, registry[mid], metered_costs))
+        # free-first, then cost-class priority, then cheapest-first;
+        # stable → hand order breaks ties.
+        entries.sort(key=lambda e: (not e.free, e.cost_class_priority, e.cost_rank))
         pools[role] = entries
     return pools
 

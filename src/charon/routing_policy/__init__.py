@@ -23,7 +23,7 @@ from charon import providers as _providers_mod
 from charon.proxy_server import UpstreamRoute as _UpstreamRoute
 
 from .base import DefaultPolicy, Policy
-from .cost_rank import derived_cost_rank
+from .cost_rank import cost_class_priority, derived_cost_rank
 from .drain import DrainPolicy
 from .matrix import CapabilityMatrix, Grade, ModelCapability, WorkClass
 from .pools import PoolsSimplificationPolicy
@@ -37,6 +37,7 @@ __all__ = [
     "Grade",
     "WorkClass",
     "derived_cost_rank",
+    "cost_class_priority",
     "DrainPolicy",
     "PoolsSimplificationPolicy",
     "SpillPolicy",
@@ -83,22 +84,24 @@ def route_from_spec(spec: dict, providers_cfg: dict) -> _UpstreamRoute | None:
 
 def build_routes_and_pools(
     registry: dict, pool_map: dict, providers_cfg: dict | None = None,
+    *, metered_costs: dict[tuple[str, str], float] | None = None,
 ) -> tuple[dict[str, _UpstreamRoute], dict[str, list[_UpstreamRoute]], list[str]]:
     """Compile a model registry + ``pool_map`` (virtual id → [model id]) into
     single routes (concrete models) and failover chains (virtual ids). Each chain
-    is ordered **free-first then cheapest-first** from the registry's cost metadata
-    (stable → the listed order breaks ties), matching `pools.load_pools` (D4).
+    is ordered **free-first, then by cost-class priority, then cheapest-first**
+    from the registry's cost metadata (stable → the listed order breaks ties),
+    matching `pools.load_pools` (D4).
 
-    Effective ``cost_rank`` (SR-6) is **derived** from per-token pricing when
-    present: ``blended = (3*cost_input + cost_output) / 4`` (a 3:1 input:output
-    blend approximating typical chat-completion token mix). An explicit
-    ``cost_rank`` override still wins (operator escape hatch). Genuinely-free
-    models (``free:true``) sort first regardless. Models with ``cost_class:
-    "premium"`` are GATED OUT of pool chains — they're usable only when explicitly
-    requested or in a premium role, never the cheap-first default.
+    Effective ``cost_rank`` (SR-6 + R5) is **derived** from per-token pricing when
+    present, or from live metered per-(model,provider) cost when available. An
+    explicit ``cost_rank`` override still wins (operator escape hatch).
+    Genuinely-free models (``free:true``) sort first regardless. Models with
+    ``cost_class: "premium"`` are GATED OUT of pool chains — they're usable only
+    when explicitly requested or in a premium role, never the cheap-first default.
 
     Models with ``"enabled": false`` are excluded from routes and pools."""
     providers_cfg = providers_cfg or {}
+    metered_costs = metered_costs or {}
     routes: dict[str, _UpstreamRoute] = {}
     for mid, spec in registry.items():
         if isinstance(spec, dict):
@@ -108,9 +111,15 @@ def build_routes_and_pools(
             if r is not None:
                 routes[mid] = r
 
-    def _rank(mid: str) -> tuple[bool, int]:
+    def _rank(mid: str) -> tuple[bool, int, int]:
         spec = registry.get(mid, {})
-        return (not bool(spec.get("free", False)), derived_cost_rank(spec))
+        provider = spec.get("provider") or ""
+        metered = metered_costs.get((mid, provider))
+        return (
+            not bool(spec.get("free", False)),
+            cost_class_priority(spec),
+            derived_cost_rank(spec, metered_cost=metered),
+        )
 
     def _is_premium(mid: str) -> bool:
         return registry.get(mid, {}).get("cost_class") == "premium"
