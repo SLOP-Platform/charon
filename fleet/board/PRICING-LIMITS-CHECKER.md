@@ -23,3 +23,15 @@ scope: |
   falls back to it when a provider returns no cost field). This is the pricing/limits analog of catalog-drift
   detection (CATALOG-SYNC-DRIFT). [[always-fix-catalog-mismatches]] [[charon-free-tier-routing]]
 ds: money-path; feeds R3/R5/R15/R16. PROJECT ROUTER. No product-routing behavior change on its own.
+
+## Also in scope (operator 2026-07-10)
+- CONFIRM EVERY API provider's pricing+limits (not just free tiers). Pricing is often AUTH-GATED
+  (NeuralWatt portal 403) -> the checker needs authed access (provider API/dashboard token) OR an
+  operator-supplied number; a public web fetch is not enough.
+- PLAN SELECTION: for providers with BOTH PAYG and monthly/subscription plans, evaluate which plan is
+  best for our usage and record the chosen plan per provider (feeds cost-rank). NeuralWatt example:
+  energy(per-kWh, ~95% cheaper on efficient MoE) vs per-token(predictable, dearer) vs subscription(+~35% off).
+- NON-TOKEN metering: NeuralWatt bills by ENERGY (kWh consumed per request, returned in its Usage&Energy
+  API) -> meter must PARSE that returned cost, not assume a fixed per-token price (today it records $0).
+- EVALUATE standardcompute.com (tiered-by-speed plans; never assessed — 0 mentions in fleet). Needs the
+  correct pricing URL / API to confirm.
