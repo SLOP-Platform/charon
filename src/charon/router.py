@@ -50,10 +50,12 @@ class StaticRouter:
 
     @classmethod
     def from_charon_dir(cls, state_dir: Path,
-                        policy: dict[str, str] | None = None) -> StaticRouter:
+                        policy: dict[str, str] | None = None,
+                        metered_costs: dict[tuple[str, str], float] | None = None,
+                        ) -> StaticRouter:
         """Build a pool-aware router from ``.charon/models.json`` + ``pools.json``
         (ADR-0004 R2). ``backends`` is derived from the agents named in the pools."""
-        pools = load_pools(Path(state_dir))
+        pools = load_pools(Path(state_dir), metered_costs=metered_costs)
         backends = sorted({e.agent for entries in pools.values() for e in entries})
         return cls(policy=policy, backends=backends, pools=pools)
 

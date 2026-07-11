@@ -45,10 +45,12 @@ __all__ = [
     "build_routes_and_pools",
     "tier_pools",
     "build_fallback_chain",
+    "order_pool_by_live_cost",
 ]
 
 
-def route_from_spec(spec: dict, providers_cfg: dict) -> _UpstreamRoute | None:
+def route_from_spec(spec: dict, providers_cfg: dict,
+                     *, model_id: str | None = None) -> _UpstreamRoute | None:
     """One registry entry → UpstreamRoute. A ``provider`` reference (P3) resolves
     base_url/key_env/quirks from a preset (+ ``[providers.<name>]`` overrides); a
     direct ``upstream_base`` entry (P1/P2) still works. Returns None when neither
@@ -79,6 +81,7 @@ def route_from_spec(spec: dict, providers_cfg: dict) -> _UpstreamRoute | None:
         strip_v1=strip_v1,
         wire=wire,
         adapter=adapter,
+        model_id=model_id,
     )
 
 
@@ -107,7 +110,7 @@ def build_routes_and_pools(
         if isinstance(spec, dict):
             if spec.get("enabled") is False:
                 continue
-            r = route_from_spec(spec, providers_cfg)
+            r = route_from_spec(spec, providers_cfg, model_id=mid)
             if r is not None:
                 routes[mid] = r
 
@@ -183,14 +186,63 @@ def build_fallback_chain(
     if not fallback_routes:
         return routes, pools
 
+    def _same_endpoint(a, b) -> bool:
+        return a.upstream_base == b.upstream_base and a.provider == b.provider
+
     pools = dict(pools)
     for vid in list(pools.keys()):
         existing = list(pools[vid])
         pools[vid] = existing + [fr for fr in fallback_routes
-                                  if fr not in existing]
+                                  if not any(_same_endpoint(fr, e)
+                                             for e in existing)]
     # Single-route models (not in any pool) also get the fallback.
     for mid in list(routes.keys()):
         if mid not in pools:
             pools[mid] = [routes[mid]] + fallback_routes
 
     return routes, pools
+
+
+def _live_rank_key(
+    route: _UpstreamRoute,
+    registry: dict,
+    metered_costs: dict[tuple[str, str], float],
+) -> tuple[bool, int, int]:
+    """Tuple to sort routes cheapest-first using LIVE metered cost.
+
+    Falls back to the registry's configured cost_rank when the meter has
+    no data for this (model, provider).  None-safe: missing registry entries
+    sort last (``not free`` True, cost_class_priority 4, cost_rank 1000)."""
+    mid = route.model_id or route.pool_id or ""
+    spec = registry.get(mid, {}) if isinstance(registry.get(mid), dict) else {}
+    provider = route.provider or ""
+    metered = metered_costs.get((mid, provider))
+    return (
+        not bool(spec.get("free", False)),
+        cost_class_priority(spec),
+        derived_cost_rank(spec, metered_cost=metered),
+    )
+
+
+def order_pool_by_live_cost(
+    chain: list[_UpstreamRoute],
+    *,
+    registry: dict,
+    metered_costs: dict[tuple[str, str], float] | None = None,
+) -> list[_UpstreamRoute]:
+    """Return ``chain`` reordered cheapest-first using LIVE metered cost.
+
+    If ``metered_costs`` is empty/None, the order is **unchanged** — this
+    preserves the existing static-config behaviour until traffic has created
+    data in the meter.  Premium models are NOT filtered here (that is the
+    caller's responsibility in ``build_routes_and_pools``; we only reorder).
+
+    The sort key composes (not free, cost_class_priority, cost_rank) exactly
+    as ``build_routes_and_pools`` and ``pools.load_pools`` do, but with the
+    **live** ``metered_cost`` overriding the configured ``cost_input`` /
+    ``cost_output`` when present.  Stable sort keeps relative order for ties."""
+    if not chain:
+        return []
+    if not metered_costs:
+        return list(chain)
+    return sorted(chain, key=lambda r: _live_rank_key(r, registry, metered_costs))
