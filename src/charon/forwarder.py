@@ -258,6 +258,30 @@ def forward_with_failover(handler, srv) -> None:
             return
 
     is_stream = orig_bj.get("stream") is True
+
+    # ── R2: dynamic cheapest-first using live metered cost ──────────
+    # Reorder the provider chain at request time so the cheapest (by real
+    # cumulative metered spend) is tried first.  Empty meter → the order is
+    # unchanged (preserves the static configured order built at startup).
+    # This runs BEFORE cooldown ordering so a cheap-but-cooled provider is
+    # still surfaced correctly by the cooldown pass below.
+    observer = getattr(srv, "observer", None)
+    if observer is not None and chain:
+        live = observer.all_model_provider_costs()
+        if live:
+            registry: dict[str, dict] = {}
+            model_pricing = getattr(srv, "model_pricing", {}) or {}
+            model_meta = getattr(srv, "model_meta", {}) or {}
+            for route in chain:
+                mid = route.model_id or route.pool_id or ""
+                if mid and mid not in registry:
+                    spec = dict(model_pricing.get(mid, {}))
+                    spec.update(model_meta.get(mid, {}))
+                    registry[mid] = spec
+            from .routing_policy import order_pool_by_live_cost
+            chain = order_pool_by_live_cost(
+                chain, registry=registry, metered_costs=live)
+
     ordered = srv.order_by_cooldown(chain)  # fresh providers first, cooled last (R7)
 
     # ── quality-aware routing ──────────────────────────────────────

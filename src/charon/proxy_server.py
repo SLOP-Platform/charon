@@ -185,6 +185,7 @@ class UpstreamRoute:
     strip_v1: bool | None = None  # per-provider quirk; None → use the server default
     wire: str = WIRE_OPENAI  # upstream wire format (SR-6): WIRE_OPENAI | WIRE_ANTHROPIC
     adapter: str | None = None  # response-shape adapter key (response_adapters.py);
+    model_id: str | None = None  # registry model id (for live meter lookup in R2)
     #                             None → IDENTITY passthrough (byte-identical relay)
 
     @property
