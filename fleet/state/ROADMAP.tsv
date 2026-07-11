@@ -8,6 +8,9 @@
 #         in a project has a wave, that project renders wave sub-headers (wave-less items -> Unscheduled);
 #         projects with NO waves render FLAT.
 # PROJECT numbers are assigned by project order-of-first-appearance; rows render in input order.
+# ORDER CONVENTION (2026-07-10 agreed): within each project, order rows by STATUS PROGRESSION —
+#   done -> building(now) -> queued -> designed -> parked -> not-started, ascending ID within a status.
+#   (SECURITY is the reference.) KEEP this order when adding/updating rows; do NOT sort by ID.
 # Edit this file to move an item; fleet/report.sh re-renders the canonical format from it.
 Fleet	F1	done	-	worktree-leak-guard	stop droid work leaking into main	Wave A
 Fleet	F2	done	-	auto-done-on-merge	close tickets when PRs merge	Wave A
@@ -19,24 +22,24 @@ Fleet	F7	done	-	board-correctness	keep the board state valid	Wave B
 Fleet	F8	done	-	refuse-unverified-done	reject unmerged work as complete	Wave C
 Fleet	F9	done	-	done-unmerged-red	flag unmerged tickets claiming completion	Wave C
 Fleet	F10	done	-	retire-done-ordering	retire finished tickets in order	Wave C
+Fleet	F20	done	-	report-renderer	one canonical fleet status report
+Fleet	F21	done	-	gate-exclude-goldens	drop benchmark fixtures from the gate
+Fleet	F22	done	-	done-close-archived	record merge-proof on archived tickets
+Fleet	F24	done	-	fleet-gate-repoint	gate runs fleet tests not product ones
+Fleet	F27	done	-	access-check	probe+report host access at boot
+Fleet	F23	building	now	session-end-deploy	auto-update 4-LOM at session close
 Fleet	F11	queued	next	work-optimizer	schedule work for max parallelism
 Fleet	F12	queued	next	auto-close	close stale and landed tickets
 Fleet	F13	queued	next	recurrence-auditor	catch repeat failures automatically
 Fleet	F14	queued	next	detector-lifecycle	keep drift detectors current
+Fleet	F28	queued	next	startup-context-diet	cut startup context and token cost
 Fleet	F15	designed	next	worktree-cleanup	clean up orphaned worktrees
 Fleet	F16	designed	next	autonomous-ttl	time-box unattended runs
 Fleet	F17	designed	next	scorecard-auto-append	record model scores automatically
 Fleet	F18	designed	next	auto-log-model-lies	log models that claim false success
-Fleet	F19	not-started	next	bridge-unregister-trap	unregister the bridge on exit
-Fleet	F20	done	-	report-renderer	one canonical fleet status report
-Fleet	F21	done	-	gate-exclude-goldens	drop benchmark fixtures from the gate
-Fleet	F22	done	-	done-close-archived	record merge-proof on archived tickets
-Fleet	F23	building	now	session-end-deploy	auto-update 4-LOM at session close
-Fleet	F24	done	-	fleet-gate-repoint	gate runs fleet tests not product ones
 Fleet	F25	designed	next	repo-decl-central	declare product vs fleet repo once
 Fleet	F26	designed	next	shellcheck-clean	make fleet scripts shellcheck-clean
-Fleet	F27	done	-	access-check	probe+report host access at boot
-Fleet	F28	queued	next	startup-context-diet	cut startup context and token cost
+Fleet	F19	not-started	next	bridge-unregister-trap	unregister the bridge on exit
 Security	S1	done	-	email-scrub	remove operator email from repo
 Security	S2	done	-	enforce-public-clean	keep private info out of repo
 Security	S4	building	now	scrub-name+name-guard	remove leaked name, block its return
