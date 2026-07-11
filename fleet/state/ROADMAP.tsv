@@ -16,16 +16,23 @@ Router	R2	done	-	router-core	price-sorted order + smart failover	Wave 2 — deci
 Router	R3	done	-	capability-matrix	which providers serve what + quirks	Wave 2 — decide (brain)
 Router	R7	done	-	capability-engine	one brain for routing	Wave 2 — decide (brain)
 Router	R8	done	-	latency-signal	fail over slow providers	Wave 2 — decide (brain)
-Router	R9	designed	next	work-routing-to-charon	route fleet work through gateway	Wave 3 — act (policies)
-Router	R15	done	-	free-tier-order	adversarial best-order given exact limits	Wave 3 — act (policies)
-Router	R16	designed	next	graceful-degrade	throttle+alert+auto-recover on refill	Wave 3 — act (policies)
-Router	R17	done	-	pricing-limits-checker	verify limits+pricing, alert on change	Wave 3 — act (policies)
-Router	R10	parked	next	free-tier-quota-spill	spill when a tier caps	Wave 3 — act (policies)
-Router	R11	parked	next	drain-then-park	spend prepaid credit then pause	Wave 3 — act (policies)
-Router	R12	parked	next	drain-routing	route to drain credit first	Wave 3 — act (policies)
-Router	R13	parked	next	pools-simplification	cut the pool sprawl	Wave 3 — act (policies)
-Router	R14	parked	next	meter-session-tag	attribute spend to a session	Wave 3 — act (policies)
-Router	R18	designed	next	provider-probe-fix	fix provider key probe validation	Wave 4 — provider integration
+Router	R43	next	next	wiring-audit	sweep gateway for built-but-inert features → wired/inert matrix	Wave 3 — class-fix (wiring & test discipline)
+Router	R44	designed	next	dogfood-gate	e2e merge-gate: real-config request asserts observable effects	Wave 3 — class-fix (wiring & test discipline)
+Router	R45	designed	next	inert-startup-check	startup self-check: active vs inert optional components (fail-loud)	Wave 3 — class-fix (wiring & test discipline)
+Router	R46	designed	next	balance-wire	construct BalanceTracker from gateway config (un-deads R4 record_spend)	Wave 3a — foundation & balance
+Router	R47	designed	next	live-api-balance	neuralwatt adapter + TTL poller + wire balance into routing	Wave 3a — foundation & balance
+Router	R12	designed	next	drain-routing	route to drain credit first	Wave 3a — foundation & balance
+Router	R11	designed	next	drain-then-park	spend prepaid credit then pause	Wave 3a — foundation & balance
+Router	R14	designed	next	meter-session-tag	attribute spend to a session	Wave 3b — quick wins
+Router	R16	designed	next	graceful-degrade	throttle+alert+auto-recover on refill	Wave 3b — quick wins
+Router	R26	designed	next	catalog-reconcile-gpt5	reconcile catalog with live routing	Wave 3b — quick wins
+Router	R30	designed	next	rfl-3	image-aware provider routing filter	Wave 3b — quick wins
+Router	R15	done	-	free-tier-order	adversarial best-order given exact limits	Wave 3b — quick wins
+Router	R10	designed	next	free-tier-quota-spill	spill when a tier caps	Wave 3c — bigger
+Router	R13	designed	next	pools-simplification	cut the pool sprawl	Wave 3c — bigger
+Router	R9	parked	next	work-routing-to-charon	route fleet work through gateway	Wave 3d — deferred (not dropped)
+Router	R18	designed	next	provider-probe-fix	fix provider key probe validation	Wave 3d — deferred (not dropped)
+Router	R17	done	-	pricing-limits-checker	verify limits+pricing, alert on change	Wave 3b — quick wins
 Router	R19	designed	next	provider-url-helper	unify provider URL construction helper	Wave 4 — provider integration
 Router	R20	parked	next	openrouter-flakiness-fix	flatten openrouter wrapped error fields	Wave 4 — provider integration
 Router	R21	parked	next	longcat-provider	add longcat provider integration	Wave 4 — provider integration
@@ -33,11 +40,9 @@ Router	R22	parked	next	cooldown-fix3	audit cooldown retry-after edge cases	Wave 
 Router	R23	parked	next	provider-flatrate	add flat-rate cheap providers	Wave 4 — provider integration
 Router	R24	parked	next	sr-12	restore opencode-zen provider preset	Wave 4 — provider integration
 Router	R25	parked	next	catalog-sync-drift	sync catalog and detect drift	Wave 5 — catalog & pricing
-Router	R26	parked	next	catalog-reconcile-gpt5	reconcile catalog with live routing	Wave 5 — catalog & pricing
 Router	R27	parked	next	catalog-search-curate	search and curate model catalog	Wave 5 — catalog & pricing
 Router	R28	parked	next	nanogpt-primary-review	review nanogpt primary routing policy	Wave 5 — catalog & pricing
 Router	R29	designed	next	rfl-5	optional context compaction for long chats	Wave 6 — RFL console
-Router	R30	parked	next	rfl-3	image-aware provider routing filter	Wave 6 — RFL console
 Router	R31	parked	next	rfl-2	chat playground and served-model view	Wave 6 — RFL console
 Router	R32	parked	next	rfl-4	console limit editor with hot-reload	Wave 6 — RFL console
 Router	R33	designed	next	sr-4	fix smart-routing doc inaccuracies	Wave 7 — SR routing
