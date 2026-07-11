@@ -35,6 +35,7 @@ Fleet	F19	not-started	next	bridge-unregister-trap	unregister the bridge on exit
 Fleet	F24	done	-	fleet-gate-repoint	gate runs fleet tests not product ones
 Fleet	F25	designed	next	repo-decl-central	declare product vs fleet repo once
 Fleet	F26	designed	next	shellcheck-clean	make fleet scripts shellcheck-clean
+Fleet	F27	done	-	access-check	probe+report host access at boot
 Security	S1	done	-	email-scrub	remove operator email from repo
 Security	S2	done	-	enforce-public-clean	keep private info out of repo
 Security	S4	building	now	scrub-name+name-guard	remove leaked name, block its return

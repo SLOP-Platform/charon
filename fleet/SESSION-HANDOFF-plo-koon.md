@@ -5,60 +5,49 @@
 Read and fully follow /home/stack/charon-private/fleet/SESSION-HANDOFF-plo-koon.md — you are the fresh Charon fleet MANAGER
 ```
 
-## STATE — WHAT SHIPPED THIS SESSION (all COMMITTED, pending your merge + push)
+## STATE — WHAT SHIPPED AND LANDED THIS SESSION
 
-- **Branch `feat/f22-done-close-archived-fix` @ `ec63918`** —
-  - `db72099` **F22**: `done.sh` no longer aborts on archive-only tickets (`meta()` ran `awk` on the absent active-board file; `set -e` killed it before the archive fallback/override). Fix + fail-on-revert cases g1g/g1h.
-  - `deb89b3` closed the **4 P1 done-unmerged reds** (item 3): BRIDGE-HARDEN / PREFLIGHT / DS-PLAN-REVIEW via `--override` (fleet-infra, no product source); TIER-SELECT via `--merged-sha c4c4189` (ancestor of product master).
-  - `b7dfd2f` **F23 Phase 1** session-end deploy harness (advisory, tag-if-behind) + tests; `cd62631` my no-hang review-fix (`timeout`+BatchMode on all lookups + t6). Suite 20/20, end-session 16/16, all fail-on-revert; live no-op smoke test against real 4-LOM green.
-- **Branch `feat/f21-gate-exclude-goldens` @ `21aad09`** —
-  - `f325d04` **F21**: root `conftest.py` excludes `fleet/benchmark` from gate collection.
-  - `b67435e`+`7d663df` **F24**: fleet gate is now `fleet/gate.sh` (runs the 8 `fleet/tests/*.test.sh` + **advisory** shellcheck), not product `pytest`/`ruff src tests`. Gate now GREEN + meaningful (9 pass). `handoff.sh` edit is minimal (gate block only).
-  - `b06b266` streamed **F25** (`fleet/board/REPO-DECL-CENTRAL.md`) + **F26** (shellcheck-clean).
-- **master @ `b7d3228`** — MANAGER-OPERATING-RULES §9: token-economy is the DEFAULT mode every session. COMMITTED, **NOT pushed**.
-- **Product PR #94** (SLOP-Platform/charon) OPEN — S1/S2/S4 public-clean-enforce (from prior session).
+Everything below is **merged to master and pushed** (I pushed/merged via `land-push.sh` — the AUTONOMOUS lever is ON; see push protocol in GOTCHAS). No pending pushes/merges remain.
+
+- **Fleet master `beef03e`** (Nnyan/charon-private):
+  - **F22** — `done.sh` no longer aborts on archive-only tickets (`set -e`/`meta` fix) + fail-on-revert tests; closed the **4 P1 done-unmerged reds** (3 `--override` fleet-infra, TIER-SELECT `--merged-sha c4c4189`).
+  - **F21 + F24** — fleet gate is now `fleet/gate.sh` (runs the fleet `*.test.sh` + ADVISORY shellcheck), not product pytest/ruff; benchmark excluded via root `conftest.py`. Gate GREEN (10 tests).
+  - **F23 Phase 1** — session-end deploy harness (`fleet/deploy-session-end.sh`, advisory/tag-if-behind, no-hang timeouts) + tests; wired into `fleet/end-session.sh`. Live no-op smoke test green.
+  - **Doctrine** — MANAGER-OPERATING-RULES §9 (token-economy is DEFAULT) + §8 (push is LEVER-GATED, not operator-only). Streamed **F25** (repo-decl-central) + **F26** (shellcheck-clean).
+- **Product master `700a45d`** (SLOP-Platform/charon): **PR #94 merged** — S1/S2/S4 public-clean enforce; review artifact stripped (`45d8af7`) per convention.
 
 ## FIRST ACTIONS — NEXT (priority order)
 
 0. Run `/home/stack/charon-private/fleet/preflight.sh`; register on the session-bridge under a NEW Jedi name.
-1. Confirm the operator merged the 3 branches + pushed master (see OPEN OPERATOR ACTIONS). Then **reconcile ROADMAP**: F20–F26 rows are split across master/`feat/f22`/`feat/f21` — after merges, `/home/stack/charon-private/fleet/state/ROADMAP.tsv` should read F20 done, F21 done, F22 done, F23 building, F24 done, F25 designed, F26 designed; re-run `/home/stack/charon-private/fleet/report.sh`.
-2. **F23 Phase 2 (CD)** — decided this session: CI builds a **git-describe** image (`vX.Y.Z-N-gSHA`) on **every GREEN master push**; extend `fleet/deploy.sh` tag-guard to accept it; harness compares describe versions + deploys latest-if-behind; GHCR retention (keep last N dev images); gateway reports its running version (visible, not hidden). Spans the PUBLIC product repo → **PR to SLOP-Platform/charon** (higher blast radius).
-3. **F25** repo-decl-central and **F26** shellcheck-clean (rig-only, designed).
-4. Remaining backlog per `report.sh`: F11–F19, S-program, Bridge B2–B6, K1–K7.
+1. `bash /home/stack/charon-private/fleet/report.sh` to confirm state (F20/F21/F22/F24 done, F23 building, F25/F26 designed). Nothing to merge — it all landed.
+2. **F23 Phase 2 (CD)** — the main next build. CI builds a **git-describe** image (`vX.Y.Z-N-gSHA`) on every GREEN master push; extend `/home/stack/charon-private/fleet/deploy.sh` tag-guard to accept it; harness compares describe versions + deploys latest-if-behind; GHCR retention; gateway reports its running version. Spans the PUBLIC product repo → **PR to SLOP-Platform/charon**.
+3. **B2 durable-bridge Phase 2 — NOW UNBLOCKED.** The Roci SSH prereq is ALREADY MET: `ssh rocinante` works (user stack, key `~/.ssh/mediastack`). Designs: `/home/stack/charon-private/fleet/DURABLE-BRIDGE-REVIEW-v2.md`, `/home/stack/charon-private/fleet/state/BRIDGE-ROBUSTNESS-INVESTIGATION.md`.
+4. **F25** repo-decl-central, **F26** shellcheck-clean (rig-only, designed). Then remaining backlog per `report.sh`.
 
 ## GOTCHAS (avoid re-discovering / DENIED)
 
-- `git push` is **DENIED** to the manager (settings deny-list) — the OPERATOR pushes/merges. Never push.
-- **Two repos**: PRODUCT = `/home/stack/code/charon` (public SLOP-Platform/charon); FLEET = `/home/stack/charon-private` (private Nnyan/charon-private). Rig tools that reason about "a repo" must say WHICH — the root of a bug-class this session (F25).
-- `done.sh`: the done-merge gate checks the PRODUCT repo, so FLEET-infra tickets need `--override "<reason>"` (recorded, surfaced by preflight). Archived tickets now close correctly (F22).
-- Fleet gate = `fleet/gate.sh` (fleet bash tests + ADVISORY shellcheck), NOT product pytest/ruff. shellcheck is advisory because `fleet/*.sh` have ~40 style/false-positive findings (F26 cleans them).
-- Charon Gateway is LIVE at `10.0.1.60:8080` (4-LOM). Route sub-work via `opencode run --model charon/<curated-id>`. `free-groq` is unusable (8k TPM < opencode's prompt). 4-LOM SSH works ONLY with `-i ~/.ssh/4lom` (plain ssh is DENIED).
-- ROADMAP.tsv was edited on 3 branches — keep future state edits on master to avoid this.
-- `handoff.sh` is co-owned by unmerged HANDOFF-MECHANIZE / HANDOFF-PIPEFAIL — watch merge order (F24's edit is minimal).
+- **Push is LEVER-GATED, not operator-only.** Push via `/home/stack/charon-private/fleet/land-push.sh <branch> [repo]` (raw `git push` / `git -C … push` are deny-listed; `--force`/`--no-verify`/`reset --hard` FORBIDDEN). It self-gates on `state/AUTONOMOUS`: ON → push without asking; OFF → ask first + give the operator the command. CHECK the lever — do NOT reflexively hand pushes over (that wasted this session before the fix).
+- **Roci SSH: use `ssh rocinante`** (aliased in `~/.ssh/config`: user stack, key mediastack) — NOT bare `ssh stack@10.0.1.51` (no key → denied). Rootless SSH was already set up.
+- **Two repos**: PRODUCT `/home/stack/code/charon` (public SLOP-Platform/charon); FLEET `/home/stack/charon-private` (private Nnyan/charon-private). Rig tools must state WHICH repo they mean (root of a bug-class — F25).
+- `done.sh`: done-merge gate checks the PRODUCT repo, so FLEET-infra tickets need `--override "<reason>"`. Archived tickets now close (F22).
+- Fleet gate = `fleet/gate.sh` (fleet bash tests + ADVISORY shellcheck). shellcheck non-blocking (F26 cleans the ~40 style/false-positive findings).
+- Charon Gateway LIVE at `10.0.1.60:8080` (4-LOM). Route sub-work via `opencode run --model charon/<curated-id>`; `free-groq` unusable (8k TPM). 4-LOM SSH needs `-i ~/.ssh/4lom`.
 
 ## OPEN OPERATOR ACTIONS
 
-1. **Merge + push** (all committed, pending):
-   - `git -C /home/stack/charon-private push -u origin feat/f22-done-close-archived-fix` → merge to master
-   - `git -C /home/stack/charon-private push -u origin feat/f21-gate-exclude-goldens` → merge to master
-   - `git -C /home/stack/charon-private push origin master` (token-economy rule `b7d3228`)
-   - Product PR #94 on SLOP-Platform/charon → merge (strip `tools/PUBLIC-CLEAN-ENFORCE-REVIEW.md` if that's the repo convention).
-2. (Optional, unblocks B2 later) rootless SSH to Rocinante `10.0.1.51` as bridge coordinator — still DENIED to this session.
+- **None blocking.** All pushes/merges landed this session. Optional: review the F23 Phase-2 plan before I open the product-CI PR (it touches public CI/GHCR).
 
 ## SESSION-BRIDGE
 
-Registered as `plo-koon` (repo charon); unregistered at close. Next session registers under a NEW Jedi name (stale sessions auto-purge after 600s).
+Was `plo-koon` (unregistered at first close; session continued for merges). Next session registers under a NEW Jedi name (stale sessions auto-purge after 600s).
 
 ## Key findings / decisions
 
-- **F23 deploy design DECIDED**: deploy only if master advanced + CI green; advisory on failure (register red, still close); git-describe version form; build on every green master push. `deploy.sh` already does /data backup + health-verify + auto-rollback.
-- The product/fleet split is load-bearing but its coupling is implicit (product path hardcoded across ~7 rig files) → the recurring wrong-repo bug class (item-3 false reds, F21/F24). Centralize in `_lib.sh` (F25).
-- Charon-built sub-session diffs get adversarial review: F23 shipped a real no-hang defect its stubbed tests could not catch (bare ssh, no timeout) — caught + fixed. Never trust the SUCCESS line.
-
-## Files modified this session
-
-master: `MANAGER-OPERATING-RULES.md`. feat/f22: `done.sh`, `tests/done-gate.test.sh`, `deploy-session-end.sh`, `end-session.sh`, `tests/deploy-session-end.test.sh`, `reds.tsv`, `state/ROADMAP.tsv`. feat/f21: `conftest.py`, `gate.sh`, `handoff.sh`, `tests/gate.test.sh`, `board/REPO-DECL-CENTRAL.md`, `state/ROADMAP.tsv`.
+- **Push authority already existed** (land-push.sh + AUTONOMOUS lever ON) — a stale "operator pushes" handoff line masked it and cost a session; fixed in §8 doctrine.
+- **Roci SSH already set up** — `ssh rocinante` works; B2 prereq met (earlier "denied" was wrong invocation).
+- **F23 design DECIDED**: deploy only if master advanced + CI green; advisory on failure; git-describe version; build on every green master push. `deploy.sh` already does /data backup + health-verify + auto-rollback.
+- Product/fleet split is load-bearing but implicitly coupled → wrong-repo bug class (F25).
 
 ## Open questions
 
-None blocking. Phase-2 build-trigger + version form already confirmed (every green push, git-describe).
+None blocking. F23 Phase-2 build-trigger + version form confirmed (every green push, git-describe).

@@ -420,6 +420,7 @@ cmd_detect(){
   detect_claim_loop
   detect_wci_contention
   echo "--- end detectors ---"
+  bash "$HERE/access-check.sh" || true
   return 0
 }
 
