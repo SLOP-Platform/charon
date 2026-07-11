@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# @covers: public-clean
 """Public-clean lint — prevent personal/internal info from leaking into the public repo."""
 from __future__ import annotations
 
@@ -21,6 +22,8 @@ _PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r'/home/stack'), 'home path "/home/stack"'),
     (re.compile(r'charon-private'), 'rig name "charon-private"'),
     (re.compile(r'\b[0-9a-fA-F]{40,}\b'), 'hex token shape (>=40 chars)'),
+    # public-clean: allow — the name-detection pattern must name the token it catches
+    (re.compile(r'\bRafael\b', re.IGNORECASE), 'personal given name'),  # public-clean: allow
 ]
 _WAIVER_RE = re.compile(r'public-clean:\s*allow\b')
 _EXCEPTIONS_PATH = Path("tools/.public-clean-exceptions.json")
@@ -45,16 +48,19 @@ def _load_exceptions(config_path: Path | None = None) -> dict[str, set[str]]:
     return {fp: set(lines) for fp, lines in data.items()}
 
 
-def check_file(path: Path, exceptions: dict[str, set[str]] | None = None) -> list[str]:
+def _scan_content(
+    rel: str, content: str, exceptions: dict[str, set[str]] | None = None
+) -> list[str]:
+    """Line-by-line pattern scan of already-read text.
+
+    Single detection core shared by every entrypoint (working-tree file read,
+    staged-blob read), so the working-tree scan and the staged-blob scan can
+    never disagree about what counts as a leak.
+    """
     if exceptions is None:
         exceptions = {}
     violations: list[str] = []
-    rel = str(path)
     exempt = exceptions.get(rel, set())
-    try:
-        content = path.read_text()
-    except (OSError, UnicodeDecodeError):
-        return violations
     for lineno, line in enumerate(content.split("\n"), start=1):
         if line in exempt:
             continue
@@ -67,6 +73,15 @@ def check_file(path: Path, exceptions: dict[str, set[str]] | None = None) -> lis
     return violations
 
 
+def check_file(path: Path, exceptions: dict[str, set[str]] | None = None) -> list[str]:
+    rel = str(path)
+    try:
+        content = path.read_text()
+    except (OSError, UnicodeDecodeError):
+        return []
+    return _scan_content(rel, content, exceptions)
+
+
 def check_paths(paths: list[Path], exceptions: dict[str, set[str]] | None = None) -> list[str]:
     all_v: list[str] = []
     for p in paths:
@@ -75,28 +90,119 @@ def check_paths(paths: list[Path], exceptions: dict[str, set[str]] | None = None
 
 
 def _tracked_files() -> list[str]:
+    """Enumerate every git-tracked path (FAIL-CLOSED).
+
+    A non-zero ``git ls-files`` (not a repo, git missing, permission error) or
+    an empty result must NOT be swallowed into ``[]`` — that would make
+    ``scan_tracked`` pass vacuously and let the gate print ``public-clean OK``
+    without having scanned anything. Both cases raise loudly so the gate/CI
+    exits non-zero instead of silently no-op'ing.
+    """
     result = subprocess.run(["git", "ls-files", "-z"], capture_output=True, text=True, check=False)
     if result.returncode != 0:
-        return []
-    return [f for f in result.stdout.split("\0") if f]
+        raise RuntimeError(
+            f"git ls-files failed (rc={result.returncode}) — refusing to run public-clean on an "
+            f"empty file set (fail-closed). stderr: {result.stderr.strip()}"
+        )
+    files = [f for f in result.stdout.split("\0") if f]
+    if not files:
+        raise RuntimeError(
+            "git ls-files returned no tracked files — refusing to pass public-clean vacuously "
+            "(fail-closed). Run from inside the repository working tree."
+        )
+    return files
 
 
-def main() -> int:
-    exceptions = _load_exceptions()
+def _staged_content(rel: str) -> str | None:
+    """Return the STAGED (index) blob for ``rel`` as text, or None to skip it.
+
+    Reads ``git show :<rel>`` so the pre-commit hook gates exactly what would be
+    committed — not the working tree. Returns None when the path is not in the
+    index (e.g. a deletion) or when the staged blob is binary/undecodable, which
+    the caller skips (mirrors ``check_file``'s binary handling).
+    """
+    result = subprocess.run(["git", "show", f":{rel}"], capture_output=True, check=False)
+    if result.returncode != 0:
+        return None
+    try:
+        return result.stdout.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def check_staged_paths(
+    rels: list[str], exceptions: dict[str, set[str]] | None = None
+) -> list[str]:
+    """Scan the STAGED content of the given repo-relative paths (pre-commit).
+
+    Unlike ``_scan_rel_paths`` (working-tree reads), this reads each path's
+    index blob, so a leak that is ``git add``-ed but absent from the working
+    copy is still caught, and an unstaged working-tree edit cannot false-red a
+    clean commit.
+    """
+    if exceptions is None:
+        exceptions = _load_exceptions()
     all_v: list[str] = []
     exceptions_rel = str(_EXCEPTIONS_PATH)
-    for rel in sorted(_tracked_files()):
+    for rel in rels:
         if rel == exceptions_rel:
-            # The exceptions ledger itself necessarily restates the exact,
-            # already-elsewhere-exempted line content it waives (that's the
-            # whole point of content-based matching — see _load_exceptions).
-            # None of that text is a *new* disclosure: it is verbatim what
-            # was already reviewed and allowed at its original location.
-            # Scanning the ledger against itself would just re-flag its own
-            # bookkeeping, so it is excluded — the same way a detect-secrets
-            # baseline file is excluded from its own secret scan.
+            continue
+        content = _staged_content(rel)
+        if content is None:
+            continue
+        all_v.extend(_scan_content(rel, content, exceptions))
+    return all_v
+
+
+def _scan_rel_paths(rels: list[str], exceptions: dict[str, set[str]]) -> list[str]:
+    """Scan an explicit list of repo-relative paths, skipping the exceptions ledger.
+
+    The exceptions ledger itself necessarily restates the exact,
+    already-elsewhere-exempted line content it waives (that's the whole point
+    of content-based matching — see _load_exceptions). None of that text is a
+    *new* disclosure: it is verbatim what was already reviewed and allowed at
+    its original location. Scanning the ledger against itself would just re-flag
+    its own bookkeeping, so it is excluded — the same way a detect-secrets
+    baseline file is excluded from its own secret scan.
+    """
+    all_v: list[str] = []
+    exceptions_rel = str(_EXCEPTIONS_PATH)
+    for rel in rels:
+        if rel == exceptions_rel:
             continue
         all_v.extend(check_file(Path(rel), exceptions))
+    return all_v
+
+
+def scan_tracked(exceptions: dict[str, set[str]] | None = None) -> list[str]:
+    """Scan every git-tracked file for personal/internal leaks.
+
+    Single source of truth for the whole-repo scan: both ``main()`` (the
+    CLI/gate/CI entrypoint) and the pytest repo-scan regression test call this,
+    so the tree the gate enforces and the tree the tests assert on can never
+    drift apart.
+    """
+    if exceptions is None:
+        exceptions = _load_exceptions()
+    return _scan_rel_paths(sorted(_tracked_files()), exceptions)
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    exceptions = _load_exceptions()
+    staged = bool(argv) and argv[0] == "--staged"
+    if staged:
+        argv = argv[1:]
+    if staged:
+        # Pre-commit path: scan the STAGED index blobs of the given paths, so the
+        # hook gates exactly what will be committed (not the working tree).
+        all_v = check_staged_paths(argv, exceptions)
+    elif argv:
+        # Explicit working-tree paths — scan just those. Still honours the
+        # exceptions ledger and inline waivers.
+        all_v = _scan_rel_paths(argv, exceptions)
+    else:
+        all_v = scan_tracked(exceptions)
     if all_v:
         print("PUBLIC-CLEAN VIOLATION — personal/internal info found:", file=sys.stderr)
         for v in all_v:

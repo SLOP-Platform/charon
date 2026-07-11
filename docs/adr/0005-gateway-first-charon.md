@@ -7,7 +7,7 @@
 > thin-core invariants remain in force.
 
 - **Status:** Accepted (2026-06-26)
-- **Deciders:** Rafael (operator)
+- **Deciders:** Nnyan (operator)
 - **Relates to:** ADR-0001 (thin orchestrator), ADR-0002 (boundary), ADR-0003 (planes),
   ADR-0004 (routing/gateway/pools/frontend — this ADR promotes its R1 proxy to the product)
 - **Grounded by:** direct read of the existing core (`src/charon/proxy_server.py`,
