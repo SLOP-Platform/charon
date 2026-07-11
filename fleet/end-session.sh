@@ -111,6 +111,9 @@ end_session(){
   fi
   say ""
   say "end-session: SESSION CLOSED. Handoff committed."
+  say ""
+  # Print the full waved roadmap on the screen at session end (operator 2026-07-10).
+  [ -f "$FLEET/report.sh" ] && bash "$FLEET/report.sh" 2>/dev/null
   return 0
 }
 
