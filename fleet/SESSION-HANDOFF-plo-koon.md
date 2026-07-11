@@ -20,9 +20,11 @@ Everything below is **merged to master and pushed** (I pushed/merged via `land-p
 
 0. Run `/home/stack/charon-private/fleet/preflight.sh`; register on the session-bridge under a NEW Jedi name.
 1. `bash /home/stack/charon-private/fleet/report.sh` to confirm state (F20/F21/F22/F24 done, F23 building, F25/F26 designed). Nothing to merge — it all landed.
-2. **F23 Phase 2 (CD)** — the main next build. CI builds a **git-describe** image (`vX.Y.Z-N-gSHA`) on every GREEN master push; extend `/home/stack/charon-private/fleet/deploy.sh` tag-guard to accept it; harness compares describe versions + deploys latest-if-behind; GHCR retention; gateway reports its running version. Spans the PUBLIC product repo → **PR to SLOP-Platform/charon**.
-3. **B2 durable-bridge Phase 2 — NOW UNBLOCKED.** The Roci SSH prereq is ALREADY MET: `ssh rocinante` works (user stack, key `~/.ssh/mediastack`). Designs: `/home/stack/charon-private/fleet/DURABLE-BRIDGE-REVIEW-v2.md`, `/home/stack/charon-private/fleet/state/BRIDGE-ROBUSTNESS-INVESTIGATION.md`.
-4. **F25** repo-decl-central, **F26** shellcheck-clean (rig-only, designed). Then remaining backlog per `report.sh`.
+2. **STARTUP-CONTEXT-DIET (F28) — OPERATOR ASK, do early.** Audit everything a session ingests at boot + the work process; cut context/token cost (slim MANAGER-OPERATING-RULES, roll up old handoffs, tighten preflight, demote verbose memories to pointers), set a STARTUP BUDGET + a regression check. Rigor is NOT trimmed. Ticket: `fleet/board/STARTUP-CONTEXT-DIET.md`.
+3. **WORK-CONVERGE-REVIEW (B7) — OPERATOR ASK, dedicated review session.** Compare how SLOP (mediastack) vs Charon (fleet rig) get work done; take best-of-both; design ONE MODULAR, PORTABLE "get-work-done" tool reusable across projects (engine vs project-specific config) so there is never >1 way. Feeds B5/B6. Ticket: `fleet/board/WORK-CONVERGE-REVIEW.md`.
+4. **F23 Phase 2 (CD)** — CI builds a **git-describe** image (`vX.Y.Z-N-gSHA`) on every GREEN master push; extend `/home/stack/charon-private/fleet/deploy.sh` tag-guard to accept it; harness compares describe versions + deploys latest-if-behind; GHCR retention; gateway reports its running version. Spans the PUBLIC product repo → **PR to SLOP-Platform/charon** (keep deploy IP/host/keys in the rig, NEVER the product repo).
+5. **B2 durable-bridge Phase 2 — NOW UNBLOCKED.** Roci SSH prereq ALREADY MET: `ssh rocinante` works (user stack, key `~/.ssh/mediastack`). Designs: `/home/stack/charon-private/fleet/DURABLE-BRIDGE-REVIEW-v2.md`, `/home/stack/charon-private/fleet/state/BRIDGE-ROBUSTNESS-INVESTIGATION.md`.
+6. **F25** repo-decl-central, **F26** shellcheck-clean (rig-only, designed). Then remaining backlog per `report.sh`.
 
 ## GOTCHAS (avoid re-discovering / DENIED)
 
