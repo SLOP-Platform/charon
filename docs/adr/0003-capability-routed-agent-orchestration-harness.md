@@ -8,7 +8,7 @@
 > *library* to the *brain* of an orchestrator.
 
 - **Status:** Accepted (2026-06-26)
-- **Deciders:** Rafael (solo operator)
+- **Deciders:** Nnyan (solo operator)
 - **Relates to:** `ms-router` decision; agent-framework evaluation (ZeroClaw Path C); memU schema lift for success-rate tracking
 - **Methodology:** ADR + tiered implementation; ports-and-adapters; derive-or-verify; structural enforcement over honor-system
 

@@ -4,7 +4,7 @@
 > inverted build posture: integrate established tools; build only the gap.
 
 - **Status:** Accepted (2026-06-26; product framing & §7 routing posture amended by ADR-0005)
-- **Deciders:** Rafael (solo operator)
+- **Deciders:** Nnyan (solo operator)
 - **Repo:** `github.com/SLOP-Platform/charon` *(name TBD)*
 - **Relates to:** ADR-0002 (project boundary & SLOP integration)
 - **Methodology:** ADR + tiered; ports-and-adapters; derive-or-verify
