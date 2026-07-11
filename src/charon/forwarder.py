@@ -149,6 +149,21 @@ def _build_upstream_req(handler, srv, route: UpstreamRoute, orig_bj: dict,
     return req
 
 
+def _required_capability(body: dict) -> str | None:
+    """Return ``'reasoning'`` when the request body signals a reasoning/thinking
+    requirement, else ``None``.
+
+    Detects top-level fields: ``reasoning``, ``thinking``,
+    ``reasoning_effort``, ``reasoning_config`` — any truthy presence flags the
+    request as needing reasoning capability (safe default: if the client asked
+    for it, we route to a provider known to support it)."""
+    for key in ("reasoning", "thinking", "reasoning_effort", "reasoning_config"):
+        val = body.get(key)
+        if val is not None and val is not False:
+            return "reasoning"  # type: ignore[return-value]
+    return None
+
+
 def forward_with_failover(handler, srv) -> None:
     """Run the data-plane failover loop for one client request (money path).
 
@@ -185,6 +200,22 @@ def forward_with_failover(handler, srv) -> None:
             "run 'charon setup' or open http://127.0.0.1:8080/charon/setup"
         )}})
         return
+
+    # ── capability-based route exclusion ────────────────────────────
+    # R3: proactive skip of known-incapable providers. If every route would be
+    # excluded (strand risk), fall back to the full chain and warn — NEVER strand.
+    cap = _required_capability(orig_bj)
+    matrix = getattr(srv, "capability_matrix", None)
+    if cap and matrix is not None and len(chain) > 0:
+        filtered = [r for r in chain if matrix.supports(r.provider or r.label, cap)]
+        if filtered:
+            chain = filtered
+        else:
+            # CRITICAL SAFETY: all routes excluded → fall back, log warning
+            import logging
+            logging.getLogger("charon.forwarder").warning(
+                "Capability exclusion would strand request (model=%s cap=%s); "
+                "using full chain instead.", requested, cap)
 
     # ── spend cap check (before any upstream call) ──────────────────
     if srv.spend_limiter is not None:
