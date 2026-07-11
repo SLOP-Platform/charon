@@ -19,10 +19,6 @@ Fleet	F7	done	-	board-correctness	keep the board state valid	Wave B
 Fleet	F8	done	-	refuse-unverified-done	reject unmerged work as complete	Wave C
 Fleet	F9	done	-	done-unmerged-red	flag unmerged tickets claiming completion	Wave C
 Fleet	F10	done	-	retire-done-ordering	retire finished tickets in order	Wave C
-Fleet	F20	done	-	report-renderer	one canonical fleet status report
-Fleet	F21	done	-	gate-exclude-goldens	drop benchmark fixtures from the gate
-Fleet	F22	done	-	done-close-archived	record merge-proof on archived tickets
-Fleet	F23	building	now	session-end-deploy	auto-update 4-LOM at session close
 Fleet	F11	queued	next	work-optimizer	schedule work for max parallelism
 Fleet	F12	queued	next	auto-close	close stale and landed tickets
 Fleet	F13	queued	next	recurrence-auditor	catch repeat failures automatically
@@ -32,6 +28,10 @@ Fleet	F16	designed	next	autonomous-ttl	time-box unattended runs
 Fleet	F17	designed	next	scorecard-auto-append	record model scores automatically
 Fleet	F18	designed	next	auto-log-model-lies	log models that claim false success
 Fleet	F19	not-started	next	bridge-unregister-trap	unregister the bridge on exit
+Fleet	F20	done	-	report-renderer	one canonical fleet status report
+Fleet	F21	done	-	gate-exclude-goldens	drop benchmark fixtures from the gate
+Fleet	F22	done	-	done-close-archived	record merge-proof on archived tickets
+Fleet	F23	building	now	session-end-deploy	auto-update 4-LOM at session close
 Fleet	F24	done	-	fleet-gate-repoint	gate runs fleet tests not product ones
 Fleet	F25	designed	next	repo-decl-central	declare product vs fleet repo once
 Fleet	F26	designed	next	shellcheck-clean	make fleet scripts shellcheck-clean
