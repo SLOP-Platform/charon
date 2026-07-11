@@ -20,7 +20,7 @@ Read and fully follow /home/stack/charon-private/fleet/SESSION-HANDOFF-plo-koon.
 0. `bash fleet/preflight.sh`; register on the session-bridge under a NEW Jedi name. Launch ALL sub-work on `charon/glm-5.2-nw` (NeuralWatt).
 1. **APPLY THE STAGED FOLD.** A Charon sub-session is producing `fleet/state/ROADMAP.tsv.new` (folds the 53 auditor tickets into the 5 projects, BENCH-OOB-GRADING→ROUTER, deletes 5, projects in priority order, waves assigned). When it lands: VERIFY (row count vs old, `ROADMAP_TSV=fleet/state/ROADMAP.tsv.new bash fleet/report.sh` renders, no ticket lost), then `mv` it over `fleet/state/ROADMAP.tsv`, ADD rows for PROJECT-MEMBERSHIP-GATE and WEB-ROADMAP-GENERATOR (FLEET), confirm the 5 deletes moved to `fleet/board/retired/`, commit + push. Proposal + rationale: `fleet/state/NON-PROJECT-AUDIT.md`.
 2. **ROUTER (top priority)** — start the critical path: R4 meter-wire → R5 cost-rank-auto → R2 router-core + R3 capability-matrix (see ROUTER-DESIGN.md). R11 drain-then-park is what makes the NeuralWatt balance-drain automatic.
-3. **WEB-ROADMAP-GENERATOR** (FLEET) — persistent self-refreshing web roadmap (regenerate HTML from ROADMAP.tsv + republish the Artifact at session end). Artifact url: 255411a5-edda-46c1-aded-a23b6d53811d.
+3. **WEB-ROADMAP-GENERATOR** (FLEET) — persistent self-refreshing web roadmap (regenerate HTML from ROADMAP.tsv + republish the Artifact at session end). The reference Artifact is the "Charon Roadmap" page in the operator's claude.ai/code/artifacts gallery (its url is in fleet/board/WEB-ROADMAP-GENERATOR.md).
 4. Then BRIDGE (portable work-engine B5/B6/B7), FLEET polish, etc., per priority.
 
 ## GOTCHAS
