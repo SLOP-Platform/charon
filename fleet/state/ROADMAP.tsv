@@ -65,6 +65,7 @@ Router	R7	designed	next	capability-engine	one brain for routing
 Router	R8	designed	next	latency-signal	fail over slow providers
 Router	R9	designed	next	work-routing-to-charon	route fleet work through gateway
 Router	R15	designed	next	free-tier-order	adversarial best-order given exact limits
+Router	R16	designed	next	graceful-degrade	throttle+alert+auto-recover on refill
 Router	R10	parked	next	free-tier-quota-spill	spill when a tier caps
 Router	R11	parked	next	drain-then-park	spend prepaid credit then pause
 Router	R12	parked	next	drain-routing	route to drain credit first
