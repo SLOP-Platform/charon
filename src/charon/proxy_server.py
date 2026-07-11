@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
 from . import console_router, forwarder
+from .balance import BalanceTracker
 from .cache import SemanticCache
 from .consensus import ConsensusRouter
 from .guardrails import Guardrails
@@ -488,6 +489,7 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         consensus_router: ConsensusRouter | None = None,
         virtual_key_manager: VirtualKeyManager | None = None,
         policy_router: PolicyRouter | None = None,
+        balance_tracker: BalanceTracker | None = None,
     ) -> None:
         super().__init__((host, port), _ProxyHandler)
         self.upstream_base = upstream_base
@@ -552,6 +554,7 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         self.consensus_router = consensus_router
         self.virtual_key_manager = virtual_key_manager
         self.policy_router = policy_router
+        self.balance_tracker = balance_tracker
         self._cooldown: dict[str, float] = {}
         self._cooldown_lock = threading.Lock()
         self.failover_events: collections.deque[dict] = collections.deque(maxlen=200)

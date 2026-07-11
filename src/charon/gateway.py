@@ -91,6 +91,7 @@ class GatewayConfig:
     consensus_router: ConsensusRouter | None = None
     virtual_key_manager: VirtualKeyManager | None = None
     policy_router: PolicyRouter | None = None
+    balance_tracker: Any = None  # BalanceTracker | None (typed as Any to avoid import cycle)
 
 
 
@@ -325,6 +326,7 @@ def build_server(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> 
         consensus_router=cfg.consensus_router,
         virtual_key_manager=cfg.virtual_key_manager,
         policy_router=cfg.policy_router,
+        balance_tracker=cfg.balance_tracker,
     )
     if setup_dir is not None:
         server.setup_handler = make_setup_handler(server, setup_dir)

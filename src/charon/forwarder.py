@@ -255,7 +255,8 @@ def forward_with_failover(handler, srv) -> None:
             resp, status, rhdrs = exc, exc.code, dict(exc.headers)
         except Exception:  # provider unreachable → fail over (don't 502 outright)
             srv.observer.record(srv.observer.classify(okey, 503, {}, {},
-                                expected_model=expected), count_usage=False, session=session_id)
+                                expected_model=expected), count_usage=False, session=session_id,
+                                provider=route.label)
             srv.set_cooldown(route, None)
             if more:  # count only providers we actually move PAST
                 failovers.append({"provider": route.label, "status": "unreachable",
@@ -275,7 +276,8 @@ def forward_with_failover(handler, srv) -> None:
                 obs_body = _extract(body_bytes, ctype)
                 obs = srv.observer.classify(okey, status, rhdrs, obs_body,
                                             expected_model=expected)
-                srv.observer.record(obs, count_usage=False, session=session_id)
+                srv.observer.record(obs, count_usage=False, session=session_id,
+                                    provider=route.label)
                 if obs.failover:  # 429/402/503/404/401+billing/unsupported → fail over
                     if obs.exhausted:  # account-level exhaustion → cool the
                         srv.set_cooldown(route, obs.retry_after)  # provider (R10c);
@@ -348,12 +350,14 @@ def forward_with_failover(handler, srv) -> None:
                 #     fall through and serve it (never error).
                 if obs.pseudo_success and srv.failover_on_downgrade and more:
                     srv.observer.record(  # visible, not silent
-                        obs, count_usage=True, session=session_id)
+                        obs, count_usage=True, session=session_id,
+                        provider=route.label)
                     failovers.append({"provider": route.label, "status": "downgrade",
                                       "reason": obs.note or "served different model"})
                     continue
                 srv.observer.record(  # served → bill usage (R10a)
-                    obs, count_usage=True, session=session_id)
+                    obs, count_usage=True, session=session_id,
+                    provider=route.label)
                 # ── post-response hooks ──────────────────────────
                 cost = obs.usage.cost_usd if obs.usage else 0.0
                 if srv.response_normalizer is not None:
@@ -374,6 +378,8 @@ def forward_with_failover(handler, srv) -> None:
                         route.label, 0, success=not obs.pseudo_success, tokens=0)
                 if srv.spend_limiter is not None:
                     srv.spend_limiter.record(_spend_to_record(obs, est_cost))
+                if srv.balance_tracker is not None:
+                    srv.balance_tracker.record_spend(route.label, cost, model=requested)
                 handler._send_resp_headers(200, ctype, route.label, failovers, obs.pseudo_success)
                 handler._write(body_bytes)
                 srv.note_request(requested, route.label, 200, cost, failovers)
@@ -398,7 +404,8 @@ def forward_with_failover(handler, srv) -> None:
             if stream_broke:  # nothing sent yet → treat like a failed attempt, fail over
                 srv.observer.record(
                     srv.observer.classify(okey, 503, {}, {}, expected_model=expected),
-                    count_usage=False, session=session_id)
+                    count_usage=False, session=session_id,
+                    provider=route.label)
                 if more:
                     failovers.append({"provider": route.label, "status": "stream-error",
                                       "reason": "upstream stream interrupted"})
@@ -419,7 +426,8 @@ def forward_with_failover(handler, srv) -> None:
             # provider) commit and SERVE this completed 200 with X-Charon-Downgrade.
             if obs.pseudo_success and srv.failover_on_downgrade and more:
                 srv.observer.record(  # visible, not silent
-                    obs, count_usage=True, session=session_id)
+                    obs, count_usage=True, session=session_id,
+                    provider=route.label)
                 failovers.append({"provider": route.label, "status": "downgrade",
                                   "reason": obs.note or "served different model"})
                 continue
@@ -447,7 +455,8 @@ def forward_with_failover(handler, srv) -> None:
             served_obs = srv.observer.classify(okey, 200, rhdrs,
                                                _extract(full_bytes, ctype),
                                                expected_model=expected)
-            srv.observer.record(served_obs, count_usage=True, session=session_id)
+            srv.observer.record(served_obs, count_usage=True, session=session_id,
+                                provider=route.label)
             # Cache the streamed 200 (mirrors the non-stream path — only non-stream
             # was cached before SR-2) but ONLY a cleanly-completed, non-downgrade
             # stream: BLOCKER #1 (never cache a downgrade — HIT can't disclose it) +
@@ -459,6 +468,8 @@ def forward_with_failover(handler, srv) -> None:
             cost = served_obs.usage.cost_usd if served_obs.usage else 0.0
             if srv.spend_limiter is not None:
                 srv.spend_limiter.record(_spend_to_record(served_obs, est_cost))
+            if srv.balance_tracker is not None:
+                srv.balance_tracker.record_spend(route.label, cost, model=requested)
             srv.note_request(requested, route.label, 200, cost, failovers)
             return
         finally:
