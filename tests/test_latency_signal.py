@@ -153,13 +153,37 @@ def test_order_by_cooldown_latency_tiebreak_in_cooled_bucket() -> None:
     try:
         soon = UpstreamRoute("http://127.0.0.1:1", "k1", provider="soon")
         later = UpstreamRoute("http://127.0.0.1:2", "k2", provider="later")
-        gw.set_cooldown(soon, 10)
-        gw.set_cooldown(later, 10)  # equal remaining cooldown
+        # Set identical absolute cooldowns so latency is the only differentiator.
+        ts = time.monotonic() + 10
+        with gw._cooldown_lock:
+            gw._cooldown[soon.upstream_base] = ts
+            gw._cooldown[later.upstream_base] = ts
         # lower latency should win the tiebreak
         gw.latency_tracker.record("later", 30.0)
         gw.latency_tracker.record("soon", 150.0)
         ordered = gw.order_by_cooldown([soon, later])
         assert [r.provider for r in ordered] == ["later", "soon"]
+    finally:
+        gw.server_close()
+
+
+def test_order_by_cooldown_cooled_bucket_composite_key_cooldown_over_latency() -> None:
+    """Among cooled providers, shorter remaining cooldown is PRIMARY; latency
+    only breaks ties. A provider with long cooldown but low latency must NOT
+    jump ahead of one with short cooldown but high latency."""
+    gw = GatewayProxyServer()
+    try:
+        soon = UpstreamRoute("http://127.0.0.1:1", "k1", provider="soon")
+        later = UpstreamRoute("http://127.0.0.1:2", "k2", provider="later")
+        # soon: short cooldown + high latency; later: long cooldown + low latency
+        now = time.monotonic()
+        with gw._cooldown_lock:
+            gw._cooldown[soon.upstream_base] = now + 5
+            gw._cooldown[later.upstream_base] = now + 100
+        gw.latency_tracker.record("soon", 200.0)
+        gw.latency_tracker.record("later", 10.0)
+        ordered = gw.order_by_cooldown([later, soon])  # input reversed deliberately
+        assert [r.provider for r in ordered] == ["soon", "later"]
     finally:
         gw.server_close()
 

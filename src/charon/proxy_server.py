@@ -635,7 +635,6 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         with self._cooldown_lock:
             fresh = [r for r in chain if self._cooldown.get(r.upstream_base, 0.0) <= now]
             cooled = [r for r in chain if self._cooldown.get(r.upstream_base, 0.0) > now]
-            cooled.sort(key=lambda r: self._cooldown.get(r.upstream_base, 0.0))
 
         def _lat_sort_key(route: UpstreamRoute) -> float:
             # Lower latency first; missing data → +inf so known-good routes win.
@@ -643,7 +642,8 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
             return float(lat) if lat is not None else float("inf")
 
         fresh.sort(key=_lat_sort_key)
-        cooled.sort(key=_lat_sort_key)
+        # R8 fix: stable composite-key sort — cooldown is PRIMARY, latency tiebreaks.
+        cooled.sort(key=lambda r: (self._cooldown.get(r.upstream_base, 0.0), _lat_sort_key(r)))
         return fresh + cooled
 
     def is_slow_provider(self, route: UpstreamRoute) -> bool:
