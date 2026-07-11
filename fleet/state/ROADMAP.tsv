@@ -74,7 +74,7 @@ Fleet	F21	done	-	gate-exclude-goldens	drop benchmark fixtures from the gate	Wave
 Fleet	F22	done	-	done-close-archived	record merge-proof on archived tickets	Wave D — gate & reporting
 Fleet	F24	done	-	fleet-gate-repoint	gate runs fleet tests not product ones	Wave D — gate & reporting
 Fleet	F27	done	-	access-check	probe+report host access at boot	Wave D — gate & reporting
-Fleet	F44	designed	next	web-roadmap-generator	self-refreshing web roadmap from ROADMAP.tsv	Wave D — gate & reporting
+Fleet	F44	done	-	web-roadmap-generator	self-refreshing web roadmap from ROADMAP.tsv	Wave D — gate & reporting
 Fleet	F11	queued	next	work-optimizer	schedule work for max parallelism	Wave E — automation brains
 Fleet	F12	queued	next	auto-close	close stale and landed tickets	Wave E — automation brains
 Fleet	F13	queued	next	recurrence-auditor	catch repeat failures automatically	Wave E — automation brains
