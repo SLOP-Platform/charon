@@ -418,8 +418,9 @@ detect_inflight_landscape(){
   [ -x "$script" ] || { echo "inflight-audit: project-audit.sh not found/executable"; return 0; }
   local tickets unmerged
   tickets=$(ls "$HERE/board" 2>/dev/null | grep '\.md$' | grep -vc '\.parked$')
-  unmerged=$(bash "$script" 2>/dev/null | grep -c 'AHEAD (unmerged!)')
-  echo "inflight-audit: ${tickets:-0} active board ticket(s), ${unmerged:-0} unmerged feat/ branch(es)"
+  # count AHEAD *and* UNKNOWN-base branches — an unresolvable base must not read as 0-stranded
+  unmerged=$(bash "$script" 2>/dev/null | grep -cE 'AHEAD \(unmerged!\)|UNKNOWN\(')
+  echo "inflight-audit: ${tickets:-0} active board ticket(s), ${unmerged:-0} unmerged/unknown branch(es)"
   echo "    -> BEFORE authoring any brief / launching a build: fleet/project-audit.sh <TICKET>"
   echo "    -> full in-flight map: fleet/project-audit.sh"
 }
