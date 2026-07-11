@@ -17,7 +17,7 @@ Router	R3	done	-	capability-matrix	which providers serve what + quirks	Wave 2 �
 Router	R7	done	-	capability-engine	one brain for routing	Wave 2 — decide (brain)
 Router	R8	done	-	latency-signal	fail over slow providers	Wave 2 — decide (brain)
 Router	R9	designed	next	work-routing-to-charon	route fleet work through gateway	Wave 3 — act (policies)
-Router	R15	designed	next	free-tier-order	adversarial best-order given exact limits	Wave 3 — act (policies)
+Router	R15	done	-	free-tier-order	adversarial best-order given exact limits	Wave 3 — act (policies)
 Router	R16	designed	next	graceful-degrade	throttle+alert+auto-recover on refill	Wave 3 — act (policies)
 Router	R17	done	-	pricing-limits-checker	verify limits+pricing, alert on change	Wave 3 — act (policies)
 Router	R10	parked	next	free-tier-quota-spill	spill when a tier caps	Wave 3 — act (policies)
@@ -75,6 +75,7 @@ Fleet	F22	done	-	done-close-archived	record merge-proof on archived tickets	Wave
 Fleet	F24	done	-	fleet-gate-repoint	gate runs fleet tests not product ones	Wave D — gate & reporting
 Fleet	F27	done	-	access-check	probe+report host access at boot	Wave D — gate & reporting
 Fleet	F44	done	-	web-roadmap-generator	self-refreshing web roadmap from ROADMAP.tsv	Wave D — gate & reporting
+Fleet	F45	designed	next	project-audit-gate	fact-audit + re-sequence at project/wave start	Wave H — board & gate
 Fleet	F11	queued	next	work-optimizer	schedule work for max parallelism	Wave E — automation brains
 Fleet	F12	queued	next	auto-close	close stale and landed tickets	Wave E — automation brains
 Fleet	F13	queued	next	recurrence-auditor	catch repeat failures automatically	Wave E — automation brains
