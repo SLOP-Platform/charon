@@ -410,6 +410,20 @@ detect_wci_contention(){
   fi
 }
 
+# Surface scheduled/done work so a session never re-specs or collides with prior
+# work (the [project-start-audit-and-resequence] safeguard). Terse here; the full
+# map + per-ticket collision check live in fleet/project-audit.sh.
+detect_inflight_landscape(){
+  local script="$HERE/project-audit.sh"
+  [ -x "$script" ] || { echo "inflight-audit: project-audit.sh not found/executable"; return 0; }
+  local tickets unmerged
+  tickets=$(ls "$HERE/board" 2>/dev/null | grep '\.md$' | grep -vc '\.parked$')
+  unmerged=$(bash "$script" 2>/dev/null | grep -c 'AHEAD (unmerged!)')
+  echo "inflight-audit: ${tickets:-0} active board ticket(s), ${unmerged:-0} unmerged feat/ branch(es)"
+  echo "    -> BEFORE authoring any brief / launching a build: fleet/project-audit.sh <TICKET>"
+  echo "    -> full in-flight map: fleet/project-audit.sh"
+}
+
 cmd_detect(){
   local full=0
   case "${1:-}" in --full) full=1;; esac
@@ -419,6 +433,7 @@ cmd_detect(){
   detect_repo_drift
   detect_claim_loop
   detect_wci_contention
+  detect_inflight_landscape
   echo "--- end detectors ---"
   bash "$HERE/access-check.sh" || true
   return 0
