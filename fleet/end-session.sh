@@ -109,6 +109,11 @@ end_session(){
     source "$DEPLOY_HOOK"
     session_end_deploy || true
   fi
+  # -- regenerate the self-contained HTML roadmap (advisory; never block close) --
+  if [ -f "$FLEET/roadmap-html.sh" ]; then
+    bash "$FLEET/roadmap-html.sh" "$PRIV/fleet/state/overnight/roadmap.html" >/dev/null 2>&1 || true
+  fi
+
   say ""
   say "end-session: SESSION CLOSED. Handoff committed."
   say ""
