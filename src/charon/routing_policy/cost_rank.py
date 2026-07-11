@@ -5,7 +5,6 @@ cost-rank computation from live pricing data.
 """
 from __future__ import annotations
 
-
 # Order: cheaper funding classes first.  Matches _COST_CLASSES in config.py
 # ("free-daily", "expiring", "prepaid", "metered", "premium").
 _COST_CLASS_PRIORITY: dict[str, int] = {

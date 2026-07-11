@@ -61,7 +61,7 @@ def _mk_upstream(delay_s: float = 0.0):
     srv = _Threaded(("127.0.0.1", 0), _LatencyMockUpstream)
     srv.delay_s = delay_s  # type: ignore[attr-defined]
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    return srv, f"http://{srv.server_address[0]}:{srv.server_address[1]}"
+    return srv, f"http://127.0.0.1:{srv.server_address[1]}"
 
 
 # ---------------------------------------------------------------------------

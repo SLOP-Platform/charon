@@ -24,14 +24,15 @@ import socketserver
 import threading
 import time
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
 from . import console_router, forwarder
 from .balance import BalanceTracker
 from .cache import SemanticCache
-from .latency import RollingLatency
 from .consensus import ConsensusRouter
 from .guardrails import Guardrails
+from .latency import RollingLatency
 from .netutil import is_loopback
 from .observability import Observability
 from .policy_router import PolicyRouter
@@ -564,6 +565,9 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         self.virtual_key_manager = virtual_key_manager
         self.policy_router = policy_router
         self.balance_tracker = balance_tracker
+        # R3: optional capability deny-table, set by gateway.build_server;
+        # forwarder reads via getattr(..., None) so direct-server tests are unaffected.
+        self.capability_matrix: Any = None
         self.latency_tracker = latency_tracker or RollingLatency()
         self.slow_provider_threshold_ms = slow_provider_threshold_ms
         self._cooldown: dict[str, float] = {}

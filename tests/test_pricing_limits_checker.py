@@ -5,10 +5,10 @@ raises a red finding; reverting the mismatch makes the finding disappear.
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
-from charon import config, pricing_limits_checker as plc
+from charon import config
+from charon import pricing_limits_checker as plc
 from charon.pricing_limits_checker import (
     CheckerConfig,
     ModelPriceSpec,
@@ -16,7 +16,6 @@ from charon.pricing_limits_checker import (
     ProviderCanonical,
     ProviderLimitSpec,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -70,7 +69,9 @@ def test_detects_price_drift_and_passes_when_consistent(monkeypatch, tmp_path):
     config.add_model("gpt-4o", provider="openrouter", cost_input=0.002, cost_output=0.003)
     findings2 = plc.run_check(config_dir=tmp_path, threshold_pct=5.0)
     drift_findings2 = [f for f in findings2 if f.category == "price_drift" and f.model == "gpt-4o"]
-    assert len(drift_findings2) == 0, f"Expected 0 drift findings after revert, got {drift_findings2}"
+    assert len(drift_findings2) == 0, (
+        f"Expected 0 drift findings after revert, got {drift_findings2}"
+    )
 
 
 def test_detects_missing_model_and_passes_when_added(monkeypatch, tmp_path):
@@ -175,7 +176,9 @@ def test_detects_non_token_pricing(monkeypatch, tmp_path):
 def test_marginal_cost_helper_energy():
     """Non-token energy rate can be approximately converted to a per-token signal."""
     nt = NonTokenPricing(type="energy_kwh", rate=10.0, unit="kWh")
-    approx = plc.marginal_cost_per_token(nt, avg_tokens_per_request=1_000_000, avg_kwh_per_request=0.019)
+    approx = plc.marginal_cost_per_token(
+        nt, avg_tokens_per_request=1_000_000, avg_kwh_per_request=0.019
+    )
     assert approx is not None
     # 0.019 kWh * $10/kWh = $0.19 per 1M tokens
     assert abs(approx - 0.19) < 0.01

@@ -286,7 +286,6 @@ def check_pricing_limits(
     findings: list[Finding] = []
     thresh = threshold_pct if threshold_pct is not None else canonical.threshold_pct
     models: dict[str, dict] = configured.get("models") or {}
-    providers_cfg: dict[str, dict] = configured.get("providers") or {}
 
     # ------------------------------------------------------------------
     # 1. canonical -> configured (missing or drifted)
@@ -305,7 +304,10 @@ def check_pricing_limits(
                     category="limit_change",
                     provider=pname,
                     model=None,
-                    message=f"canonical limits defined for {pname} — ensure runtime quota tracker is in sync",
+                    message=(
+                        f"canonical limits defined for {pname} — "
+                        f"ensure runtime quota tracker is in sync"
+                    ),
                     canonical_value=asdict(pc.limits),
                     configured_value=None,
                 )
@@ -336,7 +338,10 @@ def check_pricing_limits(
                         category="missing",
                         provider=pname,
                         model=mid,
-                        message=f"model {mid!r} present in canonical but missing from configured models.json",
+                        message=(
+                            f"model {mid!r} present in canonical "
+                            f"but missing from configured models.json"
+                        ),
                         canonical_value=asdict(ms),
                         configured_value=None,
                     )
@@ -355,7 +360,10 @@ def check_pricing_limits(
                         category="price_drift",
                         provider=pname,
                         model=mid,
-                        message=f"cost_input drift: canonical={ms.cost_input} configured={c_in} ({pct_in:+.1f}%)",
+                        message=(
+                            f"cost_input drift: canonical={ms.cost_input} "
+                            f"configured={c_in} ({pct_in:+.1f}%)"
+                        ),
                         canonical_value=ms.cost_input,
                         configured_value=c_in,
                     )
@@ -367,7 +375,10 @@ def check_pricing_limits(
                         category="price_drift",
                         provider=pname,
                         model=mid,
-                        message=f"cost_output drift: canonical={ms.cost_output} configured={c_out} ({pct_out:+.1f}%)",
+                        message=(
+                            f"cost_output drift: canonical={ms.cost_output} "
+                            f"configured={c_out} ({pct_out:+.1f}%)"
+                        ),
                         canonical_value=ms.cost_output,
                         configured_value=c_out,
                     )
@@ -394,8 +405,8 @@ def check_pricing_limits(
         provider = mcfg.get("provider")
         if provider is None:
             continue
-        pc = canonical.providers.get(provider)
-        if pc is None:
+        pc2 = canonical.providers.get(provider)
+        if pc2 is None:
             # Provider exists in config but not in canonical at all
             findings.append(
                 Finding(
@@ -403,13 +414,20 @@ def check_pricing_limits(
                     category="stale",
                     provider=provider,
                     model=mid,
-                    message=f"provider {provider!r} has configured model {mid!r} but no canonical entry",
+                    message=(
+                        f"provider {provider!r} has configured model "
+                        f"{mid!r} but no canonical entry"
+                    ),
                     canonical_value=None,
-                    configured_value={k: mcfg[k] for k in ("cost_input", "cost_output", "free") if k in mcfg},
+                    configured_value={
+                        k: mcfg[k]
+                        for k in ("cost_input", "cost_output", "free")
+                        if k in mcfg
+                    },
                 )
             )
             continue
-        if mid not in pc.pricing and not mcfg.get("free"):
+        if mid not in pc2.pricing and not mcfg.get("free"):
             # Model in config but not in canonical pricing table
             findings.append(
                 Finding(
@@ -419,7 +437,11 @@ def check_pricing_limits(
                     model=mid,
                     message=f"model {mid!r} configured but absent from canonical pricing table",
                     canonical_value=None,
-                    configured_value={k: mcfg[k] for k in ("cost_input", "cost_output", "free") if k in mcfg},
+                    configured_value={
+                        k: mcfg[k]
+                        for k in ("cost_input", "cost_output", "free")
+                        if k in mcfg
+                    },
                 )
             )
 

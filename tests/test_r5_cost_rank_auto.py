@@ -6,17 +6,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from charon.balance import BalanceTracker
-from charon.pools import PoolEntry, PoolConfigError, choose_from_pool, load_pools
+from charon.pools import load_pools
 from charon.proxy import GatewayProxy
 from charon.routing_policy import build_routes_and_pools
 from charon.routing_policy.cost_rank import (
     cost_class_priority,
     derived_cost_rank,
 )
-
 
 # ---------------------------------------------------------------------------
 # 1) cost_rank derivation: metered overrides configured

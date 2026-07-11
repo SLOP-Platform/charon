@@ -66,7 +66,9 @@ def _big_body(token_target):
     """Build a request body whose len//4 token estimate is ~token_target."""
     # Each char counts as ~0.25 tokens in the estimate (len(raw_body)//4).
     # To hit a target, use raw_body length ≈ token_target * 4.
-    b = json.dumps({"model": "v", "messages": [{"role": "user", "content": "x" * (token_target * 4)}]}).encode()
+    b = json.dumps(
+        {"model": "v", "messages": [{"role": "user", "content": "x" * (token_target * 4)}]}
+    ).encode()
     return b
 
 
@@ -164,7 +166,6 @@ def test_all_too_small_never_strands():
             headers={"Content-Type": "application/json"}, method="POST")
         resp = urllib.request.urlopen(req, timeout=10)
         status = resp.status
-        hdrs = dict(resp.headers)
         resp.read()
         resp.close()
         assert status == 200, "request was stranded instead of falling back"

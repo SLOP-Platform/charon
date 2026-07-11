@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import pytest
 
-from charon.routing_policy.matrix import CapabilityMatrix, Grade, WorkClass, _DEFAULT_PROVIDER_DENIES
+from charon.routing_policy.matrix import (
+    _DEFAULT_PROVIDER_DENIES,
+    CapabilityMatrix,
+)
 
 
 class TestQueryAPI:
@@ -98,7 +101,9 @@ class TestDefaultProviderDenies:
         assert m.supports("openrouter", "reasoning") is True
         assert m.supports("novita", "reasoning") is False  # still present via default
 
-    @pytest.mark.parametrize("wc", ["reasoning", "coding", "translation", "creative", "analysis", "general"])
+    @pytest.mark.parametrize(
+        "wc", ["reasoning", "coding", "translation", "creative", "analysis", "general"]
+    )
     def test_all_work_classes_are_valid_literals(self, wc: str):
         """Smoke: every WorkClass literal can round-trip through the API."""
         m = CapabilityMatrix()
