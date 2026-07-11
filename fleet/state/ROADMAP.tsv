@@ -52,10 +52,20 @@ Bridge	B6	designed	next	work-engine-d10	move the work engine in-tree
 Bridge	B7	designed	next	work-converge-review	one modular work tool (SLOP+Charon)
 Bridge	B4	parked	next	benchmark-v2	rank models by real outcomes
 Bridge	B3	not-started	next	roci-coordinator	run a durable session coordinator
-Backlog	K1	designed	next	pools-redesign	collapse pools into model tiers
-Backlog	K2	designed	next	meter-wave-2	measure real spend per call
 Backlog	K3	designed	next	grader-secfix	harden the grader against tampering
 Backlog	K4	designed	next	bench-oob-reds-replay	grade models on past failures
-Backlog	K5	designed	next	work-routing-to-charon	route work through the gateway
-Backlog	K6	parked	next	drain-then-park	spend prepaid credit, then pause
 Backlog	K7	parked	next	chutes-commandcode-keys	get missing provider API keys
+Router	R1	done	-	meter-model-provider	real per-call cost sensor
+Router	R2	designed	next	router-core	price-sorted order + smart failover
+Router	R3	designed	next	capability-matrix	which providers serve what + quirks
+Router	R4	designed	next	meter-wire	wire real cost into decisions
+Router	R5	designed	next	cost-rank-auto	sort pools by metered cost
+Router	R6	designed	next	pools-redesign	collapse pools into model tiers
+Router	R7	designed	next	capability-engine	one brain for routing
+Router	R8	designed	next	latency-signal	fail over slow providers
+Router	R9	designed	next	work-routing-to-charon	route fleet work through gateway
+Router	R10	parked	next	free-tier-quota-spill	spill when a tier caps
+Router	R11	parked	next	drain-then-park	spend prepaid credit then pause
+Router	R12	parked	next	drain-routing	route to drain credit first
+Router	R13	parked	next	pools-simplification	cut the pool sprawl
+Router	R14	parked	next	meter-session-tag	attribute spend to a session
