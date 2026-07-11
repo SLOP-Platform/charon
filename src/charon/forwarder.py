@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 import urllib.error
 import urllib.request
 from typing import TYPE_CHECKING
@@ -248,6 +249,7 @@ def forward_with_failover(handler, srv) -> None:
         # so the default path is provably byte-identical (never re-encodes).
         adapter = get_adapter(route.adapter)
 
+        start = time.monotonic()
         try:
             resp = urllib.request.urlopen(req, timeout=srv.fwd_timeout)
             status, rhdrs = resp.status, dict(resp.headers)
@@ -336,6 +338,8 @@ def forward_with_failover(handler, srv) -> None:
                         body_bytes = json.dumps(canon).encode()
                 observed = _extract(body_bytes, ctype)  # now sees top-level model+usage
                 obs = srv.observer.classify(okey, 200, rhdrs, observed, expected_model=expected)
+                latency_ms = int((time.monotonic() - start) * 1000)
+                srv.latency_tracker.record(route.label, latency_ms)
                 # ── genuine silent downgrade (obs.pseudo_success) ─────────────
                 # Operator toggle `failover_on_downgrade` (default False):
                 #   False → SERVE this COMPLETED, already-billed 200 with the
@@ -418,6 +422,8 @@ def forward_with_failover(handler, srv) -> None:
 
             obs = srv.observer.classify(okey, 200, rhdrs, _extract(b"".join(head), ctype),
                                         expected_model=expected)
+            latency_ms = int((time.monotonic() - start) * 1000)
+            srv.latency_tracker.record(route.label, latency_ms)
             # ── genuine streaming downgrade (obs.pseudo_success) ──────────────
             # Same operator toggle as the non-stream path. With failover_on_downgrade
             # True AND a next provider, fail over BEFORE committing any byte (headers
@@ -457,6 +463,8 @@ def forward_with_failover(handler, srv) -> None:
                                                expected_model=expected)
             srv.observer.record(served_obs, count_usage=True, session=session_id,
                                 provider=route.label)
+            latency_ms = int((time.monotonic() - start) * 1000)
+            srv.latency_tracker.record(route.label, latency_ms)
             # Cache the streamed 200 (mirrors the non-stream path — only non-stream
             # was cached before SR-2) but ONLY a cleanly-completed, non-downgrade
             # stream: BLOCKER #1 (never cache a downgrade — HIT can't disclose it) +

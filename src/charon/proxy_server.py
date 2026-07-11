@@ -29,6 +29,7 @@ from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 from . import console_router, forwarder
 from .balance import BalanceTracker
 from .cache import SemanticCache
+from .latency import RollingLatency
 from .consensus import ConsensusRouter
 from .guardrails import Guardrails
 from .netutil import is_loopback
@@ -490,6 +491,8 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         virtual_key_manager: VirtualKeyManager | None = None,
         policy_router: PolicyRouter | None = None,
         balance_tracker: BalanceTracker | None = None,
+        latency_tracker: RollingLatency | None = None,
+        slow_provider_threshold_ms: float | None = None,
     ) -> None:
         super().__init__((host, port), _ProxyHandler)
         self.upstream_base = upstream_base
@@ -555,6 +558,8 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         self.virtual_key_manager = virtual_key_manager
         self.policy_router = policy_router
         self.balance_tracker = balance_tracker
+        self.latency_tracker = latency_tracker or RollingLatency()
+        self.slow_provider_threshold_ms = slow_provider_threshold_ms
         self._cooldown: dict[str, float] = {}
         self._cooldown_lock = threading.Lock()
         self.failover_events: collections.deque[dict] = collections.deque(maxlen=200)
@@ -619,13 +624,34 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         Within the cooled bucket, order by soonest-to-recover first (ascending
         remaining cooldown) — cooldown-anchor-demotion red: among several cooled
         providers, prefer the one closest to coming back rather than an arbitrary
-        (insertion) order."""
+        (insertion) order.
+
+        R8 latency-signal tiebreak: among providers with the same cooldown status
+        (both fresh or both cooled with identical remaining cooldown), prefer the
+        one with lower measured EWMA latency. None-safe: if no latency data exists
+        for a provider, it sorts as if its latency were ``+inf`` (i.e. deprioritised
+        but never removed)."""
         now = time.monotonic()
         with self._cooldown_lock:
             fresh = [r for r in chain if self._cooldown.get(r.upstream_base, 0.0) <= now]
             cooled = [r for r in chain if self._cooldown.get(r.upstream_base, 0.0) > now]
             cooled.sort(key=lambda r: self._cooldown.get(r.upstream_base, 0.0))
+
+        def _lat_sort_key(route: UpstreamRoute) -> float:
+            # Lower latency first; missing data → +inf so known-good routes win.
+            lat = self.latency_tracker.latency_ms(route.label)
+            return float(lat) if lat is not None else float("inf")
+
+        fresh.sort(key=_lat_sort_key)
+        cooled.sort(key=_lat_sort_key)
         return fresh + cooled
+
+    def is_slow_provider(self, route: UpstreamRoute) -> bool:
+        """True when the provider's measured EWMA latency exceeds the configured
+        ``slow_provider_threshold_ms``.  None-safe: False when no data or no
+        threshold is configured."""
+        return self.latency_tracker.is_slow(
+            route.label, self.slow_provider_threshold_ms)
 
     def retry_after_hint(self, chain: list[UpstreamRoute]) -> int:
         """Seconds until the soonest member of ``chain`` recovers — a bounded
