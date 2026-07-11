@@ -49,6 +49,10 @@ class ProviderPreset:
     # (a per-provider marker, declared not detected — mirrors ``wire``).
     adapter: str | None = None
     note: str = ""
+    # Capability-engine (R7): per-provider hard limits surfaced for proactive
+    # eligibility filtering.  None/absent means "unknown / no limit" (safe default).
+    max_context: int | None = None       # max input+output tokens this provider admits
+    max_concurrency: int | None = None   # max in-flight requests to this provider
 
 
 # Built-in presets. VERIFIED bases are marked; UNVERIFIED ones carry a note and
@@ -286,7 +290,8 @@ def resolve(name: str, overrides: dict | None = None) -> ProviderPreset:
                 f"({', '.join(sorted(PRESETS))}) and no base_url override given")
         base = ProviderPreset(base_url=str(overrides["base_url"]))
     fields = {}
-    for k in ("base_url", "key_env", "strip_v1", "downgrade_prone", "wire", "adapter"):
+    for k in ("base_url", "key_env", "strip_v1", "downgrade_prone", "wire", "adapter",
+              "max_context", "max_concurrency"):
         if k in overrides and overrides[k] is not None:
             fields[k] = overrides[k]
     return replace(base, **fields) if fields else base

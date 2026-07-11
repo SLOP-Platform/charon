@@ -187,6 +187,9 @@ class UpstreamRoute:
     adapter: str | None = None  # response-shape adapter key (response_adapters.py);
     model_id: str | None = None  # registry model id (for live meter lookup in R2)
     #                             None → IDENTITY passthrough (byte-identical relay)
+    # R7 capability-engine: per-route hard limits (None = unknown / no limit)
+    max_context: int | None = None       # max tokens this route admits
+    max_concurrency: int | None = None   # max in-flight requests to this route
 
     @property
     def label(self) -> str:
@@ -535,6 +538,8 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         # Retry-After path is unaffected (60 < 120).
         self.max_cooldown_s = max_cooldown_s
         self.failover_log_path = failover_log_path
+        # R7 capability-engine: per-provider in-flight request counter
+        self._inflight: dict[str, int] = {}
         # Operator toggle (SR-2): on a GENUINE silent downgrade, fail over to the next
         # provider to try for the asked model instead of serving the downgrade. The
         # discarded attempt is recorded with count_usage=True (visible, not the old
@@ -668,6 +673,21 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
                          if self._cooldown.get(r.upstream_base, 0.0) > now]
         soonest = min(remaining) if remaining else self.default_cooldown
         return int(max(1.0, min(soonest, self.max_cooldown_s)))
+
+    def inflight_inc(self, route: UpstreamRoute) -> None:
+        """Increment the in-flight counter for *route.label* (R7)."""
+        with self._cooldown_lock:
+            self._inflight[route.label] = self._inflight.get(route.label, 0) + 1
+
+    def inflight_dec(self, route: UpstreamRoute) -> None:
+        """Decrement the in-flight counter for *route.label* (R7), clamped at 0."""
+        with self._cooldown_lock:
+            self._inflight[route.label] = max(self._inflight.get(route.label, 0) - 1, 0)
+
+    def inflight_count(self, route: UpstreamRoute) -> int:
+        """Current in-flight count for *route.label* (R7)."""
+        with self._cooldown_lock:
+            return self._inflight.get(route.label, 0)
 
     def set_cooldown(self, route: UpstreamRoute, retry_after: int | None) -> None:
         """Mark a provider out-of-capacity until ``Retry-After`` (or a default),
