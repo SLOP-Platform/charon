@@ -17,7 +17,7 @@ accept: |
   Fail-on-revert: inject a changed price/limit in the source table -> the checker flags it (red + alert);
   revert the change -> green.
 scope: |
-  Operator 2026-07-10: provider limits AND pricing drift constantly (NeuralWatt Basic $5->$10/MO subscription,
+  Operator 2026-07-10: provider limits AND pricing drift constantly (NeuralWatt Basic now $20/MO subscription ($5 intro -> $10 -> $20),
   which INCLUDES 6 kWh/mo; $10/kWh is only the PAYG overflow on the separate $22 balance),
   and those changes change the router's decision algorithm. Today limits live in a MANUAL doc
   (FREE-TIER-ROUTING.md) and pricing is HAND-SET per-model cost_input/cost_output (goes stale; the meter
