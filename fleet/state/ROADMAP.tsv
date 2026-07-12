@@ -94,7 +94,7 @@ Fleet	F17	done	-	scorecard-auto-append	record model scores automatically	Wave G 
 Fleet	F18	done	-	auto-log-model-lies	log models that claim false success	Wave G — quality & hygiene
 Fleet	F25	designed	next	repo-decl-central	declare product vs fleet repo once	Wave G — quality & hygiene
 Fleet	F26	designed	next	shellcheck-clean	make fleet scripts shellcheck-clean	Wave G — quality & hygiene
-Fleet	F29	parked	next	post-gateway-wci-decompose	post-gateway file decompose wave	Wave G — quality & hygiene
+Fleet	F29	designed	next	post-gateway-wci-decompose	ACCEPTED surgical gateway decompose: module-registry + config-package + providers-data (unblocks Router W4-8)	Wave G — quality & hygiene
 Fleet	F30	designed	next	difficulty-schema	enforce difficulty field on tickets	Wave H — board & gate
 Fleet	F31	designed	next	wire-mocklint-enforce	enforce fabricated-mock lint in gate	Wave H — board & gate
 Fleet	F43	designed	next	project-membership-gate	gate: new tickets fold into a project	Wave H — board & gate
