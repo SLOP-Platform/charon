@@ -28,3 +28,15 @@ scope: Auto-derive cost_rank from real METERED cost — cost_rank must DERIVE fr
   the math (cost_rank = f(cost_input, cost_output)) is mechanical, but the cost_class
   enum's interaction with DRAIN's priority chain and the gateway sort order is
   design-sensitive. Split: spec on strong, implement on frontier.
+note: |
+  ADR-0016 REFERENCE (docs/adr/0016-demand-driven-capability-match.md, 2026-07-12). This is the mechanism behind
+  ADR-0016 step #0 "DEPLOY v0.5.0 cost-rank-AUTO to .60". Per the ADR "Reconciliation with built code" table, this
+  work is ALREADY BUILT IN REPO, NOT DEPLOYED (routing_policy/cost_rank.derived_cost_rank:32; order_pool_by_live_cost
+  wired at forwarder.py's R2 block). KEPT PARKED (NOT un-parked to a live build ticket) for two facts: (1) the code
+  exists — step #0 is an OPERATOR-GATED DOCKER DEPLOY, not a droid BUILD ticket, so there is nothing for an off-Claude
+  droid to build here; (2) un-parking it to live would RED validate_board — it owns gateway.py + config.py which the
+  live serial chain (F29-REGISTRY-SLICE / PROVIDER-PROBE-FIX / PRICING-LIMITS-CHECKER / F29-CONFIG-PKG / PROVIDER-URL-
+  HELPER) already owns UNSEQUENCED relative to this ticket's stale deps (SR-5b done, DRAIN-ROUTING parked). ACTION for
+  #0 is a deploy (charon-deploy-drift-lessons: config/state live on the mounted /data volume on .60), tracked as
+  ADR-0016 step #0 / step #8, NOT a board build ticket. Re-pointed to ADR-0016 on 2026-07-12.
+
