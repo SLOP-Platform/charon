@@ -267,6 +267,41 @@ board_gate(){
   fi
 }
 
+# --- executor_gate: MECHANIZES [route-work-to-charon-not-claude] for the FLEET WORK EXECUTOR.
+# Runs checks/no-claude-executor.sh EVERY preflight (identical machinery to board_gate): FAIL LOUD if
+# fleet-droid.sh (or any work executor) would run `claude -p/--bg` as the droid work agent (routes to
+# Anthropic = burns Claude tokens) instead of running OFF Claude through the gateway ($CHARON_AGENT_CMD).
+# On RED it AUTO-REOPENS the tracked red 'fleet-executor-hits-anthropic' BEFORE cmd_scan, so a
+# reintroduced claude-executor BLOCKS preflight; the red self-closes when the check goes green again.
+EXECUTOR_RED_ID="fleet-executor-hits-anthropic"
+EXECUTOR_CHECK="$HERE/checks/no-claude-executor.sh"
+_executor_red_status(){ awk -F"$TAB" -v id="$EXECUTOR_RED_ID" '$1==id{print $7; exit}' "$TSV"; }
+_executor_red_ensure_open(){
+  local st; st="$(_executor_red_status)"
+  if [ -z "$st" ]; then
+    cmd_add "$EXECUTOR_RED_ID" P1 routing \
+      "fleet work executor invokes 'claude -p/--bg' (routes to Anthropic, burns Claude tokens) instead of routing OFF Claude through the gateway" \
+      "bash $EXECUTOR_CHECK" >/dev/null 2>&1 || true
+  elif [ "$st" = closed ]; then
+    local tmp; tmp="$(mktemp)"
+    awk -F"$TAB" -v OFS="$TAB" -v id="$EXECUTOR_RED_ID" \
+      '/^#/{print;next} $1==id{$7="open";$8=""} {print}' "$TSV" > "$tmp" && mv "$tmp" "$TSV"
+  fi
+}
+executor_gate(){
+  [ -f "$EXECUTOR_CHECK" ] || { echo "executor_gate: no-claude-executor.sh not found at $EXECUTOR_CHECK"; return 0; }
+  local out rc; out="$(bash "$EXECUTOR_CHECK" 2>&1)"; rc=$?
+  if [ $rc -eq 0 ]; then
+    echo "executor_gate: fleet work runs OFF Claude via the gateway client (no claude -p executor)"
+    [ "$(_executor_red_status)" = open ] && \
+      cmd_close "$EXECUTOR_RED_ID" --override "auto: no-claude-executor GREEN" >/dev/null 2>&1 || true
+  else
+    _executor_red_ensure_open
+    echo "executor_gate: FLEET EXECUTOR LEAK — AUTO-REGISTERED tracked red '$EXECUTOR_RED_ID' (blocks preflight until the work executor routes off Claude via \$CHARON_AGENT_CMD)"
+    printf '%s\n' "$out" | grep -i leak | head -4 | sed 's/^ *//; s/^/    /'
+  fi
+}
+
 # --- detect_needs_push: MECHANIZES [never-ignore-preexisting-issues] for STRANDED PUSHES (#3).
 # submit.sh writes state/needs-push/<id> when a droid committed work but no PR opened, and a
 # later re-claim's `git worktree remove --force` can DESTROY that committed work (CI-WORKFLOW-
@@ -461,7 +496,7 @@ show_operator_actions(){
 # functions above are exposed with NO side effects.
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 case "${1:-scan}" in
-  scan|"") bash "$HERE/reconcile-merged.sh"; board_gate; done_merge_gate; detect_needs_push; bash "$HERE/retire-done.sh"; cmd_scan; scan_rc=$?; cmd_detect; show_operator_actions; exit $scan_rc ;;
+  scan|"") bash "$HERE/reconcile-merged.sh"; board_gate; executor_gate; done_merge_gate; detect_needs_push; bash "$HERE/retire-done.sh"; cmd_scan; scan_rc=$?; cmd_detect; show_operator_actions; exit $scan_rc ;;
   add)     shift; cmd_add "$@" ;;
   close)   shift; cmd_close "$@" ;;
   list)    shift; cmd_list "$@" ;;

@@ -1,0 +1,24 @@
+# tier-models.tsv — per-tier GATEWAY model FAILOVER CHAIN for the OFF-CLAUDE droid executor.
+#
+# Consumed by fleet/fleet-droid.sh to turn a tier arg into the ordered list of gateway model ids
+# it hands the swappable work client ($CHARON_AGENT_CMD -> charon-run.sh). Each id is used as
+# `charon/<id>` against the Charon gateway (4-LOM, http://10.0.1.60:8080), which itself fails over
+# across PROVIDERS for one id; the chain here adds failover across MODELS when one is exhausted.
+# These are NON-CLAUDE gateway models — the droid's WORK runs off Claude. (The MANAGER stays on
+# Claude; only the droid work-execution step is off-Claude.)
+#
+# WHY A DATA FILE: `charon tier resolve` has NO non-anthropic executor and config has NO
+# tier->gateway-model map (tier members are haiku/sonnet/opus only). So the per-tier gateway chain
+# lives here — swap models by editing this file, ZERO code edits.
+#
+# PROVISIONAL — PENDING OPERATOR DECISION. NO workhorse-per-tier is finalized. The ids below are a
+# provisional default drawn from cheap, gateway-proven models (seen live in the exhaustion ledger /
+# model-scorecard); they are NOT a "chosen" workhorse. Model selection is pending real-code +
+# benchmark testing (see memory: charon-no-workhorse-finalized). Reorder / replace freely.
+#
+# FORMAT: <canonical-tier> <ONE TAB> comma,separated,failover,chain   (cheapest-capable first)
+# Exactly ONE tab between the two columns. Canonical tiers: frontier | strong | economy. Legacy
+# aliases (high/opus, med/sonnet, low/haiku) are normalized to these by fleet-droid.sh before lookup.
+frontier	deepseek-v4-pro,kimi-k2.6,glm-5.2
+strong	deepseek-v4-flash,glm-5.2,hy3-preview-or
+economy	deepseek-v4-flash,glm-5.2
