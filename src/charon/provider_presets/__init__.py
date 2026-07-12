@@ -11,13 +11,16 @@ the machinery requires zero edits.
 """
 from __future__ import annotations
 
-from . import anthropic, hosted, local, opencode
+from .anthropic import CATEGORY_PRESETS_DATA as _ANTHROPIC
+from .hosted import CATEGORY_PRESETS_DATA as _HOSTED
+from .local import CATEGORY_PRESETS_DATA as _LOCAL
+from .opencode import CATEGORY_PRESETS_DATA as _OPENCODE
 
 
 def _merge() -> dict[str, dict]:
     d: dict[str, dict] = {}
-    for mod in (anthropic, hosted, local, opencode):
-        d.update(mod.CATEGORY_PRESETS_DATA)
+    for data in (_ANTHROPIC, _HOSTED, _LOCAL, _OPENCODE):
+        d.update(data)
     return d
 
 
