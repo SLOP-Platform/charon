@@ -28,7 +28,11 @@ Read and fully follow /home/stack/charon-private/fleet/SESSION-HANDOFF-luminara.
    - F14 · F15 · F12 → **FOUNDATION** (LIFECYCLE class); F26 shellcheck → FOUNDATION / under KS31 (ADOPT-THIN).
    - K7 → **ROUTER Wave 4**; K8 tool-repair → **ROUTER** (product bug, not backlog).
    - Consolidate the benchmark triple-home (K3/K4/K16 + R41 + B4) into ONE bench theme (GAP-C2: wrap promptfoo) before building.
-**B. God-file decompose/convert review = the F29 REVISIT** — a subsession reviewed `providers.py`/`gateway.py`/`proxy_server.py`/`config.py` for DECOMPOSE or out-of-box CONVERSION (registry/plugin/data-driven) to kill the collisions. Output: `fleet/state/GODFILE-DECOMPOSE-REVIEW.md`. READ it, pick decompose/convert/serialize per file, and PRESENT to the operator — **respect the deliberate F29 deferral (recommend, don't override).**
+**B. F29 REVISIT — ACCEPTED (operator, 2026-07-12).** Un-defer F29 **surgically** per `fleet/state/GODFILE-DECOMPOSE-REVIEW.md`, in ONE deliberate pass (it touches all 4 files once), sequenced AHEAD of the R10–R14 / R30–R42 waves it unblocks:
+   1. Build a Smart-Routing **module registry** — one declarative table replaces GatewayConfig's 15 fields + the `_module_inst` if-ladder + ~20 passthrough kwargs + ~15 `__init__` params; a new module = 1 row + 1 file, **zero god-file edits** (dissolves the 2 biggest collision clusters at once).
+   2. **Decompose `config.py`** into a `config/` package + back-compat facade (un-blocks 9).
+   3. **Convert `providers.py` PRESETS → data/category files.**
+   All back-compat-faced (low risk). F29 is UN-PARKED in ROADMAP.tsv (🟤→🟣). Decompose into sub-tickets when building; `proxy_server.py` is already half-decomposed (no separate action).
 **C. Add owns/difficulty board files for KS3–32 + B2–B9** (subsession) — the blind spots: no board file → collisions uncomputable + they fail the F43/F30 gates.
 **D. MECHANIZED actions report (built this session):** `bash fleet/wci-actions.sh` recomputes collision hotspots + board-coverage blind spots from the LIVE board on every run (never stale); the placement/ranked JUDGMENT lives in `fleet/state/ROADMAP-WCI-AUDIT.md` (refresh by re-running the WCI-audit subsession). Use it as the always-current WCI cockpit.
 
