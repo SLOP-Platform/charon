@@ -46,6 +46,15 @@ Merge order is enforced by `depends_on` (e.g. T7 stays `blocked` until you `done
 Tickets in one wave own **disjoint files**; cross-wave file collisions are sequenced via
 `depends_on`. Current board: N1, N2, T8 (ready) · T7 (after N1) · N4 (after N2).
 
+### Target repo (`repo:` field — multi-repo)
+A ticket defaults to the **charon product** repo. To target a different repo, add a
+`repo:` field (key from `fleet/repo-registry.sh`): `repo: keystone` builds in
+`/home/stack/code/keystone` (worktree under `keystone-wt/<id>`, base `main`, ksf gate) and
+lands to `Nnyan/keystone`; **omit the field** for charon product (worktree
+`charon-fleet-<id>`, base `master`, PRs to `SLOP-Platform/charon`) — unchanged. The PR
+owner/repo is **derived** from each repo's own `gh repo view`, never hardwired. Add a repo
+by giving it a case arm in `repo-registry.sh`. See `state/HARNESS-MULTIREPO.md`.
+
 ## State (auto-managed)
 `state/claims/<id>` held · `state/submitted/<id>` PR open · `state/done/<id>` merged.
 `state/lock` is the flock that makes claims atomic. To reset a stuck ticket:

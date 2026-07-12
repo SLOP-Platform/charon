@@ -24,12 +24,13 @@
 # This file is a LIBRARY: `source` it. It runs nothing on its own.
 # Requires: git. No other deps.
 
-# leak_worktree_setup <charon_repo> <worktree_dir> <branch> <needs_push_marker>
-#   Creates <worktree_dir> as a fresh worktree of <branch> off origin/master.
+# leak_worktree_setup <repo> <worktree_dir> <branch> <needs_push_marker> [base_ref]
+#   Creates <worktree_dir> as a fresh worktree of <branch> off <base_ref>.
+#   base_ref defaults to origin/master (charon back-compat); pass origin/main for keystone etc.
 #   Return: 0 = created OK.  1 = FATAL (could not create — caller must NOT launch into main).
 #           2 = REFUSED (needs-push marker present — stranded work; do not destroy).
 leak_worktree_setup(){
-  local charon="$1" wt="$2" branch="$3" npmarker="${4:-}"
+  local charon="$1" wt="$2" branch="$3" npmarker="${4:-}" base_ref="${5:-origin/master}"
   if [ -n "$npmarker" ] && [ -e "$npmarker" ]; then
     echo "leak-guard: REFUSING to (re)create $wt — $npmarker exists (committed-but-unlanded work); land it first." >&2
     return 2
@@ -42,18 +43,19 @@ leak_worktree_setup(){
   fi
   git -C "$charon" worktree prune 2>/dev/null || true
   git -C "$charon" branch -D "$branch" 2>/dev/null || true
-  git -C "$charon" worktree add "$wt" -b "$branch" origin/master >/dev/null 2>&1 || return 1
+  git -C "$charon" worktree add "$wt" -b "$branch" "$base_ref" >/dev/null 2>&1 || return 1
   return 0
 }
 
-# leak_detect <charon_repo> <worktree_dir> <branch> <main_before_porcelain>
+# leak_detect <repo> <worktree_dir> <branch> <main_before_porcelain> [base_ref]
 #   Echoes "LEAK" + returns 0 when the droid leaked into the main checkout; echoes "CLEAN" +
 #   returns 1 otherwise. LEAK == worktree produced NO commits AND is clean AND the main checkout
 #   gained NEW porcelain entries versus the pre-session snapshot.
+#   base_ref defaults to origin/master (charon back-compat); pass origin/main for keystone etc.
 leak_detect(){
-  local charon="$1" wt="$2" branch="$3" main_before="$4"
+  local charon="$1" wt="$2" branch="$3" main_before="$4" base_ref="${5:-origin/master}"
   local commits wtdirty main_after newmain
-  commits="$(git -C "$wt" log --oneline "origin/master..$branch" 2>/dev/null)"
+  commits="$(git -C "$wt" log --oneline "$base_ref..$branch" 2>/dev/null)"
   wtdirty="$(git -C "$wt" status --porcelain 2>/dev/null)"
   main_after="$(git -C "$charon" status --porcelain 2>/dev/null)"
   # lines present in main_after but NOT in the pre-session snapshot = new stray work in main.

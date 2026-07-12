@@ -16,9 +16,12 @@
 # (claim once, stand down when empty); raise `--retries` to ride out longer dependency gaps.
 set -euo pipefail
 FLEET="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CHARON="/home/stack/code/charon"   # the product repo (READ/worktree host only)
+CHARON="/home/stack/code/charon"   # DEFAULT product repo (a ticket's `repo:` field overrides per-ticket)
 # WORKTREE-LEAK GUARD (#1): launcher pre-creates the worktree + post-session leak detector.
 source "$FLEET/leak-guard.sh"
+# MULTI-REPO: maps a ticket's `repo:` field -> repo path / worktree / base branch / gate.
+# Absent field -> key `charon` (product) => IDENTICAL behavior to the old hardwired path.
+source "$FLEET/repo-registry.sh"
 usage(){ echo "usage: fleet-droid.sh <frontier|strong|economy|low|med|high|opus|sonnet|haiku> [--wait <min>] [--retries <n>] [--patience <cycles>]"; exit 2; }
 TIER=""; WAIT_MIN=3; RETRIES=6; PATIENCE=1
 while [ $# -gt 0 ]; do case "$1" in
@@ -68,34 +71,43 @@ while true; do
   pfile="$(awk -F': ' '$1=="prompt"{sub(/^[^:]*: ?/,"");print;exit}' "$tfile")"
   spec="$(cat "$tfile"; echo; echo '--- WORK SPEC ---'; cat "$pfile" 2>/dev/null || echo '(no prompt file)')"
   branch="$(awk -F': ' '$1=="branch"{sub(/^[^:]*: ?/,"");print;exit}' "$tfile")"
-  wt="$CHARON-fleet-$id"
-  # #1 WORKTREE-LEAK GUARD (a): the LAUNCHER creates the worktree off origin/master BEFORE the
-  # model runs, so the create/cd step is out of the model's hands — a model that ignores it can
-  # no longer land in the main checkout undetected. On failure we FAIL LOUDLY and never launch
-  # into the main checkout. A live needs-push marker means committed-but-unlanded work is sitting
-  # in that worktree — REFUSE to re-run (would risk destroying it); the manager lands it.
+  # MULTI-REPO: resolve the ticket's target repo (`repo:` field; absent -> charon product).
+  # RR_PATH/RR_WT/RR_BASE/RR_GATE come from repo-registry.sh; owner/repo is derived (not hardwired).
+  repokey="$(awk -F': ' '$1=="repo"{sub(/^[^:]*: ?/,"");print;exit}' "$tfile")"
+  if ! repo_resolve "$repokey" "$id"; then
+    echo "[$DROID] $id names UNKNOWN repo '$repokey' (known: $(repo_known_keys)) — releasing; fix the ticket's repo: field." >&2
+    bash "$FLEET/release.sh" "$id" || true; current=""; continue
+  fi
+  REPO="$RR_PATH"; wt="$RR_WT"; base_ref="origin/$RR_BASE"
+  echo "[$DROID] $id -> repo=$RR_KEY ($REPO) base=$RR_BASE worktree=$wt"
+  # #1 WORKTREE-LEAK GUARD (a): the LAUNCHER creates the worktree off the repo's base branch
+  # BEFORE the model runs, so the create/cd step is out of the model's hands — a model that
+  # ignores it can no longer land in the main checkout undetected. On failure we FAIL LOUDLY and
+  # never launch into the main checkout. A live needs-push marker means committed-but-unlanded
+  # work is sitting in that worktree — REFUSE to re-run (would risk destroying it); manager lands.
   npmark="$FLEET/state/needs-push/$id"
-  set +e; leak_worktree_setup "$CHARON" "$wt" "$branch" "$npmark"; lg_rc=$?; set -e
+  mkdir -p "$(dirname "$wt")"
+  set +e; leak_worktree_setup "$REPO" "$wt" "$branch" "$npmark" "$base_ref"; lg_rc=$?; set -e
   if [ "$lg_rc" -eq 2 ]; then
     echo "[$DROID] $id has committed-but-unlanded work (state/needs-push/$id) — NOT re-running (would risk its worktree). Land it: fleet/land-needs-push.sh $id. Keeping claim; next…" >&2
     current=""   # keep the claim marker so it isn't re-offered; manager lands it
     continue
   elif [ "$lg_rc" -ne 0 ]; then
-    echo "[$DROID] FATAL: could not create worktree $wt off origin/master — REFUSING to launch into the main checkout. Releasing $id for retry." >&2
+    echo "[$DROID] FATAL: could not create worktree $wt off $base_ref — REFUSING to launch into the main checkout $REPO. Releasing $id for retry." >&2
     bash "$FLEET/release.sh" "$id" || true; current=""
     bash "$FLEET/loop-guard.sh" record "$id" "$DROID" \
       || echo "[$DROID] LOOP-GUARD: $id quarantined (repeated worktree-create failures)."
     continue
   fi
   # Snapshot the main checkout so the post-session leak detector can spot NEW stray work in it.
-  main_before="$(git -C "$CHARON" status --porcelain 2>/dev/null)"
+  main_before="$(git -C "$REPO" status --porcelain 2>/dev/null)"
   # LAUNCHER NOTE wins over JOIN-PROMPT step 1: the worktree already exists and is the CWD.
   launcher_note="=== LAUNCHER NOTE (overrides step 1 of the join prompt) ===
 Your isolated worktree ALREADY EXISTS and is your current working directory:
-  $wt   (branch $branch, freshly created off origin/master by the launcher)
+  $wt   (branch $branch, freshly created off $base_ref by the launcher)
 Do NOT run 'git worktree add' or 'git worktree remove'. SKIP the worktree-creation step.
 Verify you are in $wt (run: pwd), then begin at the implementation step. NEVER edit the main
-checkout $CHARON — only files under $wt.
+checkout $REPO — only files under $wt.
 "
   prompt="$launcher_note
 $(cat "$FLEET/JOIN-PROMPT.md")
@@ -106,15 +118,15 @@ $spec"
   if ( cd "$wt" && claude -p --model "$MODEL" --dangerously-skip-permissions "$prompt" ); then
     # #1 WORKTREE-LEAK GUARD (b): did the droid leak into the main checkout instead of its worktree?
     # (0 commits AND clean worktree AND the main checkout gained NEW porcelain entries.)
-    if [ "$(leak_detect "$CHARON" "$wt" "$branch" "$main_before")" = LEAK ]; then
-      lf="$(leak_capture "$CHARON" "$id" "$FLEET/state/leaks")"
+    if [ "$(leak_detect "$REPO" "$wt" "$branch" "$main_before" "$base_ref")" = LEAK ]; then
+      lf="$(leak_capture "$REPO" "$id" "$FLEET/state/leaks")"
       {
         echo ""
         echo "[$DROID] !!! LEAK DETECTED for $id !!! The droid wrote into the MAIN checkout"
-        echo "[$DROID]     $CHARON instead of its worktree (0 commits, clean worktree, main newly dirty)."
+        echo "[$DROID]     $REPO instead of its worktree (0 commits, clean worktree, main newly dirty)."
         echo "[$DROID]     Stray work CAPTURED (quarantined) -> $lf"
         echo "[$DROID]     Main checkout LEFT UNTOUCHED for manager recovery. NOT releasing/publishing $id."
-        echo "[$DROID]     MANAGER: recover from the capture, clean $CHARON, then 'fleet/release.sh $id'."
+        echo "[$DROID]     MANAGER: recover from the capture, clean $REPO, then 'fleet/release.sh $id'."
       } >&2
       current=""   # keep the claim so the ticket isn't re-run over the un-recovered leak
       continue
@@ -125,7 +137,7 @@ $spec"
     # publishes here in plain operator-shell — NOT a Claude Bash tool call — so the
     # deny-list never applies. Read <branch> from the ticket via the same awk meta pattern.
     branch="$(awk -F': ' '$1=="branch"{sub(/^[^:]*: ?/,"");print;exit}' "$tfile")"
-    wt="/home/stack/code/charon-fleet-$id"
+    # wt / REPO / base_ref already resolved above from the ticket's repo: field (multi-repo).
     # SAFETY NET (FR1 root cause): a droid can exit 0 with work left UNCOMMITTED — it made the
     # edits but never ran `git commit`. Pushing then publishes an EMPTY branch (gh pr create
     # fails → NEEDS-PUSH) and strands the work in the worktree, where a later re-claim's
@@ -139,7 +151,7 @@ $spec"
     fi
     # If there are STILL no commits beyond base, the droid produced nothing — a genuine no-op.
     # Release for retry rather than pushing an empty branch.
-    if [ -z "$(git -C "$wt" log --oneline "origin/master..$branch" 2>/dev/null)" ]; then
+    if [ -z "$(git -C "$wt" log --oneline "$base_ref..$branch" 2>/dev/null)" ]; then
       echo "[$DROID] $id produced NO commits and NO changes — releasing for retry (nothing to publish)."
       bash "$FLEET/release.sh" "$id" || true; current=""
       # LOOP-GUARD: count this zero-commit release. After N (default 2) of the SAME id in this
@@ -154,12 +166,15 @@ $spec"
     # push + open the DRAFT PR. If either fails, fall through: submit.sh grounds on a real
     # open PR and flags state/needs-push when there isn't one. `|| true` keeps set -e happy.
     git -C "$wt" push origin --delete "$branch" 2>/dev/null || true
-    # Title from the commit subject, NOT `--fill`: the worktree has no local `master`
-    # ref, so `--fill` (which computes `master...branch`) fails and no PR opens. A
-    # commit-subject title needs no master ref and is robust.
+    # Title from the commit subject, NOT `--fill`: the worktree has no local base
+    # ref, so `--fill` (which computes `base...branch`) fails and no PR opens. A
+    # commit-subject title needs no base ref and is robust.
     pr_title="$(git -C "$wt" log -1 --pretty=%s 2>/dev/null || echo "$id")"
+    # MULTI-REPO: PR target owner/repo is DERIVED from the ticket's repo (not hardwired to
+    # SLOP-Platform/charon); base is the repo's base branch (master for charon, main for keystone).
+    owner_repo="$(repo_owner_repo "$REPO")"
     git -C "$wt" push -u origin "$branch" \
-      && gh pr create --repo SLOP-Platform/charon --base master --head "$branch" --draft \
+      && gh pr create --repo "$owner_repo" --base "$RR_BASE" --head "$branch" --draft \
            --title "$pr_title" \
            --body "Automated draft PR for $id. See the commit and docs/review-log/$id.md." \
       || true
