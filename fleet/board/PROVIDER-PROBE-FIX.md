@@ -2,11 +2,18 @@ tier: strong
 difficulty: 3  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
 work_class: bugfix
 branch: fix/provider-probe-validation
-depends_on: RESPONSE-ADAPTER-UNIVERSAL
+depends_on: RESPONSE-ADAPTER-UNIVERSAL, F29-REGISTRY-SLICE, F29-CONFIG-PKG, F29-PROVIDERS-DATA
 real-dep: RESPONSE-ADAPTER-UNIVERSAL shared-file hand-off — that ticket is a live (not-done)
   owner of the SAME gateway.py and providers.py this ticket edits (plumbing an adapter key
   through ProviderPreset/gateway routing). Serialize behind it rather than run as a
   concurrent second writer of either file; rebase onto its merge before starting.
+real-dep: F29-REGISTRY-SLICE / F29-CONFIG-PKG / F29-PROVIDERS-DATA god-file hand-off (2026-07-12
+  F29 surgical un-defer) — those three decompose gateway.py/proxy_server.py, config.py, and
+  providers.py respectively, the SAME files this ticket edits. This ticket (and its downstream
+  chain PROVIDER-URL-HELPER + PRICING-LIMITS-CHECKER, which depend_on it) is BLOCKED behind the
+  F29 decompose so it edits the post-split modules, never as a concurrent second writer of the
+  god-files. Rebase onto all three F29 merges before starting; expect the edit sites to have moved
+  into config/*.py and provider_presets/*.py.
 owns: src/charon/gateway.py, src/charon/config.py, src/charon/providers.py, tests/test_config.py
 accept: PYTHONPATH=src python3 -m pytest tests/test_config.py tests/test_gateway.py tests/test_providers.py -q
 prompt: /home/stack/charon-private/fleet/board/briefs/PROVIDER-PROBE-FIX.md
