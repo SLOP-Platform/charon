@@ -425,6 +425,15 @@ detect_inflight_landscape(){
   echo "    -> full in-flight map: fleet/project-audit.sh"
 }
 
+# Wake-trigger for the DEFERRED gateway contract-injection (PROPOSAL step-3): if
+# CG-attributed discipline failures cross the threshold, static-doc doctrine is
+# not steering CG and the deferred fix is warranted. cg-drift.sh owns the tally.
+detect_cg_drift(){
+  local script="$HERE/cg-drift.sh"
+  [ -x "$script" ] || { echo "cg-drift: cg-drift.sh not found/executable"; return 0; }
+  bash "$script" check || true
+}
+
 cmd_detect(){
   local full=0
   case "${1:-}" in --full) full=1;; esac
@@ -435,6 +444,7 @@ cmd_detect(){
   detect_claim_loop
   detect_wci_contention
   detect_inflight_landscape
+  detect_cg_drift
   echo "--- end detectors ---"
   bash "$HERE/access-check.sh" || true
   return 0

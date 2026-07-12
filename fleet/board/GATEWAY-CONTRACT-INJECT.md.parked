@@ -1,0 +1,32 @@
+tier: frontier
+difficulty: 5  # money-path, high blast radius
+work_class: money-path
+branch: feat/gateway-contract-inject
+owns: src/charon/forwarder.py, tests/test_forwarder_contract_inject.py
+accept: PYTHONPATH=src python3 -m pytest tests/test_forwarder_contract_inject.py -v -q
+  # FAIL-ON-REVERT: (1) flag OFF -> request body is BYTE-IDENTICAL (no injected turn);
+  # (2) an exception in the injector -> original body forwarded (fail-OPEN), never a 500;
+  # (3) flag ON -> exactly one additive system turn prepended, size-capped, generic text.
+prompt: /home/stack/charon-private/prompts/gateway-contract-inject.md   # author at activation
+scope: >-
+  DEFERRED step-3 of the session-guardrails design (PROPOSAL-SESSION-GUARDRAILS.md; memory
+  [charon-gateway-contract-inject-deferred] + [session-guardrails-two-tier]). Inject a generic
+  process-discipline "contract" system message into every CG request at forwarder.py:113-123 — the
+  only lever that steers opencode/CG sessions BEHAVIORALLY at runtime (native Claude hooks can't reach
+  CG). HARDENED build only: flag-guarded, real try/except FAIL-OPEN (the forwarder.py:121 precedent has
+  NO try/except), byte-identical when OFF, additive-only (prepend, never rewrite turns), size-capped.
+  Contract text generic — NO repo internals/paths/ticket names ([public-repo-no-personal-info]).
+  DATA-EGRESS: text ships to third-party providers every call — keep doctrine generic.
+  DO-NOT-BUILD-UNTIL: the wake-trigger fires — fleet/cg-drift.sh reports >=2 CG discipline failures in
+  30 days (surfaced by preflight detect_cg_drift). Below threshold this stays parked; static-doc
+  doctrine (MANAGER-OPERATING-RULES.md, referenced by JOIN-PROMPT + CG AGENTS.md) is the interim.
+
+## Dependencies & sequence
+depends_on: (evidence gate) cg-drift.sh trigger >=2/30d — NOT a build dep, a WARRANT dep. Do not
+  un-park on speculation; only when preflight's detect_cg_drift goes red.
+real-dep: CI required-check + land-push gate must be live first (they are what LOG the drift events
+  that arm this trigger). Without them the tally never fills and this correctly stays parked.
+concurrency: co-owns forwarder.py with the whole money path -> NOT parallel-safe with meter/drain work.
+note: PARKED — deferred by DTC on blast-radius grounds 2026-07-11. Un-park ONLY on the cg-drift trigger.
+  ADVERSARIAL review mandatory before merge (money-path, fail-open correctness is where a bug 500s all
+  routed traffic).
