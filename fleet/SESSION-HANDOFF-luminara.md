@@ -23,6 +23,15 @@ Read and fully follow /home/stack/charon-private/fleet/SESSION-HANDOFF-luminara.
 5. **Roadmap re-org (from `fleet/state/ROADMAP-WCI-AUDIT.md`):** move F14/F15/F12/F26 → FOUNDATION; consolidate the benchmark triple-home (K3/K4/K16 + R41 + B4); ROUTER Wave 4 (R19/R21/R23/R24 all own `providers.py` → serialize or split); KEYSTONE pull KS29/KS8/KS31/KS30 substrate BEFORE lens Wave E; **add board files (owns/difficulty) for KS3–32 + B2–B9** (they fail F43/F30 gates + collisions are uncomputable without them).
 6. Fold Gingugu borrowable ideas (confidence-lifecycle enum, decay-on-read, RRF retrieval, consolidate tool, SessionStart contract hook) into FN2/FN3 accept criteria.
 
+## WCI EXECUTION PLAN (operator-directed 2026-07-12 — DO these next session)
+**A. Make the CLEAR MOVES** (low-risk placement fixes; edit ROADMAP.tsv + board, land via land.sh):
+   - F14 · F15 · F12 → **FOUNDATION** (LIFECYCLE class); F26 shellcheck → FOUNDATION / under KS31 (ADOPT-THIN).
+   - K7 → **ROUTER Wave 4**; K8 tool-repair → **ROUTER** (product bug, not backlog).
+   - Consolidate the benchmark triple-home (K3/K4/K16 + R41 + B4) into ONE bench theme (GAP-C2: wrap promptfoo) before building.
+**B. God-file decompose/convert review = the F29 REVISIT** — a subsession reviewed `providers.py`/`gateway.py`/`proxy_server.py`/`config.py` for DECOMPOSE or out-of-box CONVERSION (registry/plugin/data-driven) to kill the collisions. Output: `fleet/state/GODFILE-DECOMPOSE-REVIEW.md`. READ it, pick decompose/convert/serialize per file, and PRESENT to the operator — **respect the deliberate F29 deferral (recommend, don't override).**
+**C. Add owns/difficulty board files for KS3–32 + B2–B9** (subsession) — the blind spots: no board file → collisions uncomputable + they fail the F43/F30 gates.
+**D. MECHANIZED actions report (built this session):** `bash fleet/wci-actions.sh` recomputes collision hotspots + board-coverage blind spots from the LIVE board on every run (never stale); the placement/ranked JUDGMENT lives in `fleet/state/ROADMAP-WCI-AUDIT.md` (refresh by re-running the WCI-audit subsession). Use it as the always-current WCI cockpit.
+
 ## GOTCHAS / avoid / DENIED
 - **Merges/pushes ONLY via `fleet/land.sh`** — raw `git merge` / `git push` / `git -C … push` / `git commit --amend` / `git rebase` / `git remote add` are deny-listed. land.sh gates (refuse-on-red) and auto-syncs a diverged master. `git merge` DENIAL is intentional (added this session).
 - **Repo-create + `git remote add` + docker + settings-edit are operator-gated** (deny-listed / self-protected) — hand the operator exact commands, don't fight the wall.
