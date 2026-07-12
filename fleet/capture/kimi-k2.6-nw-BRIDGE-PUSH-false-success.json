@@ -1,0 +1,16 @@
+{
+  "run_id": "capture-kimi-k2.6-nw-BRIDGE-PUSH-1752100000-0",
+  "model": "kimi-k2.6-nw",
+  "unit_id": "CAPTURE-BRIDGE-PUSH",
+  "kind": "capture",
+  "worktree": "/dev/null",
+  "claimed_result": "SUCCESS",
+  "work_class": "ci-infra",
+  "ref": "BRIDGE-PUSH",
+  "difficulty": "3",
+  "stage": "active",
+  "actual_verdict": "BLOCK",
+  "actual_gate": "fail",
+  "score": 15,
+  "evidence": "CRITICAL: Concurrent thread_post silently drops messages (12 lost / 40 concurrent). HIGH: IntegrityError catch conflates unrelated errors with idempotency dedup. Review: BRIDGE-PUSH-REVIEW.md VERDICT=FIX-REQUIRED (5 defects)"
+}

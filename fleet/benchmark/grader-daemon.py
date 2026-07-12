@@ -51,8 +51,28 @@ SECTIONS_GRADERS   = BENCH_DIR / "graders"
 SCORECARD_VERSION_FILE = BENCH_DIR / "scorecard.version"
 SCORECARD_ARTIFACT_DIR = BENCH_DIR
 
+PROVISIONAL_STORE  = WORK_DIR / "capture"   # provisional capture pairing
+
 POLL_INTERVAL_S    = 2          # seconds between req/ directory scans
 GRADER_TIMEOUT_S   = 300        # max seconds a grader subprocess may run
+
+# ── test hook: override ledger path for hermetic unit tests ──────────────────
+_LEDGER_PATH_OVERRIDE: Path | None = None
+_PROVISIONAL_STORE_OVERRIDE: Path | None = None
+
+
+def _ledger_path() -> Path:
+    """Return the active ledger path (real or test-overridden)."""
+    if _LEDGER_PATH_OVERRIDE is not None:
+        return _LEDGER_PATH_OVERRIDE
+    return SCORECARD_TSV
+
+
+def _provisional_dir() -> Path:
+    """Return the active provisional store dir (real or test-overridden)."""
+    if _PROVISIONAL_STORE_OVERRIDE is not None:
+        return _PROVISIONAL_STORE_OVERRIDE
+    return PROVISIONAL_STORE
 
 # ── section metadata (mirrored from lib/sections.sh) ───────────────────────
 
@@ -254,7 +274,158 @@ def _grade(snapshot: Path, req: dict) -> dict:
             "reason": f"unknown unit {unit_id!r} — no grader available"}
 
 
-# ── grade_state recording ───────────────────────────────────────────────────
+# ── capture handler (kind=capture) ───────────────────────────────────────────
+
+def _load_provisionals() -> dict:
+    """Load the provisional capture store. Returns {run_id: data}."""
+    store_dir = _provisional_dir()
+    store_dir.mkdir(parents=True, exist_ok=True)
+    pf = store_dir / "provisionals.json"
+    if not pf.exists():
+        return {}
+    try:
+        return json.loads(pf.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _save_provisionals(data: dict) -> None:
+    store_dir = _provisional_dir()
+    store_dir.mkdir(parents=True, exist_ok=True)
+    pf = store_dir / "provisionals.json"
+    tmp = pf.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n")
+    tmp.rename(pf)
+
+
+def _compute_discrepancy(claimed: str, actual_verdict: str, actual_gate: str) -> bool:
+    """True when the model claimed SUCCESS but independent review found a failure."""
+    if claimed != "SUCCESS":
+        return False
+    if actual_verdict == "BLOCK":
+        return True
+    if actual_gate == "fail":
+        return True
+    return False
+
+
+def _append_capture_row(model: str, ref: str, work_class: str, difficulty: str,
+                        claimed_result: str, actual_verdict: str, actual_gate: str,
+                        score: int, evidence: str, ledger_path: Path) -> None:
+    """Append a source=live capture row to the ledger."""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    discrepancy = _compute_discrepancy(claimed_result, actual_verdict, actual_gate)
+
+    note_parts = [f"ref={ref}", f"evidence={evidence}"]
+    if discrepancy:
+        note_parts.append("FALSE-SUCCESS claimed=SUCCESS")
+    note = "; ".join(note_parts).replace("\t", " ")
+
+    row = [
+        today, "live", ref, work_class, difficulty, model,
+        actual_verdict, actual_gate, str(score),
+        "-", "-", "-", note, "-", "-", "active",
+    ]
+    line = "\t".join(row) + "\n"
+
+    with open(ledger_path, "a") as fh:
+        fh.write(line)
+
+    tag = "FALSE-SUCCESS " if discrepancy else ""
+    log(f"capture: appended {tag}live row: {model} / {ref} / {actual_verdict} score={score}")
+
+
+def _handle_capture(req: dict, ledger_override: Path | None = None) -> bool:
+    """Handle a capture-kind request.
+
+    Two-phase protocol:
+    - PROVISIONAL (actual_verdict absent/null): store for later pairing.
+    - FINAL (actual_verdict present): pair with stored provisional, compute
+      discrepancy, append a ``source=live`` row to the ledger.
+
+    Returns True if a row was appended to the ledger.
+    """
+    actual_verdict = req.get("actual_verdict")
+    actual_gate = req.get("actual_gate", "")
+    score = req.get("score")
+
+    ledger = ledger_override if ledger_override is not None else _ledger_path()
+
+    run_id = req.get("run_id", "?")
+    model = req.get("model", "?")
+    ref = req.get("ref", "?")
+    work_class = req.get("work_class", "ci-infra")
+    difficulty = req.get("difficulty", "-")
+    claimed_result = req.get("claimed_result", "?")
+    evidence = req.get("evidence", "")
+
+    # ── PROVISIONAL: store and wait ──────────────────────────────────────
+    if actual_verdict is None or (isinstance(actual_verdict, str) and actual_verdict.strip() == ""):
+        data = _load_provisionals()
+        data[run_id] = {
+            "model": model,
+            "ref": ref,
+            "work_class": work_class,
+            "difficulty": difficulty,
+            "claimed_result": claimed_result,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        _save_provisionals(data)
+        log(f"capture: stored provisional {run_id} (model={model}, ref={ref})")
+        return False
+
+    # ── FINAL: compute discrepancy and append ────────────────────────────
+    prov_data = {}
+    provs = _load_provisionals()
+    if run_id in provs:
+        prov_data = provs.pop(run_id)
+        _save_provisionals(provs)
+        log(f"capture: paired FINAL with provisional {run_id}")
+    else:
+        log(f"capture: FINAL {run_id} with no stored provisional — using request fields directly")
+
+    stored_claimed = prov_data.get("claimed_result", claimed_result)
+    stored_model = prov_data.get("model", model)
+    stored_ref = prov_data.get("ref", ref)
+    stored_wclass = prov_data.get("work_class", work_class)
+    stored_diff = prov_data.get("difficulty", difficulty)
+
+    if score is None:
+        score = 0
+    score_int = int(score)
+
+    _append_capture_row(
+        model=stored_model, ref=stored_ref, work_class=stored_wclass,
+        difficulty=stored_diff, claimed_result=stored_claimed,
+        actual_verdict=str(actual_verdict), actual_gate=str(actual_gate),
+        score=score_int, evidence=evidence, ledger_path=ledger,
+    )
+
+    # Also append to versioned scorecard artifact
+    version = _read_scorecard_version()
+    _ensure_scorecard(version)
+    discrepancy = _compute_discrepancy(stored_claimed, str(actual_verdict), str(actual_gate))
+    note = f"ref={stored_ref};evidence={evidence}"
+    if discrepancy:
+        note += ";FALSE-SUCCESS claimed=SUCCESS"
+    scorecard_row = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "run_id": run_id,
+        "model": stored_model,
+        "unit_id": f"CAPTURE-{stored_ref}",
+        "kind": "capture",
+        "score": score_int,
+        "verdict": str(actual_verdict),
+        "gate": str(actual_gate),
+        "reason": note,
+        "time_s": -1,
+        "cost_usd": "-",
+        "corrections": -1,
+        "finalize": False,
+    }
+    _append_to_scorecard(version, scorecard_row)
+
+    return True
 
 def _record_grade_state(model: str, unit_id: str, score: int, gate: str) -> dict:
     """Call grade_state.py record. Returns the record JSON as a dict.
@@ -374,6 +545,36 @@ def _process_request(req_path: Path) -> None:
 
     run_id = req["run_id"]
     log(f"processing: {run_id}  model={req['model']}  unit={req['unit_id']}")
+
+    # ── capture requests skip snapshot/grade ─────────────────────────────
+    if req.get("kind") == "capture":
+        try:
+            appended = _handle_capture(req)
+            success = True
+            result_data = {
+                "run_id": run_id,
+                "model": req.get("model", "?"),
+                "unit_id": req.get("unit_id", "?"),
+                "kind": "capture",
+                "success": True,
+                "appended": appended,
+            }
+            _write_result(req, result_data, {}, True)
+        except Exception:
+            log(f"capture handler error for {run_id}:\n{traceback.format_exc()}")
+            _write_result(req, {
+                "run_id": run_id,
+                "model": req.get("model", "?"),
+                "unit_id": req.get("unit_id", "?"),
+                "kind": "capture",
+                "success": False,
+                "score": 0,
+                "verdict": "BLOCK",
+                "gate": "fail",
+                "reason": f"capture handler error: {traceback.format_exc()[:500]}",
+            }, {}, False)
+        _delete_req_safe(req_path)
+        return
 
     try:
         # 1. snapshot the agent's worktree
