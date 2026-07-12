@@ -6,3 +6,5 @@ ts	job	model	event	note
 2026-07-10T17:49:08Z	decompose-review	glm-5.2	limit-failover	rc=0; all providers for this model exhausted at gateway
 2026-07-10T17:52:31Z	decompose-review	deepseek-v4-pro	limit-failover	rc=0; all providers for this model exhausted at gateway
 2026-07-10T17:52:31Z	decompose-review	glm-5.2 deepseek-v4-pro	ALL-EXHAUSTED	every model failed over; POOL TOO THIN -> consider adding providers
+2026-07-12T06:29:05Z	CAPTURE-PIPELINE.log	deepseek-v4-pro	error-failover	rc=1; non-limit failure
+2026-07-12T06:50:16Z	DRAIN-AND-PARK-FIX.log	deepseek-v4-pro	error-failover	rc=1; non-limit failure

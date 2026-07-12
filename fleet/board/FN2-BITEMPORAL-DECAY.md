@@ -2,7 +2,7 @@ tier: economy
 difficulty: 3
 work_class: ci-infra
 branch: feat/fn2-bitemporal-decay
-depends_on: FN1
+depends_on:
 owns: /home/stack/charon-private/fleet/memory/bitemporal.py
 accept: |
   Build ONE shared bi-temporal decay primitive (BORROW Zep/Graphiti's pattern — valid_from / valid_until /

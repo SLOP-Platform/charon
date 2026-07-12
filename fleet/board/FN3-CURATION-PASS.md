@@ -2,7 +2,7 @@ tier: economy
 difficulty: 2
 work_class: ci-infra
 branch: feat/fn3-curation-pass
-depends_on: FN1
+depends_on:
 owns: /home/stack/charon-private/fleet/memory/curate.sh
 accept: |
   A scheduled/on-demand CURATION pass over the memory store (BORROW mandalivia `/sleep` + Beads `bd compact` +
