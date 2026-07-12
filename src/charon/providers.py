@@ -21,6 +21,7 @@ from dataclasses import dataclass, replace
 from urllib.parse import urlsplit
 
 from .netutil import BROWSER_UA  # shared browser-like UA (P5 — Cloudflare 1010)
+from .provider_presets import MERGED_RAW_DATA  # data merged from category modules
 
 # ── Upstream wire-format vocabulary (SR-6) ─────────────────────────────────────
 # The vendor-agnostic gateway/proxy core references these by constant, never by
@@ -55,105 +56,12 @@ class ProviderPreset:
     max_concurrency: int | None = None   # max in-flight requests to this provider
 
 
-# Built-in presets. VERIFIED bases are marked; UNVERIFIED ones carry a note and
-# should be confirmed (or overridden) before trusting them with a real key.
+# Built-in presets assembled from the ``provider_presets/`` category modules.
+# ``MERGED_RAW_DATA`` is a plain dict merged by the registry; we construct
+# ``ProviderPreset`` instances here to avoid a circular import (the category
+# modules must not depend on this module).
 PRESETS: dict[str, ProviderPreset] = {
-    # Anthropic — native Anthropic wire format (NOT OpenAI-compatible: chat lives at
-    # /v1/messages with an ``x-api-key`` header). Marked ``wire="anthropic"`` so an
-    # already-Anthropic body routed here can receive one SR-6 prompt-cache breakpoint.
-    # strip_v1=False: the Anthropic base is a bare host and keeps the client's /v1.
-    "anthropic": ProviderPreset(
-        "https://api.anthropic.com", "ANTHROPIC_API_KEY",
-        strip_v1=False, wire=WIRE_ANTHROPIC,
-        note="Anthropic native wire (/v1/messages). SR-6 Phase-1 prompt-cache "
-             "enrichment target; full OpenAI<->Anthropic translation is Phase-2."),
-    # OpenCode Zen — one key (OPENCODE_ZEN_KEY), two endpoints with DIFFERENT model
-    # sets (verified live 2026-06-26): /zen/v1 = full catalog (~49: Claude/GPT/Gemini/
-    # Qwen + open); /zen/go/v1 = coding-focused subset (~20).
-    "opencode-zen": ProviderPreset(
-        "https://opencode.ai/zen/v1", "OPENCODE_ZEN_KEY",
-        note="OpenCode Zen — full catalog (Claude/GPT/Gemini/Qwen + open models)."),
-    "opencode-go": ProviderPreset(
-        "https://opencode.ai/zen/go/v1", "OPENCODE_ZEN_KEY",
-        note="OpenCode Zen 'go' — coding-focused subset; same OPENCODE_ZEN_KEY."),
-    # OpenRouter — base verified.
-    "openrouter": ProviderPreset(
-        "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY",
-        downgrade_prone=True,
-        note="Free tiers can silently route to a different model — failover-guarded."),
-    # Cline Pass — cheap-first leg. Its NON-streaming /chat/completions responses come
-    # back wrapped as {"data": <openai obj>, "success": true} with no top-level
-    # choices/model/usage, so it declares adapter="cline" to unwrap them (streaming is
-    # already canonical). NOTE: the base has no /models endpoint, so the setup-time
-    # key probe that GETs /models false-fails — verify the key another way.
-    "cline-pass": ProviderPreset(
-        "https://api.cline.bot/api/v1", "CLINE_PASS_API_KEY",
-        strip_v1=True, adapter="cline",
-        note="Cline Pass — non-stream bodies are wrapped ({data,success}); adapter="
-             "'cline' unwraps them. No /models endpoint (setup key probe false-fails)."),
-    # NanoGPT / ZAI — base URLs verified live via `providers test` (2026-06-26):
-    # nano-gpt.com/api/v1 → 200 from /models; api.z.ai/api/paas/v4 → 401 (needs key).
-    # The full chat-completion contract is still pending a real key.
-    "nanogpt": ProviderPreset(
-        "https://nano-gpt.com/api/v1", "NANOGPT_API_KEY",
-        note="Base verified live (HTTP 200 from /models)."),
-    "zai": ProviderPreset(
-        "https://api.z.ai/api/paas/v4", "ZAI_API_KEY",
-        note="Verified live: chat at /api/paas/v4/chat/completions (strip_v1 strips "
-             "the client's /v1 and appends to the /v4 base)."),
-    # More hosted providers — all base URLs verified live via `providers test`
-    # (2026-06-26): /models returns 200 (chutes) or 401-needs-key (the rest).
-    "deepseek": ProviderPreset("https://api.deepseek.com/v1", "DEEPSEEK_API_KEY",
-                               note="DeepSeek (base verified)."),
-    "chutes": ProviderPreset("https://llm.chutes.ai/v1", "CHUTES_API_KEY",
-                            note="Chutes.ai (base verified, /models open)."),
-    "groq": ProviderPreset("https://api.groq.com/openai/v1", "GROQ_API_KEY",
-                          note="Groq (base verified)."),
-    "together": ProviderPreset("https://api.together.xyz/v1", "TOGETHER_API_KEY",
-                              note="Together AI (base verified)."),
-    "mistral": ProviderPreset("https://api.mistral.ai/v1", "MISTRAL_API_KEY",
-                             note="Mistral (base verified)."),
-    # More hosted providers — all base URLs verified live via `providers test` (2026-06-26).
-    # fireworks, sambanova → 401/200; replicate, xai, cohere, openai → 401.
-    "fireworks": ProviderPreset("https://api.fireworks.ai/inference/v1", "FIREWORKS_API_KEY",
-                                note="Fireworks AI (base verified, HTTP 401 on /models)."),
-    "sambanova": ProviderPreset("https://api.sambanova.ai/v1", "SAMBANOVA_API_KEY",
-                                note="SambaNova (base verified, /models HTTP 200)."),
-    "replicate": ProviderPreset("https://api.replicate.com/v1", "REPLICATE_API_KEY",
-                                note="Replicate (base verified, HTTP 401 on /models)."),
-    "xai": ProviderPreset("https://api.x.ai/v1", "XAI_API_KEY",
-                          note="xAI (Grok API, base verified, HTTP 401 on /models)."),
-    "cohere": ProviderPreset("https://api.cohere.ai/v1", "COHERE_API_KEY",
-                             note="Cohere (base verified, HTTP 401 on /models)."),
-    "openai": ProviderPreset("https://api.openai.com/v1", "OPENAI_API_KEY",
-                             note="OpenAI (base verified, HTTP 401 on /models)."),
-    # Routed / aggregator + energy-aware hosted providers — OpenAI-compatible,
-    # config-only (no adapter). HF is a router across many inference providers.
-    "huggingface": ProviderPreset(
-        "https://router.huggingface.co/v1", "HF_TOKEN",
-        note="HF Inference Providers router; OpenAI-compatible, chat-only; model ids "
-             "are org/model[:provider|:fastest|:cheapest]."),
-    "neuralwatt": ProviderPreset(
-        "https://api.neuralwatt.com/v1", "NEURALWATT_API_KEY",
-        note="Neuralwatt energy-aware inference; OpenAI-compatible chat. Base from "
-             "docs/plugins — live-verify with `charon providers test`."),
-    # Unverified / limited endpoint bases — use caution; override base_url if endpoint 404s.
-    "perplexity": ProviderPreset("https://api.perplexity.ai", "PERPLEXITY_API_KEY",
-                                 strip_v1=False,
-                                 note="Perplexity (domain resolves, /models may 404; "
-                                      "endpoint varies; if using, check strip_v1 setting)."),
-    # Local OpenAI-compatible servers (usually no auth). Default ports shown.
-    "lmstudio": ProviderPreset("http://localhost:1234/v1", None,
-                               note="LM Studio (default port 1234)."),
-    "jan": ProviderPreset("http://localhost:1337/v1", None,
-                          note="Jan (default port 1337)."),
-    "ollama": ProviderPreset("http://localhost:11434/v1", None,
-                            note="Ollama OpenAI-compatible endpoint (port 11434)."),
-    "vllm": ProviderPreset("http://localhost:8000/v1", None,
-                           note="vLLM (default port 8000, OpenAI-compatible server)."),
-    "local": ProviderPreset("http://localhost:1234/v1", None,
-                           note="Generic OpenAI-compatible localhost — set base_url."),
-}
+    k: ProviderPreset(**v) for k, v in MERGED_RAW_DATA.items()}
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
