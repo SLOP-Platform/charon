@@ -1,5 +1,7 @@
 # SESSION HANDOFF — shaak-ti → next manager (2026-07-11)
 
+**Date:** 2026-07-11 17:10 PDT
+
 ## Bootstrap (paste this as the next session's first message)
 ```
 Read and fully follow /home/stack/charon-private/fleet/SESSION-HANDOFF-shaak-ti.md — you are the fresh Charon fleet MANAGER.

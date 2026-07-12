@@ -42,6 +42,14 @@ else
   miss "no fenced code block (bootstrap must be copy-pasteable)"
 fi
 
+# 1c) DATE STAMP — a handoff must carry an absolute date (ordering + staleness)
+say "[date]"
+if grep -qE '(^|[^0-9])20[0-9][0-9]-[01][0-9]-[0-3][0-9]([^0-9]|$)' "$F"; then
+  ok "has date stamp (YYYY-MM-DD)"
+else
+  miss "MISSING date stamp — add a '**Date:** YYYY-MM-DD HH:MM TZ' line near the top"
+fi
+
 # 2) ACCURACY — every referenced SHA must exist; committed-SHA claim must match HEAD
 say "[sha]"
 SHAS=$(grep -oE '\b[0-9a-f]{7,40}\b' "$F" | sort -u)
