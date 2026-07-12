@@ -7,19 +7,23 @@
 # (exit 4) — the work is committed in the worktree; the manager pushes it and lands the PR.
 set -euo pipefail
 FLEET="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; S="$FLEET/state"; BOARD="$FLEET/board"
-REPO_SLUG="SLOP-Platform/charon"
+source "$FLEET/repo-registry.sh"   # MULTI-REPO: resolve the ticket's target repo (repo: field)
 canon(){ local w="$1" f b; for f in "$BOARD"/*.md; do b="$(basename "$f" .md)"
   [ "${b,,}" = "${w,,}" ] && { echo "$b"; return 0; }; done
   echo "submit.sh: no board ticket matching '$w'" >&2; return 1; }
 meta(){ awk -F': ' -v k="$1" '$1==k{sub(/^[^:]*: ?/,"");print;exit}' "$2"; }
 id="$(canon "${1:?usage: submit.sh <id>}")" || exit 2
 branch="$(meta branch "$BOARD/$id.md")"
+# MULTI-REPO: the open-PR check + needs-push worktree path must target the ticket's OWN repo
+# (not the hardwired SLOP-Platform/charon). Absent repo: field -> charon product (back-compat).
+repo_resolve "$(meta repo "$BOARD/$id.md")" "$id" || { echo "submit.sh: $id names an unknown repo:" >&2; exit 2; }
+REPO_SLUG="$(repo_owner_repo "$RR_PATH")"
 # GROUND check: is there actually an open PR for this branch?
 prnum="$(gh pr list --repo "$REPO_SLUG" --head "$branch" --state open --json number -q '.[0].number' 2>/dev/null)"
 if [ -z "$prnum" ]; then
   mkdir -p "$S/needs-push"
-  printf 'branch=%s\nworktree=/home/stack/code/charon-fleet-%s\nreason=committed but no open PR (push or gh-pr-create failed)\nflagged=%s\n' \
-    "$branch" "$id" "$(date -u +%FT%TZ)" > "$S/needs-push/$id"
+  printf 'branch=%s\nworktree=%s\nrepo=%s\nreason=committed but no open PR (push or gh-pr-create failed)\nflagged=%s\n' \
+    "$branch" "$RR_WT" "$RR_PATH" "$(date -u +%FT%TZ)" > "$S/needs-push/$id"
   echo "submit.sh: NO open PR for '$branch' — NOT marking submitted; flagged state/needs-push/$id." >&2
   echo "           recover:  bash $FLEET/land-needs-push.sh $id" >&2
   exit 4

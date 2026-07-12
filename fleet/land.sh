@@ -16,7 +16,7 @@ if [ ! -e "$FLEET/state/AUTONOMOUS" ]; then
 fi
 
 BRANCH="${1:?usage: land.sh <feature-branch> [repo] [--base b] [--gate cmd] [--msg m]}"; shift
-REPO="/home/stack/code/charon"; BASE="master"; GATE=""; MSG=""
+REPO="/home/stack/code/charon"; BASE=""; GATE=""; MSG=""
 while [ $# -gt 0 ]; do case "$1" in
   --base) BASE="$2"; shift 2;;
   --gate) GATE="$2"; shift 2;;
@@ -25,6 +25,12 @@ while [ $# -gt 0 ]; do case "$1" in
 esac; done
 
 cd "$REPO" || { echo "land: no repo $REPO" >&2; exit 1; }
+# MULTI-REPO: derive the base branch from the repo's own default when not given (charon->master,
+# keystone->main). Keeps `land.sh <branch> <repo>` working for any repo with no --base guesswork.
+if [ -z "$BASE" ]; then
+  BASE="$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null)"
+  [ -n "$BASE" ] || BASE="master"
+fi
 echo "land: repo=$REPO base=$BASE branch=$BRANCH"
 
 # 1. commit any pending work
@@ -35,6 +41,7 @@ fi
 # 2. auto-detect the gate
 if [ -z "$GATE" ]; then
   if   [ -f "$REPO/src/charon/cli.py" ];        then GATE="PYTHONPATH=src python3 -m charon.cli gate"
+  elif [ -f "$REPO/ksf/cli.py" ];               then GATE="PYTHONPATH=. python3 -m ksf.cli --repo-root . gate && PYTHONPATH=. python3 -m ksf.cli --repo-root . verify-self"  # keystone (ksf not globally installed)
   elif [ -f "$REPO/fleet/validate_board.sh" ];  then GATE="bash $REPO/fleet/validate_board.sh $REPO/fleet"
   elif [ -d "$REPO/tests" ] || ls "$REPO"/test_*.py >/dev/null 2>&1; then GATE="python3 -m pytest -q"
   fi

@@ -54,6 +54,7 @@ for f in sorted(glob.glob(os.path.join(board, "*.md"))):
         "note": field(f, "note"),
         "parked_field": field(f, "parked"),
         "build_after": field(f, "build-after"),
+        "repo": field(f, "repo"),
         "just": just,
         "depbuild": depbuild,
     }
@@ -82,6 +83,23 @@ red, info, wci, warn = [], [], [], []
 # and by the uncommitted-work check (#6). Overridable via CHARON_REPO (self-tests point it
 # at an isolated fixture; default preserves the live path exactly).
 PRODUCT_REPO = os.environ.get("CHARON_REPO", "/home/stack/code/charon")
+
+# MULTI-REPO: a ticket may name a target repo via `repo:` (see fleet/repo-registry.sh). Map the
+# accepted keys to their checkout roots so owns-paths resolve against the RIGHT tree and an
+# unknown key fails RED. Absent field -> "charon" (product) => unchanged behavior (back-compat).
+REPO_ROOTS = {
+    "charon": PRODUCT_REPO, "product": PRODUCT_REPO,
+    "keystone": "/home/stack/code/keystone", "ksf": "/home/stack/code/keystone",
+}
+def repo_root(d):
+    return REPO_ROOTS.get((d["repo"].strip().lower() or "charon"), PRODUCT_REPO)
+
+# 0. repo: field must name a known repo (else the harness can't resolve it). Live tickets only.
+for t, d in tickets.items():
+    key = d["repo"].strip().lower()
+    if key and key not in REPO_ROOTS and not is_parked(d):
+        red.append(f"unknown-repo: {t} repo '{d['repo']}' is not one of "
+                   f"{', '.join(sorted(REPO_ROOTS))} (see fleet/repo-registry.sh)")
 
 # 1. prompt files exist
 for t, d in tickets.items():
@@ -218,7 +236,7 @@ for t, d in tickets.items():
     for p in d["owns"]:
         if not p or " " in p or "\t" in p or p.startswith("("):
             continue  # prose / descriptive owns, not a real path
-        base = p if os.path.isabs(p) else os.path.join(PRODUCT_REPO, p)
+        base = p if os.path.isabs(p) else os.path.join(repo_root(d), p)
         if "*" in p or "?" in p or "[" in p:
             if not glob.glob(base):
                 warn.append(f"owns-glob-empty: {t} owns '{p}' matches no path (yet) — verify")
