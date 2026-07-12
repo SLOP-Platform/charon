@@ -11,7 +11,7 @@ last hand-typed data from a mechanism that already exists and largely runs.
 
 ## Context
 
-The live gateway (`charon-gateway-1` @ 10.0.1.60, image `v0.4.1`) selects the
+The live gateway (self-hosted deployment, image `v0.4.1`) selects the
 provider for a requested model by sorting each pool on hand-assigned `cost_rank`
 integers in `/data/models.json`. Those integers **rot and are literally wrong**.
 Verified this session (`fleet/state/POOL-INVESTIGATION.md`): for `deepseek-v4-pro`
