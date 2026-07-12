@@ -45,11 +45,10 @@ KEYS_DIR = Path("/home/bench-grader/keys")
 SPOOL_REQ = Path("/var/lib/bench-grader/spool/req")
 SPOOL_RES = Path("/var/lib/bench-grader/spool/res")
 
-SCORECARD_VERSION_FILE = BENCH_DIR / "scorecard.version"
-SCORECARD_V1 = BENCH_DIR / "scorecard.v1.json"
-
 FLEET_DIR = BENCH_DIR.parent
 SCORECARD_TSV = FLEET_DIR / "model-scorecard.tsv"
+SCORECARD_VERSION_FILE = BENCH_DIR / "scorecard.version"
+SCORECARD_V1 = FLEET_DIR / "scorecard.v1.json"
 
 
 def fail(msg: str) -> None:
@@ -137,7 +136,7 @@ def check_B_versioned_artifact() -> None:
     if v < 1:
         fail(f"scorecard version {v} < 1 — versioning broken")
 
-    artifact = BENCH_DIR / f"scorecard.v{v}.json"
+    artifact = FLEET_DIR / f"scorecard.v{v}.json"
     if not artifact.exists():
         # The artifact is created lazily by the daemon on first write.
         # This is fine — the version file proves the daemon will CREATE it
