@@ -22,6 +22,7 @@ Read and fully follow /home/stack/charon-private/fleet/SESSION-HANDOFF-luminara.
 4. **Quick wins (gap register, ~30 min wall-clock, fan MAX-parallel on CG):** `fleet/log-prune.sh` (logrotate + `find -mtime`) + `fleet/branch-reaper.sh` (`--merged` + `worktree prune`); plus operator one-liners for the fleet-droid deny entry + a 250K context-warning hook.
 5. **Roadmap re-org (from `fleet/state/ROADMAP-WCI-AUDIT.md`):** move F14/F15/F12/F26 → FOUNDATION; consolidate the benchmark triple-home (K3/K4/K16 + R41 + B4); ROUTER Wave 4 (R19/R21/R23/R24 all own `providers.py` → serialize or split); KEYSTONE pull KS29/KS8/KS31/KS30 substrate BEFORE lens Wave E; **add board files (owns/difficulty) for KS3–32 + B2–B9** (they fail F43/F30 gates + collisions are uncomputable without them).
 6. Fold Gingugu borrowable ideas (confidence-lifecycle enum, decay-on-read, RRF retrieval, consolidate tool, SessionStart contract hook) into FN2/FN3 accept criteria.
+7. **FN5 registry-sweep** (FOUNDATION Wave C, operator-approved) — audit product+rig+KSF for smart-module-registry candidates and apply the EXISTING **KS29 registry primitive** (don't reinvent). The F29 Smart-Routing registry is candidate #1; output feeds F29 + KS20 + KS28. Best run after FN4 exists (so the audit is itself reuse/evidence-gated).
 
 ## WCI EXECUTION PLAN (operator-directed 2026-07-12 — DO these next session)
 **A. Make the CLEAR MOVES** (low-risk placement fixes; edit ROADMAP.tsv + board, land via land.sh):
