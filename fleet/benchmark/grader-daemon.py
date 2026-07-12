@@ -49,7 +49,7 @@ GRADERS_LIB_DIR    = BENCH_DIR / "lib"
 SECTIONS_GRADERS   = BENCH_DIR / "graders"
 
 SCORECARD_VERSION_FILE = BENCH_DIR / "scorecard.version"
-SCORECARD_ARTIFACT_DIR = BENCH_DIR
+SCORECARD_ARTIFACT_DIR = FLEET_DIR   # bench-grader-owned, same as SCORECARD_TSV
 
 PROVISIONAL_STORE  = WORK_DIR / "capture"   # provisional capture pairing
 
@@ -59,6 +59,7 @@ GRADER_TIMEOUT_S   = 300        # max seconds a grader subprocess may run
 # ── test hook: override ledger path for hermetic unit tests ──────────────────
 _LEDGER_PATH_OVERRIDE: Path | None = None
 _PROVISIONAL_STORE_OVERRIDE: Path | None = None
+_SCORECARD_DIR_OVERRIDE: Path | None = None
 
 
 def _ledger_path() -> Path:
@@ -73,6 +74,13 @@ def _provisional_dir() -> Path:
     if _PROVISIONAL_STORE_OVERRIDE is not None:
         return _PROVISIONAL_STORE_OVERRIDE
     return PROVISIONAL_STORE
+
+
+def _scorecard_dir() -> Path:
+    """Return the active scorecard artifact dir (real or test-overridden)."""
+    if _SCORECARD_DIR_OVERRIDE is not None:
+        return _SCORECARD_DIR_OVERRIDE
+    return SCORECARD_ARTIFACT_DIR
 
 # ── section metadata (mirrored from lib/sections.sh) ───────────────────────
 
@@ -112,13 +120,14 @@ def section_tier(section: str) -> int:
 
 def _read_scorecard_version() -> int:
     try:
-        return int(SCORECARD_VERSION_FILE.read_text().strip())
+        vf = SCORECARD_VERSION_FILE
+        return int(vf.read_text().strip())
     except (OSError, ValueError):
         return 1
 
 
 def _scorecard_path(version: int) -> Path:
-    return SCORECARD_ARTIFACT_DIR / f"scorecard.v{version}.json"
+    return _scorecard_dir() / f"scorecard.v{version}.json"
 
 
 def _ensure_scorecard(version: int) -> Path:
@@ -130,6 +139,7 @@ def _ensure_scorecard(version: int) -> Path:
             "created": datetime.now(timezone.utc).isoformat(),
             "rows": [],
         }
+        p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(initial, indent=2) + "\n")
     return p
 

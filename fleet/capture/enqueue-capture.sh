@@ -6,6 +6,7 @@
 #   enqueue-capture.sh --model <model> --claimed-result <result> \
 #       [--ref <ref>] [--work-class <class>] [--difficulty <tier>] \
 #       [--stage provisional|active] [--brief-meta <path>] \
+#       [--run-id <id>] \
 #       [--actual-verdict <verdict>] [--actual-gate <gate>] \
 #       [--score <0-100>] [--evidence <text>] \
 #       [--call-log-report] [--dry-run]
@@ -33,6 +34,7 @@ EVIDENCE=""
 CALL_LOG_REPORT=0
 DRY_RUN=0
 SPOOL_DIR="${CAPTURE_SPOOL_DIR:-/var/lib/bench-grader/spool/req}"
+RUN_ID=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -43,7 +45,8 @@ while [ $# -gt 0 ]; do
     --difficulty)      DIFFICULTY="$2"; shift 2 ;;
     --stage)           STAGE="$2"; shift 2 ;;
     --brief-meta)      BRIEF_META="$2"; shift 2 ;;
-    --actual-verdict)  ACTUAL_VERDICT="$2"; shift 2 ;;
+    --run-id)          RUN_ID="$2"; shift 2 ;;
+    --actual-verdict)  ACTUAL_VERDICT="$2"; shift 2 ;; 
     --actual-gate)     ACTUAL_GATE="$2"; shift 2 ;;
     --score)           SCORE="$2"; shift 2 ;;
     --evidence)        EVIDENCE="$2"; shift 2 ;;
@@ -103,8 +106,8 @@ if [ -n "$WORK_CLASS" ]; then
   fi
 fi
 
-# ── Generate run_id ──────────────────────────────────────────────────────────
-RUN_ID="capture-${MODEL}-${REF:-norref}-$(date -u +%s)-$$"
+# ── Generate run_id (stable correlation key so PROVISIONAL ↔ FINAL pair) ──────
+RUN_ID="${RUN_ID:-capture-${MODEL}-${REF:-norref}}"
 
 # ── Build JSON with python3 (no jq dependency) ───────────────────────────────
 _build_json() {

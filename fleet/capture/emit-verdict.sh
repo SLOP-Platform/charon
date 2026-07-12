@@ -3,7 +3,7 @@
 # FINAL capture request (Chunk C).
 #
 # Usage:
-#   emit-verdict.sh <review-packet> [--model <model>] [--job <job>] [--enqueue]
+#   emit-verdict.sh <review-packet> [--model <model>] [--claimed-result <result>] [--job <job>] [--enqueue]
 #
 # Reads a review packet (markdown) and extracts the machine verdict, gate, score,
 # and evidence. Writes <packet>.verdict.json. With --enqueue, also drops the
@@ -27,16 +27,18 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # ── Arg parse ────────────────────────────────────────────────────────────────
 PACKET=""
 MODEL="${CAPTURE_MODEL:-}"
+CLAIMED_RESULT="SUCCESS"                    # default, overridden by --claimed-result
 JOB="${CAPTURE_JOB:-}"
 ENQUEUE=0
 DRY_RUN=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --model)   MODEL="$2"; shift 2 ;;
-    --job)     JOB="$2"; shift 2 ;;
-    --enqueue) ENQUEUE=1; shift ;;
-    --dry-run) DRY_RUN=1; shift ;;
+    --model)            MODEL="$2"; shift 2 ;;
+    --claimed-result)   CLAIMED_RESULT="$2"; shift 2 ;;
+    --job)              JOB="$2"; shift 2 ;;
+    --enqueue)          ENQUEUE=1; shift ;;
+    --dry-run)          DRY_RUN=1; shift ;;
     --help|-h)
       sed -n '2,/^set -euo pipefail/p' "$0" | sed 's/^# //; s/^#//' >&2
       exit 0 ;;
@@ -156,7 +158,7 @@ if [ "$ENQUEUE" -eq 1 ]; then
   "$ENQUEUE_SCRIPT" \
     --model "$MODEL" \
     --ref "$JOB" \
-    --claimed-result "SUCCESS" \
+    --claimed-result "$CLAIMED_RESULT" \
     --stage active \
     --actual-verdict "$HUMAN_VERDICT" \
     --actual-gate "$GATE" \

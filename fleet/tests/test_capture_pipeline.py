@@ -44,9 +44,10 @@ def capture_tmpdir(tmp_path: Path) -> Path:
 
 @pytest.fixture(autouse=True)
 def reset_overrides(capture_tmpdir: Path) -> None:
-    """Reset global overrides before each test and set provisional store to tmpdir."""
+    """Reset global overrides before each test and set provisional store + scorecard dir to tmpdir."""
     gd._LEDGER_PATH_OVERRIDE = None
     gd._PROVISIONAL_STORE_OVERRIDE = Path(capture_tmpdir) / "capture-provisionals"
+    gd._SCORECARD_DIR_OVERRIDE = Path(capture_tmpdir) / "scorecard-artifacts"
 
 
 def _rows(p: Path) -> list[list[str]]:
