@@ -1,0 +1,62 @@
+========================================================================
+PROBE A/B/C: DRAIN -> AUTO-PARK -> SKIP (no fail-churn) -> RE-ARM
+========================================================================
+gateway booted: http://127.0.0.1:38903/v1 (token=set)
+  pools: ['m1']
+  pool 'm1': ['drain-fc3', 'healthy-payg']
+
+--- BEFORE traffic ---
+  drain-fc3: funding_class=3 remaining=$3.000000 parked=False drained=False should_drain=True
+  healthy-payg: funding_class=4 remaining=None parked=False drained=False should_drain=False
+
+CALL 1: HTTP 200 served_by=drain-fc3 (expected drain-fc3)
+  drain-fc3: funding_class=3 remaining=$1.500000 parked=False drained=False should_drain=True
+  healthy-payg: funding_class=4 remaining=None parked=False drained=False should_drain=False
+
+CALL 2: HTTP 200 served_by=drain-fc3 (expected drain-fc3)
+  drain-fc3: funding_class=3 remaining=$0.000000 parked=False drained=True should_drain=False
+  healthy-payg: funding_class=4 remaining=None parked=False drained=False should_drain=False
+  drain-fc3 remaining now $0.000000
+  drain-fc3 drained=True parked=False
+
+CALL 3: HTTP 200 served_by=healthy-payg (expected healthy-payg — auto-parked drain-fc3, SKIPPED, no fail-churn)
+  drain-fc3: funding_class=3 remaining=$0.000000 parked=True drained=True should_drain=False
+  healthy-payg: funding_class=4 remaining=None parked=False drained=False should_drain=False
+  drain-fc3 parked=True <- AUTO-PARKED (routing skips it)
+CALL 4: HTTP 200 served_by=healthy-payg (stable on healthy-payg, no fail-churn)
+
+--- RE-ARM: top_up drain-fc3 + rearm ---
+top_up result: {"ok": true, "provider": "drain-fc3", "top_up_usd": 5.0, "remaining": 5.0}
+rearm result: {"ok": true, "provider": "drain-fc3", "rearmed": true, "remaining": 5.0}
+  drain-fc3: funding_class=3 remaining=$5.000000 parked=False drained=False should_drain=True
+  healthy-payg: funding_class=4 remaining=None parked=False drained=False should_drain=False
+  drain-fc3 parked=False remaining=$5.000000
+
+CALL 5: HTTP 200 served_by=healthy-payg
+  drain-fc3: funding_class=3 remaining=$5.000000 parked=False drained=False should_drain=True
+  healthy-payg: funding_class=4 remaining=None parked=False drained=False should_drain=False
+  RE-ARM verified: drain-fc3 parked=False remaining=$5.000000 should_drain=True <- BACK IN CHAIN (was parked=True before re-arm)
+
+PROBE A/B/C COMPLETE
+
+========================================================================
+PROBE D: SOLE-LEG GUARD — drained sole leg is NOT parked
+========================================================================
+gateway booted: http://127.0.0.1:33429/v1 (token=set)
+  pool m2: ['sole-drain-fc3', 'parked-sibling']
+
+--- parked-sibling PRE-PARKED (so sole-drain-fc3 is the sole viable leg) ---
+  sole-drain-fc3: funding_class=3 remaining=$2.000000 parked=False drained=False should_drain=True
+  parked-sibling: funding_class=3 remaining=$10.000000 parked=True drained=False should_drain=True
+
+CALL 1: HTTP 200 served_by=sole-drain-fc3 (drains sole-drain-fc3)
+  sole-drain-fc3: funding_class=3 remaining=$0.000000 parked=False drained=True should_drain=False
+  parked-sibling: funding_class=3 remaining=$10.000000 parked=True drained=False should_drain=True
+  sole-drain-fc3 drained=True parked=False
+
+CALL 2: HTTP 200 served_by=sole-drain-fc3 (sole-drain-fc3 KEPT — guard prevented orphan)
+  sole-drain-fc3: funding_class=3 remaining=$0.000000 parked=False drained=True should_drain=False
+  parked-sibling: funding_class=3 remaining=$10.000000 parked=True drained=False should_drain=True
+  sole-drain-fc3 parked=False <- NOT PARKED (sole-leg guard held)
+
+PROBE D COMPLETE
