@@ -90,6 +90,8 @@ PRODUCT_REPO = os.environ.get("CHARON_REPO", "/home/stack/code/charon")
 REPO_ROOTS = {
     "charon": PRODUCT_REPO, "product": PRODUCT_REPO,
     "keystone": "/home/stack/code/keystone", "ksf": "/home/stack/code/keystone",
+    "charon-private": "/home/stack/charon-private", "rig": "/home/stack/charon-private",
+    "fleet": "/home/stack/charon-private",
 }
 def repo_root(d):
     return REPO_ROOTS.get((d["repo"].strip().lower() or "charon"), PRODUCT_REPO)
