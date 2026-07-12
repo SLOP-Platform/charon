@@ -61,7 +61,8 @@ git push origin "$BRANCH" || { echo "land: push failed" >&2; exit 5; }
 
 # 6. PR + merge (official gated merge)
 OWNER_REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)"
-[ -n "$OWNER_REPO" ] || { echo "land: could not resolve owner/repo via gh" >&2; exit 6; }
+[ -n "$OWNER_REPO" ] || OWNER_REPO="$(git remote get-url origin 2>/dev/null | sed -E 's#.*[:/]([^/]+/[^/.]+)(\.git)?$#\1#')"
+[ -n "$OWNER_REPO" ] || { echo "land: could not resolve owner/repo via gh or remote" >&2; exit 6; }
 gh pr create --repo "$OWNER_REPO" --base "$BASE" --head "$BRANCH" --fill 2>/dev/null || echo "land: (PR may already exist)"
 gh pr merge "$BRANCH" --repo "$OWNER_REPO" --merge 2>&1 | tail -2
 
