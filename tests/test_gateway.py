@@ -485,3 +485,48 @@ def test_sr6_explicit_cost_rank_via_add_model_still_honored(tmp_path, monkeypatc
     cfg = gateway.load_config(state_dir=tmp_path)
     chain = cfg.pools["auto"]
     assert [r.upstream_base for r in chain] == ["http://b/v1", "http://a/v1"]
+
+
+# ---- DRAIN-AND-PARK: balance tracker construction ---------------------------
+
+def test_load_config_builds_balance_tracker_from_provider_config(monkeypatch, tmp_path):
+    """When a provider has balance fields (funding_class, mode, starting_balance),
+    load_config constructs a non-None GatewayConfig.balance_tracker.
+
+    FAIL-ON-REVERT: reverting the balance-tracker construction must fail the
+    cfg.balance_tracker is not None assertion."""
+    monkeypatch.delenv("CHARON_GATEWAY_TOKEN", raising=False)
+    (tmp_path / "models.json").write_text(json.dumps({
+        "test-model": {
+            "provider": "test-provider",
+            "upstream_base": "http://x/v1",
+        },
+    }))
+    (tmp_path / "providers.json").write_text(json.dumps({
+        "test-provider": {
+            "base_url": "http://x/v1",
+            "funding_class": 3,
+            "mode": "fixed",
+            "starting_balance": 50.0,
+        },
+    }))
+    cfg = gateway.load_config(state_dir=tmp_path)
+    assert cfg.balance_tracker is not None, (
+        "FAIL-ON-REVERT: balance_tracker must be constructed from provider config")
+    # The tracker should know about this provider
+    fc = cfg.balance_tracker.funding_class("test-provider")
+    assert fc == 3
+
+
+def test_load_config_no_balance_when_no_provider_balance_fields(monkeypatch, tmp_path):
+    """Without any balance fields in providers.json, balance_tracker stays None
+    (backward-compatible — current behavior)."""
+    monkeypatch.delenv("CHARON_GATEWAY_TOKEN", raising=False)
+    (tmp_path / "models.json").write_text(json.dumps({
+        "m": {"upstream_base": "http://x/v1"},
+    }))
+    (tmp_path / "providers.json").write_text(json.dumps({
+        "plain-provider": {"base_url": "http://x/v1"},
+    }))
+    cfg = gateway.load_config(state_dir=tmp_path)
+    assert cfg.balance_tracker is None

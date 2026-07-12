@@ -94,6 +94,7 @@ _GUI_ROUTES = frozenset({
     "/charon/providers", "/charon/models", "/charon/models/import",
     "/charon/pools", "/charon/tiers", "/charon/fallback",
     "/charon/enable", "/charon/disable", "/charon/remove",  # setup writes
+    "/charon/balance",                               # DRAIN-AND-PARK re-arm
 })
 
 
@@ -757,7 +758,7 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
                 if r.upstream_base in cooled:
                     label_cooldown[r.label] = cooled[r.upstream_base]
         u = self.observer.cumulative_usage()
-        return {
+        snapshot: dict = {
             "pools": pools,
             "providers": stats,
             "cooldown_seconds": label_cooldown,
@@ -767,6 +768,25 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
             # Running build/version (baked into the image by SR-10); None outside a build.
             "build_sha": os.environ.get("CHARON_BUILD_SHA"),
         }
+        # DRAIN-AND-PARK: surface balance + park state when the tracker is active
+        if self.balance_tracker is not None:
+            bt = self.balance_tracker
+            parked = bt.parked_providers()
+            balances: dict[str, dict] = {}
+            for pool_chain in self.pools.values():
+                for r in pool_chain:
+                    name: str = r.provider or r.label
+                    fc = bt.funding_class(name)
+                    rem = bt.remaining(name)
+                    balances[name] = {
+                        "funding_class": fc,
+                        "remaining_usd": round(rem, 6) if rem is not None else None,
+                        "parked": name in parked,
+                        "drained": bt.is_drained(name),
+                        "should_drain": bt.should_drain(name),
+                    }
+            snapshot["balance"] = balances
+        return snapshot
 
     @property
     def url(self) -> str:

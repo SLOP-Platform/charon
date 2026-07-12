@@ -3,10 +3,11 @@
 Two balance sources:
 1. **Poll adapters** — providers that expose a balance API: DeepSeek, OpenRouter,
    NanoGPT. A small per-provider adapter returns remaining USD (or None if
-   unsupported).
-2. **Spend-tracking** — dashboard-only providers (opencode-zen, Together,
-   NeuralWatt): an operator-configured starting balance, decremented by
-   ``record_spend()`` using real ``cost_usd``.
+   unsupported). TTL-cached (default 300s) to avoid hammering the balance API.
+2. **Fixed / observer-metered** — class-3 drain-then-park providers configured
+   with a ``starting_balance``; remaining = starting_balance − observer-metered
+   spend (sum of per-(model,provider) costs from the gateway proxy's observer).
+   No parallel per-provider decrement ledger — one spend source, not two.
 
 All operations are thread-safe (``threading.Lock``).  Config-driven, OFF/inert
 unless a provider is explicitly configured with a balance.  Stdlib only, no
@@ -18,10 +19,13 @@ Public API:
   ``model_spend(model, provider) -> float``
   ``should_drain(provider) -> bool``   (positive balance -> route-first)
   ``is_drained(provider, floor=0.0) -> bool``  (approx 0 -> demote/skip)
+  ``funding_class(provider) -> int|None``
+  ``park(provider)`` / ``unpark(provider)`` / ``is_parked(provider)``
 """
 from __future__ import annotations
 
 import json
+import os
 import time
 from collections.abc import Callable
 from threading import Lock
@@ -126,6 +130,8 @@ _POLL_ADAPTERS: dict[str, Callable[..., float | None]] = {
     "nanogpt": _poll_nanogpt,
 }
 
+_DEFAULT_POLL_TTL = 300.0  # seconds
+
 
 # ---------------------------------------------------------------------------
 # Balance tracker — thread-safe, config-driven
@@ -137,9 +143,11 @@ class BalanceTracker:
 
     Two modes:
     * **Poll** — configured with ``base_url`` + ``api_key``; periodically calls
-      the provider's balance endpoint to get real remaining USD.
-    * **Fixed** — operator-configured starting balance (e.g. dashboard
-      providers); decremented by ``record_spend()``.
+      the provider's balance endpoint to get real remaining USD. TTL-cached
+      (configurable, default 300s).
+    * **Fixed / observer-metered** — class-3 drain-then-park providers with a
+      ``starting_balance``; remaining = starting_balance − observer-metered
+      spend. No parallel per-provider decrement ledger — one spend source.
 
     A provider not present in ``config`` is always inert: ``remaining`` returns
     None, ``should_drain`` returns False, and ``record_spend`` is a no-op.
@@ -166,28 +174,64 @@ class BalanceTracker:
 
         self._fixed_balances: dict[str, float] = {}
         self._counters: dict[str, int] = {}
-        # Per-(model, provider) metered spend (METER-MODEL-PROVIDER Wave 1).
-        # Accumulated by ``record_spend(provider, usd, model=...)`` so Wave-2
-        # cost-rank routing and drain-then-park can read actual model-level burn
-        # rate instead of an est_cost floor. Caller wiring is deferred to Wave 2,
-        # so this ledger is EMPTY under real traffic today.
         self._model_spend: dict[tuple[str, str], float] = {}
+        # Poll TTL cache: provider → (result_usd_or_None, timestamp)
+        self._poll_cache: dict[str, tuple[float | None, float]] = {}
+        # Parked providers (class-3 drain-then-park providers at ~0)
+        self._parked: set[str] = set()
+        # Observer-metered spend callback: (provider) -> float
+        self._spend_provider_fn: Callable[[str], float] | None = None
 
+        # _build_configs_internal normalises the raw providers.json config into
+        # the internal per-provider dict the tracker expects.
         for provider, cfg in self._config.items():
-            if cfg.get("mode") == "fixed":
-                start = cfg.get("starting_usd", 0.0)
+            self._build_configs_internal(provider, cfg)
+
+    def _build_configs_internal(self, provider: str,
+                                 raw: dict[str, Any]) -> None:
+        """Normalise one provider's config from providers.json shape to the
+        internal shape consumed by remaining/record_spend."""
+        mode = raw.get("mode")
+        fc = raw.get("funding_class")
+        if fc is not None:
+            raw["funding_class"] = int(fc)
+
+        if mode == "fixed":
+            start = raw.get("starting_balance") or raw.get("starting_usd", 0.0)
+            try:
+                self._fixed_balances[provider] = float(start)
+            except (ValueError, TypeError):
+                self._fixed_balances[provider] = 0.0
+            raw["starting_usd"] = float(start)
+        elif mode == "poll":
+            # Resolve balance_key_env → api_key
+            base_url = raw.get("balance_base_url") or raw.get("base_url")
+            if base_url:
+                raw["base_url"] = str(base_url)
+            be = raw.get("balance_key_env") or raw.get("key_env")
+            if be and isinstance(be, str):
+                raw["api_key"] = os.environ.get(be) or raw.get("api_key", "")
+                if not raw["api_key"]:
+                    from . import secrets as _sec
+                    raw["api_key"] = _sec.load_secrets().get(be, "")
+            ttl_raw = raw.get("balance_ttl")
+            if ttl_raw is not None:
                 try:
-                    self._fixed_balances[provider] = float(start)
+                    raw["ttl"] = float(ttl_raw)
                 except (ValueError, TypeError):
-                    self._fixed_balances[provider] = 0.0
+                    pass
 
     # -- public API ---------------------------------------------------------
 
     def remaining(self, provider: str) -> float | None:
         """Current remaining USD for *provider*, or None if not configured.
 
-        Poll providers return None when unreachable (don't cache stale).
-        Fixed providers return the tracked balance (non-negative).
+        Poll providers: TTL-cached; returns None when unreachable (no stale
+        cache).  Fixed class-3 providers: starting_balance − observer-metered
+        spend (anti-sprawl: one spend source).  Fixed legacy providers (no
+        funding_class): the internal tracked balance.
+
+        Unconfigured providers return None.
         """
         cfg = self._config.get(provider)
         if cfg is None:
@@ -195,6 +239,11 @@ class BalanceTracker:
 
         mode = cfg.get("mode")
         if mode == "fixed":
+            start = cfg.get("starting_usd", 0.0)
+            fc = cfg.get("funding_class")
+            if fc == 3 and self._spend_provider_fn is not None:
+                spent = self._spend_provider_fn(provider)
+                return max(start - spent, 0.0)
             with self._lock:
                 return self._fixed_balances.get(provider, 0.0)
 
@@ -202,18 +251,33 @@ class BalanceTracker:
             base_url = cfg.get("base_url")
             api_key = cfg.get("api_key")
             timeout = float(cfg.get("timeout", 20.0))
+            ttl = float(cfg.get("ttl", _DEFAULT_POLL_TTL))
             if not base_url or not api_key:
                 return None
             adapter = _POLL_ADAPTERS.get(provider)
             if adapter is None:
                 return None
+            now = self._now()
+            with self._lock:
+                cached = self._poll_cache.get(provider)
+                if cached is not None and (now - cached[1]) < ttl:
+                    return cached[0]
             try:
-                return adapter(str(base_url), str(api_key), timeout)
+                result = adapter(str(base_url), str(api_key), timeout)
             except Exception:  # noqa: BLE001
-                self._counters["poll_error"] = (
-                    self._counters.get("poll_error", 0) + 1
-                )
+                with self._lock:
+                    self._counters["poll_error"] = (
+                        self._counters.get("poll_error", 0) + 1
+                    )
+                    self._poll_cache[provider] = (None, now)
                 return None
+            with self._lock:
+                self._poll_cache[provider] = (result, now)
+                if result is not None:
+                    self._counters["poll_success"] = (
+                        self._counters.get("poll_success", 0) + 1
+                    )
+            return result
 
         return None
 
@@ -221,18 +285,16 @@ class BalanceTracker:
                      model: str | None = None) -> None:
         """Decrement a fixed provider's tracked balance by *usd*.
 
-        For poll providers or unconfigured providers this is a no-op (their
-        balance is authoritative — we don't double-count).
-
-        ``model`` (METER-MODEL-PROVIDER Wave 1) optionally also tracks per-model
-        spend on this provider so Wave-2 cost-rank routing can read actual
-        model-level burn rate instead of an est_cost floor. Caller wiring
-        (provider=route.label in forwarder.py) is deferred to Wave 2, so this
-        ledger is EMPTY under real traffic today."""
+        For class-3 drain-then-park providers AND poll providers, this is a
+        no-op on the balance — the observer meter is the single spend source
+        (anti-sprawl).  ``_model_spend`` is still updated when ``model`` is
+        given so the model-level ledger stays consistent.
+        """
         usd = float(usd)
         if usd <= 0.0:
-            return  # negative/zero spend is ignored
+            return
         cfg = self._config.get(provider)
+        fc = cfg.get("funding_class") if cfg is not None else None
         if cfg is None or cfg.get("mode") != "fixed":
             if model is not None:
                 with self._lock:
@@ -241,27 +303,21 @@ class BalanceTracker:
                         self._model_spend.get(key, 0.0) + usd)
             return
         with self._lock:
-            cur = self._fixed_balances.get(provider, 0.0)
-            self._fixed_balances[provider] = max(cur - usd, 0.0)
+            # Anti-sprawl: class-3 drain-then-park providers use the observer
+            # meter, not a parallel internal decrement.
+            if fc != 3:
+                cur = self._fixed_balances.get(provider, 0.0)
+                self._fixed_balances[provider] = max(cur - usd, 0.0)
             if model is not None:
                 key = (model, provider)
                 self._model_spend[key] = (
                     self._model_spend.get(key, 0.0) + usd)
 
     def model_spend(self, model: str, provider: str) -> float:
-        """Cumulative metered spend for one (model, provider) pair (METER-MODEL-
-        PROVIDER Wave 1). Returns 0.0 for a never-seen entry (never raises).
+        """Cumulative metered spend for one (model, provider) pair.
 
-        WAVE-2 DEFERRED: this ledger WILL be read by Wave-2 cost-rank routing
-        and drain-then-park to get actual model-level burn rate instead of
-        an est_cost floor. Caller wiring (provider=route.label in
-        forwarder.py) is deferred to Wave 2, so this ledger is EMPTY under
-        real traffic today.
-
-        Keying precondition: ``model`` MUST be the EXACT model id passed to
-        ``record_spend(model=...)`` — NOT a normalized, prefix-stripped, or
-        aliased form. Entries exist ONLY for calls that passed a non-None
-        ``model``; ``model=None`` calls are NOT metered per-pair."""
+        Returns 0.0 for a never-seen entry (never raises).
+        """
         with self._lock:
             return self._model_spend.get((model, provider), 0.0)
 
@@ -284,9 +340,55 @@ class BalanceTracker:
         """
         rem = self.remaining(provider)
         if rem is None:
-            # Not configured — not tracking, so never "drained".
             return False
         return rem <= floor
+
+    def funding_class(self, provider: str) -> int | None:
+        """Return the provider's ``funding_class``, or None if not configured
+        or unset."""
+        cfg = self._config.get(provider)
+        if cfg is None:
+            return None
+        fc = cfg.get("funding_class")
+        if fc is not None:
+            return int(fc)
+        return None
+
+    # -- park lifecycle (class-3 drain-then-park) ------------------------
+
+    def park(self, provider: str) -> None:
+        """Mark a provider as parked (unavailable; routing skips it)."""
+        with self._lock:
+            self._parked.add(str(provider))
+
+    def unpark(self, provider: str) -> None:
+        """Re-arm a parked provider (available again)."""
+        with self._lock:
+            self._parked.discard(str(provider))
+
+    def is_parked(self, provider: str) -> bool:
+        """True if the provider is currently parked."""
+        with self._lock:
+            return provider in self._parked
+
+    def parked_providers(self) -> set[str]:
+        """Return a read-only snapshot of currently-parked providers."""
+        with self._lock:
+            return set(self._parked)
+
+    # -- spend-source wiring (observer meter) ----------------------------
+
+    def set_spend_provider_fn(self, fn: Callable[[str], float]) -> None:
+        """Wire the observer-metered spend callback.
+
+        ``fn(provider)`` must return the total metered spend for that provider
+        (sum of ``GatewayProxy.all_model_provider_costs()`` filtered by
+        provider label).
+        """
+        with self._lock:
+            self._spend_provider_fn = fn
+
+    # -- poll control ----------------------------------------------------
 
     def force_poll(self, provider: str) -> float | None:
         """Synchronous poll for a poll-configured provider, regardless of cache.
@@ -313,12 +415,32 @@ class BalanceTracker:
                     self._counters.get("poll_error", 0) + 1
                 )
             return None
-        if result is not None:
-            with self._lock:
+        now = self._now()
+        with self._lock:
+            self._poll_cache[provider] = (result, now)
+            if result is not None:
                 self._counters["poll_success"] = (
                     self._counters.get("poll_success", 0) + 1
                 )
         return result
+
+    def top_up(self, provider: str, amount_usd: float) -> None:
+        """Add *amount_usd* to a fixed provider's configured starting_balance.
+
+        This re-arms a parked class-3 provider by giving it fresh credit.
+        """
+        amt = float(amount_usd)
+        if amt <= 0:
+            return
+        cfg = self._config.get(provider)
+        if cfg is None:
+            return
+        with self._lock:
+            current_start = float(cfg.get("starting_usd", 0.0))
+            cfg["starting_usd"] = current_start + amt
+            if cfg.get("mode") == "fixed":
+                cur = self._fixed_balances.get(provider, 0.0)
+                self._fixed_balances[provider] = cur + amt
 
     def configure(
         self,
