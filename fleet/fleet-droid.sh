@@ -17,6 +17,14 @@
 set -euo pipefail
 FLEET="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHARON="/home/stack/code/charon"   # DEFAULT product repo (a ticket's `repo:` field overrides per-ticket)
+# OFF-CLAUDE WORK CLIENT (SWAPPABLE). The droid's actual work runs THROUGH THE CHARON GATEWAY, not
+# `claude -p` (which speaks to Anthropic directly and burns Claude tokens). Default client =
+# charon-run.sh (opencode CLI -> `charon/<model>` -> gateway, cross-model failover, "zero Claude
+# limit"). The opencode CLI is only the DEFAULT client — it is NOT hardwired: swap the client next
+# week by setting CHARON_AGENT_CMD to any executable with the SAME positional contract
+#   <cwd> <outlog> <brief-file> <model1> [model2 ...]      (exit 0 = success)
+# — one env var, zero other edits. The MANAGER stays on Claude; only this droid work step is off-Claude.
+CHARON_AGENT_CMD="${CHARON_AGENT_CMD:-$FLEET/charon-run.sh}"
 # WORKTREE-LEAK GUARD (#1): launcher pre-creates the worktree + post-session leak detector.
 source "$FLEET/leak-guard.sh"
 # MULTI-REPO: maps a ticket's `repo:` field -> repo path / worktree / base branch / gate.
@@ -32,16 +40,29 @@ while [ $# -gt 0 ]; do case "$1" in
   *) usage;;
 esac; done
 [ -n "$TIER" ] || usage
-# De-hardwire the launch model: resolve tier -> concrete Anthropic model NAME via config
-# (`charon tier resolve … --executor anthropic`, TIER-3). `claude -p` speaks the Anthropic
-# Messages API while the gateway is OpenAI-only, so the fleet path does NOT route through the
-# gateway — it's a name lookup, no Anthropic↔OpenAI shim. `|| MODEL="$TIER"` keeps half-migrated
-# setups working: legacy opus/sonnet/haiku still launch unchanged when tiers.json is absent.
-MODEL="$(charon tier resolve "$TIER" --executor anthropic 2>/dev/null)" || MODEL="$TIER"
-# Fallback map when charon can't resolve (e.g. not on PYTHONPATH): canonical tier -> Claude model,
-# so a canonical name never reaches `claude -p --model` as an invalid literal. Legacy opus/sonnet/haiku
-# are already valid model names and pass through untouched.
-case "$MODEL" in frontier) MODEL=opus;; strong) MODEL=sonnet;; economy) MODEL=haiku;; esac
+# OFF-CLAUDE tier resolution: turn the tier arg into a GATEWAY model FAILOVER CHAIN (charon/<id>),
+# NOT an Anthropic model. `charon tier resolve` only exposes an ANTHROPIC executor (its tier members
+# are haiku/sonnet/opus) and config has NO tier->gateway-model map, so the per-tier chain lives in a
+# small DATA FILE: fleet/tier-models.tsv (tier <TAB> comma,separated,failover,chain). Swap models by
+# editing that file — zero code edits. The chain feeds $CHARON_AGENT_CMD's cross-model failover.
+# ⚠️ PROVISIONAL defaults only — NO workhorse-per-tier is finalized; the real per-tier model is a
+# PENDING OPERATOR DECISION (see the file header + memory: charon-no-workhorse-finalized).
+TIER_MODELS_FILE="${CHARON_TIER_MODELS:-$FLEET/tier-models.tsv}"
+# normalize legacy/alias tier args (high/opus, med/sonnet, low/haiku) to canonical frontier/strong/economy
+case "$TIER" in
+  high|opus)   CANON=frontier;;
+  med|sonnet)  CANON=strong;;
+  low|haiku)   CANON=economy;;
+  *)           CANON="$TIER";;
+esac
+# $NF (last field) not $2 — tolerant of accidental extra tabs / column alignment in the data file.
+models_line="$(awk -F'\t' -v t="$CANON" '$1!~/^#/ && $1==t {print $NF; exit}' "$TIER_MODELS_FILE" 2>/dev/null || true)"
+if [ -z "$models_line" ]; then
+  echo "[fleet-droid] FATAL: no gateway model chain for tier '$TIER' (canonical '$CANON') in $TIER_MODELS_FILE — add a '$CANON<TAB>model1,model2' row." >&2
+  exit 3
+fi
+IFS=',' read -r -a MODELS <<<"$models_line" || true
+[ "${#MODELS[@]}" -gt 0 ] || { echo "[fleet-droid] FATAL: empty gateway model chain for tier '$CANON'." >&2; exit 3; }
 DROID="$TIER-$$"; current=""; empties=0
 # Release the in-flight claim if the tab is Ctrl-C'd / killed (no stuck tickets).
 cleanup(){ if [ -n "${current:-}" ] && [ ! -e "$FLEET/state/submitted/$current" ]; then
@@ -52,7 +73,7 @@ cleanup(){ if [ -n "${current:-}" ] && [ ! -e "$FLEET/state/submitted/$current" 
 trap 'cleanup; echo "[$DROID] stood down."; exit 130' INT TERM
 trap cleanup EXIT
 wmsg=""; [ "$WAIT_MIN" -gt 0 ] && wmsg=", wait=${WAIT_MIN}m retries=${RETRIES} patience=${PATIENCE}"
-echo "[$DROID] charon-fleet droid up (model=$MODEL$wmsg). Ctrl-C to stand down."
+echo "[$DROID] charon-fleet droid up (off-Claude via ${CHARON_AGENT_CMD##*/}; gateway chain=${MODELS[*]}$wmsg). Ctrl-C to stand down."
 while true; do
   # Tier patience: try OWN tier first; only dip to lower tiers once we've been
   # empty-at-own-tier for >= PATIENCE wait-cycles (gives lower tiers a head start).
@@ -114,8 +135,17 @@ $(cat "$FLEET/JOIN-PROMPT.md")
 
 === YOUR ASSIGNED TICKET: $id ===
 $spec"
-  # Run WITH the worktree as the working directory (belt: launcher-set CWD; braces: the note above).
-  if ( cd "$wt" && claude -p --model "$MODEL" --dangerously-skip-permissions "$prompt" ); then
+  # OFF-CLAUDE EXECUTION (the ONE step that changed): run the droid's work THROUGH THE GATEWAY via
+  # the swappable client ($CHARON_AGENT_CMD), NOT `claude -p`. `claude -p` speaks the Anthropic
+  # Messages API directly (no ANTHROPIC_BASE_URL) and burns Claude tokens; the gateway client routes
+  # `charon/<model>` to 4-LOM (non-Claude models, cheapest-usage-first, roll-to-next-on-exhaust). The
+  # prompt becomes the client's BRIEF FILE; the tier's gateway chain ($MODELS) drives cross-model
+  # failover. The client cds into the worktree itself (its <cwd> arg). Success == exit 0 (charon-run.sh
+  # returns 0 on a model success, non-zero when every model in the chain is exhausted).
+  brief="$FLEET/state/agent-briefs/$DROID-$id.md"; mkdir -p "$(dirname "$brief")"
+  printf '%s' "$prompt" > "$brief"
+  outlog="$FLEET/state/agent-logs/$DROID-$id.txt"; mkdir -p "$(dirname "$outlog")"
+  if "$CHARON_AGENT_CMD" "$wt" "$outlog" "$brief" "${MODELS[@]}"; then
     # #1 WORKTREE-LEAK GUARD (b): did the droid leak into the main checkout instead of its worktree?
     # (0 commits AND clean worktree AND the main checkout gained NEW porcelain entries.)
     if [ "$(leak_detect "$REPO" "$wt" "$branch" "$main_before" "$base_ref")" = LEAK ]; then
