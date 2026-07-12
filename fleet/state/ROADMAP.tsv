@@ -167,3 +167,4 @@ Foundation	FN1	designed	next	memory-store-adopt	adopt basic-memory MCP store ove
 Foundation	FN2	designed	next	bitemporal-decay	shared valid-from/until+last-referenced decay for memory facts AND model-signal ledgers (fixes routing-brain decay, gap B2)	Wave A — memory
 Foundation	FN3	designed	next	curation-pass	scheduled dedup/conflict-flag/decay-to-archive; approval-gated (borrow /sleep + bd compact)	Wave A — memory
 Foundation	FN4	designed	next	research-gate	mechanized research protocol: reuse-check-first + evidence-over-prose + registry(dedup/staleness->update) + completeness gate	Wave B — research-gate
+Foundation	FN5	designed	next	registry-sweep	audit product+rig+KSF for smart-registry candidates -> apply KS29 primitive (kills collision/accretion classes); F29 registry = candidate #1	Wave C — anti-accretion
