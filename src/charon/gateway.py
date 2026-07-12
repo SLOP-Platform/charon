@@ -182,6 +182,10 @@ def load_config(
         if price:
             model_pricing[mid] = price
 
+    # DRAIN-AND-PARK: construct BalanceTracker from provider configs when any
+    # provider carries a balance field (funding_class / mode / starting_balance).
+    balance_tracker = _build_balance_tracker(providers_cfg)
+
     return GatewayConfig(
         host=host or cfg_host,
         port=port if port is not None else cfg_port,
@@ -205,7 +209,24 @@ def load_config(
         consensus_router=_module_inst("consensus", state_dir),
         virtual_key_manager=_module_inst("vkeys", state_dir),
         policy_router=_module_inst("policy", state_dir),
+        balance_tracker=balance_tracker,
     )
+
+
+def _build_balance_tracker(providers_cfg: dict) -> Any:
+    """Construct a BalanceTracker from provider configs when any provider carries
+    balance fields (funding_class, mode, starting_balance).
+
+    Returns None when no provider has balance config — backward-compatible."""
+    if not providers_cfg:
+        return None
+    has_balance = any(
+        v.get("funding_class") is not None or v.get("mode") is not None
+        for v in providers_cfg.values())
+    if not has_balance:
+        return None
+    from .balance import BalanceTracker
+    return BalanceTracker(config=providers_cfg)
 
 
 def _module_inst(name: str, state_dir: str | Path | None = None) -> Any:
@@ -328,6 +349,14 @@ def build_server(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> 
         policy_router=cfg.policy_router,
         balance_tracker=cfg.balance_tracker,
     )
+    # DRAIN-AND-PARK: wire the observer meter as the spend source for class-3
+    # drain-then-park providers (anti-sprawl: one spend source, not two).
+    if server.balance_tracker is not None:
+        def _observer_spend(provider: str) -> float:
+            costs = server.observer.all_model_provider_costs()
+            return sum(c for (m, pr), c in costs.items() if pr == provider)
+
+        server.balance_tracker.set_spend_provider_fn(_observer_spend)
     # R3 capability-matrix injection: default deny table (openrouter/novita
     # reasoning-incapable). Optional attribute — forwarder.py reads it via
     # getattr with None fallback so direct-server tests are unaffected.
@@ -452,6 +481,34 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
             ok = config.remove(str(payload.get("kind")), str(payload.get("name")))
             _reload()
             return 200, {"ok": ok}
+        if action == "balance":
+            prov = str(payload.get("provider") or "").strip()
+            op = str(payload.get("op") or "").strip()
+            if not prov:
+                return 400, {"error": {"message": "provider name required"}}
+            bt = getattr(server, "balance_tracker", None)
+            if bt is None:
+                return 400, {"error": {"message": "balance tracking not configured"}}
+            if op == "rearm":
+                # Re-arm a parked provider: unpark it. Optionally top up.
+                top = payload.get("top_up_usd")
+                if top is not None:
+                    bt.top_up(prov, float(top))
+                bt.unpark(prov)
+                return 200, {"ok": True, "provider": prov, "rearmed": True,
+                           "remaining": bt.remaining(prov)}
+            if op == "park":
+                bt.park(prov)
+                return 200, {"ok": True, "provider": prov, "parked": True}
+            if op == "top_up":
+                top = payload.get("amount_usd")
+                if top is None:
+                    return 400, {"error": {"message": "amount_usd required"}}
+                bt.top_up(prov, float(top))
+                bt.unpark(prov)
+                return 200, {"ok": True, "provider": prov, "top_up_usd": float(top),
+                           "remaining": bt.remaining(prov)}
+            return 400, {"error": {"message": f"unknown balance op {op!r}"}}
         return 400, {"error": {"message": f"unknown action {action!r}"}}
 
     return handler

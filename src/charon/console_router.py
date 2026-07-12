@@ -138,7 +138,8 @@ def try_handle_control_plane(handler, srv) -> bool:
         if handler.command == "POST" and path_only in (
                 "/charon/providers", "/charon/models", "/charon/models/import",
                 "/charon/pools", "/charon/tiers", "/charon/fallback",
-                "/charon/enable", "/charon/disable", "/charon/remove"):
+                "/charon/enable", "/charon/disable", "/charon/remove",
+                "/charon/balance"):
             host = handler.headers.get("Host", "")
             origin = handler.headers.get("Origin")
             if origin and urlsplit(origin).netloc != host:  # CSRF: cross-origin write

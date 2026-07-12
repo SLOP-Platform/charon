@@ -402,3 +402,92 @@ def test_set_pricing_hot_reload_updates_cost() -> None:
                             "usage": {"prompt_tokens": 100, "completion_tokens": 0}})
     assert obs1.usage is not None and obs1.usage.cost_usd == 0.001
     assert obs1.cost_source == "computed"
+
+
+# ---- DRAIN routing: free-first-then-drain ordering + exclude-at-0 ----------
+
+def test_order_chain_by_funding_class_free_before_drain_before_payg():
+    """Free-daily (1) sorts BEFORE drain-then-park (3) BEFORE flat-sub (2)
+    BEFORE PAYG (4).  Within class 3, positive balance sorts first (drain
+    priority)."""
+    from charon.proxy_server import UpstreamRoute
+    from charon.routing_policy import order_chain_by_funding_class
+
+    chain = [
+        UpstreamRoute("http://payg/v1", api_key="k", provider="payg"),
+        UpstreamRoute("http://drain/v1", api_key="k", provider="drain"),
+        UpstreamRoute("http://free/v1", api_key="k", provider="free-daily"),
+        UpstreamRoute("http://flat/v1", api_key="k", provider="flat-sub"),
+    ]
+
+    fc_map = {"payg": 4, "drain": 3, "free-daily": 1, "flat-sub": 2}
+    rem_map = {"drain": 5.0}
+
+    ordered = order_chain_by_funding_class(
+        chain,
+        funding_class_fn=lambda p: fc_map.get(p),
+        remaining_fn=lambda p: rem_map.get(p),
+    )
+    providers = [r.provider for r in ordered]
+
+    # free-daily (1) first, then drain (3, positive), then flat (2), then PAYG (4)
+    assert providers.index("free-daily") < providers.index("drain")
+    assert providers.index("drain") < providers.index("flat-sub")
+    assert providers.index("flat-sub") < providers.index("payg")
+
+
+def test_order_chain_by_funding_class_drain_priority_within_class3():
+    """Within class 3, providers with positive balance sort first; those at ~0
+    sort last.  Free-daily (class 1) still sorts before all class 3."""
+    from charon.proxy_server import UpstreamRoute
+    from charon.routing_policy import order_chain_by_funding_class
+
+    chain = [
+        UpstreamRoute("http://drain-empty/v1", api_key="k", provider="drain-empty"),
+        UpstreamRoute("http://free/v1", api_key="k", provider="free"),
+        UpstreamRoute("http://drain-full/v1", api_key="k", provider="drain-full"),
+    ]
+
+    fc_map = {"drain-empty": 3, "free": 1, "drain-full": 3}
+    rem_map = {"drain-empty": 0.0, "drain-full": 10.0}
+
+    ordered = order_chain_by_funding_class(
+        chain,
+        funding_class_fn=lambda p: fc_map.get(p),
+        remaining_fn=lambda p: rem_map.get(p),
+    )
+    providers = [r.provider for r in ordered]
+
+    # free (class 1) first
+    assert providers.index("free") == 0
+    # drain-full (class 3, positive) before drain-empty (class 3, zero)
+    assert providers.index("drain-full") < providers.index("drain-empty")
+
+
+def test_funding_class_order_values():
+    """funding_class_order returns the correct sort priority."""
+    from charon.routing_policy import funding_class_order
+
+    # Lower = preferred
+    assert funding_class_order(1) < funding_class_order(3)   # free before drain
+    assert funding_class_order(3) < funding_class_order(2)   # drain before flat
+    assert funding_class_order(2) < funding_class_order(4)   # flat before PAYG
+    assert funding_class_order(None) == 5   # unconfigured sorts last
+
+
+def test_order_chain_empty_chain_returns_empty():
+    from charon.routing_policy import order_chain_by_funding_class
+    assert order_chain_by_funding_class([], funding_class_fn=lambda p: None) == []
+
+
+def test_order_chain_single_provider_unchanged():
+    from charon.proxy_server import UpstreamRoute
+    from charon.routing_policy import order_chain_by_funding_class
+    chain = [UpstreamRoute("http://x/v1", api_key="k", provider="only")]
+    result = order_chain_by_funding_class(
+        chain,
+        funding_class_fn=lambda p: 3,
+        remaining_fn=lambda p: 1.0,
+    )
+    assert result == chain
+

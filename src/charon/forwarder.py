@@ -164,6 +164,36 @@ def _required_capability(body: dict) -> str | None:
     return None
 
 
+def _is_sole_leg(provider: str,
+                 pools: dict[str, list],
+                 bt) -> bool:
+    """True if *provider* is the ONLY remaining leg of ANY pool.
+
+    A provider is "remaining" if it is NOT parked (or otherwise permanently
+    excluded).  This is the sole-leg guard: we must never park/exclude the
+    last provider in a pool, because that orphans the pool and strands ALL
+    its traffic.
+
+    ``pools`` is ``srv.pools``: {pool_id: [UpstreamRoute, ...]}.
+    """
+    if not pools:
+        return False
+    for _pool_id, routes in pools.items():
+        labels = {r.provider or r.label for r in routes}
+        if provider not in labels:
+            continue
+        # Count how many legs in this pool are still viable (not parked).
+        viable = 0
+        for r in routes:
+            p = r.provider or r.label
+            if not bt.is_parked(p) and not bt.is_drained(p):
+                viable += 1
+        if viable == 0 and provider in labels:
+            # This provider is the last leg — all others are parked/drained.
+            return True
+    return False
+
+
 def forward_with_failover(handler, srv) -> None:
     """Run the data-plane failover loop for one client request (money path).
 
@@ -240,6 +270,66 @@ def forward_with_failover(handler, srv) -> None:
             logging.getLogger("charon.forwarder").warning(
                 "Capability engine would strand request (model=%s est_tokens=%d); "
                 "using full chain instead.", requested, est_tokens)
+
+    # ── DRAIN-AND-PARK: funding-class ordering + pre-flight exclusion ──
+    # Reorder by funding class (free-daily first, then drain-then-park, then
+    # flat-sub, then PAYG).  Within class 3: positive balance → top priority;
+    # at ~0 → excluded (no fail-churn) UNLESS this provider is the sole
+    # remaining leg of any pool (sole-leg guard — never orphan a pool).
+    bt = getattr(srv, "balance_tracker", None)
+    if bt is not None and chain and len(chain) > 1:
+        from .routing_policy import order_chain_by_funding_class
+
+        def _fc(prov: str) -> int | None:
+            fc = bt.funding_class(prov)
+            return int(fc) if fc is not None else None
+
+        def _rem(prov: str) -> float | None:
+            return bt.remaining(prov)
+
+        chain = order_chain_by_funding_class(
+            chain, funding_class_fn=_fc, remaining_fn=_rem)
+
+        # Pre-flight exclusion: class-3 providers at ~0 → skip unless sole leg.
+        drain_eligible: list = []
+        for r in chain:
+            prov = r.provider or r.label
+            fc = bt.funding_class(prov)
+            if fc == 3 and bt.is_parked(prov):
+                # Parked — always excluded.
+                continue
+            if fc == 3 and bt.is_drained(prov):
+                # Sole-leg guard: check if this provider is the only remaining
+                # leg of any pool.
+                is_sole = _is_sole_leg(prov, srv.pools, bt)
+                if is_sole:
+                    # Keep it — never orphan the pool.  An alert is logged
+                    # but the provider stays in the chain.
+                    import logging
+                    logging.getLogger("charon.forwarder").warning(
+                        "SOLE-LEG GUARD: provider %r is drained (balance=0) but "
+                        "is the only remaining leg of a pool — keeping it to "
+                        "prevent pool orphaning.", prov)
+                    drain_eligible.append(r)
+                    continue
+                # Pre-flight skip: drained class-3, not sole leg.
+                # Auto-park it right now (routing excludes it without fail-churn).
+                bt.park(prov)
+                continue
+            elif fc == 3 and bt.should_drain(prov):
+                # Positive balance — ensure it's unparked (may have been
+                # re-armed via top_up).
+                bt.unpark(prov)
+            drain_eligible.append(r)
+        if drain_eligible:
+            chain = drain_eligible
+        else:
+            # CRITICAL SAFETY: all routes excluded by drain routing → fall back
+            # to the original chain and warn (never strand).
+            import logging
+            logging.getLogger("charon.forwarder").warning(
+                "DRAIN routing would strand request (model=%s); "
+                "using full chain instead.", requested)
 
     # ── spend cap check (before any upstream call) ──────────────────
     if srv.spend_limiter is not None:

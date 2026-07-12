@@ -18,6 +18,8 @@ derived_cost_rank       — SR-6 cost-rank derivation from per-token pricing
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from charon import config as _config_mod
 from charon import providers as _providers_mod
 from charon.proxy_server import UpstreamRoute as _UpstreamRoute
@@ -46,6 +48,7 @@ __all__ = [
     "tier_pools",
     "build_fallback_chain",
     "order_pool_by_live_cost",
+    "order_chain_by_funding_class",
 ]
 
 
@@ -260,3 +263,54 @@ def order_pool_by_live_cost(
     if not metered_costs:
         return list(chain)
     return sorted(chain, key=lambda r: _live_rank_key(r, registry, metered_costs))
+
+
+# Funding-class priority for drain routing (operator decision #2 free-first-then-drain).
+# Lower = preferred.  Class 1 (free-daily) first, then class 3 (drain-then-park prepaid),
+# then class 2 (flat-sub), then class 4 (PAYG).  Unknown / None → 5 (sort last).
+_FUNDING_CLASS_ORDER: dict[int | None, int] = {
+    1: 0,   # free-recurring (try first — never blocks draining)
+    3: 1,   # drain-then-park prepaid (drain finite credit before flat/PAYG)
+    2: 2,   # flat-sub
+    4: 3,   # PAYG
+    None: 5,  # unconfigured
+}
+
+
+def funding_class_order(fc: int | None) -> int:
+    return _FUNDING_CLASS_ORDER.get(fc, 5)
+
+
+def order_chain_by_funding_class(
+    chain: list[_UpstreamRoute],
+    *,
+    funding_class_fn: Callable[[str], int | None],
+    remaining_fn: Callable[[str], float | None] | None = None,
+) -> list[_UpstreamRoute]:
+    """Return ``chain`` reordered by funding-class priority (free-first-then-drain).
+
+    Within class 3 (drain-then-park), providers with positive remaining balance
+    sort first (drain priority); exhausted ones sort last.  This is the sort
+    ONLY — exclusion (skip-at-0) and the sole-leg guard happen in the caller.
+
+    ``funding_class_fn(provider)`` must return the funding_class int or None.
+    ``remaining_fn(provider)`` must return remaining USD or None (used only for
+    breaking ties within class 3).
+    """
+    if not chain:
+        return []
+
+    def _sort_key(route: _UpstreamRoute) -> tuple[int, int]:
+        prov = route.provider or route.label
+        fc = funding_class_fn(prov)
+        fc_order = funding_class_order(fc)
+        # Within class 3: positive balance → preferred (0), exhausted → deprioritised (1)
+        drain_prio = 0
+        if fc == 3 and remaining_fn is not None:
+            rem = remaining_fn(prov)
+            if rem is not None and rem <= 0.0:
+                drain_prio = 1  # at ~0 → sort after those with balance
+        return (fc_order, drain_prio)
+
+    return sorted(chain, key=_sort_key)
+
