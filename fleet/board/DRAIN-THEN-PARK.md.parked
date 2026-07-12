@@ -12,11 +12,33 @@ real-dep: DRAIN-ROUTING build — DRAIN establishes the funding-class / cost_cla
   a parallel scheme. Also shares gateway.py + balance.py with the cost chain (shared-file sequencing).
 owns: src/charon/balance.py, src/charon/gateway.py, tests/test_drain_then_park.py
 accept: PYTHONPATH=src python3 -m pytest tests/test_drain_then_park.py -v -q
-  # FAIL-ON-REVERT (two invariants): (1) a class-3 (drain-then-park) provider whose balance reaches
+  # FAIL-ON-REVERT (invariants): (1) a class-3 (drain-then-park) provider whose balance reaches
   # ~0 is AUTO-PARKED (marked unavailable; routing skips it, no fail-churn) and RE-ARMS to active when
   # topped up; (2) SOLE-LEG GUARD — a provider that is the ONLY remaining leg of any pool is NEVER
   # auto-parked at 0 (kept/alerted instead of orphaning the pool). Reverting either the park trigger
   # or the sole-leg guard fails the corresponding assertion.
+  # (3) REACTIVE SIGNAL IS THE AUTHORITATIVE PARK TRIGGER (verified 2026-07-12 — OPENCODE-GO-USAGE.md;
+  #     EXHAUSTION-PARK-TICKETS.md need (A)). Park on the upstream EXHAUSTION RESPONSE, not the modeled
+  #     balance. Both signals are ALREADY classified→failover at master (proxy.py:207 _is_billing_error,
+  #     _EXHAUSTION_STATUSES={429,402,503}, _EXHAUSTION_BODY_PATTERNS incl "insufficient_balance") but are
+  #     NOT yet PARKED — so a drained provider is retried + re-pollutes failover every request (the deepseek
+  #     "all_providers_exhausted" churn). Verified signals to PARK on: 401 whose body is CreditsError /
+  #     "Insufficient balance" (opencode-zen AND opencode-go — ONE shared prepaid pool, identical 401 on both
+  #     bases), OR 429 (nanogpt weekly-quota exhaustion). Modeled balance (starting_usd − spend, from R46) is
+  #     ADVISORY/predict-early ONLY — it drifts and there is NO opencode balance endpoint to reconcile it.
+  # (4) FUNDING-CLASS RE-ARM TABLE — park + re-arm is PER FUNDING CLASS, not one flag. Cover ≥3 verified classes:
+  #     (a) opencode-zen/-go — PREPAID single shared pool; signal 401 CreditsError; re-arm = OPERATOR TOP-UP
+  #         ONLY (no periodic refresh — stays parked until topped up / auto-reload fires).
+  #     (b) nanogpt — WEEKLY quota; signal 429; re-arm = AUTOMATIC on the weekly reset (park, wait out the
+  #         window, a health probe re-arms — no operator action).
+  #     (c) neuralwatt — TIERED: primary plan (drained, operator NOT renewing) + secondary OVERAGE pool (credit
+  #         remains). Do NOT park when the primary tier exhausts — fall through to overage; park ONLY when the
+  #         LAST pool hits zero; re-arm = top-up / none. (Live neuralwatt signal UNVERIFIED locally — key only
+  #         on the .60 gateway; confirm signal there before wiring its park.)
+  #     Fail-on-revert: a 401-CreditsError provider parks + re-arms-on-topup; a 429-weekly provider parks +
+  #     auto-re-arms after the reset window; a tiered provider is NOT parked while any secondary pool has credit.
+  #     Revert any class's policy → its assertion RED. (Class-1 nanogpt periodic-reset overlaps FREE-TIER-QUOTA-
+  #     SPILL/R10 — this ticket owns the SHARED reactive-park + re-arm mechanism both classes consume.)
 prompt: /home/stack/charon-private/prompts/drain-then-park.md   # author at activation
 scope: >-
   Operator feature directive (memory charon-drain-then-park-provider-class, 2026-07-09). Model

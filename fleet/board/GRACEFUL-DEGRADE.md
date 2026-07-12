@@ -15,6 +15,13 @@ accept: |
   3. AUTO-RECOVER ON REFILL: after a refill, a health CHECK/probe re-arms the parked provider and routing
      returns to it automatically. Test: park on exhaustion, restore credit, probe passes -> next request
      routes back to it with no manual reconfig.
+  RECONCILE 2026-07-12 (EXHAUSTION-PARK-TICKETS.md need (A)): the PARK trigger for behaviors 2/3 is the
+  REACTIVE upstream exhaustion response (401 CreditsError body [opencode-zen/-go] OR 429 [nanogpt weekly]),
+  NOT the modeled balance — already classified→failover at master (proxy.py:207) but not yet parked; modeled
+  balance (R46) is advisory. AUTO-RECOVER is FUNDING-CLASS-AWARE (shared taxonomy owned by R11 DRAIN-THEN-PARK):
+  prepaid (opencode-zen) re-arms only after operator TOP-UP; periodic (nanogpt) re-arms AUTOMATICALLY after the
+  weekly reset window; tiered (neuralwatt: primary drained + overage remaining) is NOT parked until the LAST
+  pool hits zero. Fail-on-revert: each class's re-arm path (topup-probe / window-auto / last-pool-only) asserted.
 scope: |
   Operator North Star (2026-07-10): "I don't want to worry about pools/exhaustion IF I have a viable
   option; if the last option is rate-limited, throttle the session; tell me when performance is impacted
