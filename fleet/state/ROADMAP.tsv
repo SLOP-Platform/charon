@@ -166,3 +166,4 @@ Fleet	F47	designed	next	no-dark-work	register every session on the bridge + pick
 Foundation	FN1	designed	next	memory-store-adopt	adopt basic-memory MCP store over memory/ + kill whole-dump hook + migrate ~50 notes	Wave A — memory
 Foundation	FN2	designed	next	bitemporal-decay	shared valid-from/until+last-referenced decay for memory facts AND model-signal ledgers (fixes routing-brain decay, gap B2)	Wave A — memory
 Foundation	FN3	designed	next	curation-pass	scheduled dedup/conflict-flag/decay-to-archive; approval-gated (borrow /sleep + bd compact)	Wave A — memory
+Foundation	FN4	designed	next	research-gate	mechanized research protocol: reuse-check-first + evidence-over-prose + registry(dedup/staleness->update) + completeness gate	Wave B — research-gate
