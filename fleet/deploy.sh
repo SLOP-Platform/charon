@@ -327,12 +327,13 @@ for line in open(sys.argv[1], encoding='utf-8', errors='replace'):
         break
 PY
 )"
-  # 2026-07-09 cline-wire: cline-pass is now the cheap-first (drain-first) leg on the
-  # deepseek-v4-pro pool (order: cline,ng,ds,or). nanogpt/deepseek/openrouter remain
-  # BELOW it as spill/backstop. A fresh (uncached) probe must therefore route to
-  # cline-pass; getting nanogpt back means the cheap-first leg silently dropped.
-  [ "$provider" = "cline-pass" ] || fail "deepseek-v4-pro provider changed: expected cline-pass (cheap-first leg), got '${provider:-missing}'"
-  log "deepseek-v4-pro provider remains cline-pass (nanogpt/ds/or spill below)"
+  # 2026-07-12 pool-fix: deepseek.com (deepseek-direct) is the funded, working, and
+  # actually-cheapest leg on the deepseek-v4-pro pool after the POOL-INVESTIGATION
+  # retune (opencode-go/zen disabled, nanogpt deprioritized). A fresh (uncached)
+  # probe must therefore route to `deepseek`; getting a dead/spill leg back means
+  # the cheap-first funded leg silently dropped.
+  [ "$provider" = "deepseek" ] || fail "deepseek-v4-pro provider changed: expected deepseek (funded cheap-first leg), got '${provider:-missing}'"
+  log "deepseek-v4-pro provider remains deepseek (api.deepseek.com; dead legs disabled)"
 }
 
 verify_all() {

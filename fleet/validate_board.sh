@@ -51,6 +51,7 @@ for f in sorted(glob.glob(os.path.join(board, "*.md"))):
         "deps": [d.strip() for d in field(f, "depends_on").split(",") if d.strip()],
         "owns": [o.strip() for o in field(f, "owns").split(",") if o.strip()],
         "work_class": field(f, "work_class"),
+        "difficulty": field(f, "difficulty"),
         "note": field(f, "note"),
         "parked_field": field(f, "parked"),
         "build_after": field(f, "build-after"),
@@ -204,6 +205,27 @@ def inactive(t):
     # fully claimable" checks (work_class, D&S, owns-collision, WCI, missing-prompt) — a
     # parked ticket may legitimately have an unwritten prompt / provisional owns.
     return is_done(t) or is_parked(tickets[t])
+
+# 2e. difficulty required (1-5) for every live ticket. The difficulty ordinal captures
+# estimated effort/complexity — auto-seeded from tier (economy=1 … frontier=5), manually
+# refined as purpose clarifies. D&S standing-rule precedent (§2b above): same mandatory
+# self-document discipline, same not-scanned-so-exempt for .md.parked.
+for t, d in tickets.items():
+    if inactive(t):
+        continue
+    diff_raw = d["difficulty"]
+    if not diff_raw:
+        red.append(f"difficulty-missing: {t} has no 'difficulty:' field "
+                   f"(required — integer 1-5, auto-seeded from tier)")
+    else:
+        try:
+            diff_val = int(diff_raw.split(None, 1)[0])
+            if diff_val < 1 or diff_val > 5:
+                red.append(f"difficulty-invalid: {t} difficulty '{diff_raw}' "
+                           f"is outside 1-5 range (got {diff_val})")
+        except (ValueError, IndexError):
+            red.append(f"difficulty-invalid: {t} difficulty '{diff_raw}' "
+                       f"is not a valid integer 1-5")
 
 # 4. owns partition. A collision is only a LAUNCH RISK if >=2 of the owners are
 # not-done (could still run concurrently). Done/done or done/live pairs already
