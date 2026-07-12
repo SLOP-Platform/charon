@@ -1,3 +1,4 @@
+repo: charon-private
 tier: strong
 difficulty: 3
 work_class: design-review

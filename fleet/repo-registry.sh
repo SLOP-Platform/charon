@@ -17,7 +17,7 @@
 repo_default_key(){ echo charon; }
 
 # repo_known_keys — every accepted key/alias (for validators / help text).
-repo_known_keys(){ echo "charon product keystone ksf"; }
+repo_known_keys(){ echo "charon product keystone ksf charon-private rig fleet"; }
 
 # repo_resolve <key> <id>
 #   Resolves a repo KEY (empty -> default) + a ticket id into globals:
@@ -46,6 +46,14 @@ repo_resolve(){
       # ksf isn't globally installed (CI does `pip install -e .`); run it in-tree via the
       # module, from the repo root (`--repo-root .`). gate THEN verify-self, same as CI.
       RR_GATE='PYTHONPATH=. python3 -m ksf.cli --repo-root . gate && PYTHONPATH=. python3 -m ksf.cli --repo-root . verify-self'
+      ;;
+    charon-private|rig|fleet)
+      RR_KEY=charon-private
+      RR_PATH=/home/stack/charon-private
+      RR_WT="/home/stack/charon-private-wt/$id"
+      RR_BASE=master
+      # rig gate == the board validator, run from the repo root against the fleet dir.
+      RR_GATE='bash "$PWD/fleet/validate_board.sh" "$PWD/fleet"'
       ;;
     *)
       return 1
