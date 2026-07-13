@@ -14,6 +14,7 @@ CHECKS: list[tuple[list[str], str]] = [
     (["python3", "tools/check_arch.py"], "check-arch"),
     (["python3", "tools/check_security.py"], "security-scan"),
     (["python3", "tools/check_test_patterns.py"], "test-patterns"),
+    (["python3", "tools/check_workflows.py"], "workflow-policy"),
 ]
 
 

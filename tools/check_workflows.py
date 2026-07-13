@@ -7,10 +7,16 @@ GROUND: stdlib-only, no-YAML-dependency line/indent scanner over
 Enforces three policies that previously existed only as prose comments a
 human had to remember to re-apply:
 
-1. Action-ref pin policy: first-party `actions/*` `uses:` lines must be a
-   bare major-version tag (`@vN`); everything else (`docker/*`,
-   `actions/attest-*`, any other third-party action) must be pinned to a
-   full 40-char commit SHA.
+1. Action-ref pin policy (OpenSSF-hardened): EVERY `uses:` line — first-party
+   `actions/*` included — must be pinned to a full 40-char commit SHA (a
+   trailing `# vN` comment is fine and encouraged for human readability). A
+   bare version tag (`@v4`, `@v5.4.0`, ...) is a supply-chain-integrity
+   violation: tags are mutable refs an attacker (or a compromised upstream
+   maintainer account) can repoint after the fact, whereas a commit SHA is
+   immutable. This is the industry-hardened default (OpenSSF Scorecard
+   "Pinned-Dependencies" check) and the policy this gate exists to enforce
+   — reverting any `uses:` line from a SHA back to a bare tag must fail this
+   gate.
 2. Fragile Windows smoke pattern: `Start-Process` (case-insensitive) inside
    a `run:` block is the known async-launch-then-poll pattern that rotted
    `windows-exe.yml` (HANDOFF-2026-07-04-v2 finding #2) — flagged wherever
@@ -20,7 +26,12 @@ human had to remember to re-apply:
    containing `image-smoke`/`modeA-isolation`/`package`/`build`) must scope
    its `push:`/`pull_request:` triggers with a `paths:` filter, so a
    docs-only change never triggers a full package build. `ci.yml` (the fast
-   pytest/lint gate) is exempt by design.
+   pytest/lint gate) is exempt by design. A `push:` block whose ONLY ref
+   selector is `tags:` (no `branches:`) is also exempt from the paths:
+   requirement: a version-tag push is already a deliberate, human-initiated
+   release action (not the incidental commit the filter exists to screen
+   out), and bolting a `paths:` filter onto a tag ref risks the release
+   silently failing to fire on a GitHub tag-diff edge case.
 
 Exit non-zero if any violation is found across all workflow files, 0 if
 clean.
@@ -34,7 +45,6 @@ from pathlib import Path
 _ACTION_RE = re.compile(r"""uses:\s*([^\s@'"]+)@([^\s'"]+)""")
 _RUN_KEY_RE = re.compile(r"^(\s*)run:\s*(.*)$")
 _SHA_RE = re.compile(r"[0-9a-fA-F]{40}")
-_MAJOR_TAG_RE = re.compile(r"v\d+")
 _PACKAGING_JOB_HINTS = ("image-smoke", "modea-isolation", "package", "build")
 _PACKAGING_FILENAMES = ("release.yml", "windows-exe.yml")
 _EXEMPT_FILENAMES = ("ci.yml",)
@@ -93,19 +103,13 @@ def check_action_refs(path: Path, lines: list[str]) -> list[str]:
         if not m:
             continue
         ref, ver = m.group(1), m.group(2).split("#")[0].strip()
-        first_party = ref.startswith("actions/") and not ref.startswith("actions/attest-")
-        if first_party:
-            if not _MAJOR_TAG_RE.fullmatch(ver):
-                violations.append(
-                    f"{path}:{i + 1}: first-party action {ref!r} must be pinned to a "
-                    f"bare major-version tag (@vN), got {ver!r}"
-                )
-        else:
-            if not _SHA_RE.fullmatch(ver):
-                violations.append(
-                    f"{path}:{i + 1}: third-party action {ref!r} must be pinned to a "
-                    f"full 40-char commit SHA, got {ver!r}"
-                )
+        if not _SHA_RE.fullmatch(ver):
+            violations.append(
+                f"{path}:{i + 1}: action {ref!r} must be pinned to a full 40-char "
+                f"commit SHA (OpenSSF hardened pin policy), got {ver!r} — a bare "
+                f"version tag is a mutable ref and a supply-chain-integrity "
+                f"violation"
+            )
     return violations
 
 
@@ -172,6 +176,10 @@ def check_paths_filter(path: Path, lines: list[str]) -> list[str]:
             continue
         ts, te = on_children[trigger]
         keys = {k for k, _, _ in _block_children(lines, ts + 1, te)}
+        if trigger == "push" and "tags" in keys and "branches" not in keys:
+            # Tag-only push trigger (release/version pipelines) — exempt,
+            # see policy 3 in the module docstring.
+            continue
         if "paths" not in keys:
             violations.append(
                 f"{path}:{ts + 1}: packaging workflow missing paths: filter under "

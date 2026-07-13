@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@{_SHA_CHECKOUT}  # v4
 
       - name: Build image
         uses: docker/build-push-action@{_SHA_DOCKER}
@@ -38,28 +38,7 @@ jobs:
         run: pytest -q
 """
 
-_BAD_THIRD_PARTY_BARE_TAG = """\
-name: Release
-
-on:
-  push:
-    branches: [main]
-    paths:
-      - "src/**"
-
-jobs:
-  build:
-    name: Build package
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Build image
-        uses: docker/build-push-action@v6
-"""
-
-_BAD_FIRST_PARTY_SHA = f"""\
+_BAD_THIRD_PARTY_BARE_TAG = f"""\
 name: Release
 
 on:
@@ -75,9 +54,30 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@{_SHA_CHECKOUT}
+
+      - name: Build image
+        uses: docker/build-push-action@v6
 """
 
-_BAD_START_PROCESS = """\
+_BAD_FIRST_PARTY_BARE_TAG = """\
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+
+jobs:
+  build:
+    name: Build package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+"""
+
+_BAD_START_PROCESS = f"""\
 name: Windows EXE
 
 on:
@@ -92,7 +92,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@{_SHA_CHECKOUT}  # v4
 
       - name: Smoke test
         run: |
@@ -100,7 +100,7 @@ jobs:
           Start-Sleep -Seconds 2
 """
 
-_BAD_MISSING_PATHS = """\
+_BAD_MISSING_PATHS = f"""\
 name: Windows EXE
 
 on:
@@ -113,7 +113,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@{_SHA_CHECKOUT}  # v4
 
       - name: Build
         run: pyinstaller packaging/charon.spec
@@ -140,10 +140,35 @@ def test_third_party_action_bare_tag_is_flagged(tmp_path: Path) -> None:
     assert any("docker/build-push-action" in v and "40-char commit SHA" in v for v in violations)
 
 
-def test_first_party_action_full_sha_is_flagged(tmp_path: Path) -> None:
-    f = _write(tmp_path, "release.yml", _BAD_FIRST_PARTY_SHA)
+def test_first_party_action_bare_tag_is_flagged(tmp_path: Path) -> None:
+    """OpenSSF-hardened pin policy: first-party actions/* must ALSO be
+    SHA-pinned — a bare @vN tag is a mutable ref and a violation, same as
+    any third-party action."""
+    f = _write(tmp_path, "release.yml", _BAD_FIRST_PARTY_BARE_TAG)
     violations = scan_workflow_file(f)
-    assert any("actions/checkout" in v and "major-version tag" in v for v in violations)
+    assert any("actions/checkout" in v and "40-char commit SHA" in v for v in violations)
+
+
+def test_unpinning_a_sha_to_a_bare_tag_makes_the_gate_red(tmp_path: Path) -> None:
+    """Fail-on-revert: this is the exact regression class that shipped once
+    already (SHA-pins on actions/checkout + actions/setup-python silently
+    unpinned to @v4/@v5 to make this gate pass, weakening supply-chain
+    security instead of the workflows being fixed). Prove a session cannot
+    silently repeat it: starting from a SHA-pinned-clean fixture, replacing
+    the SHA with the bare tag comment it was pinned "as" must turn
+    ``workflow-policy`` RED and name the offending file.
+    """
+    clean = _write(tmp_path, "release.yml", _GOOD)
+    assert scan_workflow_file(clean) == []
+
+    unpinned_content = _GOOD.replace(f"@{_SHA_CHECKOUT}  # v4", "@v4")
+    assert "actions/checkout@v4" in unpinned_content
+    unpinned = _write(tmp_path, "release.yml", unpinned_content)
+    violations = scan_workflow_file(unpinned)
+    assert any(
+        "release.yml" in v and "actions/checkout" in v and "40-char commit SHA" in v
+        for v in violations
+    ), f"expected an unpinned actions/checkout violation naming release.yml, got: {violations}"
 
 
 def test_start_process_in_run_block_is_flagged(tmp_path: Path) -> None:
@@ -167,6 +192,32 @@ def test_ci_yml_is_exempt_from_paths_requirement(tmp_path: Path) -> None:
     f = _write(tmp_path, "ci.yml", content)
     violations = scan_workflow_file(f)
     assert not any("missing paths" in v for v in violations)
+
+
+def test_tag_only_push_is_exempt_from_paths_requirement(tmp_path: Path) -> None:
+    # A version-tag-only push trigger (release.yml / windows-exe.yml's real
+    # shape) is a deliberate release action, not the incidental commit the
+    # paths: filter exists to screen out — exempt from the rule.
+    content = _BAD_MISSING_PATHS.replace(
+        "  push:\n    branches: [main]\n",
+        '  push:\n    tags:\n      - "v*"\n',
+    )
+    f = _write(tmp_path, "windows-exe.yml", content)
+    violations = scan_workflow_file(f)
+    assert not any("missing paths" in v for v in violations)
+
+
+def test_push_with_both_tags_and_branches_still_requires_paths(tmp_path: Path) -> None:
+    # The tag-only exemption must not overreach: a push trigger that ALSO
+    # matches branches (so incidental commits can still fire it) keeps the
+    # paths: filter requirement.
+    content = _BAD_MISSING_PATHS.replace(
+        "  push:\n    branches: [main]\n",
+        '  push:\n    branches: [main]\n    tags:\n      - "v*"\n',
+    )
+    f = _write(tmp_path, "windows-exe.yml", content)
+    violations = scan_workflow_file(f)
+    assert any("missing paths" in v and "on.push" in v for v in violations)
 
 
 def test_main_exits_nonzero_when_any_fixture_is_bad(tmp_path: Path) -> None:
