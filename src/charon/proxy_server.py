@@ -484,6 +484,9 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         failover_log_path: str | None = None,
         failover_on_downgrade: bool = False,
         anthropic_prompt_cache: bool = True,
+        # F29 module registry: one dict for all Smart-Routing modules.
+        # Individual kwargs below are kept for backward compat and merged in.
+        modules: dict[str, Any] | None = None,
         guardrails: Guardrails | None = None,
         semantic_cache: SemanticCache | None = None,
         response_normalizer: ResponseNormalizer | None = None,
@@ -553,18 +556,34 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         # full-input) price. OFF → the body is forwarded byte-identical. OpenAI-wire
         # routes are NEVER touched regardless of this flag.
         self.anthropic_prompt_cache = anthropic_prompt_cache
-        self.guardrails = guardrails
-        self.semantic_cache = semantic_cache
-        self.response_normalizer = response_normalizer
-        self.observability = observability
-        self.quality_scorer = quality_scorer
-        self.spend_limiter = spend_limiter
-        self.request_inspector = request_inspector
-        self.session_affinity = session_affinity
-        self.speculative_executor = speculative_executor
-        self.consensus_router = consensus_router
-        self.virtual_key_manager = virtual_key_manager
-        self.policy_router = policy_router
+        # F29: populate self.modules from either the modules dict or individual kwargs.
+        self.modules = modules or {}
+        _mod_param_names = (
+            "guardrails", "semantic_cache", "response_normalizer", "observability",
+            "quality_scorer", "spend_limiter", "request_inspector", "session_affinity",
+            "speculative_executor", "consensus_router", "virtual_key_manager", "policy_router")
+        for _mn in _mod_param_names:
+            _mv = locals().get(_mn)
+            if _mv is not None:
+                self.modules[_mn] = _mv
+        # Backward-compat direct attributes: set ALL known names (None by default)
+        # so that srv.guardrails / srv.semantic_cache / ... always resolve.
+        self.guardrails = self.modules.get("guardrails")
+        self.semantic_cache = self.modules.get("semantic_cache")
+        self.response_normalizer = self.modules.get("response_normalizer")
+        self.observability = self.modules.get("observability")
+        self.quality_scorer = self.modules.get("quality_scorer")
+        self.spend_limiter = self.modules.get("spend_limiter")
+        self.request_inspector = self.modules.get("request_inspector")
+        self.session_affinity = self.modules.get("session_affinity")
+        self.speculative_executor = self.modules.get("speculative_executor")
+        self.consensus_router = self.modules.get("consensus_router")
+        self.virtual_key_manager = self.modules.get("virtual_key_manager")
+        self.policy_router = self.modules.get("policy_router")
+        # Also set attrs for any extra keys injected via modules= (new specs).
+        for _mn in self.modules:
+            if not hasattr(self, _mn):
+                setattr(self, _mn, self.modules[_mn])
         self.balance_tracker = balance_tracker
         # R3: optional capability deny-table, set by gateway.build_server;
         # forwarder reads via getattr(..., None) so direct-server tests are unaffected.
