@@ -172,10 +172,29 @@ def sha256_file(path: Path) -> str | None:
 # ── execution helpers (run product code, observe EFFECT) ─────────────────────
 
 def copy_to_scratch(worktree: Path) -> Path:
+    """Copy ``worktree`` into a private, WRITABLE scratch dir a grader can
+    mutate (e.g. to apply a behavioral mutant) without touching the daemon's
+    own read-only snapshot.
+
+    ROOT-CAUSE (b) FIX: the daemon's snapshot (grader-daemon.py
+    ``_snapshot_worktree``) is deliberately chmod'd read-only (0o444 files /
+    0o555 dirs) so the daemon itself can never mutate it. ``shutil.copytree``
+    defaults to ``copy2``, which PRESERVES those permission bits into the
+    scratch copy too — so any grader that writes into its scratch copy (e.g.
+    header-redaction-test.py applying a mutant to ``gateway/headers.py``)
+    crashed with ``PermissionError`` before it ever compared behavior,
+    surfacing as a uniform fail-closed BLOCK regardless of the model's actual
+    diff. Force the scratch copy writable immediately after the copy.
+    """
     scratch = Path(tempfile.mkdtemp(prefix="pf-grade-"))
     dest = scratch / "wt"
     shutil.copytree(worktree, dest,
                     ignore=shutil.ignore_patterns(*IGNORE_NAMES))
+    for p in dest.rglob("*"):
+        try:
+            p.chmod(0o755 if p.is_dir() else 0o644)
+        except OSError:
+            pass
     return dest
 
 

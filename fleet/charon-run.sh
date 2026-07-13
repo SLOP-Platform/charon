@@ -5,9 +5,12 @@
 # across MODELS when one is exhausted across all its providers (session/rate limit).
 # Zero Claude limit (all models are non-Claude on the 4-LOM gateway).
 set -u
+PFR_DEBUG="${PFR_DEBUG:-0}"
+dbg() { [ "$PFR_DEBUG" = "1" ] && printf '[charon-run][DEBUG] %s\n' "$*" >&2; return 0; }
 CWD="$1"; OUT="$2"; BRIEF="$3"; shift 3
 MODELS=("$@")
 PROMPT="$(cat "$BRIEF")"
+dbg "invoked: cwd=$CWD out=$OUT brief=$BRIEF models=[${MODELS[*]}]"
 : > "$OUT"
 LABEL=$(basename "$OUT" .txt)
 LEDGER="${CHARON_EXHAUST_LEDGER:-/home/stack/charon-private/fleet/provider-exhaustion-ledger.tsv}"
@@ -18,8 +21,16 @@ fi
 for M in "${MODELS[@]}"; do
   echo "===== [charon-run] attempt: charon/$M @ $(basename "$CWD") =====" >> "$OUT"
   MARK=$(wc -l < "$OUT")
-  ( cd "$CWD" && timeout 1800 opencode run --model "charon/$M" "$PROMPT" ) >> "$OUT" 2>&1
+  dbg "attempt model=charon/$M cwd=$CWD cmd: timeout 1800 opencode run --model charon/$M <PROMPT, ${#PROMPT} bytes>"
+  # `</dev/null`: this subprocess must NEVER read stdin. When this script is
+  # invoked from preflight.sh's per-task `while read` loop, an inherited,
+  # unbounded stdin here is what silently truncates that loop to ONE task
+  # (see preflight.sh's fd-3 fix + comment) — belt-and-suspenders even when
+  # invoked standalone (headless run should never block on / consume tty
+  # input either).
+  ( cd "$CWD" && timeout 1800 opencode run --model "charon/$M" "$PROMPT" ) </dev/null >> "$OUT" 2>&1
   RC=$?
+  dbg "attempt model=charon/$M exit_code=$RC"
   TAIL=$(tail -n +"$MARK" "$OUT")
   # Hard failure OR limit-signal in this attempt's tail -> fail over to next model.
   if printf '%s' "$TAIL" | grep -qiE '\b429\b|rate.?limit|quota exceeded|insufficient (funds|credit|balance)|session limit|no capacity|model (is )?(over|exhausted)|out of (credit|quota)'; then
