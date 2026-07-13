@@ -381,13 +381,19 @@ class GatewayProxy:
         if not isinstance(body, dict):
             # Some upstreams (e.g. Google's OpenAI-compatible error responses) ship
             # a JSON *array* rather than an object for error bodies. There is no
-            # `.model`/`.error` field to extract from a non-dict payload, so treat
-            # it as "no parseable body" instead of crashing every `.get()` below —
-            # an AttributeError here happens mid-request (after the upstream status
-            # is already known) and surfaces to the client as a connection reset
-            # instead of a clean status passthrough. The HTTP `status` itself is
-            # still classified normally either way.
-            body = None
+            # `.model` field on a non-dict payload, and `.get()` on a bare list/str
+            # would AttributeError mid-request — after the upstream status is
+            # already known — surfacing to the client as a connection reset instead
+            # of a clean status passthrough. A LIST is wrapped as a synthetic
+            # ``{"error": body}`` rather than dropped: ``_collect_error_strings``
+            # already recurses into lists, so this lets billing/auth/unsupported-
+            # model pattern matching still see it (e.g. a 401 whose list body says
+            # "insufficient balance" would otherwise be silently misclassified as a
+            # bare auth error instead of exhaustion). Any other non-dict/non-list
+            # shape (str, int, ...) has nothing to recurse into and is treated as
+            # "no parseable body". The HTTP `status` itself is still classified
+            # normally either way.
+            body = {"error": body} if isinstance(body, list) else None
         returned = (body or {}).get("model")
         exhausted = _is_billing_error(body, status)
         transient = exhausted and _is_transient_billing_error(body, status)
