@@ -30,6 +30,17 @@ AGPL-3.0 is fine for the internal rig; txtai/MIT is the documented swap path.
 - All markdown files have tags + last_referenced frontmatter
 - Search output is valid JSON with file/title/tags/score/snippet fields
 
+### Sanitization applied to markdown files
+All 92 markdown files + pin.md scrubbed for `public_clean` compliance:
+- `/home/stack` → `~`
+- `10.0.1.60` / `10.0.1.51` → `<COORDINATOR_HOST>` / `<LEGACY_HOST>`
+- `4-lom` / `4-LOM` → `self-hosted-runner`
+- `charon-private` → `build-rig`
+- `public_repo-no-personal-info` memory policy upheld
+
+### Pre-existing red (not my change)
+`tests/test_gateway.py::test_failover_chain_check_warns_when_no_pools_or_fallback` fails on origin/master — capsys empty because `sys.stderr` is not captured by `_check_failover_safety` when `print(..., file=sys.stderr)` runs after a prior `build_server`. Baseline red; kept out of owns:.
+
 ### Scoping
 - Reverted `load.sh` to dump full set → test (a) catches it (size check + content assertion)
 - Reverted `search.py` to no-op → test (b) catches it (no results)
