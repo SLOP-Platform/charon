@@ -172,3 +172,7 @@ Router	DETENTION-REDLINE	done	-	detention-redline	scorecard block-rate excludes 
 Router	WORK-DECOMPOSER	building	next	work-decomposer	strong planner splits a broad change into single-domain sub-tickets	Model-Trust
 Router	MODEL-PREFLIGHT	building	next	model-preflight	OOB-graded battery screens a candidate model on our failure modes	Model-Trust
 Fleet	LAND-SH-SAFE-SYNC	next	next	land-sh-safe-sync	land.sh sync must never destroy an uncommitted working tree	Rig fixes
+Router	PROVIDER-CATALOG-REFRESH	in-review	next	provider-catalog-refresh	auto model<->provider mapping on a schedule (wired)	Model-Trust
+Router	ADD-PROVIDER-MECHANIZE	done	-	add-provider-mechanize	one-command gateway provider add	Model-Trust
+Router	DECOMPOSE-EFFORT-AXIS	done	-	decompose-effort-axis	effort axis on the decompose gate (EFFORT-WIRE+ESTIMATOR merged)	Model-Trust
+Router	MODEL-LIFECYCLE	designed	next	model-lifecycle	fresh-install onboard + scheduled keep-fresh orchestrator	Model-Trust
