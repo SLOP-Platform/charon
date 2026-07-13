@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import decompose
+from . import decompose, decompose_effort
 from .decompose_surface import change_surface
 from .land import in_scope
 from .ledger import validate_task_id
@@ -59,6 +59,9 @@ _MERGE_LABELS = frozenset({"merge_after", "merge-order"})
 # reported back to the right external ticket (the write-back/sink seam). Slugified
 # to a board-safe id; absent → fall back to the title slug as before.
 _ID_LABELS = frozenset({"id", "ticket", "ticket_id"})
+# The ticket's 1-5 difficulty (board convention). Fed to the DECOMPOSE-EFFORT-AXIS as
+# its heaviest signal; absent → the estimator's own default midpoint.
+_DIFFICULTY_LABELS = frozenset({"difficulty", "diff"})
 # DECOMPOSE-DEFAULT-GATE escape hatch (recorded, cannot hide — like the detention
 # override). ``single-domain: true`` asserts the ticket is one domain; ``no-decompose:
 # <reason>`` bypasses with an explicit recorded reason.
@@ -76,6 +79,9 @@ _PATHISH_RE = re.compile(r"^[\w.][\w./+-]*$")
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 DEFAULT_TIER = "med"
+# Mid-point difficulty used when a ticket declares none — matches the estimator's own
+# default so an unspecified ticket scores identically whether or not intake set it.
+_DEFAULT_DIFFICULTY = decompose_effort.DEFAULT_DIFFICULTY
 
 # The product repo root, resolved from this module's own location — NOT a hardcoded
 # path (public-repo hygiene): src/charon/intake.py → parents[2] == repo root. Handed
@@ -105,6 +111,9 @@ class RawItem:
     declared_deps: list[str] = field(default_factory=list)
     declared_merge: list[str] = field(default_factory=list)
     declared_id: str = ""
+    # Raw 1-5 difficulty token verbatim (empty = undeclared); coerced when the
+    # PlanUnit is built. Feeds the DECOMPOSE-EFFORT-AXIS.
+    declared_difficulty: str = ""
     # DECOMPOSE-DEFAULT-GATE bypass reason (empty = no bypass). Set from a
     # ``single-domain: true`` or ``no-decompose: <reason>`` field.
     bypass_reason: str = ""
@@ -207,6 +216,10 @@ def _apply_field(item: RawItem, label: str, value: str) -> None:
             tokens = _split_list(value)
             if tokens:
                 item.declared_id = tokens[0]
+    elif label in _DIFFICULTY_LABELS:
+        # Keep the FIRST difficulty token seen; coerced to an int at unit build.
+        if value.strip() and not item.declared_difficulty:
+            item.declared_difficulty = value.strip().split()[0]
     elif label in _NO_DECOMPOSE_LABELS:
         # An explicit reason always wins (it is the recorded justification).
         if value.strip():
@@ -283,6 +296,10 @@ class PlanUnit:
     accept: list[str]
     body: str = ""
     tier: str = DEFAULT_TIER
+    # 1-5 effort difficulty (board convention). Read by the DECOMPOSE-EFFORT-AXIS as
+    # its heaviest signal; defaults to the estimator midpoint so undeclared tickets are
+    # neutral. Backward-compatible: pre-existing callers that omit it are unaffected.
+    difficulty: int = _DEFAULT_DIFFICULTY
     owned_paths: list[str] = field(default_factory=list)
     depends_on: list[str] = field(default_factory=list)
     merge_after: list[str] = field(default_factory=list)
@@ -308,6 +325,7 @@ class PlanUnit:
             "body": self.body,
             "accept": list(self.accept),
             "tier": self.tier,
+            "difficulty": self.difficulty,
             "owned_paths": list(self.owned_paths),
             "owns": list(self.owned_paths),  # board.Unit reads ``owns``
             "depends_on": list(self.depends_on),
@@ -665,6 +683,7 @@ def analyze(
             accept=list(item.accept),
             body=item.body,
             tier=item.tier or DEFAULT_TIER,
+            difficulty=_coerce_difficulty(item.declared_difficulty),
             owned_paths=owned,
             flags=flags,
             merge_after=list(item.declared_merge),
@@ -851,39 +870,143 @@ def _enforce_decompose_gate(
     planner_ask: ModelInvoker | None,
     is_detained: Callable[[str], bool] | None,
 ) -> None:
-    """REFUSE to admit any unit whose change surface exceeds SINGLE-DOMAIN.
+    """REFUSE to admit any unit that exceeds SINGLE-DOMAIN by change SURFACE **or** by
+    EFFORT.
 
-    For each admitted unit the DEC-AST-WRAP ``change_surface`` is measured over the unit's
-    owned paths. "Broad" is the engine's own signal: the AST independence proof splits the
-    owned files into MORE THAN ONE provably-independent group — i.e. the unit bundles work
-    that could run as separate, collision-free tickets (owns span disjoint independence
-    groups / cross a wiring boundary). Files the engine cannot prove independent stay in ONE
-    group and are admitted as a single coherent domain (conservative, matching the rest of
-    the engine — coupled modules are legitimately one unit). A single (or zero) owned path
-    is single-domain by construction and skipped, so the common single-file ticket never
-    even builds the import graph. An explicit escape hatch (``decompose_bypass``, recorded
-    on the unit) admits regardless, with the reason preserved."""
+    SURFACE axis: the DEC-AST-WRAP ``change_surface`` is measured over the unit's owned
+    paths. "Broad" is the engine's own signal — the AST independence proof splits the owned
+    files into MORE THAN ONE provably-independent group (the unit bundles work that could run
+    as separate collision-free tickets). Files the engine cannot prove independent stay in
+    ONE group and are admitted as a single coherent domain (conservative — coupled modules
+    are legitimately one unit). A single (or zero) owned path is single-domain by
+    construction, so the common single-file ticket never even builds the import graph.
+
+    EFFORT axis (DECOMPOSE-EFFORT-AXIS): surface breadth != effort. A single-file / coupled
+    ticket that is nonetheless LARGE-and-slow (high difficulty, many required behaviors)
+    never trips the surface axis at all, yet is the poster child for over-scope. So EVERY
+    admitted unit — including the single-file one the surface axis skips — is ALSO scored by
+    ``decompose_effort``: a clear over-effort call is REFUSED (fail-loud, like the surface
+    refusal); a soft-band call is ADMITTED with a recorded advisory (irreducible
+    one-file-but-big work must not be blocked). The effort SIZE signal REUSES the
+    ``change_surface`` already computed for the surface axis when there is one (multi-file
+    units) — it is never recomputed, so the intake path takes no extra AST pass.
+
+    The escape hatch (``decompose_bypass``, recorded on the unit) admits regardless and
+    bypasses BOTH axes, with the reason preserved."""
     if not enabled:
         return
     root = repo_root or _REPO_ROOT
     for unit in units:
-        if len(unit.owned_paths) <= 1:
-            continue  # one (or no) owned path cannot span >1 independence group
         if unit.decompose_bypass:
-            continue  # explicit, recorded escape hatch — cannot hide
-        surface = change_surface(unit.owned_paths, repo_root=root, config_dir=config_dir)
-        groups_val = surface.get("independence_groups")
-        groups = groups_val if isinstance(groups_val, list) else []
-        if len(groups) <= 1:
-            continue  # one independence group — single, coherent domain: admit untouched
-        files_val = surface.get("files")
-        files = files_val if isinstance(files_val, list) else list(unit.owned_paths)
-        domains = sorted({_domain_key(str(p)) for p in files})
-        suggestion = _suggest_split(
-            unit, surface, product_acceptance, planner_ask, is_detained,
-            config_dir, auto_decompose,
+            continue  # explicit, recorded escape hatch — bypasses BOTH axes, cannot hide
+
+        # SURFACE axis. Only a unit with >1 owned path can span >1 independence group, so
+        # the single-file ticket never builds the import graph. ``surface`` is captured and
+        # reused by the effort axis below (no second change_surface pass).
+        surface: dict | None = None
+        if len(unit.owned_paths) > 1:
+            surface = change_surface(unit.owned_paths, repo_root=root, config_dir=config_dir)
+            groups_val = surface.get("independence_groups")
+            groups = groups_val if isinstance(groups_val, list) else []
+            if len(groups) > 1:
+                files_val = surface.get("files")
+                files = files_val if isinstance(files_val, list) else list(unit.owned_paths)
+                domains = sorted({_domain_key(str(p)) for p in files})
+                suggestion = _suggest_split(
+                    unit, surface, product_acceptance, planner_ask, is_detained,
+                    config_dir, auto_decompose,
+                )
+                raise IntakeError(_gate_refusal_message(unit, domains, groups, suggestion))
+
+        # EFFORT axis — runs for EVERY admitted unit (incl. single-file), reusing ``surface``.
+        _enforce_effort_axis(
+            unit, surface,
+            product_acceptance=product_acceptance,
+            planner_ask=planner_ask,
+            is_detained=is_detained,
+            config_dir=config_dir,
+            auto_decompose=auto_decompose,
         )
-        raise IntakeError(_gate_refusal_message(unit, domains, groups, suggestion))
+
+
+def _enforce_effort_axis(
+    unit: PlanUnit,
+    surface: dict | None,
+    *,
+    product_acceptance: str,
+    planner_ask: ModelInvoker | None,
+    is_detained: Callable[[str], bool] | None,
+    config_dir: str | None,
+    auto_decompose: bool,
+) -> None:
+    """Score ``unit`` on the EFFORT axis and act on the verdict.
+
+    ``over-scope`` → REFUSE at intake (fail-loud, naming the effort reason); auto-run the
+    planner for a concrete split only when a change surface is available (a single-file
+    over-effort ticket has nothing to surface-split — that is exactly why it is over EFFORT,
+    not over surface). ``advise-split`` → ADMIT but record an advisory warning on the unit
+    (never blocks irreducible one-file-but-big work). ``ok`` → untouched. ``surface`` (when
+    the surface axis computed one) feeds the SIZE signal instead of the compute-free
+    owned-path fallback — no recompute."""
+    score = decompose_effort.estimate_effort(unit, surface=surface)
+    tier = unit.tier or None
+    verdict = decompose_effort.effort_verdict(score, tier=tier)
+    if verdict == "ok":
+        return
+    threshold = decompose_effort.tier_threshold(tier)
+    if verdict == "over-scope":
+        suggestion = None
+        if surface is not None:
+            suggestion = _suggest_split(
+                unit, surface, product_acceptance, planner_ask, is_detained,
+                config_dir, auto_decompose,
+            )
+        raise IntakeError(_effort_refusal_message(unit, score, threshold, suggestion))
+    # advise-split (soft band) — advisory only: admit, but record a warning that cannot hide.
+    unit.flags.append(_effort_advisory_flag(score, threshold))
+
+
+def _effort_refusal_message(
+    unit: PlanUnit,
+    score: decompose_effort.EffortScore,
+    threshold: decompose_effort.EffortThreshold,
+    suggestion: list[PlanUnit] | None,
+) -> str:
+    """A fail-loud, actionable EFFORT refusal — names what tripped (score vs hard band and
+    the underlying signals) and exactly how to proceed."""
+    lines = [
+        f"DECOMPOSE-EFFORT-AXIS: work item {unit.id!r} ({unit.goal!r}) is OVER-SCOPE by "
+        "EFFORT and cannot enter the board un-decomposed.",
+        f"  effort score {score.total} >= hard threshold {threshold.hard} (tier {unit.tier!r})",
+        f"  signals: difficulty={score.difficulty}, size={score.size:g}, "
+        f"behaviors={score.behaviors}",
+        f"  detail: {'; '.join(score.notes)}",
+    ]
+    if suggestion:
+        lines.append(
+            f"  DEC-PLANNER proposes {len(suggestion)} sub-ticket(s) "
+            "(submit these instead of the parent):"
+        )
+        for sub in suggestion:
+            lines.append(f"    - {sub.id}: owns {sub.owned_paths} (parent={sub.parent})")
+    lines.append(
+        "  FIX: split into smaller sub-tickets (fewer required behaviours / lower difficulty "
+        "each), OR add 'single-domain: true' / 'no-decompose: <reason>' to bypass (recorded)."
+    )
+    return "\n".join(lines)
+
+
+def _effort_advisory_flag(
+    score: decompose_effort.EffortScore,
+    threshold: decompose_effort.EffortThreshold,
+) -> str:
+    """The recorded (never-blocking) advisory for a soft-band unit."""
+    return (
+        f"effort advisory: score {score.total} is in the advise-split band "
+        f"({threshold.soft} <= score < {threshold.hard}) — difficulty={score.difficulty}, "
+        f"behaviors={score.behaviors}. Consider splitting; admitted (irreducible "
+        "one-file-but-big work is allowed)."
+    )
 
 
 def _suggest_split(
@@ -958,6 +1081,15 @@ def _gate_refusal_message(
 
 
 # ----------------------------------------------------------------- small helpers
+def _coerce_difficulty(raw: str) -> int:
+    """A declared difficulty token → int. Undeclared / unparseable degrades to the
+    estimator midpoint (never invents a difficulty). The estimator clamps to 1-5."""
+    try:
+        return int(round(float(raw)))
+    except (TypeError, ValueError):
+        return _DEFAULT_DIFFICULTY
+
+
 def _normalize(s: str) -> str:
     return re.sub(r"\s+", " ", s.strip().lower())
 
