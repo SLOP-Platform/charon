@@ -1,0 +1,24 @@
+---
+description: "CONFIRMED failover bug (exhausted opencode-zen/OpenRouter did NOT fail over to NeuralWatt/NanoGPT) + operator's tier-fallback want (free-first for easy work; model-not-supported → equivalent-tier substitute)."
+metadata: 
+name: charon-failover-bug-and-tier-fallback
+node_type: memory
+originSessionId: f0885a70-8492-49ca-91ec-8aac49fad3b7
+type: project
+tags: [bug, charon, debugging, failover, tier]
+last_referenced: 2026-07-13
+---
+**2026-07-04 (end of session-2, hit monthly spend limit).** Operator ran an opencode session to continue Charon work as a test and observed real routing gaps:
+
+**2026-07-05 — DROID RELIABILITY BLOCKERS (open-model routing gaps; both block agentic droids through Charon):**
+- **#4b BUMPED TO #1 PRIORITY:** DeepSeek V4 Pro emits malformed `tool_calls` → opencode "malformed tool call data that could not be repaired". Fix = wire `tool_repair.py` into the proxy response path (needs #3 allow_mutating fix first). Interim workaround: route droids to a cleaner-tool-call model.
+- **NEW GAP — empty-200 should fail over:** switching droids to Kimi K2.6 gave "empty response despite retries across available sources". Likely a real failover gap: a provider returning **HTTP 200 with empty/near-empty content** is classified as SUCCESS, so Charon does NOT fail over to the next candidate — it returns empty. New ticket: treat an empty/whitespace-only 200 completion (no content AND no tool_calls) as a failover trigger (like the unsupported-400 fix), so it tries the next provider. Sits alongside #20 (wrapped-error) in `proxy.py` classify.
+- **Interim for droids:** retry (Kimi error says it's often transient), or try GLM 5.2 / Qwen 3.6 Plus (different provider paths), or run on a proven paid path. Reliable droid routing needs #4b + #5 (reasoning-strip) + #20 (wrapped-error) + this empty-200 fix landed.
+
+**ROOT CAUSE FOUND (2026-07-04, main-loop diagnosis):** the pools are FINE — `glm-5.2`/`gpt-5.5`/etc. DO include nanogpt + neuralwatt candidates. The bug is the **failover-trigger classification in `src/charon/proxy.py`**: `_EXHAUSTION_STATUSES = {429,402,503}` and `_DROP_STATUSES = {404}` — a **`400` "model not supported"** is in NEITHER, so Charon returns that 400 to the client instead of failing over/dropping. That's the `gpt-5.5` "not supported" no-failover. **FIX (small, high-value, do FIRST next session):** classify `400`/`422` responses whose body matches "not supported / unsupported / no such model / model not found" as a **DROP** (like 404) → the candidate is excluded and the router continues down the pool to nanogpt/neuralwatt/free tiers. Add a body-pattern list (e.g. `_UNSUPPORTED_BODY_PATTERNS`) + set `dropped=True` in `classify()` (proxy.py ~:246-264) for that case; add a test. This directly delivers the operator's tier-fallback want (provider can't serve the model → skip to the next provider). Then release + deploy. (Also verify the budget-exhaustion path returns 429/402 so it's already caught; if a provider signals budget-exhausted with a 200+error or 400, add it to `_EXHAUSTION_BODY_PATTERNS` too.)
+
+**FAILOVER BUG (investigate — top priority):** with `gpt-5.5` selected, opencode got `Model gpt-5.5 is not supported`; switching to `glm-5.2` let it continue. During the run, **opencode-zen and OpenRouter ran out of session budget, but Charon did NOT fail over to NeuralWatt or NanoGPT.** So the exhaustion→failover path (pool ordering / exclusion in `proxy_server.py`) is not reaching the lower-priority providers as expected. Reproduce + fix: exhausted/4xx providers must be excluded and the router must continue down the pool's cost-ranked candidates to NeuralWatt/NanoGPT. Relates to [[charon-free-tier-routing]] and the deferred quota wiring (RFL-1).
+
+**TIER-FALLBACK requirement (operator, strong want):** (1) route simple/easy work to **FREE models when possible**; (2) when a requested model-id has **no provider** (e.g. `gpt-5.5` "not supported"), **substitute an equivalent-TIER model on a provider that has one** — i.e. tier/capability-based cross-model fallback, not just same-model failover. Ties directly to the POOLS simplification (handoff #19: capability/tier pools + default draw-down) + `model_catalog.py`/tiers + the request-normalizer (#5).
+
+**UNCOMMITTED STATE to reconcile (fresh session):** the opencode/GLM-5.2 session created **11 new tickets** — `/build-rig/fleet/board/` (9 active `.md` + 2 `.md.parked`) and `/build-rig/prompts/` (11 prompt `.md`). **Nothing committed** — build-rig fleet repo is ahead of origin by 1 commit with many untracked files. The **version-gate fix is uncommitted** in product worktree `/repo/charon-yoda-session3` (branch `feat/yoda-session3-manager`). Fresh session: review these, commit/reconcile, and dedupe against handoff tickets #1–#19. The two session-2 research agents (META-RULES-CONSOLIDATED.md, POOLS-SIMPLIFICATION.md) **died on the spend limit before finishing — re-run them.**
