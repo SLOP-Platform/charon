@@ -16,3 +16,7 @@ fleet/state/*
 fleet/logs/
 __pycache__/
 fleet/state/overnight/
+
+# runtime artifacts (regenerated; never source-tracked)
+fleet/scorecard.v1.json
+fleet/provider-exhaustion-ledger.tsv
