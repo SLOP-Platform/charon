@@ -10,6 +10,10 @@ CHECKS: list[tuple[list[str], str]] = [
     (["python3", "tools/check_version.py"], "version"),
     (["python3", "tools/check_gate_registry.py"], "gate-registry"),
     (["python3", "tools/check_public_clean.py"], "public-clean"),
+    (["python3", "tools/check_no_rig_import.py"], "no-rig-import"),
+    (["python3", "tools/check_arch.py"], "check-arch"),
+    (["python3", "tools/check_security.py"], "security-scan"),
+    (["python3", "tools/check_test_patterns.py"], "test-patterns"),
 ]
 
 
