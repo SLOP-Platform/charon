@@ -29,10 +29,17 @@ import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from . import decompose
+from .decompose_surface import change_surface
 from .land import in_scope
 from .ledger import validate_task_id
+
+if TYPE_CHECKING:
+    # Type-only import — the runtime import lives inside ``_suggest_split`` to avoid a
+    # cycle (``decompose_planner`` imports from ``intake``).
+    from .decompose_planner import ModelInvoker
 
 # Headings (outside code fences) whose normalized title names the whole-product
 # acceptance section rather than a work item.
@@ -52,15 +59,29 @@ _MERGE_LABELS = frozenset({"merge_after", "merge-order"})
 # reported back to the right external ticket (the write-back/sink seam). Slugified
 # to a board-safe id; absent → fall back to the title slug as before.
 _ID_LABELS = frozenset({"id", "ticket", "ticket_id"})
+# DECOMPOSE-DEFAULT-GATE escape hatch (recorded, cannot hide — like the detention
+# override). ``single-domain: true`` asserts the ticket is one domain; ``no-decompose:
+# <reason>`` bypasses with an explicit recorded reason.
+_SINGLE_DOMAIN_LABELS = frozenset({"single-domain", "single_domain"})
+_NO_DECOMPOSE_LABELS = frozenset({"no-decompose", "no_decompose"})
+_TRUTHY = frozenset({"true", "yes", "1", "on", "y"})
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
-_FIELD_RE = re.compile(r"^\s*([A-Za-z_]+)\s*:\s*(.*)$")
+# Label may contain hyphens (e.g. ``single-domain``); still anchored to a leading
+# letter, so every pre-existing underscore/word label continues to match.
+_FIELD_RE = re.compile(r"^\s*([A-Za-z][\w-]*)\s*:\s*(.*)$")
 _FENCE_RE = re.compile(r"^\s*(```+|~~~+)")
 _INLINE_CODE_RE = re.compile(r"`([^`]+)`")
 _PATHISH_RE = re.compile(r"^[\w.][\w./+-]*$")
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 DEFAULT_TIER = "med"
+
+# The product repo root, resolved from this module's own location — NOT a hardcoded
+# path (public-repo hygiene): src/charon/intake.py → parents[2] == repo root. Handed
+# to the DEC-AST-WRAP change-surface engine so the gate measures blast radius against
+# the real source tree. Overridable per-call (tests point it at a fixture repo).
+_REPO_ROOT = str(Path(__file__).resolve().parents[2])
 
 
 class IntakeError(RuntimeError):
@@ -84,6 +105,9 @@ class RawItem:
     declared_deps: list[str] = field(default_factory=list)
     declared_merge: list[str] = field(default_factory=list)
     declared_id: str = ""
+    # DECOMPOSE-DEFAULT-GATE bypass reason (empty = no bypass). Set from a
+    # ``single-domain: true`` or ``no-decompose: <reason>`` field.
+    bypass_reason: str = ""
 
 
 # ------------------------------------------------------------- the markdown adapter
@@ -183,6 +207,13 @@ def _apply_field(item: RawItem, label: str, value: str) -> None:
             tokens = _split_list(value)
             if tokens:
                 item.declared_id = tokens[0]
+    elif label in _NO_DECOMPOSE_LABELS:
+        # An explicit reason always wins (it is the recorded justification).
+        if value.strip():
+            item.bypass_reason = value.strip()
+    elif label in _SINGLE_DOMAIN_LABELS:
+        if not item.bypass_reason and value.strip().lower() in _TRUTHY:
+            item.bypass_reason = "single-domain: true (operator-declared)"
 
 
 def _finalize_item_paths(item: RawItem) -> None:
@@ -261,6 +292,10 @@ class PlanUnit:
     # decomposer→sub-ticket linkage). Empty for hand-authored / top-level units,
     # so every existing unit and artifact is unaffected (backward-compatible).
     parent: str = ""
+    # DECOMPOSE-DEFAULT-GATE: non-empty iff this unit bypassed the gate via an
+    # explicit ``single-domain: true`` / ``no-decompose: <reason>`` escape hatch.
+    # Recorded here (and in ``to_dict``) so a bypass can never hide.
+    decompose_bypass: str = ""
 
     @property
     def propose_only(self) -> bool:
@@ -282,6 +317,7 @@ class PlanUnit:
             "propose_only": self.propose_only,
             "flags": list(self.flags),
             "parent": self.parent,
+            "decompose_bypass": self.decompose_bypass,
         }
 
 
@@ -386,18 +422,67 @@ class Plan:
 
 
 # ------------------------------------------------------------------ the front door
-def intake(text: str, *, fmt: str = "markdown") -> Plan:
+def intake(
+    text: str,
+    *,
+    fmt: str = "markdown",
+    repo_root: str | None = None,
+    config_dir: str | None = None,
+    decompose_gate: bool = True,
+    auto_decompose: bool = False,
+    planner_ask: ModelInvoker | None = None,
+    is_detained: Callable[[str], bool] | None = None,
+) -> Plan:
     """Induct ``text`` via the ``fmt`` adapter and analyze it into a ticket plan
-    (the public entry point). Treats all input as data."""
+    (the public entry point). Treats all input as data.
+
+    DECOMPOSE-DEFAULT-GATE (on by default): every new work item is measured against a
+    SINGLE-DOMAIN threshold (DEC-AST-WRAP change surface); a broad item that spans >1
+    module / crosses a wiring boundary / spans disjoint independence groups is REFUSED
+    at intake (fail-loud) unless it carries a ``single-domain: true`` /
+    ``no-decompose: <reason>`` escape hatch. ``repo_root``/``config_dir`` point the AST
+    engine at the tree (default: the product repo). When ``auto_decompose`` is set (or a
+    ``planner_ask`` seam is supplied) the DEC-PLANNER is auto-run to include the proposed
+    single-domain sub-tickets in the refusal message. ``decompose_gate=False`` disables
+    the gate (used only to prove it is load-bearing)."""
     if fmt not in _ADAPTERS:
         raise IntakeError(f"unknown intake format {fmt!r}; have {available_adapters()}")
     product_acceptance, items = _ADAPTERS[fmt](text)
-    return analyze(items, product_acceptance)
+    return analyze(
+        items,
+        product_acceptance,
+        repo_root=repo_root,
+        config_dir=config_dir,
+        decompose_gate=decompose_gate,
+        auto_decompose=auto_decompose,
+        planner_ask=planner_ask,
+        is_detained=is_detained,
+    )
 
 
-def intake_file(path: str | Path, *, fmt: str | None = None) -> Plan:
-    """Induct a file. ``fmt`` defaults to ``markdown`` (the only v1 adapter)."""
-    return intake(Path(path).read_text(encoding="utf-8"), fmt=fmt or "markdown")
+def intake_file(
+    path: str | Path,
+    *,
+    fmt: str | None = None,
+    repo_root: str | None = None,
+    config_dir: str | None = None,
+    decompose_gate: bool = True,
+    auto_decompose: bool = False,
+    planner_ask: ModelInvoker | None = None,
+    is_detained: Callable[[str], bool] | None = None,
+) -> Plan:
+    """Induct a file. ``fmt`` defaults to ``markdown`` (the only v1 adapter). The
+    DECOMPOSE-DEFAULT-GATE applies exactly as in ``intake`` (same real path)."""
+    return intake(
+        Path(path).read_text(encoding="utf-8"),
+        fmt=fmt or "markdown",
+        repo_root=repo_root,
+        config_dir=config_dir,
+        decompose_gate=decompose_gate,
+        auto_decompose=auto_decompose,
+        planner_ask=planner_ask,
+        is_detained=is_detained,
+    )
 
 
 # ------------------------------------------------------- Phase 2: autonomous mode
@@ -498,9 +583,23 @@ def autonomous_intake(
 
 
 # ----------------------------------------------------------------- the analysis
-def analyze(items: Iterable[RawItem], product_acceptance: str = "") -> Plan:
+def analyze(
+    items: Iterable[RawItem],
+    product_acceptance: str = "",
+    *,
+    repo_root: str | None = None,
+    config_dir: str | None = None,
+    decompose_gate: bool = True,
+    auto_decompose: bool = False,
+    planner_ask: ModelInvoker | None = None,
+    is_detained: Callable[[str], bool] | None = None,
+) -> Plan:
     """Apply the ADR-0008 failure contract mechanically to parsed items and emit a
-    plan. Pure analysis: nothing is executed, nothing is spawned (ADR-0011 D1)."""
+    plan. Pure analysis: nothing is executed, nothing is spawned (ADR-0011 D1).
+
+    The DECOMPOSE-DEFAULT-GATE runs as a final pass (see ``_enforce_decompose_gate``):
+    it REFUSES any admitted unit whose change surface exceeds SINGLE-DOMAIN unless the
+    unit carries an escape-hatch bypass (recorded on ``PlanUnit.decompose_bypass``)."""
     items = list(items)
     plan = Plan(product_acceptance=product_acceptance.strip())
 
@@ -569,6 +668,7 @@ def analyze(items: Iterable[RawItem], product_acceptance: str = "") -> Plan:
             owned_paths=owned,
             flags=flags,
             merge_after=list(item.declared_merge),
+            decompose_bypass=item.bypass_reason,
         )
         pairs.append((unit, item))
 
@@ -637,6 +737,20 @@ def analyze(items: Iterable[RawItem], product_acceptance: str = "") -> Plan:
 
     # Defence in depth: NEVER return a plan whose concurrent units share a path.
     assert_disjoint_waves(plan.units)
+
+    # DECOMPOSE-DEFAULT-GATE (capstone): make decomposition the DEFAULT work-creation
+    # path — a broad/god-ticket can never enter the board un-decomposed. Runs on the
+    # SAME real path production uses (intake → analyze), never a side function.
+    _enforce_decompose_gate(
+        plan.units,
+        product_acceptance=plan.product_acceptance,
+        repo_root=repo_root,
+        config_dir=config_dir,
+        enabled=decompose_gate,
+        auto_decompose=auto_decompose,
+        planner_ask=planner_ask,
+        is_detained=is_detained,
+    )
     return plan
 
 
@@ -710,6 +824,137 @@ def assert_disjoint_waves(units: list[PlanUnit]) -> None:
                 f"disjoint-wave invariant violated: units {a.id!r} and {b.id!r} "
                 f"share a path yet neither depends on the other"
             )
+
+
+# ------------------------------------------------------ DECOMPOSE-DEFAULT-GATE
+def _domain_key(path: str) -> str:
+    """A coarse single-domain key: a source file and its co-located test collapse to the
+    SAME domain (``src/charon/x.py`` and ``tests/test_x.py`` → ``x``), while two unrelated
+    modules are two domains. The heuristic module-count guard that complements the AST
+    independence split (a change touching one module plus its own test stays one domain)."""
+    base = path.rsplit("/", 1)[-1]
+    if base.endswith(".py"):
+        base = base[:-3]
+    if base.startswith("test_"):
+        base = base[len("test_"):]
+    return base or path
+
+
+def _enforce_decompose_gate(
+    units: list[PlanUnit],
+    *,
+    product_acceptance: str,
+    repo_root: str | None,
+    config_dir: str | None,
+    enabled: bool,
+    auto_decompose: bool,
+    planner_ask: ModelInvoker | None,
+    is_detained: Callable[[str], bool] | None,
+) -> None:
+    """REFUSE to admit any unit whose change surface exceeds SINGLE-DOMAIN.
+
+    For each admitted unit the DEC-AST-WRAP ``change_surface`` is measured over the unit's
+    owned paths. "Broad" is the engine's own signal: the AST independence proof splits the
+    owned files into MORE THAN ONE provably-independent group — i.e. the unit bundles work
+    that could run as separate, collision-free tickets (owns span disjoint independence
+    groups / cross a wiring boundary). Files the engine cannot prove independent stay in ONE
+    group and are admitted as a single coherent domain (conservative, matching the rest of
+    the engine — coupled modules are legitimately one unit). A single (or zero) owned path
+    is single-domain by construction and skipped, so the common single-file ticket never
+    even builds the import graph. An explicit escape hatch (``decompose_bypass``, recorded
+    on the unit) admits regardless, with the reason preserved."""
+    if not enabled:
+        return
+    root = repo_root or _REPO_ROOT
+    for unit in units:
+        if len(unit.owned_paths) <= 1:
+            continue  # one (or no) owned path cannot span >1 independence group
+        if unit.decompose_bypass:
+            continue  # explicit, recorded escape hatch — cannot hide
+        surface = change_surface(unit.owned_paths, repo_root=root, config_dir=config_dir)
+        groups_val = surface.get("independence_groups")
+        groups = groups_val if isinstance(groups_val, list) else []
+        if len(groups) <= 1:
+            continue  # one independence group — single, coherent domain: admit untouched
+        files_val = surface.get("files")
+        files = files_val if isinstance(files_val, list) else list(unit.owned_paths)
+        domains = sorted({_domain_key(str(p)) for p in files})
+        suggestion = _suggest_split(
+            unit, surface, product_acceptance, planner_ask, is_detained,
+            config_dir, auto_decompose,
+        )
+        raise IntakeError(_gate_refusal_message(unit, domains, groups, suggestion))
+
+
+def _suggest_split(
+    unit: PlanUnit,
+    surface: dict,
+    product_acceptance: str,
+    planner_ask: ModelInvoker | None,
+    is_detained: Callable[[str], bool] | None,
+    config_dir: str | None,
+    auto_decompose: bool,
+) -> list[PlanUnit] | None:
+    """AUTO-run the DEC-PLANNER over the broad ticket's change surface to emit disjoint
+    single-domain sub-tickets, for the actionable refusal message. Only attempted when a
+    planner is available (``planner_ask`` supplied or ``auto_decompose`` set), so the base
+    intake path stays network-free and deterministic. Any planner failure (no configured
+    model, bad reply, unresolvable split) degrades to ``None`` — the parent is still
+    refused, just without a concrete suggestion."""
+    if planner_ask is None and not auto_decompose:
+        return None
+    # Lazy, package-relative import: decompose_planner imports intake at module load, so
+    # a static ``from .decompose_planner import ...`` here would trip the arch-lint
+    # circular-import check. The ``from . import`` form (as decompose_planner itself uses
+    # for recommend/secrets) resolves to the package, breaking the static self-edge; at
+    # runtime decompose_planner is fully loaded by the time this runs, so there is no cycle.
+    from . import decompose_planner as _dp
+
+    try:
+        subs = _dp.plan_decomposition(
+            _dp.BroadTicket(
+                id=unit.id,
+                goal=unit.goal,
+                body=unit.body,
+                product_acceptance=product_acceptance,
+            ),
+            surface,
+            ask=planner_ask,
+            is_detained=is_detained,
+            config_dir=config_dir,
+        )
+    except _dp.PlannerError:
+        return None
+    for sub in subs:
+        sub.parent = unit.id
+    return subs
+
+
+def _gate_refusal_message(
+    unit: PlanUnit,
+    domains: list[str],
+    groups: list,
+    suggestion: list[PlanUnit] | None,
+) -> str:
+    """A fail-loud, actionable refusal: what tripped, and exactly how to proceed."""
+    lines = [
+        f"DECOMPOSE-DEFAULT-GATE: work item {unit.id!r} ({unit.goal!r}) exceeds "
+        "SINGLE-DOMAIN and cannot enter the board un-decomposed.",
+        f"  owns spans {len(domains)} domain(s): {domains}",
+        f"  AST independence split → {len(groups)} group(s): {groups}",
+    ]
+    if suggestion:
+        lines.append(
+            f"  DEC-PLANNER proposes {len(suggestion)} single-domain sub-ticket(s) "
+            "(submit these instead of the parent):"
+        )
+        for sub in suggestion:
+            lines.append(f"    - {sub.id}: owns {sub.owned_paths} (parent={sub.parent})")
+    lines.append(
+        "  FIX: split into single-domain sub-tickets (one module each), OR add "
+        "'single-domain: true' / 'no-decompose: <reason>' to bypass (recorded)."
+    )
+    return "\n".join(lines)
 
 
 # ----------------------------------------------------------------- small helpers
