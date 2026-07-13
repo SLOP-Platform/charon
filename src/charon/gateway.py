@@ -43,6 +43,7 @@ from .routing_policy.catalog_refresh import CatalogRefresher
 from .session_affinity import SessionAffinity
 from .speculative_execution import SpeculativeExecutor
 from .spend_limits import SpendLimiter
+from .tool_repair import ToolCallRepair
 from .virtual_keys import VirtualKeyManager
 
 # ── module registry (F29) ─────────────────────────────────────────────────────
@@ -73,6 +74,12 @@ _MODULE_SPECS: list[ModuleSpec] = [
                lambda d, sd: SemanticCache(max_size=d.get("max_size", 1000))),
     ModuleSpec("normalizer", "response_normalizer",
                lambda d, sd: ResponseNormalizer()),
+    # CG-critical (tool-call reliability): schema-only repair of malformed
+    # tool_calls[].function.arguments before a served response reaches the
+    # client. Always on (not opt_in) — the repair is a validate-then-repair
+    # guard, no-op on an already-well-formed response (near-zero risk).
+    ModuleSpec("tool_repair", "tool_repair",
+               lambda d, sd: ToolCallRepair()),
     ModuleSpec("guardrails", "guardrails",
                lambda d, sd: Guardrails(config=d if d else {"keywords": []})),
     ModuleSpec("observability", "observability",

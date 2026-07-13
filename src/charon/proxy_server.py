@@ -54,6 +54,7 @@ from .response_normalizer import ResponseNormalizer
 from .session_affinity import SessionAffinity
 from .speculative_execution import SpeculativeExecutor
 from .spend_limits import SpendLimiter
+from .tool_repair import ToolCallRepair
 from .virtual_keys import VirtualKeyManager
 
 # Public import surface re-exported from this facade (decompose). Declaring the
@@ -490,6 +491,7 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         guardrails: Guardrails | None = None,
         semantic_cache: SemanticCache | None = None,
         response_normalizer: ResponseNormalizer | None = None,
+        tool_repair: ToolCallRepair | None = None,
         observability: Observability | None = None,
         quality_scorer: QualityScorer | None = None,
         spend_limiter: SpendLimiter | None = None,
@@ -559,9 +561,10 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         # F29: populate self.modules from either the modules dict or individual kwargs.
         self.modules = modules or {}
         _mod_param_names = (
-            "guardrails", "semantic_cache", "response_normalizer", "observability",
-            "quality_scorer", "spend_limiter", "request_inspector", "session_affinity",
-            "speculative_executor", "consensus_router", "virtual_key_manager", "policy_router")
+            "guardrails", "semantic_cache", "response_normalizer", "tool_repair",
+            "observability", "quality_scorer", "spend_limiter", "request_inspector",
+            "session_affinity", "speculative_executor", "consensus_router",
+            "virtual_key_manager", "policy_router")
         for _mn in _mod_param_names:
             _mv = locals().get(_mn)
             if _mv is not None:
@@ -571,6 +574,10 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         self.guardrails = self.modules.get("guardrails")
         self.semantic_cache = self.modules.get("semantic_cache")
         self.response_normalizer = self.modules.get("response_normalizer")
+        # CG-critical: schema-only tool-call arguments repair (malformed JSON from
+        # a flaky provider), applied on the served-response path in forwarder.py.
+        # None (default) → forwarder's guard is a no-op, byte-identical behavior.
+        self.tool_repair = self.modules.get("tool_repair")
         self.observability = self.modules.get("observability")
         self.quality_scorer = self.modules.get("quality_scorer")
         self.spend_limiter = self.modules.get("spend_limiter")
