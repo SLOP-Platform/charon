@@ -2,6 +2,7 @@ tier: economy
 difficulty: 3
 work_class: ci-infra
 branch: feat/fn5-registry-sweep
+repo: charon-private
 depends_on:
 owns: /home/stack/charon-private/fleet/state/REGISTRY-CANDIDATES.md
 accept: |

@@ -2,6 +2,7 @@ tier: economy
 difficulty: 3
 work_class: ci-infra
 branch: feat/fn2-bitemporal-decay
+repo: charon-private
 depends_on:
 owns: /home/stack/charon-private/fleet/memory/bitemporal.py
 accept: |

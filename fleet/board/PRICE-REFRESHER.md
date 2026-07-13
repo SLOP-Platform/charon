@@ -2,6 +2,7 @@ tier: strong
 difficulty: 3
 work_class: money-path
 branch: feat/price-refresher
+parked: true
 repo: charon
 depends_on:
 owns: src/charon/routing_policy/price_refresher.py, tests/test_price_refresher.py

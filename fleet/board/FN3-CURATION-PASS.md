@@ -2,6 +2,7 @@ tier: economy
 difficulty: 2
 work_class: ci-infra
 branch: feat/fn3-curation-pass
+repo: charon-private
 depends_on:
 owns: /home/stack/charon-private/fleet/memory/curate.sh
 accept: |

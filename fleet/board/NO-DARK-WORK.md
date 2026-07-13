@@ -2,6 +2,7 @@ tier: economy
 difficulty: 3
 work_class: ci-infra
 branch: feat/no-dark-work
+repo: charon-private
 depends_on:
 owns: /home/stack/charon-private/fleet/dark-work-check.sh
 accept: |
