@@ -78,6 +78,10 @@ class Unit:
     goal: str = ""
     body: str = ""
     accept: list[str] = field(default_factory=list)
+    # The id of the broad ticket this unit was decomposed from (traces a
+    # sub-ticket back to its origin). Empty for top-level units — every existing
+    # board record loads unchanged (backward-compatible).
+    parent: str = ""
 
     def __post_init__(self) -> None:
         validate_task_id(self.id)
@@ -95,6 +99,7 @@ class Unit:
             "goal": self.goal,
             "body": self.body,
             "accept": list(self.accept),
+            "parent": self.parent,
         }
 
     @classmethod
@@ -110,6 +115,7 @@ class Unit:
                 goal=d.get("goal", ""),
                 body=d.get("body", ""),
                 accept=list(d.get("accept", [])),
+                parent=d.get("parent", ""),
             )
         except (KeyError, TypeError) as exc:
             raise BoardError(f"unit record malformed: {exc}") from exc
