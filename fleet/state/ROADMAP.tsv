@@ -16,13 +16,13 @@ Router	R2	done	-	router-core	price-sorted order + smart failover	Wave 2 — deci
 Router	R3	done	-	capability-matrix	which providers serve what + quirks	Wave 2 — decide (brain)
 Router	R7	done	-	capability-engine	one brain for routing	Wave 2 — decide (brain)
 Router	R8	done	-	latency-signal	fail over slow providers	Wave 2 — decide (brain)
-Router	R43	next	next	wiring-audit	sweep gateway for built-but-inert features → wired/inert matrix	Wave 3 — class-fix (wiring & test discipline)
+Router	R43	building	now	wiring-audit	sweep gateway for built-but-inert features → wired/inert matrix — audit delivered (WIRING-AUDIT-MATRIX.md), PR #20 still DRAFT (not merged)	Wave 3 — class-fix (wiring & test discipline)
 Router	R44	designed	next	dogfood-gate	e2e merge-gate: real-config request asserts observable effects	Wave 3 — class-fix (wiring & test discipline)
 Router	R45	designed	next	inert-startup-check	startup self-check: active vs inert optional components (fail-loud)	Wave 3 — class-fix (wiring & test discipline)
-Router	R46	designed	next	balance-wire	construct BalanceTracker from gateway config (un-deads R4 record_spend)	Wave 3a — foundation & balance
+Router	R46	done	-	balance-wire	construct BalanceTracker from gateway config (un-deads R4 record_spend) — merged PR #95 (b5d7948), verified live in gateway.load_config/_build_balance_tracker + test_gateway.py FAIL-ON-REVERT	Wave 3a — foundation & balance
 Router	R47	designed	next	live-api-balance	neuralwatt adapter + TTL poller + wire balance into routing	Wave 3a — foundation & balance
-Router	R12	designed	next	drain-routing	route to drain credit first	Wave 3a — foundation & balance
-Router	R11	designed	next	drain-then-park	spend prepaid credit then pause	Wave 3a — foundation & balance
+Router	R12	done	-	drain-routing	route to drain credit first — merged PR #95 (b5d7948), forwarder.py funding-class reorder + balance.py drain accounting	Wave 3a — foundation & balance
+Router	R11	done	-	drain-then-park	spend prepaid credit then pause — merged PR #95 (b5d7948), sole-leg guard (forwarder.py _is_sole_leg) + funding-class re-arm table (balance.py park/unpark) + tests/test_drain_then_park.py	Wave 3a — foundation & balance
 Router	R14	designed	next	meter-session-tag	attribute spend to a session	Wave 3b — quick wins
 Router	R16	designed	next	graceful-degrade	throttle+alert+auto-recover on refill	Wave 3b — quick wins
 Router	R26	designed	next	catalog-reconcile-gpt5	reconcile catalog with live routing	Wave 3b — quick wins
@@ -81,10 +81,10 @@ Fleet	F24	done	-	fleet-gate-repoint	gate runs fleet tests not product ones	Wave 
 Fleet	F27	done	-	access-check	probe+report host access at boot	Wave D — gate & reporting
 Fleet	F44	done	-	web-roadmap-generator	self-refreshing web roadmap from ROADMAP.tsv	Wave D — gate & reporting
 Fleet	F45	designed	next	project-audit-gate	fact-audit + re-sequence at project/wave start	Wave H — board & gate
-Fleet	F11	queued	next	work-optimizer	schedule work for max parallelism	Wave E — automation brains
-Fleet	F12	queued	next	auto-close	close stale and landed tickets	Wave E — automation brains
-Fleet	F13	queued	next	recurrence-auditor	catch repeat failures automatically	Wave E — automation brains
-Fleet	F14	queued	next	detector-lifecycle	keep drift detectors current	Wave E — automation brains
+Fleet	F11	queued	next	work-optimizer	COMPOSE (not rebuild): wire F46 parallelizability-gate (merged, fleet PR #37) + decompose-sizing's makespan N* (product feat/decompose-sizing) into one launch-time scheduler; absorbs F12's auto-close-on-completion step; see WCI-CONSOLIDATION.md	Wave E — automation brains
+Fleet	F12	parked	next	auto-close	FOLDED into F11 (auto-close-on-completion is F11's final scheduler step, not a separate brain) — most of this is ALSO already covered live by F2 auto-done-on-merge (done); see WCI-CONSOLIDATION.md	Wave E — automation brains
+Fleet	F13	parked	next	recurrence-auditor	FOLDED — the concrete recurring-defect classes are now owned by REACHABILITY-GATE (cross-boundary hardcoded paths) + test_gate_registry_execution.py (orphaned gates, PR #119); generalized brain = Keystone KS21/KS29. No standalone scope remains; see WCI-CONSOLIDATION.md	Wave E — automation brains
+Fleet	F14	parked	next	detector-lifecycle	FOLDED — detector/gate freshness now covered by test_gate_registry_execution.py's fail-loud wiring proof (PR #119) + Keystone KS29 registry-primitive drift-check when built; see WCI-CONSOLIDATION.md	Wave E — automation brains
 Fleet	F23	building	now	session-end-deploy	auto-update 4-LOM at session close	Wave F — session lifecycle
 Fleet	F28	queued	next	startup-context-diet	cut startup context and token cost	Wave F — session lifecycle
 Fleet	F16	designed	next	autonomous-ttl	time-box unattended runs	Wave F — session lifecycle
@@ -94,7 +94,7 @@ Fleet	F17	done	-	scorecard-auto-append	record model scores automatically	Wave G 
 Fleet	F18	done	-	auto-log-model-lies	log models that claim false success	Wave G — quality & hygiene
 Fleet	F25	designed	next	repo-decl-central	declare product vs fleet repo once	Wave G — quality & hygiene
 Fleet	F26	designed	next	shellcheck-clean	make fleet scripts shellcheck-clean	Wave G — quality & hygiene
-Fleet	F29	designed	next	post-gateway-wci-decompose	ACCEPTED surgical gateway decompose: module-registry + config-package + providers-data (unblocks Router W4-8)	Wave G — quality & hygiene
+Fleet	F29	done	-	post-gateway-wci-decompose	surgical gateway decompose: module-registry (PR #100/085e74f) + config-package (PR #99/6460ace) + providers-data (PR #98/5135e2e) — all 3 slices merged, unblocked Router W4-8	Wave G — quality & hygiene
 Fleet	F30	designed	next	difficulty-schema	enforce difficulty field on tickets	Wave H — board & gate
 Fleet	F31	designed	next	wire-mocklint-enforce	enforce fabricated-mock lint in gate	Wave H — board & gate
 Fleet	F43	designed	next	project-membership-gate	gate: new tickets fold into a project	Wave H — board & gate
@@ -171,8 +171,8 @@ Foundation	FN5	designed	next	registry-sweep	audit product+rig+KSF for smart-regi
 Router	DETENTION-REDLINE	done	-	detention-redline	scorecard block-rate excludes a model from a work_class chain	Model-Trust
 Router	WORK-DECOMPOSER	done	-	work-decomposer	strong planner splits a broad change into single-domain sub-tickets	Model-Trust
 Router	MODEL-PREFLIGHT	done	-	model-preflight	OOB-graded battery screens a candidate model on our failure modes	Model-Trust
-Fleet	LAND-SH-SAFE-SYNC	next	next	land-sh-safe-sync	land.sh sync must never destroy an uncommitted working tree	Rig fixes
+Fleet	LAND-SH-SAFE-SYNC	done	-	land-sh-safe-sync	land.sh sync must never destroy an uncommitted working tree — merged PR #24 (40ffdba)	Rig fixes
 Router	PROVIDER-CATALOG-REFRESH	done	-	provider-catalog-refresh	auto model<->provider mapping on a schedule (wired)	Model-Trust
 Router	ADD-PROVIDER-MECHANIZE	done	-	add-provider-mechanize	one-command gateway provider add	Model-Trust
 Router	DECOMPOSE-EFFORT-AXIS	done	-	decompose-effort-axis	effort axis on the decompose gate (EFFORT-WIRE+ESTIMATOR merged)	Model-Trust
-Router	MODEL-LIFECYCLE	designed	next	model-lifecycle	fresh-install onboard + scheduled keep-fresh orchestrator	Model-Trust
+Router	MODEL-LIFECYCLE	done	-	model-lifecycle	fresh-install onboard + scheduled keep-fresh orchestrator — merged PR #117 (69c115d)	Model-Trust

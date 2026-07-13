@@ -37,3 +37,12 @@ note: |
   Split from TEST-HARDEN-CONTRACT per operator decision 2026-07-10 (merge A-only + hard follow-up).
   Money-path-adjacent (test-integrity gate) — INDEPENDENT review before merge, fail-on-revert test
   required. Origin review packet: PR #92 REVIEW-PACKET (worktree charon-fleet-TEST-HARDEN-CONTRACT).
+
+  WCI RECONCILE (2026-07-13, code-confirmed at charon origin/master af4a17c): DO step 2 landed as a
+  SIDE EFFECT of PR #119 (gate-registry-complete/work-framework-wiring) — check_test_patterns.py IS
+  now in gate_runner.CHECKS and DOES run in `charon gate` (confirmed: gate_runner.py:16). This ticket
+  is NOT done: DO steps 1/3/4 are still open — tools/check_test_patterns.py:17-19 still documents rule
+  (e) self-mirroring-mock as a WARNING only ("gates under --strict"; gate_runner.CHECKS invokes it
+  WITHOUT --strict), so a fresh self-mirroring mock today still passes the gate. Remaining scope:
+  promote rule (e) to a hard ERROR, clean up the ~4 pre-existing violators it will surface, and
+  tighten check_gate_registry.py per DO-4. Do not mark done on step-2-only wiring.
