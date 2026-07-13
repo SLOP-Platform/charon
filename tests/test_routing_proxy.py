@@ -6,6 +6,7 @@ handles errors, and is discoverable via printed port line.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -13,6 +14,22 @@ import urllib.request
 from pathlib import Path
 
 from charon.routing_proxy import RoutingProxyServer
+
+# Absolute repo root / src, so the `python -m charon.routing_proxy` subprocess
+# below can import charon irrespective of the ambient CWD or a *relative*
+# PYTHONPATH=src that a prior test may have changed (test-isolation fix).
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_SRC_DIR = _REPO_ROOT / "src"
+
+
+def _hermetic_env() -> dict[str, str]:
+    env = dict(os.environ)
+    existing = env.get("PYTHONPATH", "")
+    parts = [str(_SRC_DIR), str(_REPO_ROOT)]
+    if existing:
+        parts.append(existing)
+    env["PYTHONPATH"] = os.pathsep.join(parts)
+    return env
 
 
 def test_routing_proxy_forwards_request(mock_upstream, _post):
@@ -128,12 +145,17 @@ def test_routing_proxy_cli_reports_port(mock_upstream, tmp_path: Path):
          "--upstream-base", upstream_url,
          "--report-path", str(report)],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        cwd=str(_REPO_ROOT), env=_hermetic_env(),
     )
     try:
         # Read the "proxy:PORT" line
         assert p.stdout is not None
         line = p.stdout.readline()
-        assert line.strip().startswith("proxy:")
+        if not line.strip().startswith("proxy:"):
+            err = p.stderr.read() if p.stderr is not None else ""
+            raise AssertionError(
+                f"expected 'proxy:PORT' on stdout, got {line!r}; stderr: {err!r}"
+            )
         port = int(line.strip().split(":")[1])
         assert port > 0
     finally:
