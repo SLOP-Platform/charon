@@ -60,13 +60,18 @@ jobs:
         run: docker build -t charon:ci .
       - name: run service + healthz
         run: |
-          docker run -d --name charon-ci -p 127.0.0.1:8473:8473 charon:ci
+          name="charon-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          trap 'docker rm -f "$name" >/dev/null 2>&1 || true' EXIT
+          docker rm -f "$name" >/dev/null 2>&1 || true
+          docker run -d --name "$name" -p 127.0.0.1:0:8473 charon:ci
+          hostport=$(docker port "$name" 8473/tcp | head -n1 | sed 's/.*://')
+          ok=0
           for _ in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8473/healthz; then ok=1; break; fi
+            if curl -fsS "http://127.0.0.1:${hostport}/healthz"; then ok=1; break; fi
             sleep 1
           done
-          docker logs charon-ci
-          docker rm -f charon-ci
+          docker logs "$name"
+          docker rm -f "$name" >/dev/null 2>&1 || true
           test "${ok:-0}" = "1"
 
   supply-chain-audit:

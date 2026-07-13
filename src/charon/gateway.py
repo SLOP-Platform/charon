@@ -22,6 +22,7 @@ import json
 import os
 import sys
 import tomllib
+from collections.abc import Callable as _Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,63 @@ from .session_affinity import SessionAffinity
 from .speculative_execution import SpeculativeExecutor
 from .spend_limits import SpendLimiter
 from .virtual_keys import VirtualKeyManager
+
+# ── module registry (F29) ─────────────────────────────────────────────────────
+# Single source of truth for every Smart-Routing module.  Adding a new module is
+# one spec row here + one module file — editing ZERO god-files in gateway.py /
+# proxy_server.py bodies.  The loop in _module_inst picks it up automatically.
+
+
+@dataclass(frozen=True)
+class ModuleSpec:
+    """One row in the module registry — declarative wiring for a Smart-Routing
+    module.  ``name`` is the short id used by ``_module_inst`` and the config-file
+    stem; ``attr`` is the backward-compatible public attribute name on
+    GatewayConfig / GatewayProxyServer.  ``opt_in`` modules return None unless
+    their config file carries ``"enabled": true``."""
+    name: str
+    attr: str
+    factory: _Callable[[dict, Path], Any]
+    opt_in: bool = False
+
+    @property
+    def config_file(self) -> str:
+        return f"{self.name}.json"
+
+
+_MODULE_SPECS: list[ModuleSpec] = [
+    ModuleSpec("cache", "semantic_cache",
+               lambda d, sd: SemanticCache(max_size=d.get("max_size", 1000))),
+    ModuleSpec("normalizer", "response_normalizer",
+               lambda d, sd: ResponseNormalizer()),
+    ModuleSpec("guardrails", "guardrails",
+               lambda d, sd: Guardrails(config=d if d else {"keywords": []})),
+    ModuleSpec("observability", "observability",
+               lambda d, sd: Observability(config=d if d else {})),
+    ModuleSpec("quality", "quality_scorer",
+               lambda d, sd: QualityScorer(state_dir=sd)),
+    ModuleSpec("spend", "spend_limiter",
+               lambda d, sd: SpendLimiter(
+                   monthly_limit_usd=float(d.get("monthly_limit_usd", 0)),
+                   state_dir=sd)),
+    ModuleSpec("inspector", "request_inspector",
+               lambda d, sd: RequestInspector()),
+    ModuleSpec("session_affinity", "session_affinity",
+               lambda d, sd: SessionAffinity(ttl=float(d.get("ttl", 300)))),
+    ModuleSpec("speculative", "speculative_executor",
+               lambda d, sd: SpeculativeExecutor(
+                   enabled=True, max_providers=int(d.get("max_providers", 3))),
+               opt_in=True),
+    ModuleSpec("consensus", "consensus_router",
+               lambda d, sd: ConsensusRouter(
+                   enabled=True, default_count=int(d.get("default_count", 3)),
+                   similarity=float(d.get("similarity", 0.8))),
+               opt_in=True),
+    ModuleSpec("vkeys", "virtual_key_manager",
+               lambda d, sd: VirtualKeyManager(state_dir=sd)),
+    ModuleSpec("policy", "policy_router",
+               lambda d, sd: PolicyRouter(state_dir=sd)),
+]
 
 # ── backward-compatible re-exports (tests import these from gateway) ──────────
 _build_routes_and_pools = routing_policy.build_routes_and_pools
@@ -78,21 +136,21 @@ class GatewayConfig:
     # saving). OFF → the body is forwarded byte-identical; OpenAI-wire routes are never
     # touched either way. Plumbed identically to failover_on_downgrade.
     anthropic_prompt_cache: bool = True
-    # ── optional B1 gateway modules (None = feature disabled) ────────
-    semantic_cache: SemanticCache | None = None
-    response_normalizer: ResponseNormalizer | None = None
-    guardrails: Guardrails | None = None
-    observability: Observability | None = None
-    quality_scorer: QualityScorer | None = None
-    spend_limiter: SpendLimiter | None = None
-    request_inspector: RequestInspector | None = None
-    session_affinity: SessionAffinity | None = None
-    speculative_executor: SpeculativeExecutor | None = None
-    consensus_router: ConsensusRouter | None = None
-    virtual_key_manager: VirtualKeyManager | None = None
-    policy_router: PolicyRouter | None = None
+    # ── Smart-Routing module instances, keyed by ModuleSpec.attr ─────
+    # F29: replaced the ~15 optional module fields with ONE registry-driven dict.
+    # Backward-compat attribute access (cfg.guardrails, etc.) → __getattr__ below.
+    modules: dict[str, Any] = field(default_factory=dict)
     balance_tracker: Any = None  # BalanceTracker | None (typed as Any to avoid import cycle)
 
+    def __getattr__(self, name: str) -> Any:
+        """Backward-compat: cfg.guardrails → self.modules["guardrails"] etc."""
+        # Only intercept names that were formerly dataclass fields (module attrs).
+        # The ModuleSpec.attr for every row in _MODULE_SPECS is the contract.
+        for spec in _MODULE_SPECS:
+            if spec.attr == name:
+                return self.modules.get(name)
+        raise AttributeError(
+            f"'{type(self).__name__}' object has no attribute {name!r}")
 
 
 def load_config(
@@ -186,6 +244,11 @@ def load_config(
     # provider carries a balance field (funding_class / mode / starting_balance).
     balance_tracker = _build_balance_tracker(providers_cfg)
 
+    # F29: instantiate every module via the registry — no per-module wiring needed.
+    modules: dict[str, Any] = {}
+    for spec in _MODULE_SPECS:
+        modules[spec.attr] = _module_inst(spec.name, state_dir)
+
     return GatewayConfig(
         host=host or cfg_host,
         port=port if port is not None else cfg_port,
@@ -197,18 +260,7 @@ def load_config(
         model_pricing=model_pricing,
         failover_on_downgrade=cfg_failover_on_downgrade,
         anthropic_prompt_cache=cfg_anthropic_prompt_cache,
-        semantic_cache=_module_inst("cache", state_dir),
-        response_normalizer=_module_inst("normalizer", state_dir),
-        guardrails=_module_inst("guardrails", state_dir),
-        observability=_module_inst("observability", state_dir),
-        quality_scorer=_module_inst("quality", state_dir),
-        spend_limiter=_module_inst("spend", state_dir),
-        request_inspector=_module_inst("inspector", state_dir),
-        session_affinity=_module_inst("session_affinity", state_dir),
-        speculative_executor=_module_inst("speculative", state_dir),
-        consensus_router=_module_inst("consensus", state_dir),
-        virtual_key_manager=_module_inst("vkeys", state_dir),
-        policy_router=_module_inst("policy", state_dir),
+        modules=modules,
         balance_tracker=balance_tracker,
     )
 
@@ -234,66 +286,28 @@ def _module_inst(name: str, state_dir: str | Path | None = None) -> Any:
 
     Reads ``<name>.json`` for operator overrides. Only returns None for
     cost-multiplying features (speculative, consensus) that need explicit opt-in.
-    """
-    from pathlib import Path
 
+    F29: the body is a loop over ``_MODULE_SPECS`` — the single source of truth.
+    Adding a new module = one spec row + one module file, editing ZERO god-files.
+    """
     from . import secrets
     d = Path(state_dir) if state_dir is not None else secrets.config_dir()
-    cfg_file = d / f"{name}.json"
-    data: dict = {}
-    if cfg_file.exists():
-        try:
-            loaded = json.loads(cfg_file.read_text())
-            if isinstance(loaded, dict):
-                data = loaded
-        except (OSError, json.JSONDecodeError):
-            pass
 
-    if name == "cache":
-        from .cache import SemanticCache
-        return SemanticCache(max_size=data.get("max_size", 1000))
-    if name == "normalizer":
-        from .response_normalizer import ResponseNormalizer
-        return ResponseNormalizer()
-    if name == "guardrails":
-        from .guardrails import Guardrails
-        return Guardrails(config=data if data else {"keywords": []})
-    if name == "observability":
-        from .observability import Observability
-        return Observability(config=data if data else {})
-    if name == "quality":
-        from .quality_scorer import QualityScorer
-        return QualityScorer(state_dir=d)
-    if name == "spend":
-        from .spend_limits import SpendLimiter
-        return SpendLimiter(
-            monthly_limit_usd=float(data.get("monthly_limit_usd", 0)),
-            state_dir=d)
-    if name == "inspector":
-        from .request_inspector import RequestInspector
-        return RequestInspector()
-    if name == "session_affinity":
-        from .session_affinity import SessionAffinity
-        return SessionAffinity(ttl=float(data.get("ttl", 300)))
-    if name == "speculative":
-        if not data.get("enabled"):
+    for spec in _MODULE_SPECS:
+        if spec.name != name:
+            continue
+        cfg_file = d / spec.config_file
+        data: dict = {}
+        if cfg_file.exists():
+            try:
+                loaded = json.loads(cfg_file.read_text())
+                if isinstance(loaded, dict):
+                    data = loaded
+            except (OSError, json.JSONDecodeError):
+                pass
+        if spec.opt_in and not data.get("enabled"):
             return None
-        from .speculative_execution import SpeculativeExecutor
-        return SpeculativeExecutor(enabled=True,
-                                   max_providers=int(data.get("max_providers", 3)))
-    if name == "consensus":
-        if not data.get("enabled"):
-            return None
-        from .consensus import ConsensusRouter
-        return ConsensusRouter(enabled=True,
-                               default_count=int(data.get("default_count", 3)),
-                               similarity=float(data.get("similarity", 0.8)))
-    if name == "vkeys":
-        from .virtual_keys import VirtualKeyManager
-        return VirtualKeyManager(state_dir=d)
-    if name == "policy":
-        from .policy_router import PolicyRouter
-        return PolicyRouter(state_dir=d)
+        return spec.factory(data, d)
     return None
 
 
@@ -335,18 +349,7 @@ def build_server(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> 
         model_pricing=cfg.model_pricing,
         failover_on_downgrade=cfg.failover_on_downgrade,
         anthropic_prompt_cache=cfg.anthropic_prompt_cache,
-        semantic_cache=cfg.semantic_cache,
-        response_normalizer=cfg.response_normalizer,
-        guardrails=cfg.guardrails,
-        observability=cfg.observability,
-        quality_scorer=cfg.quality_scorer,
-        spend_limiter=cfg.spend_limiter,
-        request_inspector=cfg.request_inspector,
-        session_affinity=cfg.session_affinity,
-        speculative_executor=cfg.speculative_executor,
-        consensus_router=cfg.consensus_router,
-        virtual_key_manager=cfg.virtual_key_manager,
-        policy_router=cfg.policy_router,
+        modules=cfg.modules,
         balance_tracker=cfg.balance_tracker,
     )
     # DRAIN-AND-PARK: wire the observer meter as the spend source for class-3
