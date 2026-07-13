@@ -6,16 +6,22 @@
   ".github/workflows/ci.yml": [
     "# Runs on the shared self-hosted 4-LOM runner pool (zero GitHub minutes); if the",
     "    # Maintainer sets CI_RUNNER=[\"self-hosted\",\"4-lom\"]; forks don't inherit it and",
+    "      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4",
+    "      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5",
     "        # persistent shared self-hosted 4-LOM runner, /tmp is NOT job-isolated —"
   ],
   ".github/workflows/heavy.yml": [
     "# self-hosted 4-LOM runner (Docker + buildx present); zero GitHub minutes.",
-    "    # Maintainer sets CI_RUNNER=[\"self-hosted\",\"4-lom\"]; forks don't inherit it and"
+    "    # Maintainer sets CI_RUNNER=[\"self-hosted\",\"4-lom\"]; forks don't inherit it and",
+    "      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4",
+    "      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5"
   ],
   ".github/workflows/release.yml": [
     "# release path. Runs on the shared self-hosted 4-LOM runner (zero GitHub minutes).",
     "# (refs/tags/vX.Y.Z). On the shared self-hosted 4-LOM runner those two runs would",
     "    # Maintainer sets CI_RUNNER=[\"self-hosted\",\"4-lom\"]; forks don't inherit it and",
+    "      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4",
+    "      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5",
     "        # Job-scoped tmp root (see ci.yml) — the shared 4-LOM runner has no",
     "          # The production gateway on the shared self-hosted 4-LOM runner already",
     "        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3",
@@ -23,7 +29,10 @@
     "        uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018  # v1"
   ],
   ".github/workflows/windows-exe.yml": [
-    "# self-hosted Linux [4-lom] runner; this workflow MUST NOT run on that runner."
+    "# self-hosted Linux [4-lom] runner; this workflow MUST NOT run on that runner.",
+    "        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4",
+    "        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5",
+    "        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  # v4.4.3"
   ],
   "CONTRIBUTING.md": [
     "**For maintainers:** The upstream repo uses a self-hosted runner pool (`4-lom`) by setting",
