@@ -39,6 +39,7 @@ from .proxy_server import GatewayProxyServer, UpstreamRoute
 from .quality_scorer import QualityScorer
 from .request_inspector import RequestInspector
 from .response_normalizer import ResponseNormalizer
+from .routing_policy.catalog_refresh import CatalogRefresher
 from .session_affinity import SessionAffinity
 from .speculative_execution import SpeculativeExecutor
 from .spend_limits import SpendLimiter
@@ -99,6 +100,14 @@ _MODULE_SPECS: list[ModuleSpec] = [
                lambda d, sd: VirtualKeyManager(state_dir=sd)),
     ModuleSpec("policy", "policy_router",
                lambda d, sd: PolicyRouter(state_dir=sd)),
+    # PROVIDER-CATALOG-REFRESH: background model→provider auto-mapping. opt_in
+    # (needs catalog_refresh.json {"enabled": true}) — build_server bind()s it to
+    # the live server and starts its TTL poll loop (never on the request path).
+    ModuleSpec("catalog_refresh", "catalog_refresh",
+               lambda d, sd: CatalogRefresher(
+                   state_dir=sd,
+                   ttl_s=float(d.get("ttl_s", 3600.0))),
+               opt_in=True),
 ]
 
 # ── backward-compatible re-exports (tests import these from gateway) ──────────
@@ -364,6 +373,16 @@ def build_server(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> 
     # reasoning-incapable). Optional attribute — forwarder.py reads it via
     # getattr with None fallback so direct-server tests are unaffected.
     server.capability_matrix = routing_policy.CapabilityMatrix()
+    # PROVIDER-CATALOG-REFRESH: bind the (opt-in) catalog refresher to the live
+    # server and start its background TTL poll. bind() snapshots the static config
+    # as the baseline; each refresh BRIDGES discovered models into srv.routes /
+    # srv.pools / srv.model_pricing via apply_routes, so a newly-advertised model
+    # routes with no hand edit. The poll runs on a daemon thread only — the
+    # request path (forward_with_failover) never calls it.
+    refresher = cfg.modules.get("catalog_refresh")
+    if refresher is not None:
+        refresher.bind(server)
+        refresher.maybe_start()
     if setup_dir is not None:
         server.setup_handler = make_setup_handler(server, setup_dir)
     return server
