@@ -266,9 +266,14 @@ def test_run_refuses_nonloopback_without_token(capsys):
     assert "non-loopback" in capsys.readouterr().err
 
 
-def test_failover_chain_check_warns_when_no_pools_or_fallback(capsys) -> None:
+def test_failover_chain_check_warns_when_no_pools_or_fallback(capsys, monkeypatch) -> None:
     """When no pools and no fallback are configured, the gateway must print a
     strong warning so operators know their setup is fragile."""
+    # Hermetic: _check_failover_safety also reads on-disk pools/fallback config, so a
+    # host that HAS those files (e.g. a live gateway box) would suppress the warning
+    # and fail this test spuriously. Force the "nothing configured" state.
+    monkeypatch.setattr("charon.config.load_fallback_providers", lambda: {})
+    monkeypatch.setattr("charon.config.load_pools", lambda: {})
     cfg = GatewayConfig(routes={}, pools={}, token="t",
                         host="127.0.0.1", port=0)
     try:
