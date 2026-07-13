@@ -10,6 +10,74 @@
 #   gate auto-detects: charon.cli gate (product) / validate_board (fleet) / pytest — or pass --gate.
 set -uo pipefail
 FLEET="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# safe_sync_base — step 7, factored out and hardened (LAND-SH-SAFE-SYNC).
+# Sync the local base branch to origin AFTER a landed merge. HARD INVARIANT: this must
+# NEVER `reset --hard` / `clean -fd` over an uncommitted DIRTY working tree — that is how a
+# whole session's uncommitted work got destroyed. Rules:
+#   * FAST-FORWARD ONLY. On divergence (base has local commits not on origin) → abort LOUDLY,
+#     print the manual command, leave the tree untouched. Never force the ref back.
+#   * Clean tree            → checkout base + `merge --ff-only` (no reset).
+#   * Dirty tree ON base    → SKIP the sync loudly (can't leave base without risking the work).
+#   * Dirty tree off base   → `git stash -u` (incl. untracked) → FF base → return → `stash pop`,
+#     so uncommitted + untracked files are preserved; a pop conflict keeps them safe in the stash.
+safe_sync_base() {
+  local repo="$1" base="$2" branch="${3:-}"
+  cd "$repo" || { echo "land: WARN sync: no repo $repo — skipping base sync" >&2; return 0; }
+  git fetch -q origin || { echo "land: WARN sync: fetch failed — skipping base sync" >&2; return 0; }
+  local cur; cur="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  local dirty=""; [ -n "$(git status --porcelain)" ] && dirty=1
+
+  if [ -z "$dirty" ]; then
+    git checkout -q "$base" || { echo "land: WARN sync: checkout $base failed — skipping sync" >&2; return 0; }
+    if git merge --ff-only -q "origin/$base"; then
+      echo "land: '$base' synced to origin -> $(git rev-parse --short HEAD)"
+    else
+      echo "land: WARN sync: local '$base' DIVERGED from origin/$base (not a fast-forward) — NOT resetting." >&2
+      echo "land:   resolve by hand: (cd $repo && git checkout $base && git log --oneline $base..origin/$base)" >&2
+    fi
+    return 0
+  fi
+
+  # DIRTY working tree — uncommitted and/or untracked work is present. NEVER destroy it.
+  if [ "$cur" = "$base" ]; then
+    echo "land: WARN sync: working tree is DIRTY on '$base' — SKIPPING base sync to PROTECT uncommitted work." >&2
+    echo "land:   sync manually once clean: (cd $repo && git stash -u && git merge --ff-only origin/$base && git stash pop)" >&2
+    return 0
+  fi
+  if ! git stash push -u -q -m "land-safe-sync ${branch:-$base}"; then
+    echo "land: WARN sync: could not stash dirty tree — SKIPPING base sync to PROTECT uncommitted work." >&2
+    echo "land:   sync manually: (cd $repo && git checkout $base && git merge --ff-only origin/$base)" >&2
+    return 0
+  fi
+  echo "land: sync: stashed dirty working tree before base sync"
+  if ! git checkout -q "$base"; then
+    echo "land: WARN sync: checkout $base failed — restoring stash, skipping sync" >&2
+    git checkout -q "$cur" 2>/dev/null || true
+    git stash pop -q 2>/dev/null || echo "land: WARN sync: your work is SAFE in 'git stash' (git stash list)" >&2
+    return 0
+  fi
+  if git merge --ff-only -q "origin/$base"; then
+    echo "land: '$base' synced to origin -> $(git rev-parse --short HEAD)"
+  else
+    echo "land: WARN sync: local '$base' DIVERGED from origin/$base (not a fast-forward) — NOT resetting." >&2
+  fi
+  git checkout -q "$cur" 2>/dev/null || true   # pop onto the branch the work came from
+  if git stash pop -q; then
+    echo "land: sync: restored stashed working tree on '$cur'"
+  else
+    echo "land: WARN sync: stash pop conflicted — your work is SAFE in 'git stash' (git stash list; stash@{0})." >&2
+  fi
+}
+
+# Hidden maintenance/test entrypoint: run ONLY the dirty-safe base sync, then exit. It performs
+# no push/merge (a local FF sync only), so it bypasses the AUTONOMOUS + gate machinery below.
+if [ "${1:-}" = "--sync-only" ]; then
+  shift
+  safe_sync_base "${1:?usage: land.sh --sync-only <repo> <base> [branch]}" "${2:?land: --sync-only needs <base>}" "${3:-}"
+  exit $?
+fi
+
 if [ ! -e "$FLEET/state/AUTONOMOUS" ]; then
   echo "land: AUTONOMOUS off — the manager will not land. Run manually or: bash $FLEET/autonomous.sh on" >&2
   exit 3
@@ -92,8 +160,8 @@ OWNER_REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)"
 gh pr create --repo "$OWNER_REPO" --base "$BASE" --head "$BRANCH" --fill 2>/dev/null || echo "land: (PR may already exist)"
 gh pr merge "$BRANCH" --repo "$OWNER_REPO" --merge 2>&1 | tail -2
 
-# 7. sync local base to origin (un-diverge; all landed work is now on origin)
-git checkout -q "$BASE" && git fetch -q origin && git reset --hard "origin/$BASE" \
-  && echo "land: '$BASE' synced to origin -> $(git rev-parse --short HEAD)"
+# 7. sync local base to origin — DIRTY-SAFE (LAND-SH-SAFE-SYNC). FF-only; never reset --hard /
+# clean over uncommitted or untracked work. See safe_sync_base() above for the full contract.
+safe_sync_base "$REPO" "$BASE" "$BRANCH"
 
 echo "land: DONE — '$BRANCH' merged into '$BASE' on $OWNER_REPO"
