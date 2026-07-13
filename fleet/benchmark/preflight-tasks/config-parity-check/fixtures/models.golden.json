@@ -1,0 +1,9 @@
+{
+  "demo-model": {
+    "providers": [
+      {"name": "prov-a", "cost_rank": 1},
+      {"name": "prov-b", "cost_rank": 2},
+      {"name": "prov-c", "cost_rank": 3}
+    ]
+  }
+}

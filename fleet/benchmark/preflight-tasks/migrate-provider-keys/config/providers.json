@@ -1,0 +1,6 @@
+{
+  "providers": [
+    {"name": "prov-a", "base": "https://a.example.com"},
+    {"name": "prov-b", "base": "https://b.example.com"}
+  ]
+}
