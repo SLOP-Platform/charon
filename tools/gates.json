@@ -158,5 +158,15 @@
     "ci_step": true,
     "invariant": "no src/charon/ module imports benchmark or grader_daemon (outside privileged-loop zones)",
     "red_proof": "tests/test_workclass_taxonomy.py"
+  },
+  {
+    "id": "inert-code",
+    "name": "Inert-code (dead/unwired symbol) detector",
+    "domain": "inert",
+    "enforcer": "tools/check_inert_code.py",
+    "covers": "0-caller unreachable public symbols in src/charon (built but never wired in)",
+    "ci_step": true,
+    "invariant": "Every 0-caller public symbol in src/charon is either reachable, @inert_by_design, or tracked in tools/inert-code-disposition.json with a {reason, disposition} entry",
+    "red_proof": "tests/test_check_inert_code.py"
   }
 ]
