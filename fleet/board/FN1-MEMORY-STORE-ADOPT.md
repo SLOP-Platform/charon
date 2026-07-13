@@ -2,6 +2,7 @@ tier: economy
 difficulty: 3
 work_class: ci-infra
 branch: feat/fn1-memory-store
+repo: charon-private
 depends_on:
 owns: /home/stack/charon-private/fleet/memory/
 accept: |

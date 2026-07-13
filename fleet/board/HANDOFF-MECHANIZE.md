@@ -2,6 +2,7 @@ tier: economy
 difficulty: 2
 work_class: ci-infra
 branch: feat/handoff-mechanize
+repo: charon-private
 depends_on:
 owns: /home/stack/charon-private/fleet/handoff.sh, /home/stack/charon-private/fleet/handoff-check.sh, /home/stack/charon-private/fleet/preflight.sh
 accept: |
