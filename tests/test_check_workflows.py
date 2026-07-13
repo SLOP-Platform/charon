@@ -169,6 +169,32 @@ def test_ci_yml_is_exempt_from_paths_requirement(tmp_path: Path) -> None:
     assert not any("missing paths" in v for v in violations)
 
 
+def test_tag_only_push_is_exempt_from_paths_requirement(tmp_path: Path) -> None:
+    # A version-tag-only push trigger (release.yml / windows-exe.yml's real
+    # shape) is a deliberate release action, not the incidental commit the
+    # paths: filter exists to screen out — exempt from the rule.
+    content = _BAD_MISSING_PATHS.replace(
+        "  push:\n    branches: [main]\n",
+        '  push:\n    tags:\n      - "v*"\n',
+    )
+    f = _write(tmp_path, "windows-exe.yml", content)
+    violations = scan_workflow_file(f)
+    assert not any("missing paths" in v for v in violations)
+
+
+def test_push_with_both_tags_and_branches_still_requires_paths(tmp_path: Path) -> None:
+    # The tag-only exemption must not overreach: a push trigger that ALSO
+    # matches branches (so incidental commits can still fire it) keeps the
+    # paths: filter requirement.
+    content = _BAD_MISSING_PATHS.replace(
+        "  push:\n    branches: [main]\n",
+        '  push:\n    branches: [main]\n    tags:\n      - "v*"\n',
+    )
+    f = _write(tmp_path, "windows-exe.yml", content)
+    violations = scan_workflow_file(f)
+    assert any("missing paths" in v and "on.push" in v for v in violations)
+
+
 def test_main_exits_nonzero_when_any_fixture_is_bad(tmp_path: Path) -> None:
     _write(tmp_path, "release.yml", _BAD_THIRD_PARTY_BARE_TAG)
     assert main(str(tmp_path / ".github" / "workflows")) == 1

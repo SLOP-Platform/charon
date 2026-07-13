@@ -20,7 +20,12 @@ human had to remember to re-apply:
    containing `image-smoke`/`modeA-isolation`/`package`/`build`) must scope
    its `push:`/`pull_request:` triggers with a `paths:` filter, so a
    docs-only change never triggers a full package build. `ci.yml` (the fast
-   pytest/lint gate) is exempt by design.
+   pytest/lint gate) is exempt by design. A `push:` block whose ONLY ref
+   selector is `tags:` (no `branches:`) is also exempt from the paths:
+   requirement: a version-tag push is already a deliberate, human-initiated
+   release action (not the incidental commit the filter exists to screen
+   out), and bolting a `paths:` filter onto a tag ref risks the release
+   silently failing to fire on a GitHub tag-diff edge case.
 
 Exit non-zero if any violation is found across all workflow files, 0 if
 clean.
@@ -172,6 +177,10 @@ def check_paths_filter(path: Path, lines: list[str]) -> list[str]:
             continue
         ts, te = on_children[trigger]
         keys = {k for k, _, _ in _block_children(lines, ts + 1, te)}
+        if trigger == "push" and "tags" in keys and "branches" not in keys:
+            # Tag-only push trigger (release/version pipelines) — exempt,
+            # see policy 3 in the module docstring.
+            continue
         if "paths" not in keys:
             violations.append(
                 f"{path}:{ts + 1}: packaging workflow missing paths: filter under "
