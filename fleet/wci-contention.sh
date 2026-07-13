@@ -4,24 +4,51 @@
 # `owns:` field, counts how many tickets own each file, and flags any file owned by
 # >= N tickets as a DECOMPOSE CANDIDATE (a god-file = refactoring debt — split it so
 # tickets re-slice onto disjoint modules and parallelize by construction).
-# See fleet/WCI-METHOD.md (Step 2/3). ADVISORY: prints hits, never mutates anything.
+# See fleet/WCI-METHOD.md (Step 2/3).
 #
-# Usage: wci-contention.sh [N]      # N = ownership threshold (default 4)
-# Exit:  always 0 (advisory; informational, never fails a caller).
+# Two modes:
+#   (default)  ADVISORY god-file detector. N defaults to 4. Scans live AND parked
+#              tickets. Prints hits, never mutates anything, ALWAYS exits 0.
+#   --strict   HARD PRE-CHECK (DEC-VALIDATE-STRICT). N defaults to 2. Scans only
+#              LIVE tickets (parked are not schedulable, so they cannot collide).
+#              Any file owned by >= N live tickets is a concurrency COLLISION: print
+#              the collisions + exit NON-ZERO. Complements the engine's
+#              intake.assert_disjoint_waves as a rig-side pre-flight.
+#
+# Usage: wci-contention.sh [--strict] [N]   # N = ownership threshold
+# Exit:  default -> always 0 (advisory).  --strict -> non-zero if any collision.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BOARD="$HERE/board"
-N="${1:-4}"
+
+# --- arg parse: --strict flag (anywhere) + optional positional N -------------
+STRICT=0
+POS=()
+for a in "$@"; do
+  case "$a" in
+    --strict) STRICT=1 ;;
+    *) POS+=("$a") ;;
+  esac
+done
+if [ "$STRICT" -eq 1 ]; then
+  N="${POS[0]:-2}"
+else
+  N="${POS[0]:-4}"
+fi
 
 case "$N" in ''|*[!0-9]*) echo "wci-contention: N must be a positive integer (got '$N')" >&2; exit 0;; esac
 [ "$N" -ge 1 ] || { echo "wci-contention: N must be >= 1" >&2; exit 0; }
 [ -d "$BOARD" ] || { echo "wci-contention: no board dir at $BOARD"; exit 0; }
 
 # owners.tsv: one "<file>\t<ticket>" row per (file, owning-ticket) pair.
+# In --strict mode only LIVE tickets (*.md) are considered — parked tickets
+# (*.md.parked) are not schedulable, so they cannot create a real collision.
 owners="$(
   shopt -s nullglob
-  for tk in "$BOARD"/*.md "$BOARD"/*.md.parked; do
+  globs=("$BOARD"/*.md)
+  [ "$STRICT" -eq 1 ] || globs+=("$BOARD"/*.md.parked)
+  for tk in "${globs[@]}"; do
     [ -f "$tk" ] || continue
     base="$(basename "$tk")"
     ticket="${base%.md}"; ticket="${ticket%.md.parked}"
@@ -55,8 +82,24 @@ hits="$(
 )"
 
 if [ -z "$hits" ]; then
-  echo "wci-contention: no DECOMPOSE CANDIDATE — no file owned by >= $N ticket(s)."
+  if [ "$STRICT" -eq 1 ]; then
+    echo "wci-contention --strict: OK — no file owned by >= $N live ticket(s)."
+  else
+    echo "wci-contention: no DECOMPOSE CANDIDATE — no file owned by >= $N ticket(s)."
+  fi
   exit 0
+fi
+
+if [ "$STRICT" -eq 1 ]; then
+  echo "wci-contention --strict: COLLISION — files owned by >= $N LIVE ticket(s):"
+  while IFS=$'\t' read -r count file list; do
+    [ -n "$file" ] || continue
+    echo "  COLLISION: $file — owned by $count live tickets"
+    echo "      owners: $list"
+  done <<< "$hits"
+  echo "  -> two live tickets sharing a file will collide when run concurrently; make owns"
+  echo "     DISJOINT (or add a real build-dep to sequence them) before launching the wave."
+  exit 1
 fi
 
 echo "WCI CONTENTION — files owned by >= $N ticket(s) (DECOMPOSE CANDIDATES):"
