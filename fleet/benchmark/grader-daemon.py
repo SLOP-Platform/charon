@@ -39,7 +39,24 @@ REQ_DIR            = SPOOL_DIR / "req"
 RES_DIR            = SPOOL_DIR / "res"
 WORK_DIR           = SPOOL_DIR / "work"
 
-FLEET_DIR          = Path("/home/stack/charon-private/fleet")
+def _resolve_fleet_dir() -> Path:
+    """Resolve the fleet/ dir from env or the daemon's own location.
+
+    REACHABILITY CONTRACT (fleet/board/REACHABILITY-GATE.md): a cross-boundary
+    path (this daemon runs as the bench-grader unix user, not stack) must NEVER
+    be a hardcoded dev-box absolute. Prefer CHARON_FLEET if the deploying
+    process sets it (e.g. a future non-WSL/production layout); otherwise derive
+    it relative to this file's own location, which is portable across users,
+    hosts, and worktrees. KEYS_DIR/SPOOL_DIR stay hardcoded intentionally —
+    those are bench-grader-owned absolutes, not a stack-only dev-box path.
+    """
+    env_override = os.environ.get("CHARON_FLEET")
+    if env_override:
+        return Path(env_override).resolve()
+    return Path(__file__).resolve().parents[1]
+
+
+FLEET_DIR          = _resolve_fleet_dir()
 BENCH_DIR          = FLEET_DIR / "benchmark"
 SCORECARD_TSV      = FLEET_DIR / "model-scorecard.tsv"
 UNITS_TSV          = BENCH_DIR / "units.tsv"
