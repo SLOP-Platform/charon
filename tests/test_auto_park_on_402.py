@@ -368,6 +368,85 @@ def test_poll_provider_stays_parked_when_balance_still_zero():
     assert bt.is_parked("openrouter")
 
 
+def test_concurrent_park_unpark_no_unhandled_exception(tmp_path: Path) -> None:
+    """CONCURRENCY BLOCKER regression: N threads hammering park()/unpark() on a
+    real disk-backed BalanceTracker must raise ZERO unhandled exceptions and
+    leave the on-disk state a valid JSON document.
+
+    The pre-fix ``_save_parked`` released the lock before writing and used a
+    single STATIC ``<name>.tmp`` path, so two concurrent writers raced: one
+    thread's ``os.replace`` consumed the other's tmp → ``FileNotFoundError``
+    (reproduced 526/1200 calls under 4 threads). Because ``park()`` is reached
+    from the money path with no try/except up to the stdlib handler, that
+    exception silently tore down the client connection. FAIL-ON-REVERT: revert
+    the unique-tmp + serialized-write fix and this test goes RED with a burst
+    of ``FileNotFoundError``."""
+    bt = BalanceTracker(config={
+        f"p{i}": {"mode": "fixed", "starting_usd": 1.0} for i in range(8)
+    }, state_dir=tmp_path)
+
+    errors: list[BaseException] = []
+    barrier = threading.Barrier(8)
+
+    def hammer(idx: int) -> None:
+        name = f"p{idx % 8}"
+        try:
+            barrier.wait()  # maximize contention — all threads start together
+            for _ in range(200):
+                bt.record_exhaustion(name)
+                bt.unpark(name)
+        except BaseException as exc:  # noqa: BLE001 — the whole point is to catch ANY
+            errors.append(exc)
+
+    threads = [threading.Thread(target=hammer, args=(i,)) for i in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors, (
+        f"concurrent park()/unpark() raised {len(errors)} unhandled "
+        f"exception(s): {errors[:3]!r} — the _save_parked tmp-file race is back")
+
+    # The on-disk state is a valid JSON doc with the expected shape (never a
+    # half-written/truncated file, thanks to atomic os.replace of a unique tmp).
+    park_file = tmp_path / "balance_park.json"
+    assert park_file.exists()
+    data = json.loads(park_file.read_text())  # raises if corrupt → RED
+    assert isinstance(data, dict) and isinstance(data.get("parked"), list)
+
+    # No leaked tmp files from the write path.
+    leaked = list(tmp_path.glob("balance_park.json.*.tmp"))
+    assert not leaked, f"leaked tmp files: {leaked}"
+
+
+def test_has_live_sibling_requires_live_sibling_in_every_owning_pool() -> None:
+    """``_has_live_sibling`` must return False when the provider is the SOLE
+    live leg of ANY pool it belongs to — even if another pool it shares has a
+    live sibling. Parking it would orphan that second pool.
+
+    FAIL-ON-REVERT: the old "return True on the first pool with a live sibling"
+    logic returns True here (pool-a has a live sibling) and would wrongly allow
+    the park, orphaning pool-b."""
+    from charon.forwarder import _has_live_sibling
+
+    bt = BalanceTracker()
+    # provider "shared" is in BOTH pools; in pool-b its only sibling is parked.
+    bt.park("b-sibling")
+    pools = {
+        "pool-a": [UpstreamRoute("http://x", "k", provider="shared"),
+                   UpstreamRoute("http://y", "k", provider="a-sibling")],
+        "pool-b": [UpstreamRoute("http://z", "k", provider="shared"),
+                   UpstreamRoute("http://w", "k", provider="b-sibling")],
+    }
+    # pool-a has a live sibling (a-sibling) but pool-b does NOT (b-sibling parked)
+    assert _has_live_sibling("shared", pools, bt) is False
+
+    # Un-park b-sibling → now every owning pool has a live sibling → True.
+    bt.unpark("b-sibling")
+    assert _has_live_sibling("shared", pools, bt) is True
+
+
 def test_record_exhaustion_counter_distinguishes_auto_from_manual_park():
     """``record_exhaustion`` (request-path auto-park) bumps a distinct
     ``auto_park`` counter from a plain operator ``park()`` call, so an

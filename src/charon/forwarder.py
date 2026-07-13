@@ -195,8 +195,9 @@ def _is_sole_leg(provider: str,
 
 
 def _has_live_sibling(provider: str, pools: dict[str, list], bt) -> bool:
-    """True if *provider* has at least one SIBLING leg (in any pool it belongs
-    to) that is neither parked nor drained.
+    """True only if, in EVERY pool *provider* belongs to, at least one SIBLING
+    leg is neither parked nor drained — i.e. parking *provider* would not
+    orphan any of its pools.
 
     Purpose-built sole-leg guard for the request-path AUTO-PARK call
     (deterministic drained-key 402 — no ``funding_class``/balance config backs
@@ -208,23 +209,34 @@ def _has_live_sibling(provider: str, pools: dict[str, list], bt) -> bool:
     would never treat it as the last leg and a pool could be parked down to
     zero, one request at a time, before the outer "all routes excluded"
     fallback ever caught it. This checks SIBLINGS ONLY (excludes the
-    candidate from its own viability count), which is the correct question
-    for a provider we already know just failed. False (no live sibling) for a
-    provider with no pool membership at all — conservative: never park a
-    provider we have no evidence has an alternative."""
+    candidate from its own viability count).
+
+    CONSERVATIVE ACROSS ALL OWNING POOLS: a provider can be a healthy member of
+    pool A yet the SOLE live leg of pool B. Returning True on the first pool
+    with a live sibling would then let us park it and orphan pool B. So we
+    require a live sibling in *every* owning pool before allowing a park, and
+    return False for a provider with no pool membership at all (never park a
+    provider we have no evidence has an alternative)."""
     if not pools:
         return False
+    owned = 0
     for _pool_id, routes in pools.items():
         labels = {r.provider or r.label for r in routes}
         if provider not in labels:
             continue
+        owned += 1
+        pool_has_live_sibling = False
         for r in routes:
             p = r.provider or r.label
             if p == provider:
                 continue
             if not bt.is_parked(p) and not bt.is_drained(p):
-                return True
-    return False
+                pool_has_live_sibling = True
+                break
+        if not pool_has_live_sibling:
+            # This owning pool would be orphaned by parking *provider* → refuse.
+            return False
+    return owned > 0
 
 
 def forward_with_failover(handler, srv) -> None:

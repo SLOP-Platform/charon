@@ -34,7 +34,9 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 from threading import Lock
@@ -208,6 +210,13 @@ class BalanceTracker:
         # Observer-metered spend callback: (provider) -> float
         self._spend_provider_fn: Callable[[str], float] | None = None
         self._state_dir: Path | None = Path(state_dir) if state_dir is not None else None
+        # Dedicated I/O lock serializing the ENTIRE parked-set persist
+        # (snapshot → write → atomic replace) so two concurrent park()/unpark()
+        # callers never interleave their writes. Separate from ``self._lock``
+        # (a non-reentrant Lock) so the disk I/O never blocks in-memory reads —
+        # the two are acquired _save_lock→_lock, never the reverse, so no
+        # inversion. See ``_save_parked``.
+        self._save_lock = Lock()
 
         # _build_configs_internal normalises the raw providers.json config into
         # the internal per-provider dict the tracker expects.
@@ -453,19 +462,57 @@ class BalanceTracker:
                 self._parked = {str(x) for x in parked}
 
     def _save_parked(self) -> None:
-        """Write the current parked-provider set to disk (atomic tmp+replace,
-        same convention as ``spend_limits.py``). No-op when ``state_dir`` was
-        never configured (in-memory-only construction, e.g. most unit tests)."""
+        """Write the current parked-provider set to disk atomically. No-op when
+        ``state_dir`` was never configured (in-memory-only construction, e.g.
+        most unit tests).
+
+        CONCURRENCY: this runs from ``park()``/``unpark()`` AFTER releasing
+        ``self._lock`` (unlike ``spend_limits._save()``, which is called by
+        ``record()`` while it still HOLDS its lock — fully serialized there).
+        Because park() is reached from the money path (``forwarder.py``'s
+        non-200 branch via ``record_exhaustion``) an unhandled exception here
+        would tear down the client connection with no HTTP response — a silent
+        hang. Two protections make that impossible:
+
+        1. The whole snapshot → write → replace runs under ``self._save_lock``
+           so concurrent saves are fully serialized (the final ``os.replace``
+           always reflects a consistent snapshot; a stale write can never win).
+        2. The temp file carries a per-call UNIQUE suffix (pid + thread id +
+           uuid) so two callers never share one tmp path — the old single
+           static ``<name>.tmp`` let one thread's ``os.replace`` consume the
+           other's tmp, and the loser raised ``FileNotFoundError`` (repro:
+           526/1200 calls under 4 threads).
+
+        Belt-and-braces, any residual OS error is swallowed (best-effort
+        persist) so a disk hiccup can NEVER propagate into the money path and
+        break the loud-terminal-503 invariant — the in-memory park state is
+        still correct, only its durability is at risk."""
         if self._state_dir is None:
             return
-        with self._lock:
-            snapshot = sorted(self._parked)
-        d = self._state_dir
-        d.mkdir(parents=True, exist_ok=True)
-        p = d / _PARK_STATE_FILE
-        tmp = p.with_name(p.name + ".tmp")
-        tmp.write_text(json.dumps({"parked": snapshot}, indent=2), encoding="utf-8")
-        os.replace(tmp, p)
+        with self._save_lock:
+            with self._lock:
+                snapshot = sorted(self._parked)
+            d = self._state_dir
+            p = d / _PARK_STATE_FILE
+            # Unique per-call tmp name — pid + thread id + uuid — so concurrent
+            # writers never collide on a shared tmp path (root cause of the race).
+            tmp = p.with_name(
+                f"{p.name}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}.tmp")
+            try:
+                d.mkdir(parents=True, exist_ok=True)
+                tmp.write_text(
+                    json.dumps({"parked": snapshot}, indent=2), encoding="utf-8")
+                os.replace(tmp, p)
+            except OSError:
+                # Best-effort: never let a persist failure reach the money path.
+                # Clean up our own tmp so we don't leak it, then give up quietly.
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+                with self._lock:
+                    self._counters["park_save_error"] = (
+                        self._counters.get("park_save_error", 0) + 1)
 
     def _maybe_auto_unpark(self, provider: str) -> None:
         """Re-arm *provider* if it is currently parked (idempotent no-op
