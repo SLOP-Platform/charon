@@ -449,6 +449,59 @@ def forward_with_failover(handler, srv) -> None:
                 obs_body = _extract(body_bytes, ctype)
                 obs = srv.observer.classify(okey, status, rhdrs, obs_body,
                                             expected_model=expected)
+
+                # ---- RETRY-ONCE: transient upstream error (TOOLCALL-ROOTCAUSE) ----
+                # A bare 503, or a nanogpt-style "pending billing reservations" 402,
+                # is a momentary account-state race that self-heals within
+                # milliseconds — retry the SAME provider ONCE (zero backoff, it's
+                # already resolved by the time we reopen the connection) before
+                # spending a failover slot on it. A deterministic drained-key 402
+                # (obs.transient False, e.g. openrouter's "can only afford ...
+                # tokens") skips this and falls straight to the existing failover
+                # logic below — retrying an empty key is pointless.
+                if obs.exhausted and obs.transient:
+                    srv.inflight_dec(route)  # release the spent first attempt's slot
+                    try:
+                        resp.close()
+                    except Exception:  # best-effort close of the spent attempt's fd
+                        pass
+                    retry_req = _build_upstream_req(handler, srv, route, orig_bj, raw_body)
+                    srv.inflight_inc(route)
+                    start = time.monotonic()
+                    try:
+                        resp = urllib.request.urlopen(retry_req, timeout=srv.fwd_timeout)
+                        status, rhdrs = resp.status, dict(resp.headers)
+                    except urllib.error.HTTPError as exc:
+                        resp, status, rhdrs = exc, exc.code, dict(exc.headers)
+                    except Exception:  # unreachable on retry → fail over, same as a
+                        # first-attempt connection error (no further retry).
+                        srv.observer.record(
+                            srv.observer.classify(okey, 503, {}, {}, expected_model=expected),
+                            count_usage=False, session=session_id, provider=route.label)
+                        srv.set_cooldown(route, None)
+                        if more:
+                            failovers.append({"provider": route.label, "status": "unreachable",
+                                              "reason": "connection error (retry)"})
+                            continue
+                        handler._send_resp_headers(502, "application/json", route.label,
+                                                    failovers, False)
+                        handler._write(json.dumps(
+                            {"error": {"message": "all upstreams unreachable"}}).encode())
+                        srv.note_request(requested, route.label, "unreachable", 0.0, failovers)
+                        return
+                    ctype = rhdrs.get("Content-Type", "application/json")
+                    if status != 200:
+                        body_bytes = handler._drain(resp)
+                        obs_body = _extract(body_bytes, ctype)
+                        obs = srv.observer.classify(okey, status, rhdrs, obs_body,
+                                                    expected_model=expected)
+                    # else: retry recovered (200) — `status` is now 200, so the
+                    # `if status != 200:` re-check just below is False and this
+                    # whole non-200 branch is skipped, falling through to the
+                    # ordinary 200-handling code (non-stream/stream) as if the
+                    # retried attempt had succeeded on the first try.
+
+            if status != 200:
                 srv.observer.record(obs, count_usage=False, session=session_id,
                                     provider=route.label)
                 if obs.failover:  # 429/402/503/404/401+billing/unsupported → fail over

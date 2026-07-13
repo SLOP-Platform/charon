@@ -42,6 +42,17 @@ _EXHAUSTION_STATUSES = {429, 402, 503}
 # Statuses meaning "this model is gone" — drop it from the pool permanently for
 # this run, not retry (free rosters churn; renames/removals return 404). ADR R6.
 _DROP_STATUSES = {404}
+# TOOLCALL-ROOTCAUSE (2026-07-13): a bare 503, or a 402 whose body matches one of
+# these patterns, is a MOMENTARY provider-side race that self-heals within
+# milliseconds (confirmed live: NanoGPT's "pending billing reservations" 402
+# recovered on the very next call). Retrying the SAME provider once (forwarder.py)
+# recovers it without burning a failover slot. A deterministic drained-key 402
+# (e.g. OpenRouter's "can only afford ... tokens" — the key is genuinely empty)
+# does NOT match these patterns and must fail over immediately instead — see
+# ``_is_transient_billing_error``.
+_TRANSIENT_BILLING_BODY_PATTERNS = [
+    "pending billing reservation", "insufficient balance after pending",
+]
 # Body patterns that signal a billing/capacity exhaustion — we inspect the JSON
 # response body because some providers (e.g. OpenCode) return 401 for billing
 # failures, not 402/429/503. Without this, the gateway never fails over.
@@ -89,6 +100,7 @@ class ProxyObservation:
     exhausted: bool
     pseudo_success: bool  # 200 but the gateway silently served a different model
     dropped: bool = False  # 404: model is gone — drop from the pool, not retry
+    transient: bool = False  # exhausted AND self-heals in ms — retry-once-same-provider
     retry_after: int | None = None
     usage: Usage | None = None
     note: str = ""
@@ -209,6 +221,18 @@ def _is_billing_error(body: dict | None, status: int) -> bool:
     the OpenCode provider returns 401 for "Insufficient balance", not 402."""
     return status in _EXHAUSTION_STATUSES or (
         status == 401 and _has_body_pattern(body, _EXHAUSTION_BODY_PATTERNS))
+
+
+def _is_transient_billing_error(body: dict | None, status: int) -> bool:
+    """True for an exhaustion worth ONE same-provider retry before failing over
+    (TOOLCALL-ROOTCAUSE.md): a bare 503, or a 402 matching a known self-healing
+    billing-reservation race. A deterministic drained-key 402 does not match and
+    returns False — see ``forward_with_failover``'s retry-once-then-failover."""
+    if status == 503:
+        return True
+    if status == 402:
+        return _has_body_pattern(body, _TRANSIENT_BILLING_BODY_PATTERNS)
+    return False
 
 
 def _is_auth_error(body: dict | None, status: int) -> bool:
@@ -366,6 +390,7 @@ class GatewayProxy:
             body = None
         returned = (body or {}).get("model")
         exhausted = _is_billing_error(body, status)
+        transient = exhausted and _is_transient_billing_error(body, status)
         auth_error = _is_auth_error(body, status)
         dropped = status in _DROP_STATUSES or _is_unsupported_model(body, status)
         # pseudo-success: a 200 that silently served a different model than asked.
@@ -420,6 +445,7 @@ class GatewayProxy:
             exhausted=exhausted,
             pseudo_success=pseudo,
             dropped=dropped,
+            transient=transient,
             retry_after=_retry_after(headers),
             usage=usage,
             note=note,
