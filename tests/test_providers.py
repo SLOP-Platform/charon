@@ -59,6 +59,36 @@ def test_unknown_provider_without_base_url_errors():
         providers.resolve("does-not-exist")
 
 
+def test_resolve_falls_back_to_persisted_config_for_non_preset_provider(monkeypatch, tmp_path):
+    """A provider added via `providers add` (not a built-in PRESETS entry) is
+    persisted to providers.json but has no explicit override at the call site —
+    e.g. the `providers test <name>` CLI subcommand, which previously raised
+    "unknown provider ... not a built-in preset" for exactly this case (the real
+    routing path in discover.py already reads this persisted config; resolve()
+    did not). resolve() must fall back to the persisted `[providers.<name>]`
+    entry when name isn't a preset and no explicit override is given."""
+    from charon import config
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    config.add_provider("deepinfra", base_url="https://api.deepinfra.com/v1/openai",
+                        key_env="DEEPINFRA_API_KEY")
+    assert "deepinfra" not in providers.PRESETS
+
+    p = providers.resolve("deepinfra")
+    assert p.base_url == "https://api.deepinfra.com/v1/openai"
+    assert p.key_env == "DEEPINFRA_API_KEY"
+
+
+def test_resolve_explicit_override_still_wins_over_persisted_config(monkeypatch, tmp_path):
+    from charon import config
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    config.add_provider("deepinfra", base_url="https://api.deepinfra.com/v1/openai",
+                        key_env="DEEPINFRA_API_KEY")
+
+    p = providers.resolve("deepinfra", {"base_url": "http://override/v1"})
+    assert p.base_url == "http://override/v1"
+    assert p.key_env == "DEEPINFRA_API_KEY"  # non-overridden fields still fall back
+
+
 def test_unknown_provider_with_base_url_ok():
     p = providers.resolve("my-local", {"base_url": "http://localhost:9/v1"})
     assert p.base_url == "http://localhost:9/v1" and p.key_env is None

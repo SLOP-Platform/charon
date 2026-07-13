@@ -574,6 +574,10 @@ def _provider_test(name: str, base_url: str | None) -> int:
     from urllib.parse import urlsplit
 
     from . import providers
+    # `providers.resolve()` falls back to the persisted `[providers.<name>]`
+    # config (written by `providers add`) when `name` isn't a built-in preset and
+    # no explicit --base-url is given here, so this also works for a non-preset
+    # provider with no --base-url.
     try:
         preset = providers.resolve(name, {"base_url": base_url} if base_url else None)
     except ValueError as exc:

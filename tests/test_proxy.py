@@ -241,6 +241,23 @@ def test_401_with_no_body_is_auth() -> None:
     assert p.exhausted_models() == set()
 
 
+def test_list_shaped_body_does_not_raise_and_classifies_status() -> None:
+    """Google's OpenAI-compatible error bodies are a JSON *array*, not an object
+    (e.g. ``[{"error": {"code": 429, "status": "RESOURCE_EXHAUSTED"}}]``).
+    ``classify``/``observe`` must degrade gracefully (no parseable fields) rather
+    than raise ``AttributeError: 'list' object has no attribute 'get'`` — which,
+    pre-fix, surfaced mid-request as a client-visible connection reset instead of
+    a clean 429 passthrough. The status must still classify the same as an empty
+    dict body would."""
+    p = GatewayProxy()
+    list_body = [{"error": {"code": 429, "message": "depleted", "status": "RESOURCE_EXHAUSTED"}}]
+    obs = p.observe("google-aistudio/gemini-2.5-pro", 429, body=list_body)  # must not raise
+    baseline = GatewayProxy().observe("google-aistudio/gemini-2.5-pro-2", 429, body={})
+    assert obs.exhausted == baseline.exhausted and obs.exhausted is True
+    assert obs.failover and obs.status == 429
+    assert obs.returned_model is None
+
+
 def test_401_unsupported_model_drops_and_fails_over() -> None:
     """RED failover-401-not-classified: opencode-go returns a *401* for a model it
     doesn't host ("Model gpt-5.5 is not supported") — neither billing nor auth. It

@@ -354,6 +354,16 @@ class GatewayProxy:
     ) -> ProxyObservation:
         """Classify one upstream response into a ``ProxyObservation`` — PURE, no
         state mutation (so the gateway can classify before deciding to serve)."""
+        if not isinstance(body, dict):
+            # Some upstreams (e.g. Google's OpenAI-compatible error responses) ship
+            # a JSON *array* rather than an object for error bodies. There is no
+            # `.model`/`.error` field to extract from a non-dict payload, so treat
+            # it as "no parseable body" instead of crashing every `.get()` below —
+            # an AttributeError here happens mid-request (after the upstream status
+            # is already known) and surfaces to the client as a connection reset
+            # instead of a clean status passthrough. The HTTP `status` itself is
+            # still classified normally either way.
+            body = None
         returned = (body or {}).get("model")
         exhausted = _is_billing_error(body, status)
         auth_error = _is_auth_error(body, status)

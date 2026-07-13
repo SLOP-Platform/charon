@@ -185,12 +185,36 @@ def list_models(name: str, overrides: dict | None = None, *,
     return _parse_models(json.loads(raw.decode("utf-8", "replace")))
 
 
+_PRESET_FIELDS = ("base_url", "key_env", "strip_v1", "downgrade_prone", "wire", "adapter",
+                  "max_context", "max_concurrency")
+
+
 def resolve(name: str, overrides: dict | None = None) -> ProviderPreset:
     """Resolve a provider to a concrete preset: start from a built-in (if ``name``
-    matches one), then apply ``[providers.<name>]`` overrides. A name with no preset
-    and no ``base_url`` override is an error (we don't know where to send)."""
-    overrides = overrides or {}
+    matches one), then apply ``[providers.<name>]`` overrides.
+
+    A name with no built-in preset match instead starts from the persisted
+    ``[providers.<name>]`` entry that ``providers add`` writes to
+    ``providers.json`` (when one exists) — mirrors ``discover.py:discover_models``
+    (the real routing path), which already reads this for exactly these
+    providers. Without this, a provider added via ``providers add`` (not a
+    built-in preset) had no way to be found by a caller — like the
+    ``providers test`` CLI subcommand — that passes no explicit override.
+    Explicit ``overrides`` are still applied on top, so they win over both the
+    built-in preset and the persisted entry.
+
+    A name with no preset, no persisted entry, and no explicit ``base_url``
+    override is an error (we don't know where to send)."""
+    overrides = dict(overrides or {})
     base = PRESETS.get(name)
+    if base is None:
+        from . import config  # deferred: config has no reverse dependency on this
+                               # module, but keep the import local to this rarely-
+                               # hit fallback branch rather than module-level.
+        persisted = config.load_providers().get(name)
+        if isinstance(persisted, dict) and persisted.get("base_url"):
+            base = ProviderPreset(**{k: v for k, v in persisted.items()
+                                     if k in _PRESET_FIELDS and v is not None})
     if base is None:
         if not overrides.get("base_url"):
             raise ValueError(
@@ -198,8 +222,7 @@ def resolve(name: str, overrides: dict | None = None) -> ProviderPreset:
                 f"({', '.join(sorted(PRESETS))}) and no base_url override given")
         base = ProviderPreset(base_url=str(overrides["base_url"]))
     fields = {}
-    for k in ("base_url", "key_env", "strip_v1", "downgrade_prone", "wire", "adapter",
-              "max_context", "max_concurrency"):
+    for k in _PRESET_FIELDS:
         if k in overrides and overrides[k] is not None:
             fields[k] = overrides[k]
     return replace(base, **fields) if fields else base
