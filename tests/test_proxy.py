@@ -258,6 +258,33 @@ def test_list_shaped_body_does_not_raise_and_classifies_status() -> None:
     assert obs.returned_model is None
 
 
+def test_list_shaped_billing_body_at_401_is_still_detected_as_exhaustion() -> None:
+    """A list-shaped body isn't just a crash risk — dropping it outright (treating
+    it as "no body") would also blind the 401 billing-pattern check, since
+    ``_is_auth_error`` conservatively treats a bodyless 401 as auth (don't fail
+    over). Wrapping the list as ``{"error": body}`` instead of discarding it lets
+    ``_collect_error_strings`` (which already recurses into lists) still find the
+    billing language, so this must classify the same as the dict-body sibling
+    ``test_401_with_billing_body_is_exhaustion`` — exhausted + failover, not auth."""
+    p = GatewayProxy()
+    list_body = [{"error": {"message": "Insufficient balance for this request"}}]
+    obs = p.observe("google-aistudio/gemini-2.5-pro", 401, body=list_body)
+    assert obs.exhausted and obs.failover
+    assert "exhausted" in obs.note
+    assert p.is_exhausted("google-aistudio/gemini-2.5-pro")
+
+
+def test_list_shaped_body_without_billing_language_is_auth() -> None:
+    """A list-shaped 401 body with no recognizable pattern falls back to the same
+    conservative "assume auth, don't fail over" verdict as an empty dict body —
+    wrapping the list must not manufacture a false billing match."""
+    p = GatewayProxy()
+    list_body = [{"error": {"message": "something else entirely"}}]
+    obs = p.observe("google-aistudio/gemini-2.5-pro", 401, body=list_body)
+    assert not obs.exhausted and not obs.failover
+    assert p.exhausted_models() == set()
+
+
 def test_401_unsupported_model_drops_and_fails_over() -> None:
     """RED failover-401-not-classified: opencode-go returns a *401* for a model it
     doesn't host ("Model gpt-5.5 is not supported") — neither billing nor auth. It
