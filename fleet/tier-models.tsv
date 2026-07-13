@@ -19,6 +19,15 @@
 # FORMAT: <canonical-tier> <ONE TAB> comma,separated,failover,chain   (cheapest-capable first)
 # Exactly ONE tab between the two columns. Canonical tiers: frontier | strong | economy. Legacy
 # aliases (high/opus, med/sonnet, low/haiku) are normalized to these by fleet-droid.sh before lookup.
-frontier	deepseek-v4-pro,kimi-k2.6,glm-5.2
-strong	deepseek-v4-flash,glm-5.2,hy3-preview-or
-economy	deepseek-v4-flash,glm-5.2
+# REVISED 2026-07-12 (LIGHT-MODELS-EVAL.md): spread economy/strong load OFF the frontier
+# default deepseek-v4-pro. pro now lives ONLY in frontier (hard money-path work like F29);
+# strong/economy are free-first onto flash-class coders with a paid deepseek-v4-flash leg
+# ($0.077/$0.154) as the reliable backstop behind every free leg. All active ids verified
+# reachable on gateway build 319658f. NanoGPT weekly cap is LIVE — keep a paid leg behind
+# any -free/-ng leg. Base pool ids used so the gateway does its own provider failover.
+frontier	deepseek-v4-pro,kimi-k2.6,glm-5.2,minimax-m3-free
+strong	minimax-m3-free,deepseek-v4-flash,glm-5.2,gpt-5.4-mini
+economy	deepseek-v4-flash-free,deepseek-v4-flash,gpt-5.4-nano
+# TARGET after operator wires ZAI_API_KEY + MORPH_API_KEY + gemini-3.1-flash-lite-or entry:
+# strong    morph-dsv4flash-morph,minimax-m3-free,deepseek-v4-flash,gemini-3.1-flash-lite-or,gpt-5.4-mini
+# economy   glm-4.7-flash-zai,glm-4.5-flash-zai,deepseek-v4-flash-free,gpt-5.4-nano,gemini-3.1-flash-lite-or
