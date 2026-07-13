@@ -65,6 +65,7 @@ PFR_MODEL_CMD="${PFR_MODEL_CMD:-$FLEET_DIR/charon-run.sh}"
 PFR_SESSION_ROOT="${PFR_SESSION_ROOT:-}"
 PFR_POLL_TIMEOUT_S="${PFR_POLL_TIMEOUT_S:-300}"
 PFR_POLL_INTERVAL_S="${PFR_POLL_INTERVAL_S:-2}"
+PFR_DEBUG="${PFR_DEBUG:-0}"
 
 # Registry files that must NEVER reach a model session worktree (design
 # §1.4/§3.2). Deliberately a flat, explicit list — not "whatever the source
@@ -75,6 +76,10 @@ PFR_DENY_FILES=(manifest.tsv traps.tsv README.md validate.sh)
 log()  { printf '[preflight] %s\n' "$*" >&2; }
 err()  { printf '[preflight] ERROR: %s\n' "$*" >&2; }
 die()  { err "$*"; exit 2; }
+# dbg — verbose trace, only emitted when PFR_DEBUG=1 (the "monitored preflight"
+# mode). Every non-debug log() line above stays as-is; dbg() adds the granular
+# per-row/per-run/per-grade-job trace requested for diagnosing INVALID cards.
+dbg()  { [ "$PFR_DEBUG" = "1" ] && printf '[preflight][DEBUG] %s\n' "$*" >&2; return 0; }
 
 usage() {
   sed -n '2,/^set -uo pipefail/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -124,6 +129,7 @@ print(json.dumps({
 ' "$run_id" "$model" "$unit_id" "$worktree" > "$tmp" || return 1
   mv "$tmp" "$out"
   chmod 644 "$out" 2>/dev/null || true
+  dbg "submit_grade_job run_id=$run_id model=$model unit=$unit_id worktree=$worktree -> $out"
 }
 
 # ── poll_for_result <run_id> -> prints result JSON on stdout, rc=1 on timeout
@@ -131,14 +137,18 @@ poll_for_result() {
   local run_id="$1"
   local res_file="$PFR_SPOOL_RES/${run_id}.json"
   local waited=0
+  local start_ts; start_ts=$(date +%s)
   while [ "$waited" -lt "$PFR_POLL_TIMEOUT_S" ]; do
     if [ -f "$res_file" ]; then
+      local elapsed=$(( $(date +%s) - start_ts ))
+      dbg "poll_for_result run_id=$run_id RESULT after ${elapsed}s (waited_counter=${waited}s)"
       cat "$res_file"
       return 0
     fi
     sleep "$PFR_POLL_INTERVAL_S"
     waited=$((waited + PFR_POLL_INTERVAL_S))
   done
+  dbg "poll_for_result run_id=$run_id TIMEOUT after ${PFR_POLL_TIMEOUT_S}s — no $res_file"
   return 1
 }
 
@@ -165,8 +175,15 @@ print(f"{success}\t{verdict}\t{gate}\t{score}\t{reason}")
 # the cross-cutting "*" rows (T13/T14 — no standalone fixture, design §2).
 manifest_task_rows() {
   [ -f "$PFR_MANIFEST" ] || die "manifest not found: $PFR_MANIFEST"
-  awk -F'\t' '!/^#/ && $1!="task_id" && NF>=4 {print $1"\t"$2"\t"$3}' "$PFR_MANIFEST" \
-    | awk -F'\t' '$3!="*"'
+  local rows
+  rows="$(awk -F'\t' '!/^#/ && $1!="task_id" && NF>=4 {print $1"\t"$2"\t"$3}' "$PFR_MANIFEST" \
+    | awk -F'\t' '$3!="*"')"
+  if [ "$PFR_DEBUG" = "1" ]; then
+    local n; n="$(printf '%s\n' "$rows" | grep -c . || true)"
+    local ids; ids="$(printf '%s\n' "$rows" | cut -f1 | tr '\n' ',' | sed 's/,$//')"
+    dbg "manifest=$PFR_MANIFEST rows_parsed=$n ids=[$ids]"
+  fi
+  printf '%s' "$rows"
 }
 
 # ── main ─────────────────────────────────────────────────────────────────────
@@ -214,6 +231,16 @@ main() {
     own_session_root=1
   fi
   mkdir -p "$session_root"
+  # ROOT-CAUSE (b) FIX, part 1: the grader-daemon runs as a DIFFERENT unix user
+  # (bench-grader) than this runner. mktemp -d's default mode (0700) leaves the
+  # daemon unable to even stat() into the session tree it is asked to snapshot
+  # -> every grade job fails BEFORE the grader ever runs, always returning a
+  # fail-closed BLOCK regardless of what the model actually did (this is the
+  # confirmed mechanism behind "uniform verdicts" — see grader-daemon.py's
+  # _snapshot_worktree). Grant cross-user traverse+read; nothing secret lives
+  # under a preflight session dir (registry/grader keys are deny-filtered by
+  # copy_session_files / live only under $KEYS, never here).
+  chmod o+rx "$session_root" 2>/dev/null || true
   log "candidate model: $candidate"
   log "session root:    $session_root"
   log "runs per task:    $PFR_RUNS_N  (pass threshold: >=${PFR_PASS_NUM}/${PFR_PASS_DEN})"
@@ -225,26 +252,63 @@ main() {
   declare -A CARD_PASS_COUNT CARD_MODE
   local task_order=()
 
-  while IFS=$'\t' read -r task_id mode grader_key; do
+  # ROOT-CAUSE (a) FIX: the loop's own `read` must NOT share fd 0 with the
+  # model command run inside its body. With `done <<< "$rows"` (fd 0), any
+  # command in the loop body that touches stdin (many headless CLIs probe or
+  # drain it) advances/exhausts the SAME shared file description, so the next
+  # `read` at the top of the loop hits EOF and the whole battery silently
+  # stops after task #1 — reproduced standalone: a bare `cat >/dev/null`
+  # inside a `while read x; do ...; done <<< "$rows"` loop truncates the loop
+  # to exactly one iteration, independent of which command runs. Moving the
+  # loop's read to a private fd (3) makes row iteration immune to whatever
+  # the model command does with fd 0; `</dev/null` on the model command below
+  # is the matching defensive half (never let it block/read on an inherited,
+  # possibly-open stdin either).
+  while IFS=$'\t' read -r task_id mode grader_key <&3; do
     [ -z "$task_id" ] && continue
+    dbg "TASK START task=$task_id mode=$mode grader_key=$grader_key"
     task_order+=("$task_id")
     CARD_MODE["$task_id"]="$mode"
     local pass_count=0
     local i
     for ((i = 1; i <= PFR_RUNS_N; i++)); do
+      dbg "  RUN START task=$task_id run=$i/$PFR_RUNS_N"
       local session_dir="$session_root/$grader_key/run$i"
       copy_session_files "$PFR_TASKS_DIR/$grader_key" "$session_dir" \
         || { err "task=$task_id run=$i: could not stage session worktree — treating as FAIL"; continue; }
+      # session_dir's own tree also needs to stay traversable/readable by the
+      # daemon user (mkdir -p inherits umask, which is usually fine, but make
+      # it explicit rather than relying on the caller's umask).
+      chmod -R o+rX "$session_dir" 2>/dev/null || true
 
       local run_id="${candidate//\//_}__${grader_key}__run${i}__$$_${RANDOM}_$(date +%s%N 2>/dev/null || date +%s)"
       local outlog="$session_dir/.model-out.log"
       local brief="$session_dir/PROMPT.md"
 
+      local _pre_sum=""
+      if [ "$PFR_DEBUG" = "1" ]; then
+        _pre_sum="$(find "$session_dir" -type f -exec sha256sum {} + 2>/dev/null | sort | sha256sum)"
+      fi
+
       if [ -x "$PFR_MODEL_CMD" ] || command -v "$PFR_MODEL_CMD" >/dev/null 2>&1; then
-        "$PFR_MODEL_CMD" "$session_dir" "$outlog" "$brief" "$candidate" \
-          || log "task=$task_id run=$i: model command exited non-zero (still submitting for grading — the grader judges the actual worktree state, not the exit code)"
+        dbg "  model command: $PFR_MODEL_CMD $session_dir $outlog $brief $candidate"
+        "$PFR_MODEL_CMD" "$session_dir" "$outlog" "$brief" "$candidate" </dev/null
+        local model_rc=$?
+        if [ "$model_rc" -ne 0 ]; then
+          log "task=$task_id run=$i: model command exited non-zero (still submitting for grading — the grader judges the actual worktree state, not the exit code)"
+        fi
+        dbg "  model command exit_code=$model_rc"
       else
         err "task=$task_id run=$i: model command not found/executable: $PFR_MODEL_CMD"
+      fi
+
+      if [ "$PFR_DEBUG" = "1" ]; then
+        local _post_sum; _post_sum="$(find "$session_dir" -type f -exec sha256sum {} + 2>/dev/null | sort | sha256sum)"
+        if [ "$_pre_sum" = "$_post_sum" ]; then
+          dbg "  worktree diff: NONE (model made zero file changes — bail/no-op, not a real attempt)"
+        else
+          dbg "  worktree diff: REAL (model changed >=1 file)"
+        fi
       fi
 
       submit_grade_job "$run_id" "$candidate" "$grader_key" "$session_dir" \
@@ -257,6 +321,7 @@ main() {
         log "  verdict=FAIL (timeout) reason=daemon-unreachable-or-timeout"
         continue
       fi
+      dbg "  grade RESULT raw: $result_json"
 
       local fields success verdict gate score reason
       fields="$(read_result_fields "$result_json")"
@@ -268,9 +333,12 @@ main() {
       else
         log "  task=$task_id run=$i verdict=FAIL score=$score gate=$gate ($verdict) $reason"
       fi
+      dbg "  RUN END task=$task_id run=$i running_pass_count=$pass_count"
     done
     CARD_PASS_COUNT["$task_id"]="$pass_count"
-  done <<< "$rows"
+    dbg "TASK END task=$task_id pass_count=$pass_count/$PFR_RUNS_N"
+  done 3<<< "$rows"
+  dbg "all manifest rows consumed; tasks processed: ${#task_order[@]} (${task_order[*]:-none})"
 
   # ── emit the result card ───────────────────────────────────────────────────
   local card=""
@@ -290,12 +358,14 @@ main() {
     else
       overall_trust=0
     fi
+    dbg "final tally task=$task_id pass=$pc/$PFR_RUNS_N threshold=>=${PFR_PASS_NUM}/${PFR_PASS_DEN} -> $task_verdict"
     card+=$(printf '%-8s %-24s %-8s %-8s\n' "$task_id" "${CARD_MODE[$task_id]}" "$pc/$PFR_RUNS_N" "$task_verdict")
     card+=$'\n'
   done
 
   local recommended="detain"
   [ "$overall_trust" -eq 1 ] && recommended="trust"
+  dbg "overall_trust=$overall_trust -> recommended=$recommended (over ${#task_order[@]} task(s): ${task_order[*]:-none})"
   card+=$'\n'
   card+="recommended verdict: $recommended"$'\n'
 
