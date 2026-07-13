@@ -469,6 +469,40 @@ detect_cg_drift(){
   bash "$script" check || true
 }
 
+# Stale-env warning: CHARON_GATEWAY_TOKEN (shell profile) can drift out of sync
+# with the ACTUAL working gateway token in ~/.config/opencode/opencode.json
+# (provider.charon.options.apiKey) — a session that trusts the stale env var
+# gets "missing or invalid bearer token" even though opencode itself works fine.
+# Nothing load-bearing in the product or fleet reads this env var on the
+# opencode-client path (charon-run.sh execs `opencode run`, which resolves its
+# own credentials from opencode.json) — so this is a non-fatal WARN, not a
+# rewrite. opencode.json is always the authoritative source.
+detect_gateway_token_drift(){
+  local env_tok="${CHARON_GATEWAY_TOKEN:-}"
+  [ -n "$env_tok" ] || { echo "clean: gateway-token-drift (CHARON_GATEWAY_TOKEN not set)"; return 0; }
+  local cfg="$HOME/.config/opencode/opencode.json"
+  [ -f "$cfg" ] || { echo "gateway-token-drift: CHARON_GATEWAY_TOKEN is set but $cfg not found — cannot compare"; return 0; }
+  command -v python3 >/dev/null 2>&1 || { echo "gateway-token-drift: python3 not found — cannot compare"; return 0; }
+  local cfg_tok
+  cfg_tok="$(python3 -c '
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    print(d.get("provider", {}).get("charon", {}).get("options", {}).get("apiKey", ""))
+except Exception:
+    print("")
+' "$cfg" 2>/dev/null)"
+  if [ -n "$cfg_tok" ] && [ "$env_tok" != "$cfg_tok" ]; then
+    echo "WARN: gateway-token-drift — CHARON_GATEWAY_TOKEN (shell env) differs from"
+    echo "    the token in $cfg (provider.charon.options.apiKey)."
+    echo "    opencode.json is authoritative; a stale env var can surface as"
+    echo "    'missing or invalid bearer token'. Non-fatal — update your shell"
+    echo "    profile to match opencode.json, or unset CHARON_GATEWAY_TOKEN."
+  else
+    echo "clean: gateway-token-drift (env var matches opencode.json or opencode.json has no token)"
+  fi
+}
+
 cmd_detect(){
   local full=0
   case "${1:-}" in --full) full=1;; esac
@@ -480,6 +514,7 @@ cmd_detect(){
   detect_wci_contention
   detect_inflight_landscape
   detect_cg_drift
+  detect_gateway_token_drift
   echo "--- end detectors ---"
   bash "$HERE/access-check.sh" || true
   return 0
