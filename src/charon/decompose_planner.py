@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+from . import decompose_sizing
 from .intake import IntakeError, PlanUnit, assert_disjoint_waves
 from .ledger import validate_task_id
 from .netutil import BROWSER_UA
@@ -97,6 +98,62 @@ def _as_list(v: object) -> list[object]:
     return [v]
 
 
+# ------------------------------------------------------- DECOMPOSE-SIZING-OPTIMIZER
+@dataclass(frozen=True)
+class SizingGuidance:
+    """Rendered ``decompose_sizing.SizingPlan`` guidance for the prompt: an
+    ``instruction`` line REPLACING the old fixed "2-4 sub-tickets" text, and a
+    ``grouping_block`` suggesting which files belong in the same sub-ticket."""
+
+    instruction: str
+    grouping_block: str
+
+
+def _size_surface(
+    surface: Mapping[str, object] | ChangeSurface, surf: ChangeSurface
+) -> SizingGuidance | None:
+    """Pre-LLM sizing pass (DECOMPOSE-SIZING-OPTIMIZER): recommend ``N*`` and a
+    suggested file grouping for ``surf``. Returns ``None`` on ANY failure or when
+    there is nothing useful to recommend (behavior-safe fallback to the
+    original "2-4" prompt guidance) — this pass never blocks or breaks planning.
+    """
+    try:
+        facts: Mapping[str, object] = (
+            surface if isinstance(surface, Mapping) else {"files": list(surf.files)}
+        )
+        plan = decompose_sizing.size_decomposition(facts)
+        if plan.n_star <= 0 or not plan.assignment:
+            return None
+        surfaces = decompose_sizing.atomic_surfaces(facts)
+        files_by_surface = {s.id: s.files for s in surfaces}
+        groups = [
+            sorted({f for sid in ids for f in files_by_surface.get(sid, ())})
+            for ids in plan.assignment.values()
+        ]
+        groups = [g for g in groups if g]
+        if not groups:
+            return None
+        instruction = (
+            f"Split ONE broad ticket into EXACTLY {plan.n_star} SINGLE-DOMAIN "
+            f"sub-tickets (DECOMPOSE-SIZING-OPTIMIZER recommendation: est wall-clock "
+            f"{plan.wallclock_parallel:.1f} vs {plan.wallclock_serial:.1f} serial)."
+        )
+        grouping_lines = "\n".join(
+            f"- group {i + 1}: {', '.join(g)}" for i, g in enumerate(groups)
+        )
+        grouping_block = (
+            "Suggested grouping — files listed together in ONE group are coupled "
+            "and should land in the SAME sub-ticket (you may still refine this, but "
+            "stay at EXACTLY the recommended sub-ticket count):\n" + grouping_lines
+        )
+        return SizingGuidance(instruction=instruction, grouping_block=grouping_block)
+    except (KeyError, ValueError, TypeError, AttributeError, ZeroDivisionError):
+        # Sizing is an advisory pre-pass, never a hard dependency of planning —
+        # any failure (bad facts shape, estimator error, etc.) falls back to the
+        # original fixed "2-4" guidance untouched.
+        return None
+
+
 # ----------------------------------------------------------------- model-invoke seam
 class ModelInvoker(Protocol):
     """A strong-model transport: prompt in, parsed-JSON dict out (or None on failure).
@@ -132,11 +189,12 @@ def plan_decomposition(
         raise PlannerError("empty change surface: nothing to decompose")
 
     invoke = ask or _default_invoker(config_dir=config_dir, is_detained=is_detained)
+    sizing = _size_surface(surface, surf)
 
     feedback = ""
     last_error = "no attempts made"
     for _attempt in range(max_reprompts + 1):
-        prompt = build_prompt(ticket, surf, feedback=feedback)
+        prompt = build_prompt(ticket, surf, feedback=feedback, sizing=sizing)
         raw = invoke(prompt)
         if not isinstance(raw, dict):
             last_error = "model returned no parseable JSON object"
@@ -238,10 +296,18 @@ def _parse_units(raw: dict, surf: ChangeSurface) -> list[PlanUnit]:
 
 
 # ----------------------------------------------------------------- prompt (Spec-Kit)
-def build_prompt(ticket: BroadTicket, surf: ChangeSurface, *, feedback: str = "") -> str:
+def build_prompt(
+    ticket: BroadTicket, surf: ChangeSurface, *, feedback: str = "",
+    sizing: SizingGuidance | None = None,
+) -> str:
     """Build the strong-planner prompt in the Spec-Kit ``tasks.md`` shape: each task is a
     single-domain, file-scoped sub-ticket with an id, disjoint ``owns``, dep-ordered
-    ``depends_on``, and its own fail-on-revert test description."""
+    ``depends_on``, and its own fail-on-revert test description.
+
+    ``sizing`` (DECOMPOSE-SIZING-OPTIMIZER, when available) REPLACES the old hardcoded
+    "2-4 sub-tickets" guidance with the optimizer's actual ``N*`` and a suggested file
+    grouping; ``None`` (empty/unreadable surface, or the sizing pass raised) falls back
+    to the original fixed "2-4" instruction, unchanged."""
     files_block = "\n".join(f"- {f}" for f in surf.files) or "- (none)"
     sym_block = ("\nRelevant symbols:\n" + "\n".join(f"- {s}" for s in surf.symbols)
                  if surf.symbols else "")
@@ -250,10 +316,15 @@ def build_prompt(ticket: BroadTicket, surf: ChangeSurface, *, feedback: str = ""
                 f"{ticket.product_acceptance}\n" if ticket.product_acceptance else "")
     fb_block = (f"\nCORRECTION FROM LAST ATTEMPT — you MUST fix this:\n{feedback}\n"
                 if feedback else "")
+    size_instruction = (
+        sizing.instruction if sizing is not None
+        else "Split ONE broad ticket into 2-4 SINGLE-DOMAIN sub-tickets so that a cheap "
+        "model can win each one alone."
+    )
+    size_grouping_block = f"\n{sizing.grouping_block}\n" if sizing is not None else ""
 
     return (
-        "You are the PLANNER of a code-work decomposer. Split ONE broad ticket into "
-        "2-4 SINGLE-DOMAIN sub-tickets so that a cheap model can win each one alone.\n\n"
+        f"You are the PLANNER of a code-work decomposer. {size_instruction}\n\n"
         f"BROAD TICKET [{ticket.id}]: {ticket.goal}\n"
         f"{ticket.body}\n"
         f"{pa_block}"
@@ -262,6 +333,7 @@ def build_prompt(ticket: BroadTicket, surf: ChangeSurface, *, feedback: str = ""
         f"{files_block}"
         f"{sym_block}"
         f"{notes_block}"
+        f"{size_grouping_block}"
         f"{fb_block}"
         "\nRULES (Spec-Kit tasks.md shape):\n"
         "- Each sub-ticket is ONE self-contained domain: one module, or one config edit.\n"
