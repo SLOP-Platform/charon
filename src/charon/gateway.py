@@ -251,7 +251,12 @@ def load_config(
 
     # DRAIN-AND-PARK: construct BalanceTracker from provider configs when any
     # provider carries a balance field (funding_class / mode / starting_balance).
-    balance_tracker = _build_balance_tracker(providers_cfg)
+    # AUTO-PARK persistence: same state_dir resolution as every other module
+    # (``_module_inst`` below) — explicit state_dir, else secrets.config_dir()
+    # (CHARON_HOME) — so the parked set survives a gateway restart. CRITICAL in
+    # a container deploy: config_dir() must resolve to the mounted volume, not
+    # the ephemeral image FS (charon-deploy-drift-lessons).
+    balance_tracker = _build_balance_tracker(providers_cfg, state_dir)
 
     # F29: instantiate every module via the registry — no per-module wiring needed.
     modules: dict[str, Any] = {}
@@ -274,11 +279,16 @@ def load_config(
     )
 
 
-def _build_balance_tracker(providers_cfg: dict) -> Any:
+def _build_balance_tracker(
+    providers_cfg: dict, state_dir: str | Path | None = None,
+) -> Any:
     """Construct a BalanceTracker from provider configs when any provider carries
     balance fields (funding_class, mode, starting_balance).
 
-    Returns None when no provider has balance config — backward-compatible."""
+    Returns None when no provider has balance config — backward-compatible.
+    ``state_dir`` resolves exactly like ``_module_inst``: the caller's explicit
+    dir, else ``secrets.config_dir()`` (CHARON_HOME) — so the parked-provider
+    set is persisted and reloaded across a gateway restart."""
     if not providers_cfg:
         return None
     has_balance = any(
@@ -286,8 +296,10 @@ def _build_balance_tracker(providers_cfg: dict) -> Any:
         for v in providers_cfg.values())
     if not has_balance:
         return None
+    from . import secrets
     from .balance import BalanceTracker
-    return BalanceTracker(config=providers_cfg)
+    resolved_dir = Path(state_dir) if state_dir is not None else secrets.config_dir()
+    return BalanceTracker(config=providers_cfg, state_dir=resolved_dir)
 
 
 def _module_inst(name: str, state_dir: str | Path | None = None) -> Any:

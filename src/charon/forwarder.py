@@ -194,6 +194,51 @@ def _is_sole_leg(provider: str,
     return False
 
 
+def _has_live_sibling(provider: str, pools: dict[str, list], bt) -> bool:
+    """True only if, in EVERY pool *provider* belongs to, at least one SIBLING
+    leg is neither parked nor drained — i.e. parking *provider* would not
+    orphan any of its pools.
+
+    Purpose-built sole-leg guard for the request-path AUTO-PARK call
+    (deterministic drained-key 402 — no ``funding_class``/balance config backs
+    it). ``_is_sole_leg`` above counts the CANDIDATE itself as "viable" unless
+    its own ``is_drained`` flag is *already* True — true only for the fc==3
+    balance-drain call site, which only ever calls it once ``bt.is_drained
+    (prov)`` is already known True. A plain API-key provider has no balance
+    config (``is_drained`` always False), so reusing ``_is_sole_leg`` here
+    would never treat it as the last leg and a pool could be parked down to
+    zero, one request at a time, before the outer "all routes excluded"
+    fallback ever caught it. This checks SIBLINGS ONLY (excludes the
+    candidate from its own viability count).
+
+    CONSERVATIVE ACROSS ALL OWNING POOLS: a provider can be a healthy member of
+    pool A yet the SOLE live leg of pool B. Returning True on the first pool
+    with a live sibling would then let us park it and orphan pool B. So we
+    require a live sibling in *every* owning pool before allowing a park, and
+    return False for a provider with no pool membership at all (never park a
+    provider we have no evidence has an alternative)."""
+    if not pools:
+        return False
+    owned = 0
+    for _pool_id, routes in pools.items():
+        labels = {r.provider or r.label for r in routes}
+        if provider not in labels:
+            continue
+        owned += 1
+        pool_has_live_sibling = False
+        for r in routes:
+            p = r.provider or r.label
+            if p == provider:
+                continue
+            if not bt.is_parked(p) and not bt.is_drained(p):
+                pool_has_live_sibling = True
+                break
+        if not pool_has_live_sibling:
+            # This owning pool would be orphaned by parking *provider* → refuse.
+            return False
+    return owned > 0
+
+
 def forward_with_failover(handler, srv) -> None:
     """Run the data-plane failover loop for one client request (money path).
 
@@ -295,8 +340,13 @@ def forward_with_failover(handler, srv) -> None:
         for r in chain:
             prov = r.provider or r.label
             fc = bt.funding_class(prov)
-            if fc == 3 and bt.is_parked(prov):
-                # Parked — always excluded.
+            if bt.is_parked(prov):
+                # Parked — always excluded, independent of funding_class. Covers
+                # BOTH a balance-drained class-3 provider AND a provider
+                # auto-parked on a deterministic drained-key 402 (below) that
+                # carries no funding_class at all. The "all routes excluded"
+                # fallback further down (never-strand safety net) covers the
+                # rare case where every leg of a pool ends up parked at once.
                 continue
             if fc == 3 and bt.is_drained(prov):
                 # Sole-leg guard: check if this provider is the only remaining
@@ -507,6 +557,32 @@ def forward_with_failover(handler, srv) -> None:
                 if obs.failover:  # 429/402/503/404/401+billing/unsupported → fail over
                     if obs.exhausted:  # account-level exhaustion → cool the
                         srv.set_cooldown(route, obs.retry_after)  # provider (R10c);
+                        # AUTO-PARK (money-path self-park, closes the gap PR #121
+                        # left open): a DETERMINISTIC drained-key 402 — status==402,
+                        # obs.transient False (e.g. openrouter's "can only afford ...
+                        # tokens") — means the key itself is empty, not a momentary
+                        # race. A time-boxed cooldown alone just re-tries the same
+                        # dead key every ``max_cooldown_s``; park it instead so the
+                        # pre-flight exclusion (above, this function) drops it from
+                        # rotation until an operator top-up or a poll-mode balance
+                        # recovery re-arms it (balance.py). Scoped tightly to 402:
+                        # a 429 throttle (self-clears with time, not a drained key)
+                        # and any transient 402/503 (PR #121 retry-once) must NEVER
+                        # be parked — both are excluded here even though
+                        # ``obs.exhausted and not obs.transient`` alone would also
+                        # be true for a bare 429 (transient is only ever set True
+                        # for 503/transient-402, never for 429).
+                        if bt is not None and status == 402 and not obs.transient:
+                            prov = route.provider or route.label
+                            if _has_live_sibling(prov, srv.pools, bt):
+                                bt.record_exhaustion(prov)
+                            else:
+                                import logging
+                                logging.getLogger("charon.forwarder").warning(
+                                    "SOLE-LEG GUARD: provider %r deterministically "
+                                    "exhausted (402) but has no live sibling in any "
+                                    "pool — NOT auto-parking it (would strand traffic "
+                                    "with no fallback).", prov)
                     # a 404 ("model gone") is model-level — do NOT cool the provider.
                     if more:  # count only providers we actually move PAST
                         failovers.append({"provider": route.label, "status": status,
