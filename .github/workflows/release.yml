@@ -87,6 +87,7 @@ jobs:
           # reason (a fixed name conflicts across concurrent runs). The container
           # still listens on its internal 8080 — only the host side is dynamic.
           name="charon-rel-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          trap 'docker rm -f "$name" >/dev/null 2>&1 || true' EXIT
           docker rm -f "$name" >/dev/null 2>&1 || true
           docker run -d --name "$name" \
             -e CHARON_GATEWAY_TOKEN=ci-smoke-token \
