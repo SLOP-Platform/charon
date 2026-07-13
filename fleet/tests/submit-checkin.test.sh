@@ -20,10 +20,13 @@ check(){ [ "$2" = "$3" ] && ok "$1" || bad "$1 (expected '$3', got '$2')"; }
 ID="AUTO-CHECKIN-TEST"
 
 # isolated temp fleet: copies of the two scripts + a board fixture + empty state/notes + fake gh.
+# submit.sh sources repo-registry.sh (MULTI-REPO fold-in) — copy it too, or submit.sh dies
+# with "No such file or directory" before it ever reaches the auto-check-in block.
 D="$(mktemp -d)"
 mkdir -p "$D/board" "$D/state/claims" "$D/session-notes" "$D/bin"
 cp "$SRC/submit.sh" "$D/submit.sh"
 cp "$SRC/checkin.sh" "$D/checkin.sh"
+cp "$SRC/repo-registry.sh" "$D/repo-registry.sh"
 cat > "$D/board/$ID.md" <<EOF
 tier: economy
 branch: feat/auto-checkin-test

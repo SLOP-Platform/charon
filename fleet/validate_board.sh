@@ -18,7 +18,7 @@
 set -uo pipefail
 FLEET="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 exec python3 - "$FLEET" <<'PY'
-import sys, glob, os, re, fnmatch
+import sys, glob, os, re, fnmatch, subprocess
 fleet = sys.argv[1]
 board = os.path.join(fleet, "board")
 def field(path, key):
@@ -381,6 +381,22 @@ for t, d in tickets.items():
 if any(d["deps"] for d in tickets.values()):
     wci.append("semantic: prompt-intent contradiction / hidden coupling is NOT machine-checked "
                "— eyeball overlapping or dep-linked tickets by hand.")
+
+# F46 PARALLELIZABILITY-GATE: ADVISORY board-wide surface of SPLITTABLE-yet-serial tickets
+# (difficulty>=M AND >1 independent owned surface, not decomposed, not justified). Delegates
+# to fleet/checks/parallelizability-gate.sh scan — REUSE, don't reinvent the owns/difficulty
+# parsing. Advisory ONLY here (never RED — never fails the board on its own): the HARD
+# launch-time gate lives in fleet/fleet-droid.sh, the one place a serial launch happens.
+try:
+    _pg = subprocess.run(
+        ["bash", os.path.join(fleet, "checks", "parallelizability-gate.sh"), "scan"],
+        capture_output=True, text=True, timeout=15
+    ).stdout
+    for _line in _pg.splitlines():
+        if "SPLITTABLE-SERIAL:" in _line:
+            wci.append(f"parallelizability: {_line.strip()}")
+except Exception as e:
+    wci.append(f"parallelizability-check-failed: could not run parallelizability-gate.sh — {e}")
 
 # 6. Uncommitted work — no session left dirty tracked files on disk.
 # Modified tracked files in src/ = a session exited without committing.

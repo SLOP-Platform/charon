@@ -30,7 +30,7 @@ source "$FLEET/leak-guard.sh"
 # MULTI-REPO: maps a ticket's `repo:` field -> repo path / worktree / base branch / gate.
 # Absent field -> key `charon` (product) => IDENTICAL behavior to the old hardwired path.
 source "$FLEET/repo-registry.sh"
-usage(){ echo "usage: fleet-droid.sh <frontier|strong|economy|low|med|high|opus|sonnet|haiku> [--wait <min>] [--retries <n>] [--patience <cycles>]"; exit 2; }
+usage(){ echo "usage: fleet-droid.sh <frontier|strong|economy|low|med|high|opus|sonnet|haiku> [--wait <min>] [--retries <n>] [--patience <cycles>] [--serial-justified=<reason>]"; exit 2; }
 
 # ---- DETENTION-REDLINE: shared tier/chain helpers ------------------------------------------------
 # Defined ONCE and used by BOTH the main claim loop and the `resolve` hook below, so the chain a
@@ -90,11 +90,16 @@ if [ "${1:-}" = "resolve" ]; then
   fi
 fi
 
-TIER=""; WAIT_MIN=3; RETRIES=6; PATIENCE=1
+TIER=""; WAIT_MIN=3; RETRIES=6; PATIENCE=1; SERIAL_JUSTIFIED=""
 while [ $# -gt 0 ]; do case "$1" in
   --wait)     WAIT_MIN="${2:?--wait needs minutes}"; shift 2;;
   --retries)  RETRIES="${2:?--retries needs a count}"; shift 2;;
   --patience) PATIENCE="${2:?--patience needs a cycle count}"; shift 2;;
+  # F46 PARALLELIZABILITY-GATE escape hatch: justifies a SERIAL launch of a claimed ticket
+  # that the gate would otherwise refuse (splittable: difficulty>=M AND >1 owned surface,
+  # not yet decomposed). Applies to whatever this tab claims next — a per-run override, not
+  # a per-ticket record; prefer 'serial_justified: <reason>' on the ticket for a durable one.
+  --serial-justified=*) SERIAL_JUSTIFIED="${1#*=}"; shift;;
   frontier|strong|economy|opus|sonnet|haiku|low|med|high) TIER="$1"; shift;;       # arg allowlist: canonical (frontier/strong/economy) + legacy
   *) usage;;
 esac; done
@@ -142,6 +147,21 @@ while true; do
   empties=0
   read -r _tag id tfile <<<"$res"; current="$id"
   echo "[$DROID] claimed $id — launching session…"
+  # F46 PARALLELIZABILITY-GATE: refuse to launch a SPLITTABLE ticket (difficulty>=M AND >1
+  # independent owned surface — see fleet/checks/parallelizability-gate.sh) as a single
+  # SERIAL job unless it has already been decomposed into sub-tickets or is justified
+  # (--serial-justified for this run, or a durable 'serial_justified:' field on the ticket).
+  # Mechanizes the wall-clock rule (MANAGER-OPERATING-RULES.md sec.4) at the ONE place a
+  # serial launch actually happens, so a splittable god-ticket can never silently run serial.
+  pg_args=(check "$id"); [ -n "$SERIAL_JUSTIFIED" ] && pg_args+=(--serial-justified="$SERIAL_JUSTIFIED")
+  if ! pg_out="$(bash "$FLEET/checks/parallelizability-gate.sh" "${pg_args[@]}" 2>&1)"; then
+    echo "$pg_out" >&2
+    echo "[$DROID] SKIP $id: PARALLELIZABILITY-GATE refused a serial launch — decompose it (fleet/decompose.sh $id) or pass --serial-justified=\"<reason>\"." >&2
+    bash "$FLEET/release.sh" "$id" >/dev/null 2>&1 || true; current=""
+    bash "$FLEET/loop-guard.sh" record "$id" "$DROID" >/dev/null 2>&1 \
+      || echo "[$DROID] LOOP-GUARD: $id quarantined (parallelizability-gate refused repeatedly)." >&2
+    continue
+  fi
   # DETENTION-REDLINE: scope the tier chain to THIS ticket's work_class (read from its board file)
   # and drop HARD-detained models BEFORE the run. Advisory-flagged models stay (loud warning). If the
   # WHOLE chain is HARD-detained, FAIL LOUD + skip — a detained model can only run behind an explicit

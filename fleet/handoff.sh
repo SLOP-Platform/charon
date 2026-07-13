@@ -14,10 +14,47 @@
 set -euo pipefail
 
 CHARON_REPO="/home/stack/code/charon"
+PRIV_REPO="/home/stack/charon-private"
 DATE_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+# ANTI-CLOBBER: SESSION is REQUIRED and must be REAL (not the literal string "unknown") —
+# a copied/placeholder handoff (e.g. seeding a new session's file from a different session's
+# old content, as happened in 3647e0e) is only obviously-wrong if the provenance stamp below
+# actually names the CURRENT session and CURRENT repo state. Previously this line contained an
+# escaped \${SESSION:-unknown} that was NEVER expanded — every generated handoff literally
+# printed the text "${SESSION:-unknown}" instead of the real session name, so a copied file
+# was indistinguishable from a fresh one. Fail loud instead of silently mislabeling.
+SESSION="${SESSION:?SESSION env var required: SESSION=<jedi-name> bash handoff.sh}"
+
+# ANTI-CLOBBER freshness stamp: resolve the REAL upstream per repo (never a hardcoded
+# origin/main — see check_push_status.sh fix) and record behind-count + HEAD sha. A stale
+# or copied handoff shows a mismatched/stale stamp instead of silently looking current.
+resolve_upstream() {
+  local repo="$1" u
+  u=$(git -C "$repo" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null) || u=""
+  if [ -z "$u" ]; then
+    u=$(git -C "$repo" symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/@@')
+  fi
+  printf '%s' "$u"
+}
+freshness_stamp() {
+  local repo="$1" label="$2" upstream behind sha
+  git -C "$repo" fetch --quiet origin 2>/dev/null || true
+  upstream="$(resolve_upstream "$repo")"
+  sha="$(git -C "$repo" rev-parse --short HEAD 2>/dev/null || echo "?")"
+  if [ -z "$upstream" ]; then
+    echo "**$label HEAD:** $sha (upstream UNRESOLVED — cannot verify freshness)"
+    return
+  fi
+  behind=$(git -C "$repo" rev-list --count "HEAD..$upstream" 2>/dev/null || echo 0)
+  if [ "${behind:-0}" -gt 0 ]; then
+    echo "**$label HEAD:** $sha — ⚠ STALE: $behind commit(s) behind $upstream"
+  else
+    echo "**$label HEAD:** $sha — current with $upstream"
+  fi
+}
 
 cat <<PREAMBLE
-# Charon Fleet — Session Handoff ($DATE_UTC) — \${SESSION:-unknown}
+# Charon Fleet — Session Handoff ($DATE_UTC) — $SESSION
 
 > **Per-session handoff.** Each session writes: \`SESSION-HANDOFF-\$SESSION.md\`.
 > No collisions. Next session reads ALL: \`SESSION-HANDOFF-*.md\`.
@@ -35,6 +72,15 @@ check the board for claimed names, register with an unused Jedi name + \`repo="c
 2. **Sub-sessions write, don't dump.** A sub-session WRITES its findings to a file and returns only a 2-3 line pointer + the absolute path. NEVER paste a full sub-session report back into the primary.
 3. **Read big docs in narrow slices, once.** Read handoffs/plans by line-range (offset/limit), never the whole file, never re-read each turn.
 4. **Keep-alive is a light heartbeat.** Fold the bridge heartbeat into real work (\`board()\` TTL 600s); do NOT run a 4-min idle wakeup loop that reprocesses full context.
+
+---
+
+## Provenance (anti-clobber — verify this matches the session/filename before trusting this handoff)
+
+**Session:** $SESSION
+**Generated:** $DATE_UTC
+$(freshness_stamp "$CHARON_REPO" "Product")
+$(freshness_stamp "$PRIV_REPO" "Rig")
 
 ---
 
