@@ -1,6 +1,6 @@
 """Vendored — verbatim copy of KSF's ``ksf/gate_result.py``.
 
-Source: /home/stack/code/keystone/ksf/gate_result.py (KSF, Keystone Framework).
+Source: keystone/ksf/gate_result.py (KSF, Keystone Framework).
 Vendored rather than pip-installed per fleet/state/WORK-FRAMEWORK-WIRING-PLAN.md
 Part 2 (cross-repo local-path dependency would break for any fresh clone of
 this product repo — Charon must not depend on a sibling checkout at build
