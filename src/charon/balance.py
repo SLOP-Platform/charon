@@ -21,6 +21,14 @@ Public API:
   ``is_drained(provider, floor=0.0) -> bool``  (approx 0 -> demote/skip)
   ``funding_class(provider) -> int|None``
   ``park(provider)`` / ``unpark(provider)`` / ``is_parked(provider)``
+  ``record_exhaustion(provider)`` (request-path auto-park on a deterministic
+  drained-key 402 — distinct counter from an operator-triggered ``park()``)
+
+Park state persists to ``<state_dir>/balance_park.json`` (atomic write) when
+constructed with a ``state_dir`` — survives a gateway restart. A poll-mode
+provider (deepseek/openrouter/nanogpt) auto-re-arms the moment its balance
+poll shows recovered funds (see ``remaining()``); a fixed-mode class-3
+provider re-arms via ``top_up()`` (operator) as before.
 """
 from __future__ import annotations
 
@@ -28,10 +36,24 @@ import json
 import os
 import time
 from collections.abc import Callable
+from pathlib import Path
 from threading import Lock
 from typing import Any
 
 from .netutil import BROWSER_UA  # shared browser-like UA (P5 — Cloudflare 1010)
+
+# AUTO-PARK persistence: the parked-provider set survives a gateway restart by
+# being written to this file under the tracker's ``state_dir`` — same JSON +
+# tmp-write/os.replace convention as spend_limits.py's ``spend.json`` /
+# quality_scorer.py's state file. ``state_dir`` is None unless the caller opts
+# in (gateway.py's ``_build_balance_tracker`` always passes the resolved
+# CHARON_HOME/config dir — CRITICAL: that must be the mounted volume in a
+# container deploy, never the ephemeral image FS, or a restart loses parks).
+_PARK_STATE_FILE = "balance_park.json"
+# A parked poll-mode provider (deepseek/openrouter/nanogpt) auto-re-arms the
+# moment its balance poll reports MORE than this many USD — same floor
+# ``should_drain`` uses for "has funds, route-first".
+_AUTO_REARM_MIN_USD = 0.0
 
 # ---------------------------------------------------------------------------
 # Balance poll adapters — pure functions that take (base_url, api_key) and
@@ -167,6 +189,7 @@ class BalanceTracker:
         self,
         config: dict[str, dict[str, Any]] | None = None,
         now: Callable[[], float] = time.monotonic,
+        state_dir: str | Path | None = None,
     ) -> None:
         self._config: dict[str, dict[str, Any]] = dict(config or {})
         self._lock = Lock()
@@ -177,15 +200,22 @@ class BalanceTracker:
         self._model_spend: dict[tuple[str, str], float] = {}
         # Poll TTL cache: provider → (result_usd_or_None, timestamp)
         self._poll_cache: dict[str, tuple[float | None, float]] = {}
-        # Parked providers (class-3 drain-then-park providers at ~0)
+        # Parked providers (class-3 drain-then-park providers at ~0, OR any
+        # provider auto-parked on a deterministic drained-key 402 — see
+        # forwarder.py). None-state_dir → in-memory only (existing unit-test
+        # construction pattern; production always passes state_dir).
         self._parked: set[str] = set()
         # Observer-metered spend callback: (provider) -> float
         self._spend_provider_fn: Callable[[str], float] | None = None
+        self._state_dir: Path | None = Path(state_dir) if state_dir is not None else None
 
         # _build_configs_internal normalises the raw providers.json config into
         # the internal per-provider dict the tracker expects.
         for provider, cfg in self._config.items():
             self._build_configs_internal(provider, cfg)
+
+        if self._state_dir is not None:
+            self._load_parked()
 
     def _build_configs_internal(self, provider: str,
                                  raw: dict[str, Any]) -> None:
@@ -277,6 +307,12 @@ class BalanceTracker:
                     self._counters["poll_success"] = (
                         self._counters.get("poll_success", 0) + 1
                     )
+            # AUTO-UNPARK (re-arm): a fresh poll on a PARKED poll-mode provider
+            # that now shows recovered funds re-arms it immediately — no operator
+            # action. Only fresh polls (not TTL-cached hits, handled above) reach
+            # here, so this fires at most once per TTL window per provider.
+            if result is not None and result > _AUTO_REARM_MIN_USD:
+                self._maybe_auto_unpark(provider)
             return result
 
         return None
@@ -357,14 +393,19 @@ class BalanceTracker:
     # -- park lifecycle (class-3 drain-then-park) ------------------------
 
     def park(self, provider: str) -> None:
-        """Mark a provider as parked (unavailable; routing skips it)."""
+        """Mark a provider as parked (unavailable; routing skips it).
+
+        Persisted to disk (when ``state_dir`` was given) so the park survives a
+        gateway restart — never loses the fact that a key was drained."""
         with self._lock:
             self._parked.add(str(provider))
+        self._save_parked()
 
     def unpark(self, provider: str) -> None:
-        """Re-arm a parked provider (available again)."""
+        """Re-arm a parked provider (available again). Persisted like ``park``."""
         with self._lock:
             self._parked.discard(str(provider))
+        self._save_parked()
 
     def is_parked(self, provider: str) -> bool:
         """True if the provider is currently parked."""
@@ -375,6 +416,67 @@ class BalanceTracker:
         """Return a read-only snapshot of currently-parked providers."""
         with self._lock:
             return set(self._parked)
+
+    def record_exhaustion(self, provider: str) -> None:
+        """Auto-park *provider* from the request path on a DETERMINISTIC billing
+        exhaustion (a drained-key 402 — see ``forwarder.py``'s non-200 branch).
+
+        Distinct entry point from the operator-triggered ``park()`` (web console
+        / setup API `balance` action) purely for observability: bumps the
+        ``auto_park`` counter so a self-park is distinguishable from a manual
+        one in ``counters()``. Identical park semantics otherwise — excluded
+        from rotation, provider config untouched, reversible via ``unpark()``,
+        ``top_up()``, or an automatic poll-recovery re-arm."""
+        with self._lock:
+            self._counters["auto_park"] = self._counters.get("auto_park", 0) + 1
+        self.park(provider)
+
+    # -- persistence (survive a gateway restart) -------------------------
+
+    def _load_parked(self) -> None:
+        """Load the parked-provider set from disk. Missing/corrupt file → start
+        with an empty set (never raises — a fresh install has no state yet)."""
+        if self._state_dir is None:
+            return
+        p = self._state_dir / _PARK_STATE_FILE
+        if not p.exists():
+            return
+        try:
+            data = json.loads(p.read_text())
+        except (OSError, json.JSONDecodeError):
+            return
+        if not isinstance(data, dict):
+            return
+        parked = data.get("parked")
+        if isinstance(parked, list):
+            with self._lock:
+                self._parked = {str(x) for x in parked}
+
+    def _save_parked(self) -> None:
+        """Write the current parked-provider set to disk (atomic tmp+replace,
+        same convention as ``spend_limits.py``). No-op when ``state_dir`` was
+        never configured (in-memory-only construction, e.g. most unit tests)."""
+        if self._state_dir is None:
+            return
+        with self._lock:
+            snapshot = sorted(self._parked)
+        d = self._state_dir
+        d.mkdir(parents=True, exist_ok=True)
+        p = d / _PARK_STATE_FILE
+        tmp = p.with_name(p.name + ".tmp")
+        tmp.write_text(json.dumps({"parked": snapshot}, indent=2), encoding="utf-8")
+        os.replace(tmp, p)
+
+    def _maybe_auto_unpark(self, provider: str) -> None:
+        """Re-arm *provider* if it is currently parked (idempotent no-op
+        otherwise) — the poll-recovery path in ``remaining()``."""
+        with self._lock:
+            was_parked = provider in self._parked
+        if not was_parked:
+            return
+        self.unpark(provider)
+        with self._lock:
+            self._counters["auto_unpark"] = self._counters.get("auto_unpark", 0) + 1
 
     # -- spend-source wiring (observer meter) ----------------------------
 
@@ -422,6 +524,11 @@ class BalanceTracker:
                 self._counters["poll_success"] = (
                     self._counters.get("poll_success", 0) + 1
                 )
+        # AUTO-UNPARK: same re-arm-on-recovery as remaining()'s poll branch —
+        # this is the operator-triggerable refresh, so a manual "check now"
+        # must re-arm just as readily as the next request's lazy poll would.
+        if result is not None and result > _AUTO_REARM_MIN_USD:
+            self._maybe_auto_unpark(provider)
         return result
 
     def top_up(self, provider: str, amount_usd: float) -> None:
