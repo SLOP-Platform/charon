@@ -83,9 +83,17 @@ else
   ok "no STALE marker in provenance stamp"
 fi
 
+# The SHA + path existence checks below validate HUMAN accuracy-claims only. The
+# "## Auto-generated state" region is a machine snapshot of the board/roadmap that
+# LEGITIMATELY references to-be-created ticket deliverables + historical/foreign SHAs
+# from ticket notes — validating those is a false-positive that makes any generated
+# handoff un-passable. Scope to the human-authored sections (before auto-state + the
+# session-summary sections after it).
+HUMAN=$(awk '/^## Auto-generated state/{skip=1} /^## Session summary/{skip=0} !skip' "$F")
+
 # 2) ACCURACY — every referenced SHA must exist; committed-SHA claim must match HEAD
 say "[sha]"
-SHAS=$(grep -oE '\b[0-9a-f]{7,40}\b' "$F" | sort -u)
+SHAS=$(printf '%s\n' "$HUMAN" | grep -oE '\b[0-9a-f]{7,40}\b' | sort -u)
 nsha=0
 for s in $SHAS; do
   if git -C "$PRIV" cat-file -e "$s^{commit}" 2>/dev/null || git -C /home/stack/code/charon cat-file -e "$s^{commit}" 2>/dev/null; then
@@ -98,7 +106,7 @@ done
 
 # 3) ACCURACY — referenced fleet scripts/briefs/paths must exist
 say "[paths]"
-PATHS=$(grep -oE '/home/stack/[A-Za-z0-9._/-]+\.(sh|md|py|json|tsv)' "$F" | sort -u)
+PATHS=$(printf '%s\n' "$HUMAN" | grep -oE '/home/stack/[A-Za-z0-9._/-]+\.(sh|md|py|json|tsv)' | sort -u)
 for p in $PATHS; do
   if [ -e "$p" ]; then ok "exists: $p"; else miss "PATH NOT FOUND: $p"; fi
 done
