@@ -304,6 +304,13 @@ class PlanUnit:
     depends_on: list[str] = field(default_factory=list)
     merge_after: list[str] = field(default_factory=list)
     flags: list[str] = field(default_factory=list)
+    # DECOMPOSE-EFFORT-AXIS soft-band ("advise-split") advisory. Deliberately a
+    # DEDICATED, NON-BLOCKING field — NOT part of ``flags``: the soft band's whole
+    # contract is warn + record but STAY RUNNABLE (irreducible one-file-but-big work
+    # must not be blocked), whereas ``flags`` is read by ``propose_only`` and by
+    # ``decompose.assess_plan`` as an UNPROVEN-independence signal that forces the
+    # human gate. Empty string = no advisory (the common case).
+    effort_advisory: str = ""
     wave: int = 0
     # The id of the broad ticket this unit was decomposed from (the
     # decomposer→sub-ticket linkage). Empty for hand-authored / top-level units,
@@ -334,6 +341,7 @@ class PlanUnit:
             "wave": self.wave,
             "propose_only": self.propose_only,
             "flags": list(self.flags),
+            "effort_advisory": self.effort_advisory,
             "parent": self.parent,
             "decompose_bypass": self.decompose_bypass,
         }
@@ -426,6 +434,8 @@ class Plan:
                 out.append(f"- `{u.id}` (wave {u.wave}, {u.tier}){dep} — {u.goal}")
                 out.append(f"    - owns: {u.owned_paths}")
                 out.append(f"    - accept: {u.accept}{flg}")
+                if u.effort_advisory:
+                    out.append(f"    - ⚠ {u.effort_advisory}")
         if self.review_items:
             out.append("")
             out.append("## Needs review (cannot auto-land)")
@@ -962,8 +972,12 @@ def _enforce_effort_axis(
                 config_dir, auto_decompose,
             )
         raise IntakeError(_effort_refusal_message(unit, score, threshold, suggestion))
-    # advise-split (soft band) — advisory only: admit, but record a warning that cannot hide.
-    unit.flags.append(_effort_advisory_flag(score, threshold))
+    # advise-split (soft band) — advisory only: admit, STAY RUNNABLE. Recorded on the
+    # dedicated ``effort_advisory`` field, NEVER on ``flags`` — ``flags`` is read by
+    # ``propose_only`` and by ``decompose.assess_plan`` as an unproven-independence signal
+    # that forces the human gate, which would silently turn this advisory into a block
+    # (violating the soft band's warn-but-stay-runnable contract).
+    unit.effort_advisory = _effort_advisory_flag(score, threshold)
 
 
 def _effort_refusal_message(

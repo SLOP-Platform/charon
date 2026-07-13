@@ -18,6 +18,7 @@ import pathlib
 
 import pytest
 
+from charon import decompose
 from charon import decompose_effort as eff
 from charon import intake as I
 
@@ -120,14 +121,19 @@ def test_normal_single_file_ticket_admitted_untouched(tmp_path):
 
     assert len(plan.units) == 1
     unit = plan.units[0]
+    assert unit.effort_advisory == ""
     assert not any("effort advisory" in f for f in unit.flags)
     assert not unit.propose_only
 
 
 # --------------------------------------------------------------------- advisory band
 def test_advisory_band_admits_with_warning_recorded(tmp_path):
-    """A soft-band ticket is ADMITTED (never blocked — irreducible one-file-but-big work is
-    allowed) but records a recoverable advisory warning on the unit, which cannot hide."""
+    """A soft-band ticket is ADMITTED and STAYS RUNNABLE (never blocked — irreducible
+    one-file-but-big work is allowed) but records a recoverable advisory warning on the
+    unit's DEDICATED ``effort_advisory`` field, which cannot hide. Critically, the advisory
+    must NOT be laundered through ``flags`` — that field also drives ``propose_only`` and
+    ``decompose.assess_plan``'s low-confidence check, so putting it there would silently
+    turn a warn-only soft-band call into a hard block, violating the axis's contract."""
     md = _md("Chunky but coupled", ["src/charon/chunky.py"], difficulty=4, behaviors=3)
 
     # Confirm the fixture actually lands in the advise-split band (not ok, not over-scope),
@@ -137,9 +143,17 @@ def test_advisory_band_admits_with_warning_recorded(tmp_path):
     score = eff.estimate_effort(unit)
     assert eff.effort_verdict(score, tier=unit.tier) == "advise-split"
 
-    advisories = [f for f in unit.flags if "effort advisory" in f]
-    assert advisories, "advise-split unit must record an advisory warning"
-    assert "advise-split band" in advisories[0]
+    assert "effort advisory" in unit.effort_advisory
+    assert "advise-split band" in unit.effort_advisory
+    # The advisory is NOT recorded on ``flags`` — that would (silently) block the unit.
+    assert not any("effort advisory" in f for f in unit.flags)
+
+    # ADMITTED and RUNNABLE: a soft-band advisory must never behave like a hard refusal.
+    assert not unit.propose_only
+    confidence = decompose.assess_plan(plan)
+    assert confidence.runnable
+    # Carried through to the emitted artifact too — cannot hide there either.
+    assert unit.to_dict()["effort_advisory"] == unit.effort_advisory
 
 
 # --------------------------------------------------------------------- escape hatch
@@ -155,6 +169,7 @@ def test_bypass_admits_over_effort_ticket_with_reason_recorded(tmp_path):
     unit = plan.units[0]
     assert unit.decompose_bypass == "irreducible one-file rewrite, tracked separately"
     # Bypass skips the axis entirely — no advisory is layered on top of an explicit override.
+    assert unit.effort_advisory == ""
     assert not any("effort advisory" in f for f in unit.flags)
 
 
