@@ -148,5 +148,15 @@
     "ci_step": true,
     "invariant": "No tracked file contains unallowlisted personal/internal info",
     "red_proof": "tests/test_public_clean.py"
+  },
+  {
+    "id": "no-rig-import-check",
+    "name": "no-rig-import guard",
+    "domain": "no-rig-import",
+    "enforcer": "tools/check_no_rig_import.py",
+    "covers": "product hot path never imports the rig grader (benchmark/grader_daemon)",
+    "ci_step": true,
+    "invariant": "no src/charon/ module imports benchmark or grader_daemon (outside privileged-loop zones)",
+    "red_proof": "tests/test_workclass_taxonomy.py"
   }
 ]
