@@ -22,3 +22,4 @@ ts	job	model	event	note
 2026-07-12T21:34:22Z	frontier-4055372-F29-CONFIG-PKG	deepseek-v4-pro	error-failover	rc=1; non-limit failure
 2026-07-12T21:34:29Z	economy-4060859-B4-BRANCH-REAPER	deepseek-v4-flash	limit-failover	rc=1; all providers for this model exhausted at gateway
 2026-07-12T21:39:36Z	strong-4060858-A1-LAND-GATE	glm-5.2	limit-failover	rc=0; all providers for this model exhausted at gateway
+2026-07-12T23:59:08Z	strong-4162761-FAIL-LOUD-CONTRACT	deepseek-v4-flash	limit-failover	rc=0; all providers for this model exhausted at gateway
