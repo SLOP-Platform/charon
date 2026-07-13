@@ -1,0 +1,11 @@
+# Example provider configuration (ships in the public repo — placeholders only).
+providers:
+  - name: openrouter
+    base_url: https://openrouter.ai/api/v1
+    api_key: "<YOUR_OPENROUTER_API_KEY>"
+    cost_class: cheap
+
+  - name: nanogpt
+    base_url: https://nano-gpt.com/api/v1
+    api_key: "<YOUR_NANOGPT_API_KEY>"
+    cost_class: cheap
