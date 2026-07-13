@@ -31,6 +31,65 @@ source "$FLEET/leak-guard.sh"
 # Absent field -> key `charon` (product) => IDENTICAL behavior to the old hardwired path.
 source "$FLEET/repo-registry.sh"
 usage(){ echo "usage: fleet-droid.sh <frontier|strong|economy|low|med|high|opus|sonnet|haiku> [--wait <min>] [--retries <n>] [--patience <cycles>]"; exit 2; }
+
+# ---- DETENTION-REDLINE: shared tier/chain helpers ------------------------------------------------
+# Defined ONCE and used by BOTH the main claim loop and the `resolve` hook below, so the chain a
+# test observes is produced by the EXACT code that runs in production (production path == test path).
+# normalize legacy/alias tier args (high/opus, med/sonnet, low/haiku) -> canonical frontier/strong/economy
+canon_tier(){ case "$1" in
+  high|opus)   echo frontier;;
+  med|sonnet)  echo strong;;
+  low|haiku)   echo economy;;
+  *)           echo "$1";;
+esac; }
+# canonical tier -> comma failover chain from the tier-models data file. $NF (last field) not $2 —
+# tolerant of accidental extra tabs / column alignment.
+tier_chain(){ local canon="$1" tmf="${CHARON_TIER_MODELS:-$FLEET/tier-models.tsv}"
+  awk -F'\t' -v t="$canon" '$1!~/^#/ && $1==t {print $NF; exit}' "$tmf" 2>/dev/null || true; }
+# Given a work_class and a tier's model chain, print the SURVIVING chain (comma-separated) after
+# dropping HARD-detained models for that work_class; advisory-flagged models STAY (with a loud
+# warning). Returns 7 if the WHOLE chain is HARD-detained (caller must FAIL LOUD — never run a
+# detained model). model-detention.sh reads the grader-owned scorecard READ-ONLY.
+detention_filter_chain(){
+  local wc="$1"; shift
+  local kept=() m drc
+  for m in "$@"; do
+    set +e; bash "$FLEET/model-detention.sh" check "$m" "$wc"; drc=$?; set -e
+    case "$drc" in
+      3) echo "[detention] HARD-detained: $m for work_class '$wc' — EXCLUDED from chain (scorecard redline: fabrication)." >&2 ;;
+      1) echo "[detention] ADVISORY: $m flagged (>=50% block rate) for work_class '$wc' — KEPT in chain, watch closely." >&2; kept+=("$m") ;;
+      *) kept+=("$m") ;;
+    esac
+  done
+  [ "${#kept[@]}" -gt 0 ] || return 7
+  ( IFS=','; echo "${kept[*]}" )
+}
+
+# ---- DETENTION-REDLINE: `resolve` dev/test hook --------------------------------------------------
+# `fleet-droid.sh resolve <tier> <ticketfile>` resolves a tier + a claimed ticket to its
+# POST-DETENTION-FILTER gateway chain using the SAME helpers the claim loop uses (production path ==
+# test path). Prints the surviving comma chain on stdout; exits 7 with a loud message when the whole
+# chain is HARD-detained for the ticket's work_class — the identical skip decision the loop makes.
+if [ "${1:-}" = "resolve" ]; then
+  rtier="${2:?resolve needs: <tier> <ticketfile>}"; rtfile="${3:?resolve needs: <tier> <ticketfile>}"
+  [ -f "$rtfile" ] || { echo "[fleet-droid] resolve: no such ticket file: $rtfile" >&2; exit 2; }
+  rcanon="$(canon_tier "$rtier")"
+  rline="$(tier_chain "$rcanon")"
+  [ -n "$rline" ] || { echo "[fleet-droid] resolve: no gateway model chain for tier '$rtier' (canonical '$rcanon')." >&2; exit 3; }
+  IFS=',' read -r -a RMODELS <<<"$rline" || true
+  rwc="$(awk -F': ' '$1=="work_class"{sub(/^[^:]*: ?/,"");print;exit}' "$rtfile")"
+  if [ -z "$rwc" ]; then
+    echo "[fleet-droid] resolve: ticket $rtfile has no work_class — detention filter cannot scope; emitting FULL chain." >&2
+    ( IFS=','; echo "${RMODELS[*]}" ); exit 0
+  fi
+  if rkept="$(detention_filter_chain "$rwc" "${RMODELS[@]}")"; then
+    echo "$rkept"; exit 0
+  else
+    echo "[fleet-droid] resolve: ALL eligible models detained for work_class '$rwc' — needs escalation or a heavily-tested run/override." >&2
+    exit 7
+  fi
+fi
+
 TIER=""; WAIT_MIN=3; RETRIES=6; PATIENCE=1
 while [ $# -gt 0 ]; do case "$1" in
   --wait)     WAIT_MIN="${2:?--wait needs minutes}"; shift 2;;
@@ -48,15 +107,9 @@ esac; done
 # ⚠️ PROVISIONAL defaults only — NO workhorse-per-tier is finalized; the real per-tier model is a
 # PENDING OPERATOR DECISION (see the file header + memory: charon-no-workhorse-finalized).
 TIER_MODELS_FILE="${CHARON_TIER_MODELS:-$FLEET/tier-models.tsv}"
-# normalize legacy/alias tier args (high/opus, med/sonnet, low/haiku) to canonical frontier/strong/economy
-case "$TIER" in
-  high|opus)   CANON=frontier;;
-  med|sonnet)  CANON=strong;;
-  low|haiku)   CANON=economy;;
-  *)           CANON="$TIER";;
-esac
-# $NF (last field) not $2 — tolerant of accidental extra tabs / column alignment in the data file.
-models_line="$(awk -F'\t' -v t="$CANON" '$1!~/^#/ && $1==t {print $NF; exit}' "$TIER_MODELS_FILE" 2>/dev/null || true)"
+# normalize + resolve via the SAME helpers the per-ticket detention filter + `resolve` hook use.
+CANON="$(canon_tier "$TIER")"
+models_line="$(tier_chain "$CANON")"
 if [ -z "$models_line" ]; then
   echo "[fleet-droid] FATAL: no gateway model chain for tier '$TIER' (canonical '$CANON') in $TIER_MODELS_FILE — add a '$CANON<TAB>model1,model2' row." >&2
   exit 3
@@ -89,6 +142,25 @@ while true; do
   empties=0
   read -r _tag id tfile <<<"$res"; current="$id"
   echo "[$DROID] claimed $id — launching session…"
+  # DETENTION-REDLINE: scope the tier chain to THIS ticket's work_class (read from its board file)
+  # and drop HARD-detained models BEFORE the run. Advisory-flagged models stay (loud warning). If the
+  # WHOLE chain is HARD-detained, FAIL LOUD + skip — a detained model can only run behind an explicit
+  # override, never a silent fall-through. RUN_MODELS is what actually feeds the work client below.
+  wclass="$(awk -F': ' '$1=="work_class"{sub(/^[^:]*: ?/,"");print;exit}' "$tfile")"
+  if [ -n "$wclass" ]; then
+    if run_line="$(detention_filter_chain "$wclass" "${MODELS[@]}")"; then
+      IFS=',' read -r -a RUN_MODELS <<<"$run_line" || true
+    else
+      echo "[$DROID] SKIP $id: ALL eligible models detained for work_class '$wclass' — needs escalation or a heavily-tested run/override. NOT running a detained model." >&2
+      bash "$FLEET/release.sh" "$id" >/dev/null 2>&1 || true; current=""
+      bash "$FLEET/loop-guard.sh" record "$id" "$DROID" >/dev/null 2>&1 \
+        || echo "[$DROID] LOOP-GUARD: $id quarantined (all models detained for '$wclass')." >&2
+      continue
+    fi
+  else
+    echo "[$DROID] WARNING: $id has no work_class field — detention filter cannot scope; running the FULL chain unfiltered." >&2
+    RUN_MODELS=("${MODELS[@]}")
+  fi
   pfile="$(awk -F': ' '$1=="prompt"{sub(/^[^:]*: ?/,"");print;exit}' "$tfile")"
   spec="$(cat "$tfile"; echo; echo '--- WORK SPEC ---'; cat "$pfile" 2>/dev/null || echo '(no prompt file)')"
   branch="$(awk -F': ' '$1=="branch"{sub(/^[^:]*: ?/,"");print;exit}' "$tfile")"
@@ -145,7 +217,7 @@ $spec"
   brief="$FLEET/state/agent-briefs/$DROID-$id.md"; mkdir -p "$(dirname "$brief")"
   printf '%s' "$prompt" > "$brief"
   outlog="$FLEET/state/agent-logs/$DROID-$id.txt"; mkdir -p "$(dirname "$outlog")"
-  if "$CHARON_AGENT_CMD" "$wt" "$outlog" "$brief" "${MODELS[@]}"; then
+  if "$CHARON_AGENT_CMD" "$wt" "$outlog" "$brief" "${RUN_MODELS[@]}"; then
     # #1 WORKTREE-LEAK GUARD (b): did the droid leak into the main checkout instead of its worktree?
     # (0 commits AND clean worktree AND the main checkout gained NEW porcelain entries.)
     if [ "$(leak_detect "$REPO" "$wt" "$branch" "$main_before" "$base_ref")" = LEAK ]; then
