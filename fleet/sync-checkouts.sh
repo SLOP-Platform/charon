@@ -31,5 +31,7 @@ sync_one() {
   fi
 }
 
-sync_one /home/stack/code/charon      product
-sync_one /home/stack/charon-private   rig
+# Env overrides exist ONLY so tests (fleet/tests/session-start-hook.test.sh) can point this
+# at throwaway repos instead of the real checkouts. Defaults are unchanged in normal operation.
+sync_one "${SYNC_CHECKOUTS_PRODUCT:-/home/stack/code/charon}"    product
+sync_one "${SYNC_CHECKOUTS_PRIV:-/home/stack/charon-private}"    rig
