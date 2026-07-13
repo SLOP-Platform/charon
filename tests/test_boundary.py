@@ -2,11 +2,32 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 from tools.check_boundary import scan_engine, scan_file
+
+# Repo root (…/charon) and its src/ dir, resolved absolutely from this file so
+# subprocesses we spawn below do not depend on the ambient CWD or a *relative*
+# PYTHONPATH=src — either of which a prior test could have perturbed. Pinning
+# both makes the subprocess-based guards hermetic (test-isolation fix).
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_SRC_DIR = _REPO_ROOT / "src"
+
+
+def _hermetic_env() -> dict[str, str]:
+    """A child-process env whose PYTHONPATH points at this checkout's src/ by
+    absolute path, so `import charon` resolves regardless of CWD or a polluted
+    parent PYTHONPATH."""
+    env = dict(os.environ)
+    existing = env.get("PYTHONPATH", "")
+    parts = [str(_SRC_DIR), str(_REPO_ROOT)]
+    if existing:
+        parts.append(existing)
+    env["PYTHONPATH"] = os.pathsep.join(parts)
+    return env
 
 # Privileged-exec symbols the exposed web process must NOT reference in-process
 # (DTC 2026-06-24 / ADR-0002 §2.3 / INV-B4): running the coordinator loop or an
@@ -166,6 +187,8 @@ def test_gateway_path_does_not_import_engine_transitively() -> None:
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
+        cwd=str(_REPO_ROOT),
+        env=_hermetic_env(),
         check=True,
     )
     leaked: list[str] = json.loads(result.stdout)
