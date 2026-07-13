@@ -17,7 +17,33 @@ OUTFILE="${1:-}"
 
 [ -f "$ROADMAP" ] || { echo "roadmap-html.sh: ROADMAP not found: $ROADMAP" >&2; exit 1; }
 
-html="$(awk -F'\t' -v genby="roadmap-html.sh" '
+# ACTIVE_MODE=recent: git-recency signal. Union the auto-detect (building/in-review)
+# with any project whose ROADMAP.tsv rows flipped status to done/building within the
+# last ~15 commits that touched that file. Derived here (git) and passed to awk.
+RECENT_ACTIVE=""
+if [ "${ACTIVE_MODE:-}" = "recent" ]; then
+  RECENT_ACTIVE="$(git -C "$SELF_DIR/.." log -15 -p -- fleet/state/ROADMAP.tsv 2>/dev/null \
+    | grep -E '^\+' | grep -vE '^\+\+\+' \
+    | awk -F'\t' '$3=="done" || $3=="building" { sub(/^\+/,"",$1); print $1 }' \
+    | sort -u | tr '\n' ' ')"
+fi
+
+html="$(awk -F'\t' -v genby="roadmap-html.sh" -v active_override="${ACTIVE_OVERRIDE:-}" -v recent_active="${RECENT_ACTIVE:-}" '
+BEGIN {
+  # ACTIVE_OVERRIDE: space-separated project names. When set, these projects
+  # (not building/in-review auto-detection) are the ACTIVE ones.
+  if (active_override != "") {
+    override_on = 1
+    no = split(active_override, oa, " ")
+    for (oi=1; oi<=no; oi++) { if (oa[oi] != "") override_set[oa[oi]] = 1 }
+  }
+  # recent_active: git-recency project set (ACTIVE_MODE=recent). Unioned with
+  # auto-detect. Ignored when ACTIVE_OVERRIDE is set (manual wins).
+  if (active_override == "" && recent_active != "") {
+    nr = split(recent_active, ra, " ")
+    for (ri=1; ri<=nr; ri++) { if (ra[ri] != "") recent_set[ra[ri]] = 1 }
+  }
+}
 function esc(s) {
   gsub(/&/, "\\&amp;", s)
   gsub(/</, "\\&lt;", s)
@@ -52,6 +78,7 @@ function status_class(s) {
   n = ++cnt[proj]
   P[proj,n,"id"]=id; P[proj,n,"st"]=st; P[proj,n,"name"]=name; P[proj,n,"goal"]=goal; P[proj,n,"wave"]=wave
   if (wave != "") haswave[proj]=1
+  if (!override_on && (st=="building" || st=="in-review")) active[proj]=1
   tally[st]++
   ptally[proj,st]++
 }
@@ -59,6 +86,20 @@ END {
   if (np == 0) { print "roadmap-html.sh: ROADMAP has no rows" > "/dev/stderr"; exit 1 }
   nrows = 0
   for (i=1; i<=np; i++) { nrows += cnt[order[i]] }
+
+  # ACTIVE_OVERRIDE: mark listed projects active (only if they exist in data).
+  if (override_on) {
+    for (i=1; i<=np; i++) { if (order[i] in override_set) active[order[i]]=1 }
+  } else {
+    # ACTIVE_MODE=recent: union git-recency set with auto-detect (already set).
+    for (i=1; i<=np; i++) { if (order[i] in recent_set) active[order[i]]=1 }
+  }
+
+  # Two-pass reorder: active projects first (preserving first-appearance order
+  # among themselves), then remaining projects in original first-appearance order.
+  ro = 0
+  for (i=1; i<=np; i++) { if (order[i] in active) { renderOrder[++ro]=order[i] } }
+  for (i=1; i<=np; i++) { if (!(order[i] in active)) { renderOrder[++ro]=order[i] } }
 
   print "<!DOCTYPE html>"
   print "<html lang=\"en\">"
@@ -105,9 +146,16 @@ END {
   print "    .project { background: var(--project-bg); border: 1px solid var(--project-border); border-radius: 12px; padding: 16px; margin-bottom: 18px; }"
   print "    .project-header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }"
   print "    .project-title { font-size: 1.15rem; font-weight: 700; margin: 0; }"
+  print "    .project-title-active { color: var(--st-done-fg); }"
+  print "    .active-marker { font-size: 0.85rem; font-weight: 600; margin-right: 4px; }"
   print "    .project-totals { display: flex; flex-wrap: wrap; gap: 6px 10px; font-size: 0.82rem; color: var(--muted); }"
   print "    .wave { margin-top: 10px; }"
-  print "    .wave-title { font-size: 0.95rem; font-weight: 600; color: var(--wave-fg); background: var(--wave-bg); padding: 6px 10px; border-radius: 8px; margin: 0 0 8px; }"
+  print "    .wave > .wave-body { margin-top: 8px; }"
+  print "    .wave-title { font-size: 0.95rem; font-weight: 600; color: var(--wave-fg); background: var(--wave-bg); padding: 6px 10px; border-radius: 8px; margin: 0; cursor: pointer; list-style: none; user-select: none; }"
+  print "    .wave-title::-webkit-details-marker { display: none; }"
+  print "    .wave-title::before { content: \"\\25B8\"; display: inline-block; margin-right: 6px; font-size: 0.8em; transition: transform 0.15s; }"
+  print "    details[open] > .wave-title::before { transform: rotate(90deg); }"
+  print "    .wave-title-done { color: var(--st-done-fg); }"
   print "    .ticket { display: grid; grid-template-columns: 90px 1fr auto; gap: 10px; align-items: start; padding: 8px 6px; border-bottom: 1px solid var(--border); }"
   print "    .ticket:last-child { border-bottom: none; }"
   print "    .id { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.9rem; font-weight: 600; color: var(--muted); }"
@@ -144,10 +192,15 @@ END {
   print "    </div>"
 
   for (i=1; i<=np; i++) {
-    proj = order[i]
+    proj = renderOrder[i]
+    isactive = (proj in active)
     print "    <section class=\"project\">"
     print "      <div class=\"project-header\">"
-    print "        <h2 class=\"project-title\">" esc(proj) "</h2>"
+    if (isactive) {
+      print "        <h2 class=\"project-title project-title-active\"><span class=\"active-marker\">&#9679; active</span>" esc(proj) "</h2>"
+    } else {
+      print "        <h2 class=\"project-title\">" esc(proj) "</h2>"
+    }
     print "        <div class=\"project-totals\">"
     for (k=1; k<=7; k++) {
       s = ord[k]
@@ -170,8 +223,19 @@ END {
       }
       for (wi=1; wi<=wc; wi++) {
         label = worder[wi]
-        print "      <div class=\"wave\">"
-        print "        <div class=\"wave-title\">" esc(label) "</div>"
+        # Determine if every ticket in this wave is done.
+        alldone = 1; wtickets = 0
+        for (n=1; n<=cnt[proj]; n++) {
+          w = P[proj,n,"wave"]; il = (w=="") ? "Unscheduled" : w
+          if (il == label) { wtickets++; if (P[proj,n,"st"] != "done") alldone = 0 }
+        }
+        if (wtickets == 0) alldone = 0
+        # All-done wave: collapsed + green summary. Otherwise: open + normal.
+        openattr = alldone ? "" : " open"
+        sumcls = alldone ? " wave-title-done" : ""
+        print "      <details class=\"wave\"" openattr ">"
+        print "        <summary class=\"wave-title" sumcls "\">" esc(label) "</summary>"
+        print "        <div class=\"wave-body\">"
         for (n=1; n<=cnt[proj]; n++) {
           w = P[proj,n,"wave"]; il = (w=="") ? "Unscheduled" : w
           if (il == label) {
@@ -189,7 +253,8 @@ END {
             print "        </div>"
           }
         }
-        print "      </div>"
+        print "        </div>"
+        print "      </details>"
       }
     } else {
       for (n=1; n<=cnt[proj]; n++) {
