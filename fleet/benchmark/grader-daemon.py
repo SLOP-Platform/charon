@@ -276,6 +276,15 @@ def _grade(snapshot: Path, req: dict) -> dict:
         return {"score": 0, "verdict": "BLOCK", "gate": "fail",
                 "reason": f"reds-replay: unit {unit_id!r} not found in reds-replay.tsv"}
 
+    if kind == "preflight":
+        # PREFLIGHT-CHUNK0 dispatch seam: route MODEL-PREFLIGHT battery tasks to
+        # their LOAD-BEARING out-of-band graders in $KEYS/preflight/ (0700). The
+        # grader ALWAYS returns a dict — it fails CLOSED (BLOCK) when no grader
+        # is deployed, so an ungraded preflight task can never silently pass a
+        # model into tier-models.tsv. The graders themselves are CHUNK-B.
+        from graders.preflight import grade as grade_preflight
+        return grade_preflight(snapshot, unit_id)
+
     # kind == "section" (or unknown — fall back to section grader)
     if unit_id.startswith("S") and unit_id in SECTION_INFO:
         return _grade_section(snapshot, unit_id)
