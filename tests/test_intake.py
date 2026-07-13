@@ -469,3 +469,35 @@ Edit `src/charon/inferred.py` to add the feature.
     assert u.owned_paths == ["src/charon/inferred.py"]
     # body still preserved alongside the scavenged path
     assert "inferred.py" in u.body
+
+
+# ------------------------------------------------- parent linkage (DEC-EMIT-PARENT)
+def test_planunit_parent_roundtrips_through_board_emit() -> None:
+    """FAIL-ON-REVERT: a decomposer-emitted sub-unit records the id of the broad
+    ticket it was split from, and that ``parent`` link survives the full emit path
+    PlanUnit -> to_dict -> board Unit.from_dict -> Unit.to_dict. Revert the
+    ``parent`` field and this assertion goes RED."""
+    sub = I.PlanUnit(
+        id="sub-1", goal="split off", accept=["pytest -q"],
+        owned_paths=["src/charon/a.py"], parent="BROAD-X",
+    )
+    d = sub.to_dict()
+    assert d["parent"] == "BROAD-X"
+
+    # cross the intake -> board seam from the same artifact
+    board_unit = BoardUnit.from_dict(d)
+    assert board_unit.parent == "BROAD-X"
+    assert board_unit.to_dict()["parent"] == "BROAD-X"
+
+
+def test_planunit_without_parent_still_works() -> None:
+    """Backward-compat: a unit with no parent defaults to empty and loads cleanly
+    through the board seam (every pre-existing unit is unaffected)."""
+    top = I.PlanUnit(id="top-1", goal="top-level", accept=["pytest -q"],
+                     owned_paths=["src/charon/b.py"])
+    assert top.parent == ""
+    assert top.to_dict()["parent"] == ""
+    board_unit = BoardUnit.from_dict(top.to_dict())
+    assert board_unit.parent == ""
+    # legacy records with no 'parent' key at all still load
+    assert BoardUnit.from_dict({"id": "legacy"}).parent == ""

@@ -257,6 +257,10 @@ class PlanUnit:
     merge_after: list[str] = field(default_factory=list)
     flags: list[str] = field(default_factory=list)
     wave: int = 0
+    # The id of the broad ticket this unit was decomposed from (the
+    # decomposer→sub-ticket linkage). Empty for hand-authored / top-level units,
+    # so every existing unit and artifact is unaffected (backward-compatible).
+    parent: str = ""
 
     @property
     def propose_only(self) -> bool:
@@ -277,6 +281,7 @@ class PlanUnit:
             "wave": self.wave,
             "propose_only": self.propose_only,
             "flags": list(self.flags),
+            "parent": self.parent,
         }
 
 
