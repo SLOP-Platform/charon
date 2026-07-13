@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import pathlib
 import tempfile
+from dataclasses import replace
 
 from charon.gateway import (
     _MODULE_SPECS,
@@ -142,7 +143,7 @@ def test_load_config_populates_all_modules(tmp_path):
 
 def test_load_config_then_build_server_forwards_modules(tmp_path):
     """load_config → build_server wires cfg.modules into the server."""
-    cfg = load_config(state_dir=str(tmp_path))
+    cfg = replace(load_config(state_dir=str(tmp_path)), port=0)  # ephemeral port
     srv = build_server(cfg)
     try:
         assert isinstance(srv.modules, dict)
@@ -229,7 +230,7 @@ def test_new_module_spec_integrated_through_build(tmp_path):
                       factory=_stub_factory)
     _MODULE_SPECS.append(spec)
     try:
-        cfg = load_config(state_dir=str(tmp_path))
+        cfg = replace(load_config(state_dir=str(tmp_path)), port=0)  # ephemeral port
         assert called, "stub factory was never called by load_config"
         assert "stub_integration_test" in cfg.modules
         assert cfg.modules["stub_integration_test"] is stub_inst
