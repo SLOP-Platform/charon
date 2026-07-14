@@ -115,6 +115,51 @@ printf '|---|---|---|---|---|---|---|---|---|---|\n' >> "$SUMMARY_FILE"
 
 git -C "$PRODUCT_REPO" fetch origin --quiet 2>/dev/null || true
 
+# finalize_live_capture <model> <overall> <ref> <gate_verdict> <test_verdict> <out_log> <card>
+# Convert this run's OBJECTIVE grade (charon.cli gate + ticket accept-test — NEVER the
+# model's own claimed SUCCESS) into a paired FINAL capture, so a clean run lands a
+# source=live/stage=active scorecard row instead of evaporating as a lost provisional.
+# The daemon (bench-grader) does the ledger write; we only enqueue to the maildrop spool.
+#
+# SAFETY INVARIANTS (money-path — see charon-run.sh's per-model loop):
+#  * Fire ONLY when out_log has CHARON_RUN_RESULT=SUCCESS — the single state where
+#    charon-run stored a PROVISIONAL + wrote state/model-used/<ref> and did NOT itself
+#    self-finalize a row. This is the double-log guard: charon-run only ever writes a
+#    FINAL row on its rc!=0 non-infra BLOCK path (which never emits this marker), and
+#    SKIPS logging entirely on provider-limit / infra faults (also no marker). So a
+#    SUCCESS marker == exactly one provisional awaiting our FINAL, never a double count.
+#  * At SUCCESS (rc==0) `overall` is only ever REVIEW-READY / FIXES-NEEDED / DETAIN — a
+#    RETRY verdict requires rc!=0 + a provider/local attribution, so an infra/provider
+#    fault is structurally never mapped onto the model here (the Flaw-2 trap).
+#  * Verdict is derived from the objective `overall`, not the model's claim; a
+#    claimed-SUCCESS that grades FIXES/BLOCK is flagged as a discrepancy (--call-log-report).
+finalize_live_capture() {
+  local model="$1" overall="$2" ref="$3" gate_v="$4" test_v="$5" out_log="$6" card="$7"
+  local enq="$FLEET_DIR/capture/enqueue-capture.sh"
+  [ -x "$enq" ] || return 0
+  # Double-log guard: only the true charon-run SUCCESS path (provisional stored,
+  # model-used written, no self-finalized row) is eligible.
+  grep -q '^CHARON_RUN_RESULT=SUCCESS' "$out_log" 2>/dev/null || return 0
+  local v g
+  case "$overall" in
+    REVIEW-READY*) v=MERGE; g=pass ;;
+    FIXES-NEEDED*) v=FIXES; g="$gate_v" ;;
+    DETAIN*)       v=BLOCK; g=fail ;;
+    *)             return 0 ;;  # RETRY*/BLOCKED*/unknown -> not a model outcome; fail closed
+  esac
+  # Normalize gate to the daemon's enum (pass|fail); anything else (skipped/not-given)
+  # is sent empty (the daemon accepts an empty actual_gate).
+  case "$g" in pass|fail) : ;; *) g="" ;; esac
+  local score=0; [ "$g" = pass ] && score=100
+  "$enq" --model "$model" --claimed-result SUCCESS --ref "$ref" \
+    --stage active --actual-verdict "$v" --actual-gate "$g" --score "$score" \
+    ${DOGFOOD_WORK_CLASS:+--work-class "$DOGFOOD_WORK_CLASS"} \
+    --evidence "dogfood-eval OBJECTIVE grade: overall=$overall gate=$gate_v test=$test_v card=$(basename "$card")" \
+    --call-log-report >/dev/null 2>&1 \
+    && echo "[dogfood-eval] live-lane FINAL enqueued: $model ref=$ref -> verdict=$v gate=${g:-<none>} (daemon appends source=live/stage=active)" >&2 \
+    || echo "[dogfood-eval] WARN: live-lane FINAL enqueue failed for $model ref=$ref (non-fatal)" >&2
+}
+
 # run_one <model>
 # Everything about ONE candidate lives here: worktree, run, grade, card. Never merges.
 run_one() {
@@ -156,7 +201,15 @@ run_one() {
 
   local start_epoch end_epoch elapsed rc
   start_epoch="$(date -u +%s)"
-  CHARON_RUN_TIMEOUT_S="$LATENCY_BUDGET_S" "$CHARON_RUN" "$wt" "$out_log" "$wt/DOGFOOD-TICKET-BRIEF.md" "$model"
+  # CHARON_JOB_REF: pin the capture ref to this candidate's unique label so the
+  # provisional charon-run stores (on success) and the FINAL finalize_live_capture
+  # enqueues below pair on the SAME ref (and state/model-used/<ref> confirms it).
+  # CHARON_JOB_WORK_CLASS: the daemon takes a paired FINAL's work_class from the
+  # STORED PROVISIONAL (grader-daemon._handle_capture), so the class must ride on the
+  # provisional charon-run enqueues here — a --work-class on the FINAL alone is ignored.
+  # Unset -> daemon defaults to ci-infra.
+  CHARON_JOB_REF="$label" CHARON_JOB_WORK_CLASS="${DOGFOOD_WORK_CLASS:-}" \
+    CHARON_RUN_TIMEOUT_S="$LATENCY_BUDGET_S" "$CHARON_RUN" "$wt" "$out_log" "$wt/DOGFOOD-TICKET-BRIEF.md" "$model"
   rc=$?
   end_epoch="$(date -u +%s)"
   elapsed=$((end_epoch - start_epoch))
@@ -247,6 +300,9 @@ run_one() {
 
   write_card "$card" "$model" "$overall" "$attribution" "$elapsed" "$latency_verdict" "$gate_verdict" "$test_verdict" "$did_real_work" "$scope_verdict" "$diff_stat" "$wt" "$branch" "$out_log" "$gate_log" "$test_log" "$diff_file"
   append_summary "$model" "$overall" "$attribution" "$elapsed" "$LATENCY_BUDGET_S" "$gate_verdict" "$test_verdict" "$did_real_work" "$scope_verdict" "$card"
+  # Close the live-lane loop: objective grade -> paired FINAL capture -> daemon writes a
+  # source=live/stage=active scorecard row (guarded; see finalize_live_capture header).
+  finalize_live_capture "$model" "$overall" "$label" "$gate_verdict" "$test_verdict" "$out_log" "$card"
 
   echo "[dogfood-eval] candidate $model -> $overall (attribution=$attribution, wall_s=$elapsed, card=$card)" >&2
 
