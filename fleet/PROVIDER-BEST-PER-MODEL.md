@@ -1,5 +1,14 @@
 # Provider best/cheapest PER MODEL — canonical routing reference
 
+> **SUPERSEDED by `fleet/state/CG-MODEL-CANDIDATES.md` + `fleet/state/CG-PROVIDERS.md`** — this doc
+> explicitly set out to be "the canonical table so we stop re-analyzing," which is now the CG- docs'
+> job, verified against the **live gateway config + live probes** rather than the
+> `PROVIDER-REVIEW-2026-07-10.md` snapshot this doc cites. **Confirmed-stale claim to fix on sight
+> wherever else it's repeated:** this doc (and `tier-models.tsv`) still list `opencode-go` (`-go`
+> suffix) as a live universal fallback leg — the live config shows opencode-go **fully retired**
+> (all 42 models `enabled:false`, 0 pool legs) as of 2026-07-14. Kept for the $/1M cost comparisons
+> and provider-strength one-liners, which are still useful directional history.
+
 **Purpose (operator, 2026-07-10):** the CANONICAL "who is best/cheapest for each model" table so we
 STOP re-analyzing providers every session. This drives `cost_rank` in the gateway pools and the
 drain-then-park order. Source of truth for prices/limits = `fleet/reviews/PROVIDER-REVIEW-2026-07-10.md`

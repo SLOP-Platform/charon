@@ -77,6 +77,8 @@ GRADER_TIMEOUT_S   = 300        # max seconds a grader subprocess may run
 _LEDGER_PATH_OVERRIDE: Path | None = None
 _PROVISIONAL_STORE_OVERRIDE: Path | None = None
 _SCORECARD_DIR_OVERRIDE: Path | None = None
+_MODEL_USED_DIR_OVERRIDE: Path | None = None  # FLAW-3 fix test hook
+_REQ_DIR_OVERRIDE: Path | None = None  # FLAW-1 fix test hook (hermetic _scan_requests)
 
 
 def _ledger_path() -> Path:
@@ -98,6 +100,20 @@ def _scorecard_dir() -> Path:
     if _SCORECARD_DIR_OVERRIDE is not None:
         return _SCORECARD_DIR_OVERRIDE
     return SCORECARD_ARTIFACT_DIR
+
+
+def _model_used_dir() -> Path:
+    """Return the active state/model-used/ dir (real or test-overridden)."""
+    if _MODEL_USED_DIR_OVERRIDE is not None:
+        return _MODEL_USED_DIR_OVERRIDE
+    return FLEET_DIR / "state" / "model-used"
+
+
+def _req_dir() -> Path:
+    """Return the active spool req/ dir (real or test-overridden)."""
+    if _REQ_DIR_OVERRIDE is not None:
+        return _REQ_DIR_OVERRIDE
+    return REQ_DIR
 
 # ── section metadata (mirrored from lib/sections.sh) ───────────────────────
 
@@ -371,6 +387,37 @@ def _append_capture_row(model: str, ref: str, work_class: str, difficulty: str,
     log(f"capture: appended {tag}live row: {model} / {ref} / {actual_verdict} score={score}")
 
 
+# FLAW-3 fix (adversarial review 2026-07-13) -- GRADER-SECFIX-RECONCILE: fold
+# this in. _read_request only checked FIELD PRESENCE, so a direct write into
+# the 1733 spool (the `stack` user CAN write there, bypassing
+# capture/enqueue-capture.sh's own enum validation entirely) could forge a
+# `source=live` row with a bogus verdict/gate for ANY model -> instant HARD
+# detain. This is a narrow, defensive addition (enum validation + a
+# provenance anchor for unpaired FINALs) -- NOT a rewrite of the daemon; the
+# owning ticket should reconcile/fold this into whatever broader request
+# validation it lands.
+_VALID_CAPTURE_VERDICTS = {"MERGE", "FIXES", "BLOCK"}
+_VALID_CAPTURE_GATES = {"pass", "fail"}
+
+
+def _model_used_matches(ref: str, model: str) -> bool:
+    """Cross-check that *model* matches state/model-used/<ref>.
+
+    charon-run.sh writes this file the instant a model's run succeeds
+    (fleet/state/model-used/<ref>) -- BEFORE any capture row is even
+    enqueued, and outside the bench-grader-owned spool a forger writes to.
+    It is the only independent provenance anchor available for an UNPAIRED
+    FINAL (no stored provisional to pair against): exactly the shape a
+    forged direct-spool write takes, since it skips charon-run.sh's own
+    provisional-then-FINAL lifecycle entirely.
+    """
+    try:
+        p = _model_used_dir() / ref
+        return p.is_file() and p.read_text().strip() == model
+    except OSError:
+        return False
+
+
 def _handle_capture(req: dict, ledger_override: Path | None = None) -> bool:
     """Handle a capture-kind request.
 
@@ -395,8 +442,17 @@ def _handle_capture(req: dict, ledger_override: Path | None = None) -> bool:
     claimed_result = req.get("claimed_result", "?")
     evidence = req.get("evidence", "")
 
+    # ── FLAW-3: validate enums before trusting either phase ──────────────
+    has_verdict = actual_verdict is not None and not (isinstance(actual_verdict, str) and actual_verdict.strip() == "")
+    if has_verdict and str(actual_verdict) not in _VALID_CAPTURE_VERDICTS:
+        log(f"capture: REJECTED {run_id} -- invalid actual_verdict {actual_verdict!r} (valid: {sorted(_VALID_CAPTURE_VERDICTS)})")
+        return False
+    if actual_gate and str(actual_gate) not in _VALID_CAPTURE_GATES:
+        log(f"capture: REJECTED {run_id} -- invalid actual_gate {actual_gate!r} (valid: {sorted(_VALID_CAPTURE_GATES)})")
+        return False
+
     # ── PROVISIONAL: store and wait ──────────────────────────────────────
-    if actual_verdict is None or (isinstance(actual_verdict, str) and actual_verdict.strip() == ""):
+    if not has_verdict:
         data = _load_provisionals()
         data[run_id] = {
             "model": model,
@@ -413,7 +469,8 @@ def _handle_capture(req: dict, ledger_override: Path | None = None) -> bool:
     # ── FINAL: compute discrepancy and append ────────────────────────────
     prov_data = {}
     provs = _load_provisionals()
-    if run_id in provs:
+    paired = run_id in provs
+    if paired:
         prov_data = provs.pop(run_id)
         _save_provisionals(provs)
         log(f"capture: paired FINAL with provisional {run_id}")
@@ -425,6 +482,15 @@ def _handle_capture(req: dict, ledger_override: Path | None = None) -> bool:
     stored_ref = prov_data.get("ref", ref)
     stored_wclass = prov_data.get("work_class", work_class)
     stored_diff = prov_data.get("difficulty", difficulty)
+
+    # ── FLAW-3: pin model provenance for an UNPAIRED FINAL ───────────────
+    # A paired FINAL is trustworthy (the provisional was itself written by a
+    # real charon-run.sh SUCCESS earlier in this same lifetime). An UNPAIRED
+    # one has no such anchor, so require state/model-used/<ref> to confirm
+    # this model really is the one that ran -- reject a forged/unbacked row.
+    if not paired and not _model_used_matches(stored_ref, stored_model):
+        log(f"capture: REJECTED unpaired FINAL {run_id} -- model {stored_model!r} not confirmed by state/model-used/{stored_ref} (unbacked/forged row)")
+        return False
 
     if score is None:
         score = 0
@@ -690,10 +756,17 @@ def _delete_req_safe(path: Path) -> None:
 
 
 def _scan_requests(seen: set) -> list[Path]:
-    """Return new (not yet seen) request files sorted by mtime."""
+    """Return new (not yet seen) request files sorted by mtime.
+
+    Dedup key is the FILENAME (`seen` stores names, not run_ids) -- this is
+    why FLAW-1 (2026-07-13 adversarial review) required the spool WRITER
+    (capture/enqueue-capture.sh) to give the PROVISIONAL and FINAL phases of
+    one run_id distinct on-disk filenames: pairing itself is keyed on the
+    run_id FIELD inside the JSON (_handle_capture), never on this filename.
+    """
     new = []
     try:
-        for entry in sorted(REQ_DIR.iterdir(), key=lambda p: p.stat().st_mtime):
+        for entry in sorted(_req_dir().iterdir(), key=lambda p: p.stat().st_mtime):
             if entry.is_file() and entry.suffix == ".json" and entry.name not in seen:
                 new.append(entry)
     except OSError:
@@ -720,7 +793,7 @@ def main() -> None:
     _ensure_scorecard(version)
 
     log(f"grader-daemon started (pid={os.getpid()}, scorecard=v{version})")
-    log(f"watching {REQ_DIR}")
+    log(f"watching {_req_dir()}")
 
     seen: set[str] = set()
 

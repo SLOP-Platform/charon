@@ -35,10 +35,18 @@
 #   too-slow                 — charon-run.sh's own timeout (rc=124) with NO pool-exhaustion
 #                               signal in opencode's log (latency-is-a-failure-class)
 #   provider-degraded->retry — charon-run.sh's own timeout WITH a pool-exhaustion signal
-#   provider-throttled->try-another — charon-run.sh's own limit-failover / ALL-EXHAUSTED
-# A model is NEVER disqualified for a provider symptom (degraded/throttled) — only for
-# early-ditch/quality or too-slow (latency-is-a-failure-class: an intrinsic budget miss
-# fails by itself, regardless of correctness).
+#   provider-throttled->try-another — a REAL limit-hit/all-exhausted signal (see
+#                               lib/dogfood-attribution.sh — local/opaque errors are
+#                               checked FIRST so this bucket isn't a catch-all)
+#   local-error                — a local/opaque failure (sqlite db-lock, opaque gateway
+#                               UnknownError) that is NOT a provider rate-limit; needs
+#                               human triage, never silently folded into provider-*
+# A model is NEVER disqualified for a provider symptom (degraded/throttled/local-error)
+# — only for early-ditch/quality or too-slow (latency-is-a-failure-class: an intrinsic
+# budget miss fails by itself, regardless of correctness). A trailing provider hiccup
+# on a call made AFTER the real diff already graded clean (gate pass + ticket-test pass)
+# is reclassified and still counts as REVIEW-READY — see reclassify_trailing_success in
+# lib/dogfood-attribution.sh.
 #
 # NEVER auto-merges, NEVER pushes, NEVER lands. Output is a per-candidate REVIEW PACKET
 # (result card + saved diff + gate/test logs) for a human to read — pass/fail is a
@@ -47,6 +55,8 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FLEET_DIR="$(cd "$HERE/.." && pwd)"
+# shellcheck source=lib/dogfood-attribution.sh
+source "$HERE/lib/dogfood-attribution.sh"
 
 # ---- configuration (env-overridable; defaults match repo-registry.sh's `charon` repo) ----
 CHARON_RUN="${DOGFOOD_CHARON_RUN:-$FLEET_DIR/charon-run.sh}"
@@ -151,22 +161,10 @@ run_one() {
   end_epoch="$(date -u +%s)"
   elapsed=$((end_epoch - start_epoch))
 
-  # ---- failure attribution (reuse charon-run.sh's OWN classification lines; never
-  # re-derive from scratch) ----
-  local attribution="unknown"
-  if [ "$rc" -eq 0 ]; then
-    attribution="ran-to-completion"
-  elif grep -q 'TIMEOUT (rc=124.*CAUSE: gateway pool exhausted' "$out_log" 2>/dev/null; then
-    attribution="provider-degraded->retry(pool-exhausted-on-timeout)"
-  elif grep -q 'TIMEOUT (rc=124.*too-slow FAIL' "$out_log" 2>/dev/null; then
-    attribution="too-slow(latency-budget-exceeded)"
-  elif grep -q "hit a provider/session LIMIT" "$out_log" 2>/dev/null; then
-    attribution="provider-throttled->try-another(limit-hit)"
-  elif grep -q "ALL MODELS EXHAUSTED" "$out_log" 2>/dev/null; then
-    attribution="provider-throttled->try-another(all-exhausted)"
-  elif grep -q "exited nonzero" "$out_log" 2>/dev/null; then
-    attribution="error-nonlimit(rc=$rc; needs human triage, not auto-disqualified as model-quality)"
-  fi
+  # ---- failure attribution (lib/dogfood-attribution.sh; never re-derive inline —
+  # see that file for the mislabel bug this classifier fixes) ----
+  local attribution
+  attribution="$(classify_attribution "$rc" "$out_log")"
 
   local latency_verdict="within-budget"
   [ "$elapsed" -ge "$LATENCY_BUDGET_S" ] && latency_verdict="BUDGET-EXCEEDED(too-slow-is-a-fail-by-itself)"
@@ -222,16 +220,29 @@ run_one() {
     echo "(no DOGFOOD_TEST_CMD given — ticket-specific accept: check not run)" > "$test_log"
   fi
 
+  # ---- reclassify a trailing provider hiccup AFTER the real work already graded clean
+  # (lib/dogfood-attribution.sh) — must run AFTER gate_verdict/test_verdict exist ----
+  attribution="$(reclassify_trailing_success "$attribution" "$rc" "${n_changed:-0}" "$gate_verdict" "$test_verdict")"
+
   # ---- overall verdict (advisory for human review — never an auto-merge signal) ----
+  # Order matters: an intrinsic quality/latency fail always wins (early-ditch/too-slow);
+  # otherwise a real diff that graded clean on BOTH the objective gate and the ticket's
+  # own accept-test is REVIEW-READY regardless of rc — this is what makes the trailing-
+  # provider-hiccup-after-success case (deepseek-v4-flash/kimi-k2.6 on TOOL-REPAIR-
+  # MUTATING) land correctly instead of as a false RETRY/provider-symptom. Only after
+  # that do we fall back to a genuine provider symptom or a local/opaque error (neither
+  # of which disqualifies the model — it's a RETRY, not a FIXES-NEEDED).
   local overall="FIXES-NEEDED"
   if [[ "$attribution" == too-slow* ]]; then
     overall="DETAIN(latency)"
   elif [[ "$attribution" == early-ditch* ]]; then
     overall="DETAIN(quality)"
+  elif [ "${n_changed:-0}" -gt 0 ] && [ "$gate_verdict" = "pass" ] && { [ "$test_verdict" = "pass" ] || [ "$test_verdict" = "not-given" ]; }; then
+    overall="REVIEW-READY(candidate-for-merge; human must still read the diff)"
   elif [[ "$attribution" == provider-*  && "$rc" -ne 0 ]]; then
     overall="RETRY(provider-symptom-not-model-fault)"
-  elif [ "$rc" -eq 0 ] && [ "${n_changed:-0}" -gt 0 ] && [ "$gate_verdict" = "pass" ] && { [ "$test_verdict" = "pass" ] || [ "$test_verdict" = "not-given" ]; }; then
-    overall="REVIEW-READY(candidate-for-merge; human must still read the diff)"
+  elif [[ "$attribution" == local-error* ]]; then
+    overall="RETRY(local-error-not-model-fault; needs human triage)"
   fi
 
   write_card "$card" "$model" "$overall" "$attribution" "$elapsed" "$latency_verdict" "$gate_verdict" "$test_verdict" "$did_real_work" "$scope_verdict" "$diff_stat" "$wt" "$branch" "$out_log" "$gate_log" "$test_log" "$diff_file"

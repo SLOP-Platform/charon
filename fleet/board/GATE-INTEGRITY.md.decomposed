@@ -1,0 +1,37 @@
+repo: charon
+tier: strong
+difficulty: 3
+work_class: ci-infra
+branch: feat/gate-integrity
+depends_on:
+owns: src/charon/gate_runner.py, tools/check_gate_registry.py, tools/check_inert_code.py, tools/inert_to_graph.py, tools/inert-code-disposition.json
+note: |
+  S1 of the CG remaining-work sequence. Full root-cause spec (file:line for every claim) at
+  fleet/state/S1-GATE-INTEGRITY-SPEC.md — READ IT FIRST, do not re-derive. The "2 RED gates on
+  master" framing was corrected: both pass on a fresh clone; the reds are LOCAL-tree pollution
+  from ephemeral .claude/worktrees/agent-* copies swept into the inert AST scan (non-determinism).
+  Do NOT edit tools/_vendor/ksf_inert_code.py (its header forbids hand-edits — fix via a
+  monkeypatch of _EXCLUDE_DIRS from tools/check_inert_code.py).
+accept: |
+  ## Task (see S1-GATE-INTEGRITY-SPEC.md for the specified fix at each step)
+  1. gate_runner.py: add pytest, check-decisions, render-review-log (--check, NOT bare — bare
+     mutates docs/REVIEW-LOG.md) to CHECKS. check_gate_registry.py: ALL_DOMAINS += ci-infra,
+     no-rig-import.
+  2. FIRST fix determinism: extend _EXCLUDE_DIRS (via check_inert_code.py monkeypatch) to exclude
+     .claude/ + caches. Verify: run `PYTHONPATH=src python3 tools/check_inert_code.py` 3x in a
+     tree with .claude/worktrees/ present → identical counts + identical symbol lists all 3.
+  3. tools/inert_to_graph.py (untracked): strip its stray `# @covers: inert-graph-coupling` line
+     (it's a diagnostic tool, no invariant/exit-code contract) OR give it a real gates.json entry.
+  4. inert-code-disposition.json: apply the §4 triage — DELETE ActualsLedger/ActualRow;
+     keep-pending-wire (NOT delete) ReviewerCircuitBreaker/next_entry/proxy_excluded_keys;
+     classify the rest per the spec table.
+
+  ## Accept (all must pass)
+  - PYTHONPATH=src python3 -m charon.cli gate  → GREEN (incl. the 3 newly-added checks)
+  - PYTHONPATH=src python3 tools/check_inert_code.py  run 3x → deterministic, identical output
+  - PYTHONPATH=src python3 -m pytest  → full suite green (incl. test_check_inert_code)
+
+  ## Dependencies & sequence
+  No depends_on. Disjoint from all live tickets except: shares no files with WORK-DECOMPOSER,
+  FAIL-LOUD-CONTRACT (forwarder.py), or GRACEFUL-DEGRADE. Must LAND before those waves' verifies
+  are trusted (a truthful gate is the prerequisite). Single wave.

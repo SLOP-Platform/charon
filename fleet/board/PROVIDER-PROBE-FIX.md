@@ -14,7 +14,19 @@ real-dep: F29-REGISTRY-SLICE / F29-CONFIG-PKG / F29-PROVIDERS-DATA god-file hand
   F29 decompose so it edits the post-split modules, never as a concurrent second writer of the
   god-files. Rebase onto all three F29 merges before starting; expect the edit sites to have moved
   into config/*.py and provider_presets/*.py.
-owns: src/charon/gateway.py, src/charon/config.py, src/charon/providers.py, tests/test_config.py
+owns: src/charon/config/keyprobe.py, src/charon/gateway.py, tests/test_config.py
+serial_justified: one coherent validation-logic fix — the `skip_probe` escape hatch threads
+  through both config/keyprobe.py (the probe logic) and gateway.py (the `providers` action caller),
+  and the /models-probe-sufficiency change is a single behavior; splitting into per-file sub-tickets
+  would fragment one atomic fix + its shared test, creating worse cross-ticket coupling than the
+  serial cost. Not splittable.
+verified: 2026-07-13 (board-reconcile pass) — F29-CONFIG-PKG already split config.py, so the bug
+  MOVED: it is now at `src/charon/config/keyprobe.py:69-72` — the `except urllib.error.HTTPError`
+  branch rejects any non-401/403 without checking the earlier successful `/models` probe (the
+  `models_count` fallback exists ONLY in the generic `except Exception` branch, lines 73-78). The
+  `skip_probe` escape hatch is entirely ABSENT (`grep -rn skip_probe src/ tests/` = 0 hits). Fix
+  targets keyprobe.py, not the stale config.py line refs below. STILL A LIVE SG BUG (breaks provider
+  validation) — priority per operator "fix SG-work issues, don't delay."
 accept: PYTHONPATH=src python3 -m pytest tests/test_config.py tests/test_gateway.py tests/test_providers.py -q
 prompt: /home/stack/charon-private/fleet/board/briefs/PROVIDER-PROBE-FIX.md
 scope: Fragility finding #4. `config.validate_provider_key` (config.py:448-508) probes a

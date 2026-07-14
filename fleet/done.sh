@@ -99,6 +99,25 @@ fi
 
 mkdir -p "$S/done"; printf '%s\n' "$marker_line" > "$S/done/$id"; rm -f "$S/submitted/$id" "$S/claims/$id"
 echo "done $id (dependents unblocked)"
+
+# ── scorecard capture (FINAL): a verified-or-overridden close is real ground
+# truth (MERGE/pass) -- pairs with the PROVISIONAL row charon-run.sh enqueued
+# at run time (same ref, same model) via the grader-safe spool (never writes
+# model-scorecard.tsv itself -- see capture/enqueue-capture.sh). Best-effort:
+# a missing model-used record (e.g. a hand-closed ticket) skips silently.
+CAPTURE_SCRIPT="$FLEET/capture/enqueue-capture.sh"
+model_used_file="$FLEET/state/model-used/$id"
+if [ -x "$CAPTURE_SCRIPT" ] && [ -f "$model_used_file" ]; then
+  model="$(cat "$model_used_file" 2>/dev/null || true)"
+  wclass="$(meta work_class "$BOARD/$id.md")"; [ -n "$wclass" ] || wclass="$(meta work_class "$BOARD/archive/$id.md")"
+  if [ -n "$model" ]; then
+    evid="done.sh verified close: $(printf '%s' "$marker_line" | tr '\t' ' ')"
+    "$CAPTURE_SCRIPT" --model "$model" --claimed-result SUCCESS --ref "$id" \
+      ${wclass:+--work-class "$wclass"} --stage active \
+      --actual-verdict MERGE --actual-gate pass --score 100 --evidence "$evid" \
+      >/dev/null 2>&1 || true
+  fi
+fi
 # MECHANIZED CLOSURE: retire the just-completed ticket off the active board (done tickets can never
 # accumulate as "active"). retire-done.sh HOLDS any ticket whose marker is not merge-verified.
 bash "$FLEET/retire-done.sh"

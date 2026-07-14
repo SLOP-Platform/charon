@@ -1,5 +1,12 @@
 # Charon Paid-Account Decision Matrix
 
+> **Model/provider roster + live status SUPERSEDED by `fleet/state/CG-MODEL-CANDIDATES.md` +
+> `fleet/state/CG-PROVIDERS.md`.** **Kept in full** — the flat-vs-PAYG break-even math (§2, token/mo
+> crossover points per plan) and the ranked recommendation reasoning (§3) are unique analysis not
+> reproduced in the roster. NanoGPT-as-anchor is confirmed still live/dominant in the CG- docs;
+> CommandCode remains plan-gated and Synthetic.new remains un-activated per the roster's current
+> status — this doc's ranking logic still holds, just re-check current $ figures before acting.
+
 **Compiled:** July 2026. **For:** operator's PERSONAL single-user Charon gateway (not reselling).
 **Purpose:** pick which recurring/paid plan (if any) to buy, weighted to the operator's goals:
 (1) stop opencode-zen metered balance-burn, (2) offload agent + coding work off Claude to cheap capable models, (3) **tool/function-calling is REQUIRED**, (4) value **flat, predictable** cost. Free tiers already staged (Groq, Cerebras, NeuralWatt-$1-credit, OpenRouter `:free`) cover low-stakes volume — so a paid account is for **OVERFLOW + higher-quality/coding models** when free tiers throttle or lack tools.

@@ -189,7 +189,8 @@ PY
 # small wait for the container to come back healthy after the restart.
 ok=0
 for _ in $(seq 1 20); do
-  if curl -sS -m 5 -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" \
+  if printf 'header = "Authorization: Bearer %s"\n' "$TOKEN" \
+       | curl -sS -m 5 -o /dev/null -w '%{http_code}' -K - \
        "$GATEWAY_URL/v1/models" 2>/dev/null | grep -q '^200$'; then
     ok=1
     break
@@ -198,7 +199,7 @@ for _ in $(seq 1 20); do
 done
 [ "$ok" -eq 1 ] || fail "gateway did not come back healthy (GET /v1/models never returned 200) after restart"
 
-MODELS_JSON="$(curl -sS -m 10 -H "Authorization: Bearer $TOKEN" "$GATEWAY_URL/v1/models")"
+MODELS_JSON="$(printf 'header = "Authorization: Bearer %s"\n' "$TOKEN" | curl -sS -m 10 -K - "$GATEWAY_URL/v1/models")"
 present=0
 for m in "${MAPPINGS[@]+"${MAPPINGS[@]}"}"; do
   model="${m%%:*}"

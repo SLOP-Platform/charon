@@ -1,7 +1,9 @@
 # Path C — the dogfood-as-eval loop (design + slate + dry-run)
 
-Date: 2026-07-13. Status: **harness built + ONE-model dry-run proven end to end. NOT a
-full candidate ranking — see "what blocks a full ranking" below.**
+Date: 2026-07-13. Status: **harness built + full 6-candidate x 2-ticket ranking run.
+2 INTEGRITY BUGS found in the harness itself and FIXED same day — see "CORRECTIONS"
+at the end of this file. Corrected per-cell verdicts: `fleet/state/PATH-C-RANKING-
+CORRECTED.md`.**
 
 ## Why this exists
 
@@ -206,3 +208,95 @@ regenerated from the still-present worktree + logs.
   dogfood probe against a copy of the ticket's brief, not a real ticket execution.
 - The harness script + this doc are committed on branch `feat/dogfood-eval` in
   `charon-private` only. Nothing was pushed.
+
+## CORRECTIONS (2026-07-13, later same day — integrity audit of the full ranking run)
+
+The full slate ran (`TOOL-REPAIR-MUTATING` bugfix + `PROVIDER-URL-HELPER` refactor x
+minimax-m2.7/deepseek-v4-pro/deepseek-v4-flash/glm-5.2/kimi-k2.6/phi-4). Auditing the raw
+`fleet/state/dogfood-eval/results/*.card.md` + `*.charon-run.log` against the model
+transcripts found **2 real integrity bugs in `dogfood-eval.sh` itself** (not in any
+candidate's work) that mislabeled otherwise-good runs. Both are FIXED on this branch.
+
+**Bug 1 — attribution mislabel.** The old inline classifier (was ~lines 163-166) matched
+`"ALL MODELS EXHAUSTED"` as a catch-all and stamped `provider-throttled`, but
+`dogfood-eval.sh` always invokes `charon-run.sh` with exactly ONE candidate model, so that
+banner fires for ANY nonzero exit — real rate-limit or not. Confirmed false for:
+- **minimax-m2.7 / PROVIDER-URL-HELPER** (first attempt, `...T002000Z`): `charon-run.log`
+  shows `Error: Unexpected error / database is locked` (rc=1) — a LOCAL sqlite lock in
+  opencode's own session store, nothing to do with any provider. (The candidate's real,
+  gradeable attempt is the rerun at `...T020402Z` — see below.)
+- **phi-4, all 4 runs** (both tickets, both timestamps): every single one failed with an
+  opaque gateway `{"name":"UnknownError", ...}` (rc=1) — see the DeepInfra funding probe
+  below; this is NOT a rate-limit.
+- **deepseek-v4-flash / kimi-k2.6 on TOOL-REPAIR-MUTATING**: both candidates' own
+  transcripts show the fix landed and ALL gate checks (pytest/ruff/mypy/boundary/version)
+  printed passing — THEN a single TRAILING post-completion call hit a real
+  provider/session limit and `charon-run.sh` exited nonzero on that basis alone. The
+  harness's own independent re-grade (gate pass + ticket pytest pass, real 2-file diff)
+  proves the work was already done and correct before that trailing call.
+
+**Fix**: extracted the classifier into `fleet/benchmark/lib/dogfood-attribution.sh`
+(`classify_attribution` + `reclassify_trailing_success`), sourced by `dogfood-eval.sh`.
+Local/opaque signatures (`database is locked`, `"name": "UnknownError"`) are now checked
+BEFORE the generic all-exhausted catch-all and get their own `local-error(...)` bucket
+(never silently folded into `provider-*`); a provider hiccup on a call made AFTER the real
+diff already graded clean (gate pass + ticket-test pass) is reclassified so the overall
+verdict still credits the work instead of a false `RETRY(provider-symptom)`. Fail-on-revert
+selftest: `fleet/benchmark/selftest/test_dogfood_attribution.sh` (verified it reproduces
+the original bug when the old check-order is restored, then verified green on the fix).
+
+**Bug 2 — accept-grep self-match.** `PROVIDER-URL-HELPER`'s `DOGFOOD_TEST_CMD` "no leftover
+inline duplication" check was a naive `grep -RnE '<pattern>' <files>`. It false-matched
+**glm-5.2**'s own DOCSTRING text (a Sphinx-style `` ``code`` `` citation of the old inline
+expression, left as documentation after glm-5.2 correctly deduplicated the real code),
+producing a false `FIXES-NEEDED` for an otherwise-clean candidate.
+
+**Fix**: new `fleet/benchmark/lib/grep-code-only.sh` — same pattern-match, but filters out
+`` ` ``-quoted (docstring-cited) and `#`-commented mentions before deciding there's a real
+leftover. Confirmed against the actual candidate worktrees still on disk
+(`/home/stack/code/charon-fleet-dogfood-PROVIDER-URL-HELPER-*`): glm-5.2 now PASSES (was a
+false fail); minimax-m2.7's genuine incomplete dedup (`discover.py:34`, real code, no
+backticks) still correctly FAILS; kimi-k2.6 (already passing) is unaffected. `PATH-C-EVAL-
+SET.md`'s canonical `DOGFOOD_TEST_CMD` one-liner updated to call the new helper. Fail-on-
+revert selftest: `fleet/benchmark/selftest/test_grep_code_only.sh` (includes a control
+assertion that the naive unfiltered grep DOES reproduce the false positive on the same
+fixture, proving the filter is load-bearing).
+
+Both selftests verified GREEN after the fix (`bash fleet/benchmark/selftest/test_dogfood_
+attribution.sh` and `bash fleet/benchmark/selftest/test_grep_code_only.sh`).
+
+**DeepInfra funding — probed directly, not inferred from docs (2026-07-13):** direct
+`POST https://api.deepinfra.com/v1/openai/chat/completions` with the stored
+`~/.config/opencode/secrets/deepinfra.key` and `model: microsoft/phi-4` returned **HTTP
+200**, a real `"PONG"` completion, `estimated_cost: 1.47e-06` — DeepInfra is **FUNDED**, not
+the 402-zero-balance state `PROVIDER-WIRE-REPORT.md` recorded that same morning. The
+gateway itself (`http://10.0.1.60:8080/v1/chat/completions`, `model: "phi-4"`) also returned
+200/PONG just now. **Conclusion: phi-4's 4/4 dogfood failures are NOT a funding/rate-limit
+issue** — DeepInfra answers plain completions fine, direct and through the gateway; the
+opaque `UnknownError` is specific to the AGENTIC/tool-use run path `charon-run.sh` drives
+(`opencode run --model charon/phi-4`), root cause otherwise unresolved. Correctly bucketed
+as `local-error(opaque-server-error...)` (needs human triage), never as a provider
+rate-limit or as a model-quality fail.
+
+**GAP found (reuse-check, not a bug): no mechanized test-quality gate exists for the
+dogfood/real-ticket set.** Searched `fleet/board/*.md` (incl. `.parked`) + `fleet/tools/` +
+`fleet/benchmark/` for a gate that evaluates AND improves a dogfood ticket's own tests when
+they're buggy/too-easy/non-discriminating (the kind of thing the operator expected to
+exist). Found only a DIFFERENT, unrelated system: `benchmark/promote.py` — a
+provisional->active promotion gate scored by cross-model spread, scoped ONLY to
+`benchmark/units.tsv` (the SYNTHETIC S0-S6 sections + T1-T12 trap-battery replays) — and
+grader-discrimination selftests (`benchmark/selftest/run_selftests.py`,
+`test_preflight_graders.py`) that check the SYNTHETIC graders themselves, not any dogfood
+ticket. Neither touches `dogfood-eval.sh`'s real-ticket set at all. `PATH-C-EVAL-SET.md`'s
+own "Rejected candidates" table documents curating out a non-discriminating ticket (SR-3,
+"free pass") as a MANUAL human/session judgment call, not a mechanized check. Confirmed
+live in this round's own data: `TOOL-REPAIR-MUTATING`'s stock pytest suite passes trivially
+on an UNMODIFIED worktree (the stale test asserts the pre-fix no-op behavior), so a
+candidate that does NOTHING would pass the ticket's own accept-check — the only thing
+stopping that from reading as a false pass today is the harness's OWN diff-based
+did-real-work override (`early-ditch` -> `DETAIN(quality)`), not any property of the
+ticket's test. **Real gap, not a false alarm**: `TOOL-REPAIR-MUTATING` is confirmed TOO
+EASY as a sole discriminator and needs either a harder/adversarial ticket added to the
+slate or a mechanized "does this ticket's test actually discriminate a no-op from a real
+fix" gate before its results are trusted alone. See `PATH-C-RANKING-CORRECTED.md`'s tier-
+assignment note.

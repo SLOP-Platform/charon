@@ -65,6 +65,39 @@ detention_filter_chain(){
   ( IFS=','; echo "${kept[*]}" )
 }
 
+# ---- S4 (Gap A rig facet): REAL-OUTCOME ranking consult -----------------------------------------
+# Before this, the tier->model resolution above consulted ONLY the static fleet/tier-models.tsv
+# chain — capability/assign.py's real-outcome grades (model-scorecard.tsv's source=live lane, see
+# capability/grades.py) were computed but never reached this dispatcher. This is the seam: given a
+# ticket's work_class + the canonical tier, ask assign.py to RE-RANK the SAME candidate set the
+# static chain already offers (--candidates) — it never introduces an unlisted model id the
+# gateway chain doesn't already know about. The pick (if any) is promoted to the FRONT of the
+# chain; the remainder of the static order follows UNCHANGED as the failover fallback, so a
+# real-ranked pick that then fails still rolls through the identical failover chain fleet-droid.sh
+# always had. Advisory-only: any failure (no live data yet for this work_class, python3/assign.py
+# unavailable, a picked id that isn't even in the candidate set we offered) falls straight back to
+# the UNCHANGED static chain — this can never make the dispatcher worse than before it existed.
+# CHARON_SCORECARD_TSV (same env-override name model-detention.sh already honors) lets tests point
+# both the ranking consult AND the detention filter at one isolated fixture ledger.
+assign_reorder_chain(){
+  local wc="$1" canon="$2" static_csv="$3" py="$FLEET/capability/assign.py"
+  [ -n "$wc" ] && [ -n "$static_csv" ] && [ -f "$py" ] || { echo "$static_csv"; return 0; }
+  local tsv_args=()
+  [ -n "${CHARON_SCORECARD_TSV:-}" ] && tsv_args=(--tsv "$CHARON_SCORECARD_TSV")
+  local picked=""
+  picked="$(python3 "$py" --work-class "$wc" --tier "$canon" --candidates "$static_csv" \
+              "${tsv_args[@]}" --print-model 2>/dev/null)" || true
+  # Sanity: never trust a picked id we didn't explicitly offer as a candidate.
+  case ",$static_csv," in *",$picked,"*) ;; *) picked="" ;; esac
+  if [ -z "$picked" ]; then echo "$static_csv"; return 0; fi
+  echo "[fleet-droid] real-outcome ranking (assign.py work_class=$wc tier=$canon): promoting $picked to the front (static chain: $static_csv)." >&2
+  local -a static_arr=() rest_arr=()
+  IFS=',' read -r -a static_arr <<<"$static_csv"
+  local m
+  for m in "${static_arr[@]}"; do [ "$m" = "$picked" ] || rest_arr+=("$m"); done
+  ( IFS=','; echo "${picked}${rest_arr[*]:+,${rest_arr[*]}}" )
+}
+
 # ---- DETENTION-REDLINE: `resolve` dev/test hook --------------------------------------------------
 # `fleet-droid.sh resolve <tier> <ticketfile>` resolves a tier + a claimed ticket to its
 # POST-DETENTION-FILTER gateway chain using the SAME helpers the claim loop uses (production path ==
@@ -76,12 +109,17 @@ if [ "${1:-}" = "resolve" ]; then
   rcanon="$(canon_tier "$rtier")"
   rline="$(tier_chain "$rcanon")"
   [ -n "$rline" ] || { echo "[fleet-droid] resolve: no gateway model chain for tier '$rtier' (canonical '$rcanon')." >&2; exit 3; }
-  IFS=',' read -r -a RMODELS <<<"$rline" || true
   rwc="$(awk -F': ' '$1=="work_class"{sub(/^[^:]*: ?/,"");print;exit}' "$rtfile")"
   if [ -z "$rwc" ]; then
     echo "[fleet-droid] resolve: ticket $rtfile has no work_class — detention filter cannot scope; emitting FULL chain." >&2
+    IFS=',' read -r -a RMODELS <<<"$rline" || true
     ( IFS=','; echo "${RMODELS[*]}" ); exit 0
   fi
+  # S4: consult assign.py's real-outcome ranking BEFORE detention filtering, same as the main
+  # claim loop below — production path == test path (this hook exists so a test can observe
+  # exactly what the loop would do).
+  rline="$(assign_reorder_chain "$rwc" "$rcanon" "$rline")"
+  IFS=',' read -r -a RMODELS <<<"$rline" || true
   if rkept="$(detention_filter_chain "$rwc" "${RMODELS[@]}")"; then
     echo "$rkept"; exit 0
   else
@@ -168,7 +206,13 @@ while true; do
   # override, never a silent fall-through. RUN_MODELS is what actually feeds the work client below.
   wclass="$(awk -F': ' '$1=="work_class"{sub(/^[^:]*: ?/,"");print;exit}' "$tfile")"
   if [ -n "$wclass" ]; then
-    if run_line="$(detention_filter_chain "$wclass" "${MODELS[@]}")"; then
+    # S4 (Gap A rig facet): consult assign.py's real-outcome ranking for THIS ticket's
+    # work_class before detention-filtering. $models_line is the tier's static chain (set once
+    # above from tier-models.tsv); WC_MODELS is that same set, re-ordered when assign.py has a
+    # real-outcome pick for it, unchanged otherwise (see assign_reorder_chain's docstring above).
+    wc_line="$(assign_reorder_chain "$wclass" "$CANON" "$models_line")"
+    IFS=',' read -r -a WC_MODELS <<<"$wc_line" || true
+    if run_line="$(detention_filter_chain "$wclass" "${WC_MODELS[@]}")"; then
       IFS=',' read -r -a RUN_MODELS <<<"$run_line" || true
     else
       echo "[$DROID] SKIP $id: ALL eligible models detained for work_class '$wclass' — needs escalation or a heavily-tested run/override. NOT running a detained model." >&2
@@ -237,7 +281,10 @@ $spec"
   brief="$FLEET/state/agent-briefs/$DROID-$id.md"; mkdir -p "$(dirname "$brief")"
   printf '%s' "$prompt" > "$brief"
   outlog="$FLEET/state/agent-logs/$DROID-$id.txt"; mkdir -p "$(dirname "$outlog")"
-  if "$CHARON_AGENT_CMD" "$wt" "$outlog" "$brief" "${RUN_MODELS[@]}"; then
+  # CHARON_JOB_REF/CHARON_JOB_WORK_CLASS: env fallback the capture pipeline's
+  # job-meta.sh reads (fleet/capture/job-meta.sh) so charon-run.sh's scorecard
+  # capture hook can tag the ref/work_class without any new plumbing.
+  if CHARON_JOB_REF="$id" CHARON_JOB_WORK_CLASS="$wclass" "$CHARON_AGENT_CMD" "$wt" "$outlog" "$brief" "${RUN_MODELS[@]}"; then
     # #1 WORKTREE-LEAK GUARD (b): did the droid leak into the main checkout instead of its worktree?
     # (0 commits AND clean worktree AND the main checkout gained NEW porcelain entries.)
     if [ "$(leak_detect "$REPO" "$wt" "$branch" "$main_before" "$base_ref")" = LEAK ]; then

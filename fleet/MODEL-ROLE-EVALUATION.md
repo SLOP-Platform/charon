@@ -1,5 +1,12 @@
 # Model → Role Evaluation for Building Charon + SLOP
 
+> **Model list / provider / cost / funding-status SUPERSEDED by `fleet/state/CG-MODEL-CANDIDATES.md`
+> + `fleet/state/CG-PROVIDERS.md`** (2026-07-14, live-config + live-probe verified). **Kept in full**
+> because §3's per-role scoring rubric (architect/implementer/reviewer/debugger/refactorer/
+> test-engineer/docs/orchestrator) is unique analysis not reproduced elsewhere — still the reference
+> for "which model for which role." Just don't trust this doc's provider/pool/availability claims;
+> cross-check those against the two CG- docs.
+
 **Purpose:** decide which LLMs the build rig routes work to, broken down by role, scored on quality-at-the-highest-level. This is **build-rig planning** (which models to point droid/fleet sessions at), NOT product code and NOT a Charon feature spec.
 
 **Date:** 2026-07-03 · **Author:** fleet manager session · **Status:** durable planning doc

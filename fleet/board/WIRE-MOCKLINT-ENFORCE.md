@@ -2,10 +2,16 @@ tier: standard
 difficulty: 2  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
 work_class: ci-infra
 branch: feat/wire-mocklint-enforce
-depends_on: TEST-HARDEN-CONTRACT
+depends_on: TEST-HARDEN-CONTRACT, GATE-INTEGRITY-B
 real-dep: TEST-HARDEN-CONTRACT (#92) landed Defect A (real anthropic wire-shape test) but scoped
   OUT Defect B (the enforcement). This ticket IS Defect B, split out per operator decision
   (merge A-only + hard follow-up). Rebase onto #92's squash-merge before starting.
+real-dep: GATE-INTEGRITY-B — shared src/charon/gate_runner.py (GATE-INTEGRITY-B's step 1 adds
+  pytest/check-decisions/render-review-log to CHECKS; land after it so this ticket's remaining
+  DO-1/3/4 work — none of which still touches gate_runner.py per the 2026-07-13 WCI RECONCILE
+  note below — never races GATE-INTEGRITY-B's CHECKS edit). Undeclared collision found + fixed per
+  fleet/state/TOOL-AUDIT-COLLISION.md-adjacent board sweep (2026-07-13). (GATE-INTEGRITY decomposed
+  2026-07-13 into -A/-B; this dep repoints to -B, which owns gate_runner.py.)
 owns: src/charon/gate_runner.py, tools/check_test_patterns.py, tools/gates.json
 accept: |
   `PYTHONPATH=src python3 -m charon.cli gate` invokes check_test_patterns.py AND a self-mirroring

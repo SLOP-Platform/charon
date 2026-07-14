@@ -1,5 +1,11 @@
 # Charon Free-Tier Stacked Routing — Provider Comparison & Pool Design
 
+> **Model/provider roster + live status SUPERSEDED by `fleet/state/CG-MODEL-CANDIDATES.md` +
+> `fleet/state/CG-PROVIDERS.md`.** **Kept in full** — the per-provider RPD/RPM/TPM/TPD limits, ToS
+> training/resale clauses, and cited source URLs (§1-2) are unique research not reproduced in the
+> roster; still the reference for "is this free tier safe/usable and what's the actual quota."
+> Re-verify the live numbers periodically (this doc says so too — free tiers drift).
+
 **Compiled:** July 2026 (v0.3.1 era). **Status:** research/design only — no product source changed.
 **Scope:** verified free/cheap LLM API providers + a proposed tiered pool arrangement mapped onto Charon's pool model.
 
