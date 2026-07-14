@@ -7,14 +7,6 @@
     "reason": "Same cascading false positive as charon.api.list_ledgers: called from charon.service.app (api.show_config()), a module only reachable via uvicorn's string-based ASGI load.",
     "disposition": "keep-detector-false-positive-uvicorn-string-load"
   },
-  "charon.capability.actuals.ActualRow": {
-    "reason": "Same module as charon.capability.actuals.ActualsLedger — same disposition, same evidence.",
-    "disposition": "delete"
-  },
-  "charon.capability.actuals.ActualsLedger": {
-    "reason": "Zero production callers (tests/test_actuals_ledger.py imports it but capability/scorecard.py is the wired replacement per the original hand-rolled audit; decompose_sizing.py:54 only comments on it historically).",
-    "disposition": "delete"
-  },
   "charon.discover.discover_models": {
     "reason": "Zero production callers (cli.py:329-339 wires discover.import_openrouter_models, not discover_models). Docstring frames discover_models as the PROPOSAL-1 Phase A full-refresh orchestrator — could be a still-wanted feature not yet CLI-exposed, or a superseded design now that import_openrouter_models covers the wired path. Needs a product-intent call, not a code-only call.",
     "disposition": "keep-needs-triage"
