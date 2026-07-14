@@ -40,11 +40,11 @@ def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
                 if not line:
                     continue
                 if ":" in line:
-                    key, _, val = line.partition(":")
-                    val = val.strip()
-                    if val.startswith("[") and val.endswith("]"):
-                        val = [v.strip() for v in val[1:-1].split(",") if v.strip()]
-                    fm[key.strip()] = val
+                    key, _, raw_value = line.partition(":")
+                    value: Any = raw_value.strip()
+                    if value.startswith("[") and value.endswith("]"):
+                        value = [v.strip() for v in value[1:-1].split(",") if v.strip()]
+                    fm[key.strip()] = value
     return fm, body
 
 
