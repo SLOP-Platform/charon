@@ -43,7 +43,38 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from tools._vendor import ksf_inert_code as _ksf_impl  # noqa: E402
 from tools._vendor.ksf_inert_code import check_inert_code  # noqa: E402
+
+# Extend the vendored detector's _EXCLUDE_DIRS to skip local-machine / harness
+# noise that pollutes the AST scan on a live dev box. The vendored module's
+# header forbids hand-edits; we monkeypatch the constant in place from this
+# adapter (spec: S1-GATE-INTEGRITY-SPEC §3). Add the const name as a re-vendor
+# merge-survival hook so a future KSF re-vendor carries this exclusion list.
+#
+# - .claude       : Claude Code local session state + ephemeral agent worktrees
+#                   (.claude/worktrees/agent-* is a full copy of src/, tests/,
+#                   tools/, packaging/ — its symbols get namespaced into the
+#                   same call graph and cause run-to-run non-determinism).
+# - .worktrees    : any other local ad-hoc worktree convention.
+# - .mypy_cache / .ruff_cache / .hypothesis : tool caches
+# - .opencode     : opencode local state
+# - dist / build / scratch : build/scratch output
+# - graphify-out  : graphify local cache/output (gitignored per commit 1a1f88f)
+# - .charon       : charon runtime state dir
+_ksf_impl._EXCLUDE_DIRS = _ksf_impl._EXCLUDE_DIRS | {
+    ".claude",
+    ".worktrees",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".hypothesis",
+    ".opencode",
+    "dist",
+    "build",
+    "scratch",
+    "graphify-out",
+    ".charon",
+}
 
 DISPOSITION_PATH = REPO_ROOT / "tools" / "inert-code-disposition.json"
 _VALID_DISPOSITIONS = re.compile(r"^(wire|delete|keep-.+)$")

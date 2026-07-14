@@ -7,9 +7,61 @@
     "reason": "Same cascading false positive as charon.api.list_ledgers: called from charon.service.app (api.show_config()), a module only reachable via uvicorn's string-based ASGI load.",
     "disposition": "keep-detector-false-positive-uvicorn-string-load"
   },
+  "charon.capability.actuals.ActualRow": {
+    "reason": "Same module as charon.capability.actuals.ActualsLedger — same disposition, same evidence.",
+    "disposition": "delete"
+  },
+  "charon.capability.actuals.ActualsLedger": {
+    "reason": "Zero production callers (tests/test_actuals_ledger.py imports it but capability/scorecard.py is the wired replacement per the original hand-rolled audit; decompose_sizing.py:54 only comments on it historically).",
+    "disposition": "delete"
+  },
+  "charon.discover.discover_models": {
+    "reason": "Zero production callers (cli.py:329-339 wires discover.import_openrouter_models, not discover_models). Docstring frames discover_models as the PROPOSAL-1 Phase A full-refresh orchestrator — could be a still-wanted feature not yet CLI-exposed, or a superseded design now that import_openrouter_models covers the wired path. Needs a product-intent call, not a code-only call.",
+    "disposition": "keep-needs-triage"
+  },
+  "charon.discover.load_cost_map": {
+    "reason": "Same module/bucket as charon.discover.discover_models — zero production callers; same product-intent ambiguity.",
+    "disposition": "keep-needs-triage"
+  },
+  "charon.doctor.probe_handoff": {
+    "reason": "Module docstring/help text (doctor.py:116-140) literally states the intended CLI surface: \"Run: charon doctor --handoff --backend-cmd-a ... --backend-cmd-b ...\". Designed, tested (tests/test_handoff.py, tests/test_handoff_crossvendor.py), just never connected to cli.py doctor subcommand dispatch (confirmed: zero doctor.* references in cli.py).",
+    "disposition": "wire"
+  },
+  "charon.engine.reconcile.FindingKind": {
+    "reason": "Same module/bucket as the already-tracked charon.engine.reconcile.ReconcileFinding; whole module has zero production callers. Same open call: wire into the coordinator or remove.",
+    "disposition": "keep-pending-decision"
+  },
   "charon.engine.reconcile.ReconcileFinding": {
     "reason": "Part of the original hand-rolled dead-code audit (engine/reconcile.py + board.set_cert() flagged unwired). set_cert() itself is now test-referenced so the detector no longer flags it, but this dataclass has zero callers anywhere. Whether reconcile.py should be wired into the coordinator or removed is an open call, not made here.",
     "disposition": "keep-pending-decision"
+  },
+  "charon.engine.reconcile.Severity": {
+    "reason": "Same module/bucket as charon.engine.reconcile.ReconcileFinding; same open call.",
+    "disposition": "keep-pending-decision"
+  },
+  "charon.engine.reconcile.reconcile_static": {
+    "reason": "Same module/bucket as charon.engine.reconcile.ReconcileFinding; same open call.",
+    "disposition": "keep-pending-decision"
+  },
+  "charon.engine.semantic_proof.IndependenceCertificate": {
+    "reason": "Actually wired: tests/test_semantic_proof.py:8 imports it directly, and test_decompose_surface.py:15-16 imports the same symbols. The detector’s _resolve_call() (tools/_vendor/ksf_inert_code.py:283-303) only correctly resolves from X import Y; Y() where Y is a symbol, not from X import Y; Y.func() where Y is a submodule — so when reachability is derived from a path that does pass the detector (e.g. a direct tests/ import), the production symbol is marked reachable in the live detector run today. Entry tracks the future risk that removing the test-side import path will re-flag it; matches the existing keep-detector-false-positive-* family.",
+    "disposition": "keep-detector-false-positive-qualified-submodule-call"
+  },
+  "charon.engine.semantic_proof.compute_certificate": {
+    "reason": "Same pattern as charon.engine.semantic_proof.IndependenceCertificate — actually called via the from .engine import semantic_proof; semantic_proof.compute_certificate(...) pattern, but the detector’s qualified-submodule import resolution builds a malformed candidate (see tools/_vendor/ksf_inert_code.py:283-303) that doesn’t match the true dotted name. Detector gap, not dead code.",
+    "disposition": "keep-detector-false-positive-qualified-submodule-call"
+  },
+  "charon.failover.ReviewerCircuitBreaker": {
+    "reason": "Zero production importers (only tests/test_failover.py + tests/test_consensus_gate.py). Native reuse candidate for the upcoming provider-health consolidation per operator direction.",
+    "disposition": "keep-pending-wire"
+  },
+  "charon.failover.next_entry": {
+    "reason": "Same module/bucket as charon.failover.ReviewerCircuitBreaker — the routing function it wraps (tests/test_failover.py:57-81 exercises both together); disposing one without the other would be incoherent.",
+    "disposition": "keep-pending-wire"
+  },
+  "charon.failover.proxy_excluded_keys": {
+    "reason": "Same module/bucket as charon.failover.ReviewerCircuitBreaker; called internally at failover.py:51 by the same not-yet-wired routing path.",
+    "disposition": "keep-pending-wire"
   },
   "charon.handoff.is_resumable": {
     "reason": "No callers found anywhere in src/ or tests/ (grepped the bare name). Genuinely unreferenced; needs a human wire-or-delete call.",
@@ -39,12 +91,40 @@
     "reason": "Actually wired: src/charon/cli.py references it as a bare attribute value ('opener = pr_opener or land.propose_pr') rather than a direct call. The detector's value-ref collector only tracks bare Name references, not qualified attribute (module.attr) references, so this is a detector false positive, not dead code.",
     "disposition": "keep-detector-false-positive-attribute-value-ref"
   },
+  "charon.lifecycle.bootstrap": {
+    "reason": "Module’s own main() docstring (lifecycle.py:627-634) explicitly states: \"the full charon setup / cron wiring is added by the manager (owns cli.py); this main only exposes the entrypoints for a smoke invocation... It intentionally does NOT run a real onboarding.\" Designed-not-yet-built, same bucket as the already-tracked subprocess_preflight_seam (keep-needs-triage).",
+    "disposition": "wire"
+  },
+  "charon.lifecycle.scheduled_refresh": {
+    "reason": "Same module/bucket as charon.lifecycle.bootstrap — main() docstring (lifecycle.py:627-634) explicitly defers the real cron wiring to the manager; same disposition, same reason.",
+    "disposition": "wire"
+  },
   "charon.lifecycle.subprocess_preflight_seam": {
     "reason": "Every hit for this name outside its own def line is inside a docstring/comment string, not real code (':func:`subprocess_preflight_seam`' and a prose example string). No real caller found; needs a human wire-or-delete call.",
     "disposition": "keep-needs-triage"
   },
+  "charon.pricing_limits_checker.CheckerConfig": {
+    "reason": "Companion dataclass of the already-condemned charon.pricing_limits_checker.check_pricing_limits/etc. functions (pricing_limits_checker.py:88, 145, 150, 154, 156). Same fate — delete the whole module together.",
+    "disposition": "delete"
+  },
   "charon.pricing_limits_checker.Finding": {
     "reason": "Part of the original hand-rolled dead-code audit: pricing_limits_checker.py is a standalone script never imported by any production entrypoint. Slated for deletion.",
+    "disposition": "delete"
+  },
+  "charon.pricing_limits_checker.ModelPriceSpec": {
+    "reason": "Companion dataclass of the already-condemned charon.pricing_limits_checker functions; pricing_limits_checker.py:91. Same fate.",
+    "disposition": "delete"
+  },
+  "charon.pricing_limits_checker.NonTokenPricing": {
+    "reason": "Companion dataclass of the already-condemned charon.pricing_limits_checker functions; pricing_limits_checker.py:158. Same fate.",
+    "disposition": "delete"
+  },
+  "charon.pricing_limits_checker.ProviderCanonical": {
+    "reason": "Companion dataclass of the already-condemned charon.pricing_limits_checker functions; pricing_limits_checker.py:162. Same fate.",
+    "disposition": "delete"
+  },
+  "charon.pricing_limits_checker.ProviderLimitSpec": {
+    "reason": "Companion dataclass of the already-condemned charon.pricing_limits_checker functions; pricing_limits_checker.py:168, 172, 178. Same fate.",
     "disposition": "delete"
   },
   "charon.pricing_limits_checker.check_pricing_limits": {
@@ -74,6 +154,18 @@
   "charon.pricing_limits_checker.save_canonical": {
     "reason": "Same module as charon.pricing_limits_checker.Finding — unwired standalone script, slated for deletion per the original audit.",
     "disposition": "delete"
+  },
+  "charon.quota.QuotaTracker": {
+    "reason": "Zero production importers; only tests/test_quota.py exercises it. No superseding implementation found — proxy.py:60-62 only does string-matching on provider error messages, it does not track/enforce quotas itself. A real, tested rpm/tpm-limiting capability sitting unintegrated, same pattern as the historical BalanceTracker issue.",
+    "disposition": "keep-pending-wire"
+  },
+  "charon.scanners.benchmark_scanners": {
+    "reason": "Explicitly an ADR-0010 D4 measured-before-required scanner-graduation harness (scanners.py:308-316) — a calibration tool run ad hoc during scanner-tier audits, not a hot-path dependency. Its sibling run_scanners is wired (land.py:41, 246, 257); benchmark_scanners is intentionally a separate, manually-invoked instrument.",
+    "disposition": "keep-manual-instrumentation"
+  },
+  "charon.service.app.RunRequest": {
+    "reason": "Same file/pattern as the already-tracked create_run/dashboard/get_config/get_run/healthz/list_runs/require_token: a pydantic BaseModel used as a FastAPI request-body type annotation (service/app.py:82, 91, 128), which the detector’s call-graph doesn’t recognize as a \"call\". Just add it to the existing tag’s entries.",
+    "disposition": "keep-detector-false-positive-uvicorn-string-load"
   },
   "charon.service.app.create_run": {
     "reason": "FastAPI route handler (@app.post) in a module loaded by uvicorn via the string 'charon.service.app:app' (service/__main__.py), which the AST reachability graph can't trace (no static import edge into app.py). Real production HTTP surface, not dead code — a detector limitation with decorator/string-based ASGI wiring.",
@@ -109,6 +201,10 @@
   },
   "charon.tool_repair.RepairResult": {
     "reason": "Part of the original hand-rolled dead-code audit: tool_repair.py is imported only by tests (grepped — no src/ import), never wired into any production entrypoint. ToolCallRepair itself no longer flags because tests reference it directly by name, but this dataclass has zero references outside its own file. Slated to be wired in.",
+    "disposition": "wire"
+  },
+  "charon.tool_repair.ToolCallRepair": {
+    "reason": "Companion class to RepairResult (already tracked [wire] in the current disposition file) in the same not-yet-integrated module (tool_repair.py:222). Same disposition, same reason (response-repair pipeline built, awaiting integration).",
     "disposition": "wire"
   }
 }
