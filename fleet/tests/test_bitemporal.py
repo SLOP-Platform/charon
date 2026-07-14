@@ -35,7 +35,7 @@ def _at(year: int, month: int, day: int, hour: int = 0) -> datetime:
 NOW = _at(2026, 7, 14)
 
 
-def test_bitemporal_weight_fresh_one_stale_decays():
+def test_bitemporal_weight_fresh_one_stale_decays() -> None:
     fresh_learned = _at(2026, 7, 13)
     stale_learned = _at(2025, 1, 1)
 
@@ -59,7 +59,7 @@ def test_bitemporal_weight_fresh_one_stale_decays():
     assert w_fresh > w_stale * 10
 
 
-def test_apply_memory_decay_downweights_stale_facts():
+def test_apply_memory_decay_downweights_stale_facts() -> None:
     base_score = 1.0
     fresh = BitemporalRecord(
         valid_from=_at(2026, 7, 1),
@@ -80,7 +80,7 @@ def test_apply_memory_decay_downweights_stale_facts():
     assert stale_score < 0.1
 
 
-def test_model_signal_decay_stale_vs_fresh_downweights():
+def test_model_signal_decay_stale_vs_fresh_downweights() -> None:
     bad_score = -1.0
     stale_signal = BitemporalRecord(
         valid_from=_at(2024, 6, 1),
@@ -100,7 +100,7 @@ def test_model_signal_decay_stale_vs_fresh_downweights():
     assert abs(fresh_eff) > abs(stale_eff) * 1_000_000
 
 
-def test_decay_disabled_weights_equal():
+def test_decay_disabled_weights_equal() -> None:
     fresh_signal = BitemporalRecord(
         valid_from=_at(2026, 7, 1),
         learned_at=_at(2026, 7, 12),
@@ -126,7 +126,7 @@ def test_decay_disabled_weights_equal():
     assert math.isclose(broken_fresh, broken_stale, rel_tol=1e-3)
 
 
-def test_should_curate_triggers_for_stale_facts():
+def test_should_curate_triggers_for_stale_facts() -> None:
     stale = BitemporalRecord(
         valid_from=_at(2024, 1, 1),
         learned_at=_at(2024, 1, 1),
@@ -142,7 +142,7 @@ def test_should_curate_triggers_for_stale_facts():
     assert not should_curate(fresh, as_of=NOW, threshold=0.5)
 
 
-def test_expired_record_zero_weight():
+def test_expired_record_zero_weight() -> None:
     expired = BitemporalRecord(
         valid_from=_at(2025, 1, 1),
         valid_until=_at(2025, 6, 1),
@@ -153,7 +153,7 @@ def test_expired_record_zero_weight():
     assert w == 0.0
 
 
-def test_invalid_window_rejected():
+def test_invalid_window_rejected() -> None:
     bad = BitemporalRecord(
         valid_from=_at(2025, 6, 1),
         valid_until=_at(2025, 1, 1),
@@ -163,7 +163,7 @@ def test_invalid_window_rejected():
         memory_fact_weight(bad, as_of=NOW)
 
 
-def test_naive_datetime_rejected():
+def test_naive_datetime_rejected() -> None:
     record = BitemporalRecord(
         valid_from=datetime(2026, 7, 1),
         learned_at=datetime(2026, 7, 1),
@@ -172,7 +172,7 @@ def test_naive_datetime_rejected():
         memory_fact_weight(record)
 
 
-def test_half_life_must_be_positive_finite():
+def test_half_life_must_be_positive_finite() -> None:
     record = BitemporalRecord(
         valid_from=_at(2026, 7, 1),
         learned_at=_at(2026, 7, 1),
@@ -183,7 +183,7 @@ def test_half_life_must_be_positive_finite():
         memory_fact_weight(record, half_life_days=math.inf)
 
 
-def test_known_at_caps_future_knowledge():
+def test_known_at_caps_future_knowledge() -> None:
     record = BitemporalRecord(
         valid_from=_at(2026, 7, 1),
         learned_at=_at(2026, 7, 13),

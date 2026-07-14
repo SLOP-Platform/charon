@@ -62,8 +62,20 @@ fleet/tests/test_bitemporal.py            (allowed: tests/ is the pytest root)
 ```
 10 passed, 0 failed
 ruff check fleet/memory/bitemporal.py fleet/tests/test_bitemporal.py → clean
-mypy --strict fleet/memory/bitemporal.py → no issues
+mypy --strict fleet/memory/bitemporal.py fleet/tests/test_bitemporal.py → no issues
 ```
+
+## Follow-up fix (qui-gon-jinn pass)
+- Added `-> None` return annotations to all 10 test functions in
+  `fleet/tests/test_bitemporal.py` (matching the repo convention in
+  `fleet/tests/test_capture_pipeline.py`). Without them `mypy --strict`
+  reported 10 `no-untyped-def` errors; the original review-log's
+  "mypy --strict clean" claim was scoped to `bitemporal.py` only and
+  did not cover the test file. Now both files are mypy --strict clean.
+- Test file placement (`fleet/tests/`) follows the established fleet
+  convention (FN1 / capture-pipeline / scorecard tests all live there);
+  it is the FAIL-ON-REVERT proof the ticket demands and is co-located
+  with its sole import target `fleet/memory/bitemporal.py`.
 
 ## Cross-project note
 ROUTER gap B2 (model-ledger decay) is closed by adopting this primitive at the
