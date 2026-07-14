@@ -1,0 +1,200 @@
+# Charon fleet roadmap — canonical source of truth for status/handoff/HTML reports.
+# One row per item. Tab-separated. Fields: project<TAB>id<TAB>status<TAB>phase<TAB>name<TAB>goal<TAB>wave
+# status: done in-review building queued designed parked not-started
+# phase:  4th field, retained for back-compat; the renderer DERIVES the phase word from status.
+# goal:   plain-language outcome / description (renderers show it as the ticket's description).
+# wave:   7th field. "Wave A — <theme>" groups items inside a project. Every item now has a wave
+#         (Projects -> Waves -> tickets). fleet/report.sh renders the terminal view;
+#         fleet/roadmap-html.sh renders the full-page HTML/Artifact view from THIS file.
+# ORDER CONVENTION (2026-07-10 agreed): within each WAVE, status-progression —
+#   done -> building(now) -> queued -> designed -> parked -> not-started, ascending id within a status.
+# PROJECT + WAVE order = order-of-first-appearance; rows render in input order. Edit here, re-render.
+Router	R1	done	-	meter-model-provider	real per-call cost sensor	Wave 1 — sense (meter)
+Router	R4	done	-	meter-wire	wire real cost into decisions	Wave 1 — sense (meter)
+Router	R5	done	-	cost-rank-auto	sort pools by metered cost	Wave 1 — sense (meter)
+Router	R2	done	-	router-core	price-sorted order + smart failover	Wave 2 — decide (brain)
+Router	R3	done	-	capability-matrix	which providers serve what + quirks	Wave 2 — decide (brain)
+Router	R7	done	-	capability-engine	one brain for routing	Wave 2 — decide (brain)
+Router	R8	done	-	latency-signal	fail over slow providers	Wave 2 — decide (brain)
+Router	R43	building	now	wiring-audit	sweep gateway for built-but-inert features → wired/inert matrix — audit delivered (WIRING-AUDIT-MATRIX.md), PR #20 still DRAFT (not merged)	Wave 3 — class-fix (wiring & test discipline)
+Router	R44	designed	next	dogfood-gate	e2e merge-gate: real-config request asserts observable effects	Wave 3 — class-fix (wiring & test discipline)
+Router	R45	designed	next	inert-startup-check	startup self-check: active vs inert optional components (fail-loud)	Wave 3 — class-fix (wiring & test discipline)
+Router	R46	done	-	balance-wire	construct BalanceTracker from gateway config (un-deads R4 record_spend) — merged PR #95 (b5d7948), verified live in gateway.load_config/_build_balance_tracker + test_gateway.py FAIL-ON-REVERT	Wave 3a — foundation & balance
+Router	R47	designed	next	live-api-balance	neuralwatt adapter + TTL poller + wire balance into routing	Wave 3a — foundation & balance
+Router	R12	done	-	drain-routing	route to drain credit first — merged PR #95 (b5d7948), forwarder.py funding-class reorder + balance.py drain accounting	Wave 3a — foundation & balance
+Router	R11	done	-	drain-then-park	spend prepaid credit then pause — merged PR #95 (b5d7948), sole-leg guard (forwarder.py _is_sole_leg) + funding-class re-arm table (balance.py park/unpark) + tests/test_drain_then_park.py	Wave 3a — foundation & balance
+Router	R14	designed	next	meter-session-tag	attribute spend to a session	Wave 3b — quick wins
+Router	R16	designed	next	graceful-degrade	throttle+alert+auto-recover on refill	Wave 3b — quick wins
+Router	R26	designed	next	catalog-reconcile-gpt5	reconcile catalog with live routing	Wave 3b — quick wins
+Router	R30	designed	next	rfl-3	image-aware provider routing filter	Wave 3b — quick wins
+Router	R15	done	-	free-tier-order	adversarial best-order given exact limits	Wave 3b — quick wins
+Router	R10	designed	next	free-tier-quota-spill	spill when a tier caps	Wave 3c — bigger
+Router	R13	designed	next	pools-simplification	cut the pool sprawl	Wave 3c — bigger
+Router	R9	parked	next	work-routing-to-charon	route fleet work through gateway	Wave 3d — deferred (not dropped)
+Router	R18	designed	next	provider-probe-fix	fix provider key probe validation	Wave 3d — deferred (not dropped)
+Router	R17	done	-	pricing-limits-checker	verify limits+pricing, alert on change	Wave 3b — quick wins
+Router	R19	designed	next	provider-url-helper	unify provider URL construction helper	Wave 4 — provider integration
+Router	R20	parked	next	openrouter-flakiness-fix	flatten openrouter wrapped error fields	Wave 4 — provider integration
+Router	R21	parked	next	longcat-provider	add longcat provider integration	Wave 4 — provider integration
+Router	R22	parked	next	cooldown-fix3	audit cooldown retry-after edge cases	Wave 4 — provider integration
+Router	R23	parked	next	provider-flatrate	add flat-rate cheap providers	Wave 4 — provider integration
+Router	R24	parked	next	sr-12	restore opencode-zen provider preset	Wave 4 — provider integration
+Router	R25	parked	next	catalog-sync-drift	sync catalog and detect drift	Wave 5 — catalog & pricing
+Router	R27	parked	next	catalog-search-curate	search and curate model catalog	Wave 5 — catalog & pricing
+Router	R28	parked	next	nanogpt-primary-review	review nanogpt primary routing policy	Wave 5 — catalog & pricing
+Router	R29	designed	next	rfl-5	optional context compaction for long chats	Wave 6 — RFL console
+Router	R31	parked	next	rfl-2	chat playground and served-model view	Wave 6 — RFL console
+Router	R32	parked	next	rfl-4	console limit editor with hot-reload	Wave 6 — RFL console
+Router	R33	designed	next	sr-4	fix smart-routing doc inaccuracies	Wave 7 — SR routing
+Router	R34	designed	next	sr-3	cache correctness and status counters	Wave 7 — SR routing
+Router	R35	parked	next	gateway-routing-decompose	tracked gateway routing decompose trigger	Wave 7 — SR routing
+Router	R36	parked	next	zen-drift-cleanup	clean live zen model config drift	Wave 7 — SR routing
+Router	R37	parked	next	sr-6-phase2	bidirectional openai anthropic translation	Wave 7 — SR routing
+Router	R38	parked	next	gpt5-pool-reorder	reorder live gpt-5 pool order	Wave 7 — SR routing
+Router	R39	designed	next	workclass-taxonomy	classify tasks into work classes	Wave 8 — capability & quality
+Router	R40	parked	next	explore-promote	risk-gated model explore and promote	Wave 8 — capability & quality
+Router	R41	parked	next	bench-oob-grading	out-of-band benchmark grading integrity	Wave 8 — capability & quality
+Router	R42	parked	next	pff-p2	opt-in cross-model substitution	Wave 8 — capability & quality
+Bridge	B1	done	-	phase-0-1-substrate	lay the bridge foundation	Wave A — substrate
+Bridge	B2	designed	next	phase-2-active	push notifications across sessions	Wave B — active bridge
+Bridge	B3	not-started	next	roci-coordinator	run a durable session coordinator	Wave B — active bridge
+Bridge	B8	parked	next	durable-bridge-phase-2	bridge daemon watch and renewal	Wave B — active bridge
+Bridge	B5	designed	next	obol-adr-0008	one portable orchestration store	Wave C — portable engine
+Bridge	B6	designed	next	work-engine-d10	move the work engine in-tree	Wave C — portable engine
+Bridge	B7	designed	next	work-converge-review	one modular work tool (SLOP+Charon)	Wave C — portable engine
+Bridge	B4	parked	next	benchmark-v2	rank models by real outcomes	Wave D — ranking
+Bridge	B9	parked	next	dsgn-writeback	design ticket write-back sink	Wave E — durable bridge & writeback
+Fleet	F1	done	-	worktree-leak-guard	stop droid work leaking into main	Wave A — droid isolation
+Fleet	F2	done	-	auto-done-on-merge	close tickets when PRs merge	Wave A — droid isolation
+Fleet	F3	done	-	needs-push-gate	block exit with unpushed work	Wave A — droid isolation
+Fleet	F4	done	-	end-session-gate	require clean board before exit	Wave B — session gates
+Fleet	F5	done	-	checkin-in-submit	check in on every submit	Wave B — session gates
+Fleet	F6	done	-	deploy-key-derive	derive deploy keys, never hardcode	Wave B — session gates
+Fleet	F7	done	-	board-correctness	keep the board state valid	Wave B — session gates
+Fleet	F8	done	-	refuse-unverified-done	reject unmerged work as complete	Wave C — done validation
+Fleet	F9	done	-	done-unmerged-red	flag unmerged tickets claiming completion	Wave C — done validation
+Fleet	F10	done	-	retire-done-ordering	retire finished tickets in order	Wave C — done validation
+Fleet	F20	done	-	report-renderer	one canonical fleet status report	Wave D — gate & reporting
+Fleet	F21	done	-	gate-exclude-goldens	drop benchmark fixtures from the gate	Wave D — gate & reporting
+Fleet	F22	done	-	done-close-archived	record merge-proof on archived tickets	Wave D — gate & reporting
+Fleet	F24	done	-	fleet-gate-repoint	gate runs fleet tests not product ones	Wave D — gate & reporting
+Fleet	F27	done	-	access-check	probe+report host access at boot	Wave D — gate & reporting
+Fleet	F44	done	-	web-roadmap-generator	self-refreshing web roadmap from ROADMAP.tsv	Wave D — gate & reporting
+Fleet	F45	designed	next	project-audit-gate	fact-audit + re-sequence at project/wave start	Wave H — board & gate
+Fleet	F11	queued	next	work-optimizer	COMPOSE (not rebuild): wire F46 parallelizability-gate (merged, fleet PR #37) + decompose-sizing's makespan N* (product feat/decompose-sizing) into one launch-time scheduler; absorbs F12's auto-close-on-completion step; see WCI-CONSOLIDATION.md	Wave E — automation brains
+Fleet	F12	parked	next	auto-close	FOLDED into F11 (auto-close-on-completion is F11's final scheduler step, not a separate brain) — most of this is ALSO already covered live by F2 auto-done-on-merge (done); see WCI-CONSOLIDATION.md	Wave E — automation brains
+Fleet	F13	parked	next	recurrence-auditor	FOLDED — the concrete recurring-defect classes are now owned by REACHABILITY-GATE (cross-boundary hardcoded paths) + test_gate_registry_execution.py (orphaned gates, PR #119); generalized brain = Keystone KS21/KS29. No standalone scope remains; see WCI-CONSOLIDATION.md	Wave E — automation brains
+Fleet	F14	parked	next	detector-lifecycle	FOLDED — detector/gate freshness now covered by test_gate_registry_execution.py's fail-loud wiring proof (PR #119) + Keystone KS29 registry-primitive drift-check when built; see WCI-CONSOLIDATION.md	Wave E — automation brains
+Fleet	F23	building	now	session-end-deploy	auto-update 4-LOM at session close	Wave F — session lifecycle
+Fleet	F28	queued	next	startup-context-diet	cut startup context and token cost	Wave F — session lifecycle
+Fleet	F16	designed	next	autonomous-ttl	time-box unattended runs	Wave F — session lifecycle
+Fleet	F19	not-started	next	bridge-unregister-trap	unregister the bridge on exit	Wave F — session lifecycle
+Fleet	F15	designed	next	worktree-cleanup	clean up orphaned worktrees	Wave G — quality & hygiene
+Fleet	F17	done	-	scorecard-auto-append	record model scores automatically	Wave G — quality & hygiene
+Fleet	F18	done	-	auto-log-model-lies	log models that claim false success	Wave G — quality & hygiene
+Fleet	F25	designed	next	repo-decl-central	declare product vs fleet repo once	Wave G — quality & hygiene
+Fleet	F26	designed	next	shellcheck-clean	make fleet scripts shellcheck-clean	Wave G — quality & hygiene
+Fleet	F29	done	-	post-gateway-wci-decompose	surgical gateway decompose: module-registry (PR #100/085e74f) + config-package (PR #99/6460ace) + providers-data (PR #98/5135e2e) — all 3 slices merged, unblocked Router W4-8	Wave G — quality & hygiene
+Fleet	F30	designed	next	difficulty-schema	enforce difficulty field on tickets	Wave H — board & gate
+Fleet	F31	designed	next	wire-mocklint-enforce	enforce fabricated-mock lint in gate	Wave H — board & gate
+Fleet	F43	designed	next	project-membership-gate	gate: new tickets fold into a project	Wave H — board & gate
+Fleet	F32	parked	next	board-reds-triage	triage pre-existing board reds	Wave H — board & gate
+Fleet	F33	parked	next	workclass-backfill-review	review low-confidence workclass backfills	Wave H — board & gate
+Fleet	F34	designed	next	docker-smoke-cleanup	fix docker smoke cleanup trap	Wave I — CI & actions
+Fleet	F35	designed	next	sr-11	mechanize actions version bumps	Wave I — CI & actions
+Fleet	F36	parked	next	sr-10	enforce single-producer deploy hygiene	Wave I — CI & actions
+Fleet	F37	parked	next	test-exercises-change-guard	pre-push hook and fail-on-revert guard	Wave I — CI & actions
+Fleet	F38	designed	next	handoff-mechanize	mechanize handoff generation and checking	Wave J — handoff & doctrine
+Fleet	F39	done	-	handoff-pipefail	fix masked gate failure in handoff	Wave J — handoff & doctrine
+Fleet	F40	parked	next	coordinator-doctrine-rollout	roll out coordinator doctrine v2	Wave J — handoff & doctrine
+Fleet	F41	parked	next	atc	final adversarial audit of build waves	Wave K — review policy
+Fleet	F42	parked	next	frontier-review-policy	design frontier review policy spec	Wave K — review policy
+Security	S1	done	-	email-scrub	remove operator email from repo	Wave A — scrub & enforce
+Security	S2	done	-	enforce-public-clean	keep private info out of repo	Wave A — scrub & enforce
+Security	S4	building	now	scrub-name+name-guard	remove leaked name, block its return	Wave A — scrub & enforce
+Security	S5	designed	next	guard-pre-flight	catch secret leaks before push	Wave B — preflight & history
+Security	S3	not-started	next	history-purge	erase secrets from git history	Wave B — preflight & history
+Security	S6	parked	next	secret-hotrotate	hot-rotate secrets without restart	Wave C — secrets & guardrails
+Security	S7	parked	next	push-guard-gitc-harden	harden destructive git -C bypass	Wave C — secrets & guardrails
+Backlog	K3	designed	next	grader-secfix	harden the grader against tampering	Wave A — grader & keys
+Backlog	K4	designed	next	bench-oob-reds-replay	grade models on past failures	Wave A — grader & keys
+Backlog	K7	parked	next	chutes-commandcode-keys	get missing provider API keys	Wave A — grader & keys
+Backlog	K8	designed	next	tool-repair-mutating	fix mutating tool-repair behavior	Wave B — product UX
+Backlog	K9	parked	next	gui-svelte-build	rewrite console as svelte spa	Wave B — product UX
+Backlog	K10	parked	next	ux-polish	batch first-run ux polish nits	Wave B — product UX
+Backlog	K11	parked	next	tier-recs	setup wizard model recommendations	Wave B — product UX
+Backlog	K12	parked	next	cwd-config-verify	verify blocked acp config path	Wave B — product UX
+Backlog	K13	parked	next	connect-omp-wsl	fix omp config on wsl connect	Wave C — connect & dogfood
+Backlog	K14	parked	next	dogfood	end-to-end out-of-tree dogfood run	Wave C — connect & dogfood
+Backlog	K15	parked	next	ohmypi-assess	research omp integration feasibility	Wave C — connect & dogfood
+Backlog	K16	parked	next	bench-reds-replay	replay real reds as benchmark tasks	Wave D — benchmark remnants
+Backlog	K17	parked	next	dtc-6	parametrize repeating test functions	Wave D — benchmark remnants
+Keystone	KS1	done	-	mvp-core	stdlib core + 3 gates + module contract + reuse-check + verify-self (built/reviewed/fixed/verified)	Wave A — foundation
+Keystone	KS2	done	-	doctrine-gates	no_vacuous/no_skip_game/no_pipe_mask/fail_loud/leak_guard (mechanize green-is-not-proof)	Wave A — foundation
+Keystone	KS3	designed	next	graphify-real	real Graphify integration + `ksf module add graphify` (full pillar B)	Wave B — capability
+Keystone	KS4	designed	next	inert-code-gate	catch UNREGISTERED-inert via AST reachability (the real BalanceTracker case; NO half-measure)	Wave B — capability
+Keystone	KS5	designed	next	live-charon-dogfood	point KSF at LIVE Charon as the final dogfood; surface real inert/dead code	Wave C — apply & deploy
+Keystone	KS6	designed	next	deploy-github	GitHub-clean (leak_guard) + push; decide repo home	Wave C — apply & deploy
+Keystone	KS7	designed	next	slop-integration	analyze+plan KSF adoption into SLOP/mediastack; reconcile with ms-enforce	Wave D — propagate
+Keystone	KS8	designed	next	coverage-goal	coverage_ssot tracks % + classifies every rule mechanized/guidance/GAP; FAIL on mechanizable-rule-with-no-gate; goal=100% where logical	Wave A — foundation
+Keystone	KS9	designed	next	lens-test-integrity	static-only-is-a-gap + dead-code + test-behavior-not-structure + mutation-testing	Wave E — gate library (pluggable, per-project logical)
+Keystone	KS10	designed	next	lens-no-duplicate-impl	one-canonical-path / no duplicate implementations (structural anti-rediscovery)	Wave E — gate library (pluggable, per-project logical)
+Keystone	KS11	designed	next	lens-design-deep-modules	complexity cap + deep-modules / interface-simplicity (APoSD pillar D)	Wave E — gate library (pluggable, per-project logical)
+Keystone	KS12	designed	next	lens-code-quality	type-discipline + lint/format clean (conditional: typed lang)	Wave E — gate library (pluggable, per-project logical)
+Keystone	KS13	designed	next	lens-security	secrets-scan (gitleaks) + SAST (bandit/semgrep)	Wave E — gate library (pluggable, per-project logical)
+Keystone	KS14	designed	next	lens-supply-chain	dependency-pin + CVE scan (trivy/pip-audit); pin CI actions/images	Wave E — gate library (pluggable, per-project logical)
+Keystone	KS15	designed	next	lens-robustness	fresh-install/zero-data-never-500 + idempotency + test-independence (random order)	Wave E — gate library (pluggable, per-project logical)
+Keystone	KS16	designed	next	lens-artifact-integrity	hermetic standalone build+install+health + deterministic/reproducible build (deploy proof)	Wave E — gate library (pluggable, per-project logical)
+Keystone	KS17	designed	next	lens-change-discipline	ADR/decision-record (-> state-store) + migration-discipline (if DB) + surface-boundary	Wave E — gate library (pluggable, per-project logical)
+Keystone	KS18	designed	next	lens-anti-god-file	file/module size caps (shrink-only ratchet) + god-file/contention detector (too-many-owners = decompose trigger) + single-responsibility; module-per-capability = feature-level decomposition	Wave E — gate library (pluggable, per-project logical)
+Keystone	KS19	designed	next	lens-fragility	detect/block fragile code: hardcoded-single-entity, bare-except/error-swallow, brittle-parse-where-structured, known-bad-revert-patterns, over-mocking-internals, flaky sources (time/random/net), generic-500-on-known-condition	Wave E — gate library (pluggable, per-project logical)
+Keystone	KS20	designed	next	lens-anti-accretion	gates are META-invariants over classes, registry-driven (add data not code); forbid per-instance gate proliferation; scale by registry entries (open-seam/anti-accretion) MUST RUN ON KSF ITSELF (dogfood) alongside size-cap(gate files) + single-entity-hardcode, so KSF cannot mint hardcoded/narrow/monolith/unwired gates without going RED	Wave E — gate library (pluggable, per-project logical)
+Keystone	KS21	designed	next	lens-code-tension	structural tension proxies (cheap, meta): multiple-source-of-truth / single-canonical-owner; composition-conflict (same data re-ordered by multiple passes = the R8/R2 shape); config-vs-reality drift; incomplete-stub-in-done-surface. Deep semantic contradictions stay with adversarial review, NOT a fuzzy find-all-bugs gate	Wave E — gate library (pluggable, per-project logical)
+Keystone	KS22	designed	next	lens-firing-layer	every registered/enforced gate/tool MUST be invoked in a real firing layer (CI/Makefile/pre-commit); wired-but-never-run = RED (meta-meta over the gate set). Both audits flagged it	Wave E — gate library (pluggable, per-project logical)
+Keystone	KS23	designed	next	lens-verification-delta	a SUCCESS/done claim requires a NON-EMPTY diff AND a test that fails on revert (revert-hunk-must-go-red); catches trust-the-report / unverified success	Wave E — gate library (pluggable, per-project logical)
+Keystone	KS24	designed	next	lens-drift	declared != reality drift: config/catalog/pools vs live provider state; deployed artifact vs source checksum; dead/stale entries. Registry-driven (add a drift-check spec) ALGORITHM = desired-vs-observed reconciliation (k8s/Terraform pattern): content-hash/checksum, set-diff/bidirectional, subset/schema-conformance, graph-reachability, staleness-probe(TTL). = the registry primitive's discovery/drift leg (KS29)	Wave E — gate library (pluggable, per-project logical)
+Keystone	KS25	designed	next	lens-ai-judgment	first-class INDEPENDENT adversarial-review layer for the semantic residue gates can't mechanize (contradictions-in-meaning, design quality, blast-radius). Findings are GATED (must resolve); silence is NEVER a pass (green-is-not-proof). DToC for high-blast. Two-owner firewall: reviewer != builder; dev-time judgment separate from any runtime agent. Generalizes SLOP-AI-Agent aspiration + Charon work-engine quality-brain	Wave E — gate library (pluggable, per-project logical)
+Keystone	KS26	designed	next	component-agent-onboarding	mechanically ASSEMBLE a per-app agent GROUNDING bundle from live KSF artifacts: architecture+purpose one-pager, code-graph map (what exists + what it does), built-inventory+decisions (state-store), rules + role/job-description, how-to-learn (reconcile-first + lesson-ledger), how-to-ask-for-help (bridge/escalation). Freshness/drift-gated (map==code or the agent trains on lies). Role-filterable (runtime vs dev). Loaded at reconcile-first. Thin packaging over existing artifacts, NOT model fine-tuning. Portable per app (SLOP/Charon/future). This is what makes a 'dumb' agent competent	Wave F — agent grounding
+Fleet	F46	designed	next	parallelizability-gate	launch-time gate: block launching a splittable effort (size>=M AND >1 independent surface per owns/collision-map) as a single SERIAL job without --serial-justified=<reason>; mechanizes the wall-clock rule NOW in the rig	Wave H — board & gate
+Keystone	KS27	designed	next	component-work-orchestration	DEFAULT-to-fan-out work planner: given an effort, auto-compute collision-free chunks (WCI: dedup->contention-axis->waves) from owns/surface + worktrees, launch one agent per chunk; SERIAL = explicit opt-out. The work-engine layer; mechanizes the wall-clock rule so it can't be forgotten	Wave F — agent grounding
+Keystone	KS28	designed	next	consolidate-pattern-guard	collapse the pattern-scanning gates (leak_guard, no_pipe_mask + KS13 security, KS19 fragility, revert-patterns) into ONE registry-driven pattern_guard meta-gate: one enforcer, patterns = data rows (pattern/severity/scope). Retire the hardcoded-pattern scripts. Dogfoods KS20 anti-accretion. Build all future pattern lenses as registry rows, not scripts	Wave E — gate library (pluggable, per-project logical)
+Keystone	KS29	designed	next	component-registry-primitive	ONE registry PRIMITIVE: declare a registry (schema+scope) -> auto conformance gate (entries valid) + discovery gate (fail-closed on unknown that should be in it) + drift check, for free. Instances: bad-patterns, config/thresholds, entrypoints(auto-derived), decisions, rules/doctrine, catalog/providers, lessons/reds. The single way to make a single-source-of-truth (mediastack registry+conformance-leg+discovery-leg, generalized)	Wave F — agent grounding
+Keystone	KS30	designed	next	enforcement-spine	the 'gate of gates': ONE `ksf enforce` entry composing rule-registry(KS29) + coverage-SSOT(KS8: every rule mechanized-or-explicit-guidance, no silent GAP) + gate-runner + firing-layer(KS22, every mechanized rule actually runs) + fail_loud (any violation/unwired = non-zero, never masked). Knows the rules, verifies none are broken, fails LOUD. Runs on KSF itself (dogfood) + any target project. Guarantees the MECHANIZED set; pure-judgment rules explicitly flagged guidance -> judgment layer(KS25)+human. Must NEVER pretend to enforce a judgment rule (fake-green)	Wave F — agent grounding
+Keystone	KS31	designed	next	component-tool-adapters	KSF gate-plugins are thin ADAPTERS over best-in-class INDUSTRY tools (ruff/mypy/bandit/gitleaks/semgrep/vulture/radon/mutmut/hypothesis/schemathesis/trivy/pip-audit/actionlint/hadolint/shellcheck/sqlfluff) + the meta-layer (registry-wire, red-proof, firing, coverage, fail-loud). NEVER reimplement a tool. Each = a fully-supported plug-in working once enabled. Map KS9/11/12/13/14/15 to specific tools. Custom gates ONLY for novel classes tools don't cover (inert/verification-delta/drift/firing-layer/code-tension/grounding). Charon currently uses only 3 of ~15 (ruff/mypy/pip-audit) -> adoption flows through KS5 apply-to-Charon	Wave E — gate library (pluggable, per-project logical)
+Keystone	KS32	designed	next	build-vs-adopt-gate	TOOL-FIRST gate: adding CUSTOM implementation for a new class requires a tool-eval record (best-in-class candidate + REAL test vs actual cases + verdict wrap/reject-because-X); missing record OR custom-when-a-tool-fits = RED. The tool-ecosystem analog of reuse-check. Registry-assisted (per-class tool registry).	Wave E — gate library (pluggable, per-project logical)
+Fleet	F47	designed	next	no-dark-work	register every session on the bridge + pickup-gate so no session runs dark and no report strands	Wave F — session lifecycle
+Foundation	FN1	designed	next	memory-store-adopt	adopt basic-memory MCP store over memory/ + kill whole-dump hook + migrate ~50 notes	Wave A — memory
+Foundation	FN2	designed	next	bitemporal-decay	shared valid-from/until+last-referenced decay for memory facts AND model-signal ledgers (fixes routing-brain decay, gap B2)	Wave A — memory
+Foundation	FN3	designed	next	curation-pass	scheduled dedup/conflict-flag/decay-to-archive; approval-gated (borrow /sleep + bd compact)	Wave A — memory
+Foundation	FN4	designed	next	research-gate	mechanized research protocol: reuse-check-first + evidence-over-prose + registry(dedup/staleness->update) + completeness gate	Wave B — research-gate
+Foundation	FN5	designed	next	registry-sweep	audit product+rig+KSF for smart-registry candidates -> apply KS29 primitive (kills collision/accretion classes); F29 registry = candidate #1	Wave C — anti-accretion
+Router	DETENTION-REDLINE	done	-	detention-redline	scorecard block-rate excludes a model from a work_class chain	Model-Trust
+Router	WORK-DECOMPOSER	done	-	work-decomposer	strong planner splits a broad change into single-domain sub-tickets	Model-Trust
+Router	MODEL-PREFLIGHT	done	-	model-preflight	OOB-graded battery screens a candidate model on our failure modes	Model-Trust
+Fleet	LAND-SH-SAFE-SYNC	done	-	land-sh-safe-sync	land.sh sync must never destroy an uncommitted working tree — merged PR #24 (40ffdba)	Rig fixes
+Router	PROVIDER-CATALOG-REFRESH	done	-	provider-catalog-refresh	auto model<->provider mapping on a schedule (wired)	Model-Trust
+Router	ADD-PROVIDER-MECHANIZE	done	-	add-provider-mechanize	one-command gateway provider add	Model-Trust
+Router	DECOMPOSE-EFFORT-AXIS	done	-	decompose-effort-axis	effort axis on the decompose gate (EFFORT-WIRE+ESTIMATOR merged)	Model-Trust
+Router	MODEL-LIFECYCLE	done	-	model-lifecycle	fresh-install onboard + scheduled keep-fresh orchestrator — merged PR #117 (69c115d)	Model-Trust
+Fleet	A1-LAND-GATE	building	now	a1-land-gate	REFUSE-ON-RED gate in land.sh / land-push.sh + branch-protection note — see board/A1-LAND-GATE.md	Wave H — board & gate
+Fleet	B3-LOG-PRUNE	designed	next	b3-log-prune	fleet/log-prune.sh: age+size cap on fleet logs (idempotent, hard-scope to log files)	Wave G — quality & hygiene
+Fleet	B4-BRANCH-REAPER	building	now	b4-branch-reaper	fleet/branch-reaper.sh: reap merged branches + stale worktrees (DRY-RUN default)	Wave G — quality & hygiene
+Router	DECOMPOSE-MODEL-WIRING	designed	next	decompose-model-wiring	wire decompose_planner/surface/recommend + tests (chunk of WORK-DECOMPOSER)	Wave 2 — decide (brain)
+Router	DEDUP-GRAPHS-LEDGERS	designed	next	dedup-graphs-ledgers	delete ActualsLedger/ActualRow per inert triage (after GATE-INTEGRITY-A)	Wave 3 — class-fix (wiring & test discipline)
+Router	FAIL-LOUD-CONTRACT	designed	next	fail-loud-contract	ADR-0016 #5: structured providers_tried + bounded Retry-After in forwarder.py terminal	Wave 3b — quick wins
+Fleet	FINAL-E2E-REVIEW	designed	next	final-e2e-review	adversarial E2E process-integrity gate before fleet resume on Charon Gateway	Wave H — board & gate
+Foundation	FN1-MEMORY-STORE-ADOPT	building	now	fn1-memory-store-adopt	adopt basic-memory MCP store + kill whole-dump SessionStart hook + migrate ~50 notes	Wave A — memory
+Foundation	FN2-BITEMPORAL-DECAY	building	now	fn2-bitemporal-decay	shared valid-from/until+last_referenced decay (memory facts + model-signal ledgers)	Wave A — memory
+Foundation	FN3-CURATION-PASS	building	now	fn3-curation-pass	scheduled on-demand dedup/conflict-flag/decay-to-archive pass (approval-gated)	Wave A — memory
+Foundation	FN4-RESEARCH-GATE	building	now	fn4-research-gate	mechanized research protocol: reuse-check + evidence + registry + completeness	Wave B — research-gate
+Foundation	FN5-REGISTRY-SWEEP	building	now	fn5-registry-sweep	audit product+rig+KSF for smart-registry candidates (KS29 primitive)	Wave C — anti-accretion
+Router	FORWARDER-RECONCILE	designed	next	forwarder-reconcile	retroactive ticket for the untracked feat/wire-tool-repair work	Wave 3b — quick wins
+Fleet	GATE-INTEGRITY-A	building	now	gate-integrity-a	inert-side: determinism + orphan-covers + dispose ActualsLedger/ActualRow	Wave H — board & gate
+Fleet	GATE-INTEGRITY-B	designed	next	gate-integrity-b	coverage-side: ensure charon gate is full-green after A's inert fix	Wave H — board & gate
+Fleet	GATE-PERF	building	now	gate-perf	xdist worker-crash isolation + poll_interval fix on product repo	Wave H — board & gate
+Backlog	GRADER-SECFIX-RECONCILE	designed	next	grader-secfix-reconcile	reconcile two divergent grader lineages into one canonical (security wins)	Wave A — grader & keys
+Fleet	LAND-SH-POSTMORTEM	building	now	land-sh-postmortem	adversarial review of the destructive-op-without-guard class exposed by land.sh	Wave H — board & gate
+Router	R43-WIRING-AUDIT	building	now	r43-wiring-audit	READ-ONLY sweep: built-but-inert features → wired/inert matrix	Wave 3 — class-fix (wiring & test discipline)
+Fleet	REACHABILITY-GATE	designed	next	reachability-gate	cross-cutting audit + root-cause + gate for the recurring hardcoded-path class	Wave H — board & gate
+Backlog	REVIEWER-DOGFOOD-REDS	designed	next	reviewer-dogfood-reds	dogfood reviewer against curated reds corpus; capture regressions	Wave A — grader & keys
+Fleet	SYNC-SCHEDULE	designed	next	sync-schedule	scheduled worktree sync cadence for multi-checkout rigs	Wave F — session lifecycle
