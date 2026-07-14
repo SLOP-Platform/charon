@@ -42,7 +42,7 @@ run_ticket() {
   DOGFOOD_WORK_CLASS="$wclass" \
   DOGFOOD_TEST_CMD="$testcmd" \
   DOGFOOD_EXPECT_FILES="$expect" \
-  DOGFOOD_LATENCY_BUDGET_S=900 \
+  DOGFOOD_LATENCY_BUDGET_S="${SWEEP_LATENCY_BUDGET_S:-480}" \
     bash "$FLEET/benchmark/dogfood-eval.sh" "$label" "$BRIEFS/${label}-eval.md" "${MODELS[@]}"
 }
 
