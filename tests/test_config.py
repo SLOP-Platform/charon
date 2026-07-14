@@ -221,3 +221,149 @@ def test_save_default_config_dir_unaffected(monkeypatch, tmp_path):
     monkeypatch.setenv("CHARON_HOME", str(tmp_path))
     config._save("models.json", {"m": {"cost_output": 0.00001}})
     assert config.load_models()["m"]["cost_output"] == 0.00001
+
+
+# ── PROVIDER-PROBE-FIX: validation logic + skip_probe escape hatch ─────────
+
+def test_validate_provider_key_models_ok_short_circuits_chat_probe():
+    """FAIL-ON-REVERT (PROVIDER-PROBE-FIX): /models returns 200 + a parseable
+    list → validate_provider_key returns valid=True WITHOUT the chat probe
+    needing to succeed. The old code ran the chat probe with model="." and
+    wrongly rejected valid keys when the upstream 400'd on the placeholder id.
+
+    Must be RED if the fix is reverted: the chat probe's HTTPError(400) would
+    trip the unconditional `return {valid: False, ...}` branch. Must be GREEN
+    with the fix: the /models short-circuit returns valid=True first."""
+    import urllib.error
+    from unittest.mock import MagicMock, patch
+
+    from charon.config import keyprobe as kp
+
+    models_body = b'{"data": [{"id": "real-model-1"}, {"id": "real-model-2"}]}'
+
+    class _ModelsResp:
+        def read(self, *_a):
+            return models_body
+
+    def _fake_open(req, timeout=None):
+        # /models → 200 + list. /chat/completions → HTTP 400 (provider rejects
+        # model=".") — this is the case the bug used to mis-handle.
+        path = req.selector or ""
+        if path.endswith("/models"):
+            return _ModelsResp()
+        if path.endswith("/chat/completions"):
+            raise urllib.error.HTTPError(
+                url=path, code=400, msg="Bad Request", hdrs=None, fp=None)
+        raise AssertionError(f"unexpected probe to {path!r}")
+
+    opener = MagicMock()
+    opener.open.side_effect = _fake_open
+    with patch("urllib.request.build_opener", return_value=opener):
+        result = kp.validate_provider_key("test", "https://api.example.com/v1", "sk-x")
+
+    assert result["valid"] is True, f"expected valid=True, got {result!r}"
+    assert result["models_count"] == 2
+    # /models was reachable → the chat probe's 400 must NOT be reported as the
+    # deciding signal.
+    assert "HTTP 400" not in result["message"]
+
+
+def test_validate_provider_key_models_unreachable_still_rejects_on_chat_400():
+    """When /models is unreachable AND the chat probe returns a non-401/403
+    HTTPError, the key is rejected — the fix is NOT a free pass."""
+    import urllib.error
+    from unittest.mock import MagicMock, patch
+
+    from charon.config import keyprobe as kp
+
+    def _fake_open(req, timeout=None):
+        # /models → unreachable (simulate). /chat → 400.
+        path = req.selector or ""
+        if path.endswith("/models"):
+            raise ConnectionError("simulated")
+        if path.endswith("/chat/completions"):
+            raise urllib.error.HTTPError(
+                url=path, code=400, msg="Bad Request", hdrs=None, fp=None)
+        raise AssertionError(f"unexpected probe to {path!r}")
+
+    opener = MagicMock()
+    opener.open.side_effect = _fake_open
+    with patch("urllib.request.build_opener", return_value=opener):
+        result = kp.validate_provider_key("test", "https://api.example.com/v1", "sk-x")
+
+    assert result["valid"] is False
+    assert "HTTP 400" in result["message"]
+
+
+def test_validate_provider_key_skip_probe_returns_skipped_without_network():
+    """skip_probe=True → valid=True, no HTTP calls, 'skipped' surface flag set
+    so the caller/UI can show a 'not validated' state instead of silence."""
+    from unittest.mock import MagicMock, patch
+
+    from charon.config import keyprobe as kp
+
+    opener = MagicMock()
+    with patch("urllib.request.build_opener", return_value=opener) as bo:
+        result = kp.validate_provider_key(
+            "test", "https://api.example.com/v1", "sk-x", skip_probe=True)
+
+    assert result["valid"] is True
+    assert result.get("skipped") is True
+    assert "skipped" in result["message"].lower()
+    # No HTTP work done.
+    assert bo.call_count == 0  # build_opener was never called
+    assert opener.open.call_count == 0
+
+
+def test_providers_gateway_action_skip_probe_end_to_end(monkeypatch, tmp_path):
+    """The /charon/providers web-setup action honours skip_probe=True: the
+    provider is persisted unvalidated, no probe network call is made, and the
+    response marks the probe as skipped."""
+    from unittest.mock import patch
+
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    monkeypatch.delenv("BADPROBE_KEY", raising=False)
+
+    cfg = gateway.load_config(state_dir=tmp_path)
+    import dataclasses
+    cfg = dataclasses.replace(cfg, token="t", port=0)
+    server = gateway.build_server(cfg, setup_dir=tmp_path)
+    server.serve_in_thread()
+    try:
+        base = server.url
+        # Hand-roll the POST so we don't depend on the test_console_provider_mgmt
+        # _req helper (owned by that ticket's tests).
+        import json as _json
+        import urllib.request
+
+        body = _json.dumps({
+            "name": "skipprov",
+            "base_url": "https://api.example.com/v1",
+            "key_env": "BADPROBE_KEY",
+            "key": "sk-dead",
+            "skip_probe": True,
+        }).encode()
+        req = urllib.request.Request(
+            base + "/charon/providers", data=body, method="POST")
+        req.add_header("Content-Type", "application/json")
+        req.add_header("Authorization", "Bearer t")
+        # Patch the re-export in the config package (where gateway.py's handler
+        # looks it up) so we can assert the call was made with skip_probe=True.
+        with patch("charon.config.validate_provider_key") as vpk:
+            vpk.return_value = {
+                "valid": True, "message": "probe skipped",
+                "models_count": 0, "skipped": True}
+            resp = urllib.request.urlopen(req, timeout=10)
+            data = _json.loads(resp.read().decode("utf-8"))
+
+        assert resp.status == 200, f"expected 200, got {resp.status}: {data!r}"
+        assert data["ok"] is True
+        assert data["provider"] == "skipprov"
+        assert data["probe"] is not None
+        assert data["probe"].get("skipped") is True
+        assert vpk.call_count == 1, \
+            f"expected one validate_provider_key call, got {vpk.call_count}"
+        assert vpk.call_args.kwargs.get("skip_probe") is True, \
+            f"expected skip_probe=True kwarg, got {vpk.call_args!r}"
+    finally:
+        server.shutdown()

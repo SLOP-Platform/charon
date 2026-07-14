@@ -425,12 +425,16 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
             preset = P.resolve(name, {"base_url": base_url} if base_url else None)  # validates
             key_env = (payload.get("key_env") or preset.key_env) or None
             key = (payload.get("key") or None)
-            # Validate the key BEFORE persisting (probe a real completion)
+            skip_probe = bool(payload.get("skip_probe"))
+            # Validate the key BEFORE persisting (probe a real completion),
+            # unless the operator explicitly opted out (token-gated / limited-
+            # access keys where even /models isn't reachable pre-activation).
             probe = None
             if key_env and key:
                 effective_base = base_url or preset.base_url
-                probe = config.validate_provider_key(name, effective_base, str(key))
-                if not probe["valid"]:
+                probe = config.validate_provider_key(
+                    name, effective_base, str(key), skip_probe=skip_probe)
+                if not probe.get("valid"):
                     return 400, {"error": {"message": probe["message"]}, "probe": probe}
             config.add_provider(name, base_url=base_url, key_env=key_env,
                                 strip_v1=(preset.strip_v1 if base_url else None))
