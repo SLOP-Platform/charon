@@ -319,7 +319,7 @@ def test_balance_tracker_model_spend_unconfigured_provider() -> None:
 def test_balance_tracker_model_spend_poll_provider() -> None:
     """For a poll-configured provider, record_spend does not decrement the
     balance (poll is authoritative) but still tracks model spend."""
-    bt = BalanceTracker(config={"deepseek": {"mode": "poll", "base_url": "http://x",
+    bt = BalanceTracker(config={"deepseek": {"mode": "poll", "base_url": "http://127.0.0.1:1",
                                               "api_key": "sk-test"}})
     bt.record_spend("deepseek", 0.05, model="v")
     assert bt.remaining("deepseek") is None  # poll is unreachable → None
