@@ -97,6 +97,21 @@ end_session(){
     return "$crc"
   fi
 
+  # -- BRANCH-GUARD (session-end-hardening 2026-07-14): never commit the handoff onto a stray
+  # feature branch. The rig primary was found left on a droid's feat/* branch; committing there
+  # tangles session work into an unrelated PR, and a later checkout clobbered live grader state
+  # (model-scorecard.tsv reverted 31->4 rows + flipped owner stack<-bench-grader, breaking appends).
+  cur_branch="$(git -C "$PRIV" branch --show-current 2>/dev/null || echo '')"
+  case "$cur_branch" in
+    master|main|chore/session-*|chore/handoff-*) : ;;
+    *)
+      say "end-session: REFUSING to close — rig is on branch '$cur_branch', not master or a chore/session-*/chore/handoff-* branch."
+      say "  Committing the handoff here would tangle it into an unrelated branch/PR (recurred 2026-07-14)."
+      say "  Fix: git -C $PRIV checkout master   (or: git -C $PRIV checkout -b chore/session-<name> master), then re-run."
+      return 1
+      ;;
+  esac
+
   # -- handoff-check PASSED -> commit the handoff, THEN declare the session closed -----------
   say "end-session: handoff-check PASSED — committing $file to charon-private."
   if ! commit_handoff "$file"; then
