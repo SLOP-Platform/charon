@@ -302,6 +302,58 @@ executor_gate(){
   fi
 }
 
+# --- handoff_gate: MECHANIZES [mechanized-handoff-gate] (MANAGER-OPERATING-RULES.md). The newest
+# HANDOFF-*.md in fleet/ MUST pass `bash fleet/handoff-check.sh <file>`; a red handoff is a recurring
+# failure mode (poor/inaccurate/incomplete handoffs stranded work for multiple sessions) so a bad
+# handoff is wired as a BLOCKING P1 red 'handoff-fails-gate' that auto-closes the moment a passing
+# handoff is on disk. This is the active detector — without it the rule was an unenforceable bullet
+# in the operating doc; with it a missing/partial handoff BLOCKS preflight like a red board.
+# Identical machinery to board_gate / executor_gate: registered BEFORE cmd_scan, so a red handoff
+# makes preflight exit non-zero (it does not get dismissed as an advisory).
+HANDOFF_RED_ID="handoff-fails-gate"
+HANDOFF_CHECK="$HERE/handoff-check.sh"
+_handoff_red_status(){ awk -F"$TAB" -v id="$HANDOFF_RED_ID" '$1==id{print $7; exit}' "$TSV"; }
+_handoff_red_ensure_open(){
+  local st desc; st="$(_handoff_red_status)"
+  desc="newest fleet/HANDOFF-*.md fails handoff-check.sh (incomplete/inaccurate) — fix it (re-run handoff.sh + handoff-check.sh) or it blocks preflight"
+  if [ -z "$st" ]; then
+    cmd_add "$HANDOFF_RED_ID" P1 gate "$desc" \
+      "bash '$HANDOFF_CHECK' \"\$(ls -1t $HERE/HANDOFF-*.md 2>/dev/null | grep -v 'SESSION-HANDOFF' | head -1)\" >/dev/null 2>&1" \
+      >/dev/null 2>&1 || true
+  elif [ "$st" = closed ]; then
+    local tmp; tmp="$(mktemp)"
+    awk -F"$TAB" -v OFS="$TAB" -v id="$HANDOFF_RED_ID" \
+      '/^#/{print;next} $1==id{$7="open";$8=""} {print}' "$TSV" > "$tmp" && mv "$tmp" "$TSV"
+  fi
+}
+_handoff_red_close_if_open(){
+  [ "$(_handoff_red_status)" = open ] && \
+    cmd_close "$HANDOFF_RED_ID" --override "auto: newest HANDOFF-*.md passes handoff-check.sh" >/dev/null 2>&1 || true
+}
+handoff_gate(){
+  [ -f "$HANDOFF_CHECK" ] || { echo "handoff_gate: handoff-check.sh not found at $HANDOFF_CHECK"; return 0; }
+  # Pick the newest HANDOFF-*.md (NOT SESSION-HANDOFF-*.md — those are per-session bootstrap
+  # docs whose freshness is covered by the SESSION start hook). SESSION-HANDOFF files use
+  # `## Bootstrap` patterns and would false-positive the bootstrap one-liner check.
+  local latest
+  latest="$(ls -1t "$HERE"/HANDOFF-*.md 2>/dev/null | grep -v 'SESSION-HANDOFF' | head -1)"
+  if [ -z "$latest" ]; then
+    echo "handoff_gate: no HANDOFF-*.md in $HERE (skipped — bootstrap with the first one after this session)"
+    return 0
+  fi
+  local out rc
+  out="$(bash "$HANDOFF_CHECK" "$latest" 2>&1)"; rc=$?
+  if [ $rc -eq 0 ]; then
+    echo "handoff_gate: $latest PASSES handoff-check.sh"
+    _handoff_red_close_if_open
+  else
+    _handoff_red_ensure_open
+    echo "handoff_gate: $latest FAILS handoff-check.sh — AUTO-REGISTERED tracked red '$HANDOFF_RED_ID' (blocks preflight until the handoff is repaired)"
+    printf '%s\n' "$out" | grep -E '^  ✗|MISSING|PATH NOT FOUND|SHA NOT FOUND|STALE' | head -8 | sed 's/^/    /'
+    [ "$(printf '%s\n' "$out" | grep -cE '^  ✗')" -gt 8 ] && echo "    +more — run: fleet/handoff-check.sh $latest"
+  fi
+}
+
 # --- detect_needs_push: MECHANIZES [never-ignore-preexisting-issues] for STRANDED PUSHES (#3).
 # submit.sh writes state/needs-push/<id> when a droid committed work but no PR opened, and a
 # later re-claim's `git worktree remove --force` can DESTROY that committed work (CI-WORKFLOW-
@@ -531,7 +583,7 @@ show_operator_actions(){
 # functions above are exposed with NO side effects.
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 case "${1:-scan}" in
-  scan|"") bash "$HERE/reconcile-merged.sh"; board_gate; executor_gate; done_merge_gate; detect_needs_push; bash "$HERE/retire-done.sh"; cmd_scan; scan_rc=$?; cmd_detect; show_operator_actions; exit $scan_rc ;;
+  scan|"") bash "$HERE/reconcile-merged.sh"; board_gate; executor_gate; handoff_gate; done_merge_gate; detect_needs_push; bash "$HERE/retire-done.sh"; cmd_scan; scan_rc=$?; cmd_detect; show_operator_actions; exit $scan_rc ;;
   add)     shift; cmd_add "$@" ;;
   close)   shift; cmd_close "$@" ;;
   list)    shift; cmd_list "$@" ;;
