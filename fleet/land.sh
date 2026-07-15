@@ -173,4 +173,17 @@ fi
 # clean over uncommitted or untracked work. See safe_sync_base() above for the full contract.
 safe_sync_base "$REPO" "$BASE" "$BRANCH"
 
+# 8. AUTO-DONE-MARK (self-heals board starvation): a merged PR whose ticket is never
+# done-marked leaves its dependents BLOCKED (they gate on state/done/<dep>). Now that done.sh
+# is O(1) (single-ticket retire), mark the ticket here so every land instantly unblocks its
+# dependents and the fleet tabs stay fed. Skip silently when the branch has no board ticket
+# (e.g. a manager fix branch). done.sh re-verifies the merge itself, so this is safe.
+_land_tid="$(grep -lE "^branch: *$BRANCH *$" "$FLEET"/board/*.md 2>/dev/null | head -1)"
+if [ -n "$_land_tid" ]; then
+  _land_tid="$(basename "$_land_tid" .md)"
+  echo "land: auto-done-marking $_land_tid (unblocks its dependents)"
+  AUTONOMOUS=1 bash "$FLEET/done.sh" "$_land_tid" >/dev/null 2>&1 \
+    || echo "land: (auto-done-mark for $_land_tid was non-fatal — run 'done.sh $_land_tid' if a dependent stays blocked)" >&2
+fi
+
 echo "land: DONE — '$BRANCH' merged into '$BASE' on $OWNER_REPO (verified state=MERGED)"
