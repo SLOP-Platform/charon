@@ -47,7 +47,7 @@ jobs:
         # cascades into every subsequent test ERRORing at fixture SETUP.
         env:
           PYTEST_DEBUG_TEMPROOT: ${{ runner.temp }}
-        run: pytest -q
+        run: pytest -q -n auto
 
       - name: render review-log (verify all fragments are readable)
         # docs/REVIEW-LOG.md is gitignored (generated); --check would always fail on a

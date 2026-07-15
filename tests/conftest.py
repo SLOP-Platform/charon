@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import http.server
 import json
+import socketserver
 import threading
 import urllib.error
 import urllib.request
@@ -10,6 +11,56 @@ from pathlib import Path
 import pytest
 
 from charon import gitutil
+
+
+def start_server(srv: socketserver.BaseServer, *, poll_interval: float = 0.05) -> threading.Thread:
+    """Start a ``socketserver`` instance in a background thread with a fast
+    ``serve_forever`` poll interval.
+
+    Stdlib's ``BaseServer.serve_forever`` defaults ``poll_interval=0.5`` and
+    ``shutdown()`` blocks until the select() loop next wakes. Across the test
+    suite we spin up hundreds of HTTP test doubles and shut them down at
+    teardown; the default 0.5s wakeup adds pure dead wait (0.5-1.0s per
+    teardown, ~52 tests in the 0.95-1.10s band). 0.05s is short enough that
+    no in-flight request is starved (request handling is the
+    ``process_request`` path, which runs regardless of poll_interval) and
+    short enough that teardown returns in <100ms even with two servers
+    shut down serially.
+    """
+    t = threading.Thread(
+        target=srv.serve_forever, args=(poll_interval,), daemon=True
+    )
+    t.start()
+    return t
+
+
+@pytest.fixture(autouse=True)
+def _tighten_socketserver_poll_interval():
+    """Patch ``BaseServer.serve_forever`` defaults to 0.05s for the duration
+    of every test in this repo.
+
+    Most test files spin up ``http.server.HTTPServer`` (or other
+    ``socketserver`` subclasses) via
+    ``threading.Thread(target=srv.serve_forever, daemon=True).start()`` with
+    no ``poll_interval`` argument, leaving the stdlib default of 0.5s. When
+    the test calls ``srv.shutdown()`` at teardown, that call blocks until
+    the select() loop next wakes — up to 0.5s of dead wait per server. With
+    many tests in the 0.95-1.10s band (one upstream + one gateway, both
+    shut down serially), this dominates wall-clock for the suite despite
+    user/sys CPU remaining tiny (wall ~150s, user ~15s).
+
+    This autouse fixture runs in every test, in this conftest, and is the
+    single chokepoint that flips the stdlib default to 0.05s for the test
+    process lifetime — touching NO other test file (per the GATE-PERF
+    ticket's ``owns:`` boundary). The same fixture also keeps the explicit
+    ``start_server()`` helper above consistent with the implicit default.
+    """
+    saved = socketserver.BaseServer.serve_forever.__defaults__
+    socketserver.BaseServer.serve_forever.__defaults__ = (0.05,)
+    try:
+        yield
+    finally:
+        socketserver.BaseServer.serve_forever.__defaults__ = saved
 
 
 @pytest.fixture
@@ -65,8 +116,7 @@ def mock_upstream():
             self.wfile.write(resp)
 
     srv = http.server.HTTPServer(("127.0.0.1", 0), H)
-    t = threading.Thread(target=srv.serve_forever, daemon=True)
-    t.start()
+    start_server(srv)
     host, bound_port = srv.server_address[:2]
     if isinstance(host, bytes):
         host = host.decode()

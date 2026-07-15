@@ -59,7 +59,7 @@ jobs:
         # rm_rf this run's live pytest basetemp mid-suite.
         env:
           PYTEST_DEBUG_TEMPROOT: ${{ runner.temp }}
-        run: pytest -q
+        run: pytest -q -n auto
 
   image-smoke:
     # Runner is chosen by the CI_RUNNER repo variable (Settings → Variables).
