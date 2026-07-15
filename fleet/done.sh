@@ -68,6 +68,16 @@ done
 id="$(canon "$id_arg")" || exit 2
 branch="$(meta branch "$BOARD/$id.md")"; [ -n "$branch" ] || branch="$(meta branch "$BOARD/archive/$id.md")"
 owns="$(meta owns "$BOARD/$id.md")";     [ -n "$owns" ]   || owns="$(meta owns "$BOARD/archive/$id.md")"
+# repo-aware: read repo field from board, map to GitHub slug, override REPO_SLUG for gh calls
+ticket_repo="$(meta repo "$BOARD/$id.md")"
+[ -n "$ticket_repo" ] || ticket_repo="$(meta repo "$BOARD/archive/$id.md")"
+if [ -n "$ticket_repo" ]; then
+  case "$ticket_repo" in
+    charon) REPO_SLUG="SLOP-Platform/charon" ;;
+    charon-private) REPO_SLUG="Nnyan/charon-private" ;;
+    *) echo "done.sh: WARNING — unknown repo '$ticket_repo' for ticket $id; using default slug." >&2 ;;
+  esac
+fi
 
 if [ -n "$override" ]; then
   marker_line="$(date -u +%FT%TZ)"$'\t'"override:$override"
