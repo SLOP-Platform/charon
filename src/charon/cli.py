@@ -362,12 +362,8 @@ def _mask_key(key: str) -> str:
     return f"({len(key)} chars, ends in ...{key[-4:]})"
 
 
-def _probe_key(preset: object, api_key: str) -> str | None:
-    """Probe a provider with a minimal chat completion to validate the key.
-    Returns None on success, or an error message string on failure.
-    Security: refuses non-http(s) and link-local bases (SSRF guard)."""
-    import urllib.error
-    import urllib.request
+def _check_probe_url(preset: object) -> str | None:
+    """Validate the probe URL from a preset. Returns an error string or None (OK)."""
     from urllib.parse import urlsplit
 
     base = getattr(preset, "base_url", None)
@@ -379,13 +375,21 @@ def _probe_key(preset: object, api_key: str) -> str | None:
     host = parts.hostname or ""
     if host.startswith("169.254.") or host == "metadata.google.internal":
         return "refusing link-local / metadata host"
+    return None
+
+
+def _do_probe(base_url: str, api_key: str) -> str | None:
+    """Send ONE minimal chat-completion probe to ``base_url``. Returns None on
+    success or an error message string. Does the actual POST at /chat/completions."""
+    import urllib.error
+    import urllib.request
 
     class _NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, *a, **k):
             return None
 
     opener = urllib.request.build_opener(_NoRedirect())
-    raw_base = base.rstrip("/")
+    raw_base = base_url.rstrip("/")
     body = json.dumps({
         "model": ".",
         "messages": [{"role": "user", "content": "hi"}],
@@ -398,13 +402,56 @@ def _probe_key(preset: object, api_key: str) -> str | None:
         req.add_header("Authorization", "Bearer " + api_key)
         resp = opener.open(req, timeout=15.0)
         resp.read(1024)
-        return None  # success
+        return None
     except urllib.error.HTTPError as exc:
         if exc.code in (401, 403):
             return f"key rejected (HTTP {exc.code})"
         return f"probe failed (HTTP {exc.code})"
     except Exception:  # noqa: S112 — network probe, any transport error is handled
         return "provider unreachable or probe timed out"
+
+
+def _probe_key(preset: object, api_key: str) -> str | None:
+    """Validate a single provider's key via a minimal chat-completion probe.
+    Returns None on success, or an error message on failure.
+    Backward-compatible wrapper — delegates to ``_probe_keys``."""
+    return _probe_keys([(preset, api_key)])
+
+
+def _probe_keys(candidates: list[tuple[object, str]]) -> str | None:
+    """Probe multiple providers via failover. Each candidate is (preset, api_key).
+    Returns None on the first success, or a 'pool exhausted' error string."""
+    if not candidates:
+        return None
+    from .failover_loop import FAILOVER, OK, AttemptResult, invoke_with_failover
+
+    def _attempt(cand: tuple[object, str], feedback: str) -> AttemptResult[None]:
+        preset, api_key = cand
+        url_err = _check_probe_url(preset)
+        if url_err:
+            return AttemptResult(kind=FAILOVER, attribution=url_err)
+        base = getattr(preset, "base_url", "")
+        err = _do_probe(base, api_key)
+        if err is None:
+            return AttemptResult(kind=OK, value=None)
+        return AttemptResult(kind=FAILOVER, attribution=err)
+
+    def _describe(cand: tuple[object, str]) -> str:
+        preset, _ = cand
+        return getattr(preset, "base_url", "?") or "?"
+
+    try:
+        invoke_with_failover(
+            candidates, _attempt, max_retries=0,
+            describe=_describe,
+            recommendation=(
+                "pool exhausted — configure a provider with a working API key"
+            ),
+            error=RuntimeError,
+        )
+        return None
+    except RuntimeError as exc:
+        return str(exc)
 
 
 def _cmd_setup(args: argparse.Namespace) -> int:

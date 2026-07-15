@@ -182,7 +182,7 @@ def test_probe_key_sends_shared_browser_ua() -> None:
         base_url = "https://api.groq.com/openai/v1"
 
     with patch("urllib.request.build_opener", return_value=opener):
-        cli_mod._probe_key(Preset(), "sk-x")
+        cli_mod._do_probe(Preset.base_url, "sk-x")
 
     assert seen
     assert all(ua == BROWSER_UA for ua in seen)
