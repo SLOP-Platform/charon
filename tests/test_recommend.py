@@ -143,14 +143,14 @@ def test_recommend_tiers_env_pinned_worker_queried_first(
 
     calls: list[str] = []
 
-    def _fake_ask(model_id, base_url, api_key, _catalog):
+    def _fake_post(model_id, base_url, api_key, _prompt, timeout=30.0):
         calls.append(model_id)
         return None  # heuristic fallback — we only care about call ORDER
 
-    monkeypatch.setattr(recommend, "_ask_model", _fake_ask)
+    monkeypatch.setattr(recommend, "_post_tier_ranking", _fake_post)
 
     recommend_tiers("any-provider", catalog, config_dir=str(tmp_path))
-    assert calls, "_ask_model was never called"
+    assert calls, "_post_tier_ranking was never called"
     assert calls[0] == "pinned-worker"
 
 
@@ -180,12 +180,136 @@ def test_recommend_tiers_tier_high_worker_queried_first(
 
     calls: list[str] = []
 
-    def _fake_ask(model_id, base_url, api_key, _catalog):
+    def _fake_post(model_id, base_url, api_key, _prompt, timeout=30.0):
         calls.append(model_id)
         return None
 
-    monkeypatch.setattr(recommend, "_ask_model", _fake_ask)
+    monkeypatch.setattr(recommend, "_post_tier_ranking", _fake_post)
 
     recommend_tiers("any-provider", catalog, config_dir=str(tmp_path))
-    assert calls, "_ask_model was never called"
+    assert calls, "_post_tier_ranking was never called"
     assert calls[0] == "tier-high-model"
+
+
+# --------------------------------------------------------- DESTIFF-RECOMMEND failover
+def test_recommend_tiers_fails_over_when_first_candidate_401s(
+    tmp_path, monkeypatch
+) -> None:
+    # DESTIFF-RECOMMEND (accept): a transport/auth fault on the first candidate must
+    # FAIL OVER to the next, not zero out the recommendation. The first candidate's
+    # key 401s (provider-level auth fault → _TierTransportError), the second serves
+    # a valid catalog ranking. The returned tiers MUST come from the SECOND model
+    # (proves the loop advanced past the dead provider). FAIL-ON-REVERT: collapsing
+    # ``_post_tier_ranking`` back to a blanket ``None`` (so 401 looks like an
+    # unparseable reply) makes the loop treat it as quality → re-prompt the same
+    # dead model → heuristic fallback. The 'real-model' in 'high' from the SECOND
+    # provider then never appears.
+    from charon import recommend
+
+    catalog = [{"id": "real-model", "free": False}]
+    monkeypatch.setattr(
+        recommend,
+        "_find_trusted_models",
+        lambda cd: [
+            ("dead-key-model", "https://api.openai.com/v1", "bad"),
+            ("live-model", "https://api.openai.com/v1", "good"),
+        ],
+    )
+    monkeypatch.delenv("CHARON_DECOMPOSE_WORKER_MODEL", raising=False)
+
+    def _fake_post(model_id, base_url, api_key, _prompt, timeout=30.0):
+        if model_id == "dead-key-model":
+            raise recommend._TierTransportError(
+                "auth", 401, "HTTP 401 from dead-key-model"
+            )
+        # Second candidate: valid catalog ranking.
+        return {"high": ["real-model"], "med": [], "low": []}
+
+    monkeypatch.setattr(recommend, "_post_tier_ranking", _fake_post)
+
+    recs = recommend_tiers("any-provider", catalog, config_dir=str(tmp_path))
+    tiers = {r.tier: r.model_ids for r in recs}
+    assert "real-model" in tiers.get("high", []), (
+        f"expected live-model's high ranking to win after failover; got {tiers}"
+    )
+
+
+def test_recommend_tiers_all_candidates_fail_returns_heuristic(
+    tmp_path, monkeypatch
+) -> None:
+    # DESTIFF-RECOMMEND (accept): when EVERY candidate fails the loop must return a
+    # clear, non-hanging result (the heuristic fallback — no live ranking, but every
+    # catalog id still gets a tier assignment). A dead provider pool no longer
+    # zeros out the recommendation or leaves the call hanging on a single
+    # provider. FAIL-ON-REVERT: removing the failover wrapper or catching the
+    # _RecommendError around it lets the exhaustion raise out of the public API,
+    # which the CLI cannot handle cleanly.
+    from charon import recommend
+
+    catalog = [
+        {"id": "claude-3.5-sonnet", "free": False},
+        {"id": "haiku", "free": False},
+    ]
+    monkeypatch.setattr(
+        recommend,
+        "_find_trusted_models",
+        lambda cd: [
+            ("model-a", "https://api.openai.com/v1", "k1"),
+            ("model-b", "https://api.openai.com/v1", "k2"),
+        ],
+    )
+    monkeypatch.delenv("CHARON_DECOMPOSE_WORKER_MODEL", raising=False)
+
+    def _fake_post(model_id, base_url, api_key, _prompt, timeout=30.0):
+        raise recommend._TierTransportError("auth", 401, f"HTTP 401 from {model_id}")
+
+    monkeypatch.setattr(recommend, "_post_tier_ranking", _fake_post)
+
+    recs = recommend_tiers("any-provider", catalog, config_dir=str(tmp_path))
+    # Heuristic path: both models still classified into a tier, none lost.
+    assert len(recs) == 3
+    all_ids: set[str] = set()
+    for r in recs:
+        all_ids.update(r.model_ids)
+    assert all_ids == {"claude-3.5-sonnet", "haiku"}
+
+
+def test_recommend_tiers_quality_fault_reprompts_same_model(
+    tmp_path, monkeypatch
+) -> None:
+    # DESTIFF-RECOMMEND (fix A): a 200-but-unparseable reply is a QUALITY fault of
+    # THIS model, not a provider fault — the loop must re-prompt the SAME model
+    # (one extra attempt) before advancing. With one dead-parse candidate and one
+    # live candidate, the live candidate's answer must still win (the dead-parse
+    # was retried, then advanced). FAIL-ON-REVERT: classifying unparseable-200 as
+    # a transport error advances the loop too early, OR as a blanket-OK lets a
+    # bad parse through. The retry-then-failover behavior is the contract.
+    from charon import recommend
+
+    catalog = [{"id": "real-model", "free": False}]
+    monkeypatch.setattr(
+        recommend,
+        "_find_trusted_models",
+        lambda cd: [
+            ("garbage-model", "https://api.openai.com/v1", "k1"),
+            ("live-model", "https://api.openai.com/v1", "k2"),
+        ],
+    )
+    monkeypatch.delenv("CHARON_DECOMPOSE_WORKER_MODEL", raising=False)
+
+    calls: list[str] = []
+
+    def _fake_post(model_id, base_url, api_key, _prompt, timeout=30.0):
+        calls.append(model_id)
+        if model_id == "garbage-model":
+            return None  # 200-but-unparseable → RETRY the same model
+        return {"high": ["real-model"], "med": [], "low": []}
+
+    monkeypatch.setattr(recommend, "_post_tier_ranking", _fake_post)
+
+    recs = recommend_tiers("any-provider", catalog, config_dir=str(tmp_path))
+    tiers = {r.tier: r.model_ids for r in recs}
+    assert "real-model" in tiers.get("high", [])
+    # garbage-model is retried (max_retries=1 → 2 attempts), then advanced.
+    assert calls.count("garbage-model") == 2
+    assert calls[-1] == "live-model"
