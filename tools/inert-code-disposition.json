@@ -1,114 +1,238 @@
 {
   "charon.api.list_ledgers": {
-    "reason": "Called from charon.service.app (api.list_ledgers()) but that call site doesn't count: service/app.py is loaded by uvicorn via the string 'charon.service.app:app' (see service/__main__.py), which is invisible to static AST reachability, so the whole module reads as unreachable and this call cascades as a false positive.",
-    "disposition": "keep-detector-false-positive-uvicorn-string-load"
+    "disposition": "keep-detector-false-positive-uvicorn-string-load",
+    "reason": "Called from charon.service.app (api.list_ledgers()) but that call site doesn't count: service/app.py is loaded by uvicorn via the string 'charon.service.app:app' (see service/__main__.py), which is invisible to static AST reachability, so the whole module reads as unreachable and this call cascades as a false positive."
   },
   "charon.api.show_config": {
-    "reason": "Same cascading false positive as charon.api.list_ledgers: called from charon.service.app (api.show_config()), a module only reachable via uvicorn's string-based ASGI load.",
-    "disposition": "keep-detector-false-positive-uvicorn-string-load"
+    "disposition": "keep-detector-false-positive-uvicorn-string-load",
+    "reason": "Same cascading false positive as charon.api.list_ledgers: called from charon.service.app (api.show_config()), a module only reachable via uvicorn's string-based ASGI load."
+  },
+  "charon.cache.format_stats": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 3x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
+  },
+  "charon.capability.actuals.ActualRow": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 18x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
+  },
+  "charon.capability.actuals.ActualsLedger": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 10x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
+  },
+  "charon.discover.discover_models": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 21x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
+  },
+  "charon.discover.load_cost_map": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 4x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
+  },
+  "charon.doctor.probe_handoff": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 10x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
+  },
+  "charon.engine.reconcile.FindingKind": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 30x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
   },
   "charon.engine.reconcile.ReconcileFinding": {
-    "reason": "Part of the original hand-rolled dead-code audit (engine/reconcile.py + board.set_cert() flagged unwired). set_cert() itself is now test-referenced so the detector no longer flags it, but this dataclass has zero callers anywhere. Whether reconcile.py should be wired into the coordinator or removed is an open call, not made here.",
-    "disposition": "keep-pending-decision"
+    "disposition": "keep-pending-decision",
+    "reason": "Part of the original hand-rolled dead-code audit (engine/reconcile.py + board.set_cert() flagged unwired). set_cert() itself is now test-referenced so the detector no longer flags it, but this dataclass has zero callers anywhere. Whether reconcile.py should be wired into the coordinator or removed is an open call, not made here."
+  },
+  "charon.engine.reconcile.Severity": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 9x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
+  },
+  "charon.engine.reconcile.reconcile_static": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 26x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
+  },
+  "charon.engine.semantic_proof.IndependenceCertificate": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 8x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
+  },
+  "charon.engine.semantic_proof.compute_certificate": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 22x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
+  },
+  "charon.failover.ReviewerCircuitBreaker": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 12x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
+  },
+  "charon.failover.next_entry": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 6x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
+  },
+  "charon.failover.proxy_excluded_keys": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 3x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
   },
   "charon.handoff.is_resumable": {
-    "reason": "No callers found anywhere in src/ or tests/ (grepped the bare name). Genuinely unreferenced; needs a human wire-or-delete call.",
-    "disposition": "keep-needs-triage"
+    "disposition": "keep-needs-triage",
+    "reason": "No callers found anywhere in src/ or tests/ (grepped the bare name). Genuinely unreferenced; needs a human wire-or-delete call."
   },
   "charon.handoff.rehydrate_remaining": {
-    "reason": "No callers found anywhere in src/ or tests/. Genuinely unreferenced; needs a human wire-or-delete call.",
-    "disposition": "keep-needs-triage"
+    "disposition": "keep-needs-triage",
+    "reason": "No callers found anywhere in src/ or tests/. Genuinely unreferenced; needs a human wire-or-delete call."
   },
   "charon.intake.autonomous_intake": {
-    "reason": "No callers found anywhere in src/ or tests/. Genuinely unreferenced; needs a human wire-or-delete call.",
-    "disposition": "keep-needs-triage"
+    "disposition": "keep-needs-triage",
+    "reason": "No callers found anywhere in src/ or tests/. Genuinely unreferenced; needs a human wire-or-delete call."
   },
   "charon.intake.register_adapter": {
-    "reason": "No callers found anywhere in src/ or tests/. Genuinely unreferenced; needs a human wire-or-delete call.",
-    "disposition": "keep-needs-triage"
+    "disposition": "keep-needs-triage",
+    "reason": "No callers found anywhere in src/ or tests/. Genuinely unreferenced; needs a human wire-or-delete call."
   },
   "charon.land.acceptance_from": {
-    "reason": "No callers found anywhere in src/ or tests/. Genuinely unreferenced; needs a human wire-or-delete call.",
-    "disposition": "keep-needs-triage"
+    "disposition": "keep-needs-triage",
+    "reason": "No callers found anywhere in src/ or tests/. Genuinely unreferenced; needs a human wire-or-delete call."
   },
   "charon.land.auto_land_batch": {
-    "reason": "No callers found anywhere in src/ or tests/. Genuinely unreferenced; needs a human wire-or-delete call.",
-    "disposition": "keep-needs-triage"
+    "disposition": "keep-needs-triage",
+    "reason": "No callers found anywhere in src/ or tests/. Genuinely unreferenced; needs a human wire-or-delete call."
   },
   "charon.land.propose_pr": {
-    "reason": "Actually wired: src/charon/cli.py references it as a bare attribute value ('opener = pr_opener or land.propose_pr') rather than a direct call. The detector's value-ref collector only tracks bare Name references, not qualified attribute (module.attr) references, so this is a detector false positive, not dead code.",
-    "disposition": "keep-detector-false-positive-attribute-value-ref"
+    "disposition": "keep-detector-false-positive-attribute-value-ref",
+    "reason": "Actually wired: src/charon/cli.py references it as a bare attribute value ('opener = pr_opener or land.propose_pr') rather than a direct call. The detector's value-ref collector only tracks bare Name references, not qualified attribute (module.attr) references, so this is a detector false positive, not dead code."
+  },
+  "charon.lifecycle.bootstrap": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 27x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
+  },
+  "charon.lifecycle.scheduled_refresh": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 11x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
   },
   "charon.lifecycle.subprocess_preflight_seam": {
-    "reason": "Every hit for this name outside its own def line is inside a docstring/comment string, not real code (':func:`subprocess_preflight_seam`' and a prose example string). No real caller found; needs a human wire-or-delete call.",
-    "disposition": "keep-needs-triage"
+    "disposition": "keep-needs-triage",
+    "reason": "Every hit for this name outside its own def line is inside a docstring/comment string, not real code (':func:`subprocess_preflight_seam`' and a prose example string). No real caller found; needs a human wire-or-delete call."
+  },
+  "charon.pricing_limits_checker.CheckerConfig": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 15x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
   },
   "charon.pricing_limits_checker.Finding": {
-    "reason": "Part of the original hand-rolled dead-code audit: pricing_limits_checker.py is a standalone script never imported by any production entrypoint. Slated for deletion.",
-    "disposition": "delete"
+    "disposition": "delete",
+    "reason": "Part of the original hand-rolled dead-code audit: pricing_limits_checker.py is a standalone script never imported by any production entrypoint. Slated for deletion."
+  },
+  "charon.pricing_limits_checker.ModelPriceSpec": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 8x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
+  },
+  "charon.pricing_limits_checker.NonTokenPricing": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 10x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
+  },
+  "charon.pricing_limits_checker.ProviderCanonical": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 9x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
+  },
+  "charon.pricing_limits_checker.ProviderLimitSpec": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 5x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
   },
   "charon.pricing_limits_checker.check_pricing_limits": {
-    "reason": "Same module as charon.pricing_limits_checker.Finding — unwired standalone script, slated for deletion per the original audit.",
-    "disposition": "delete"
+    "disposition": "delete",
+    "reason": "Same module as charon.pricing_limits_checker.Finding \u2014 unwired standalone script, slated for deletion per the original audit."
   },
   "charon.pricing_limits_checker.findings_to_dicts": {
-    "reason": "Same module as charon.pricing_limits_checker.Finding — unwired standalone script, slated for deletion per the original audit.",
-    "disposition": "delete"
+    "disposition": "delete",
+    "reason": "Same module as charon.pricing_limits_checker.Finding \u2014 unwired standalone script, slated for deletion per the original audit."
   },
   "charon.pricing_limits_checker.load_canonical": {
-    "reason": "Same module as charon.pricing_limits_checker.Finding — unwired standalone script, slated for deletion per the original audit.",
-    "disposition": "delete"
+    "disposition": "delete",
+    "reason": "Same module as charon.pricing_limits_checker.Finding \u2014 unwired standalone script, slated for deletion per the original audit."
   },
   "charon.pricing_limits_checker.load_configured": {
-    "reason": "Same module as charon.pricing_limits_checker.Finding — unwired standalone script, slated for deletion per the original audit.",
-    "disposition": "delete"
+    "disposition": "delete",
+    "reason": "Same module as charon.pricing_limits_checker.Finding \u2014 unwired standalone script, slated for deletion per the original audit."
   },
   "charon.pricing_limits_checker.marginal_cost_per_token": {
-    "reason": "Same module as charon.pricing_limits_checker.Finding — unwired standalone script, slated for deletion per the original audit.",
-    "disposition": "delete"
+    "disposition": "delete",
+    "reason": "Same module as charon.pricing_limits_checker.Finding \u2014 unwired standalone script, slated for deletion per the original audit."
   },
   "charon.pricing_limits_checker.run_check": {
-    "reason": "Same module as charon.pricing_limits_checker.Finding — unwired standalone script, slated for deletion per the original audit.",
-    "disposition": "delete"
+    "disposition": "delete",
+    "reason": "Same module as charon.pricing_limits_checker.Finding \u2014 unwired standalone script, slated for deletion per the original audit."
   },
   "charon.pricing_limits_checker.save_canonical": {
-    "reason": "Same module as charon.pricing_limits_checker.Finding — unwired standalone script, slated for deletion per the original audit.",
-    "disposition": "delete"
+    "disposition": "delete",
+    "reason": "Same module as charon.pricing_limits_checker.Finding \u2014 unwired standalone script, slated for deletion per the original audit."
+  },
+  "charon.quota.QuotaTracker": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 24x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
+  },
+  "charon.scanners.benchmark_scanners": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 7x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
+  },
+  "charon.service.app.RunRequest": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 8x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
   },
   "charon.service.app.create_run": {
-    "reason": "FastAPI route handler (@app.post) in a module loaded by uvicorn via the string 'charon.service.app:app' (service/__main__.py), which the AST reachability graph can't trace (no static import edge into app.py). Real production HTTP surface, not dead code — a detector limitation with decorator/string-based ASGI wiring.",
-    "disposition": "keep-detector-false-positive-uvicorn-string-load"
+    "disposition": "keep-detector-false-positive-uvicorn-string-load",
+    "reason": "FastAPI route handler (@app.post) in a module loaded by uvicorn via the string 'charon.service.app:app' (service/__main__.py), which the AST reachability graph can't trace (no static import edge into app.py). Real production HTTP surface, not dead code \u2014 a detector limitation with decorator/string-based ASGI wiring."
   },
   "charon.service.app.dashboard": {
-    "reason": "Same as charon.service.app.create_run: FastAPI route in the uvicorn string-loaded app module.",
-    "disposition": "keep-detector-false-positive-uvicorn-string-load"
+    "disposition": "keep-detector-false-positive-uvicorn-string-load",
+    "reason": "Same as charon.service.app.create_run: FastAPI route in the uvicorn string-loaded app module."
   },
   "charon.service.app.get_config": {
-    "reason": "Same as charon.service.app.create_run: FastAPI route in the uvicorn string-loaded app module.",
-    "disposition": "keep-detector-false-positive-uvicorn-string-load"
+    "disposition": "keep-detector-false-positive-uvicorn-string-load",
+    "reason": "Same as charon.service.app.create_run: FastAPI route in the uvicorn string-loaded app module."
   },
   "charon.service.app.get_run": {
-    "reason": "Same as charon.service.app.create_run: FastAPI route in the uvicorn string-loaded app module.",
-    "disposition": "keep-detector-false-positive-uvicorn-string-load"
+    "disposition": "keep-detector-false-positive-uvicorn-string-load",
+    "reason": "Same as charon.service.app.create_run: FastAPI route in the uvicorn string-loaded app module."
   },
   "charon.service.app.healthz": {
-    "reason": "Same as charon.service.app.create_run: FastAPI route in the uvicorn string-loaded app module.",
-    "disposition": "keep-detector-false-positive-uvicorn-string-load"
+    "disposition": "keep-detector-false-positive-uvicorn-string-load",
+    "reason": "Same as charon.service.app.create_run: FastAPI route in the uvicorn string-loaded app module."
   },
   "charon.service.app.list_runs": {
-    "reason": "Same as charon.service.app.create_run: FastAPI route in the uvicorn string-loaded app module.",
-    "disposition": "keep-detector-false-positive-uvicorn-string-load"
+    "disposition": "keep-detector-false-positive-uvicorn-string-load",
+    "reason": "Same as charon.service.app.create_run: FastAPI route in the uvicorn string-loaded app module."
   },
   "charon.service.app.require_token": {
-    "reason": "FastAPI dependency function wired in via Depends(require_token) inside the same uvicorn string-loaded app module — same detector limitation as the routes above.",
-    "disposition": "keep-detector-false-positive-uvicorn-string-load"
+    "disposition": "keep-detector-false-positive-uvicorn-string-load",
+    "reason": "FastAPI dependency function wired in via Depends(require_token) inside the same uvicorn string-loaded app module \u2014 same detector limitation as the routes above."
   },
   "charon.service.get_app": {
-    "reason": "Public factory function (service/__init__.py) with no internal caller found; may be an external embedding surface. Needs a human wire-or-delete/keep-public-API call.",
-    "disposition": "keep-needs-triage"
+    "disposition": "keep-needs-triage",
+    "reason": "Public factory function (service/__init__.py) with no internal caller found; may be an external embedding surface. Needs a human wire-or-delete/keep-public-API call."
   },
   "charon.tool_repair.RepairResult": {
-    "reason": "Part of the original hand-rolled dead-code audit: tool_repair.py is imported only by tests (grepped — no src/ import), never wired into any production entrypoint. ToolCallRepair itself no longer flags because tests reference it directly by name, but this dataclass has zero references outside its own file. Slated to be wired in.",
-    "disposition": "wire"
+    "disposition": "wire",
+    "reason": "Part of the original hand-rolled dead-code audit: tool_repair.py is imported only by tests (grepped \u2014 no src/ import), never wired into any production entrypoint. ToolCallRepair itself no longer flags because tests reference it directly by name, but this dataclass has zero references outside its own file. Slated to be wired in."
+  },
+  "charon.tool_repair.ToolCallRepair": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 27x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
+  },
+  "charon.types.GuardrailViolation": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 11x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
+  },
+  "charon.types.ObsEvent": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 21x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
+  },
+  "charon.types.ObsTarget": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 25x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
+  },
+  "charon.types.QualityRecord": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 5x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
+  },
+  "charon.types.RequestHints": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 3x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
+  },
+  "charon.types.SpendDecision": {
+    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
+    "reason": "Referenced 8x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
   }
 }
