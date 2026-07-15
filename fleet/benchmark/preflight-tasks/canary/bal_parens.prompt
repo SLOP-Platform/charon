@@ -1,0 +1,1 @@
+Output ONLY valid Python, no markdown fences, no prose: a function is_bal(s) that returns True iff the parentheses in s (only '(' and ')') are balanced.

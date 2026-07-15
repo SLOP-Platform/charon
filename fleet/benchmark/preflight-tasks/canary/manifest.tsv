@@ -1,0 +1,20 @@
+# manifest.tsv — leg-preflight canary task registry (LEG-PREFLIGHT-CANARY).
+# Design of record: fleet/board/LEG-PREFLIGHT-CANARY.md + fleet/state/leg-canary-prototype.py.
+#
+# A SMALL (2), FAST, OBJECTIVELY-checkable task set — NOT the T1-T12 full
+# battery (that's preflight-tasks/, an 8-min honest-battery run). Every row
+# here must run in seconds and score with an exec/exact-match check, never
+# the model's own prose ("NEVER trust the model's word" — ticket line 30).
+#
+# kind=exec  -> checkfile is a JSON [[input, expected_bool], ...] list; the
+#               candidate's code is run through exec_check.py in a SANDBOXED
+#               subprocess (F14 — resource/ulimit-bounded, never exec()'d
+#               in leg-preflight.sh's own process).
+# kind=exact -> checkfile is the literal expected answer string; the
+#               candidate's raw response is trimmed and diffed verbatim
+#               (first contiguous run of digits, so trailing punctuation/
+#               prose from a chatty model doesn't itself cause a false DEGRADED).
+#
+# task_id	kind	prompt_file	checkfile_or_expected	max_tokens	description
+bal-parens	exec	bal_parens.prompt	bal_parens.checks.json	400	coding one-liner, balanced-parens is_bal(s), 5 exec-checked cases (from leg-canary-prototype.py)
+lcm-bound	exact	reasoning_exact.prompt	120	32	reasoning exact-answer: smallest multiple of lcm(6,15) strictly > 100
