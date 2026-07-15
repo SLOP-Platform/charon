@@ -19,6 +19,38 @@
     "disposition": "keep-detector-false-positive-module-unreachable-cascade",
     "reason": "Referenced 10x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
   },
+  "charon.context_shaper.ShapeResult": {
+    "disposition": "keep-pending-wiring-rider",
+    "reason": "RFL-5 context_shaper is an EXPERIMENTAL, OPT-IN, OFF-BY-DEFAULT compaction module intentionally NOT wired into proxy_server.py yet \u2014 the wiring is a documented follow-on rider (see the module's '## Wiring rider' note). Its public surface is exercised by tests/test_context_shaper.py but has no production caller BY DESIGN until the rider lands; not dead code."
+  },
+  "charon.context_shaper.ShaperConfig": {
+    "disposition": "keep-pending-wiring-rider",
+    "reason": "RFL-5 context_shaper is an EXPERIMENTAL, OPT-IN, OFF-BY-DEFAULT compaction module intentionally NOT wired into proxy_server.py yet \u2014 the wiring is a documented follow-on rider (see the module's '## Wiring rider' note). Its public surface is exercised by tests/test_context_shaper.py but has no production caller BY DESIGN until the rider lands; not dead code."
+  },
+  "charon.context_shaper.estimate_message_tokens": {
+    "disposition": "keep-pending-wiring-rider",
+    "reason": "RFL-5 context_shaper is an EXPERIMENTAL, OPT-IN, OFF-BY-DEFAULT compaction module intentionally NOT wired into proxy_server.py yet \u2014 the wiring is a documented follow-on rider (see the module's '## Wiring rider' note). Its public surface is exercised by tests/test_context_shaper.py but has no production caller BY DESIGN until the rider lands; not dead code."
+  },
+  "charon.context_shaper.estimate_messages_tokens": {
+    "disposition": "keep-pending-wiring-rider",
+    "reason": "RFL-5 context_shaper is an EXPERIMENTAL, OPT-IN, OFF-BY-DEFAULT compaction module intentionally NOT wired into proxy_server.py yet \u2014 the wiring is a documented follow-on rider (see the module's '## Wiring rider' note). Its public surface is exercised by tests/test_context_shaper.py but has no production caller BY DESIGN until the rider lands; not dead code."
+  },
+  "charon.context_shaper.estimate_tokens": {
+    "disposition": "keep-pending-wiring-rider",
+    "reason": "RFL-5 context_shaper is an EXPERIMENTAL, OPT-IN, OFF-BY-DEFAULT compaction module intentionally NOT wired into proxy_server.py yet \u2014 the wiring is a documented follow-on rider (see the module's '## Wiring rider' note). Its public surface is exercised by tests/test_context_shaper.py but has no production caller BY DESIGN until the rider lands; not dead code."
+  },
+  "charon.context_shaper.rank_sentences": {
+    "disposition": "keep-pending-wiring-rider",
+    "reason": "RFL-5 context_shaper is an EXPERIMENTAL, OPT-IN, OFF-BY-DEFAULT compaction module intentionally NOT wired into proxy_server.py yet \u2014 the wiring is a documented follow-on rider (see the module's '## Wiring rider' note). Its public surface is exercised by tests/test_context_shaper.py but has no production caller BY DESIGN until the rider lands; not dead code."
+  },
+  "charon.context_shaper.shape": {
+    "disposition": "keep-pending-wiring-rider",
+    "reason": "RFL-5 context_shaper is an EXPERIMENTAL, OPT-IN, OFF-BY-DEFAULT compaction module intentionally NOT wired into proxy_server.py yet \u2014 the wiring is a documented follow-on rider (see the module's '## Wiring rider' note). Its public surface is exercised by tests/test_context_shaper.py but has no production caller BY DESIGN until the rider lands; not dead code."
+  },
+  "charon.context_shaper.summarize": {
+    "disposition": "keep-pending-wiring-rider",
+    "reason": "RFL-5 context_shaper is an EXPERIMENTAL, OPT-IN, OFF-BY-DEFAULT compaction module intentionally NOT wired into proxy_server.py yet \u2014 the wiring is a documented follow-on rider (see the module's '## Wiring rider' note). Its public surface is exercised by tests/test_context_shaper.py but has no production caller BY DESIGN until the rider lands; not dead code."
+  },
   "charon.discover.discover_models": {
     "disposition": "keep-detector-false-positive-module-unreachable-cascade",
     "reason": "Referenced 21x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
