@@ -49,13 +49,17 @@ mk_ticket(){ printf 'tier: strong\nbranch: feat/%s\ndepends_on: %s\nowns: x/%s.p
 mk_dep(){    printf 'tier: strong\nbranch: feat/%s\nowns: x/%s.py\nwork_class: ci-infra\n' \
              "$1" "$1" > "$d/board/$1.md"; }
 mk_marker(){ printf '2026-01-01T00:00:00Z\tmerged:%s\tbranch:feat/%s\n' "$2" "$1" > "$d/state/done/$1"; }
+# PR-ONLY marker (no local sha) — exactly what done.sh writes when it verified the PR merged via gh.
+mk_marker_pr(){ printf '2026-01-01T00:00:00Z\tmerged:#%s\tbranch:feat/%s\n' "$2" "$1" > "$d/state/done/$1"; }
 
 mk_dep DEP-OK;    mk_marker DEP-OK "$OKSHA"
 mk_dep DEP-STALE; mk_marker DEP-STALE "$STALESHA"
 mk_dep DEP-NONE   # no done-marker => not merged
+mk_dep DEP-PRONLY; mk_marker_pr DEP-PRONLY 123   # PR-only proof, no hex sha in the marker
 mk_ticket TICK-OK    "DEP-OK"
 mk_ticket TICK-STALE "DEP-STALE"
 mk_ticket TICK-NOMARK "DEP-NONE"
+mk_ticket TICK-PRONLY "DEP-PRONLY"
 printf 'tier: strong\nbranch: feat/free\nowns: x/free.py\nwork_class: ci-infra\n' > "$d/board/TICK-FREE.md"
 
 run(){ VERIFY_MERGED_REPO="$P" BASE_INTEGRITY_OFFLINE=1 bash "$d/checks/base-integrity.sh" "$@"; }
@@ -91,6 +95,36 @@ sed 's#git -C "\$repo" merge-base --is-ancestor "\$sha" "\$base_ref" 2>/dev/null
 rc=0; VERIFY_MERGED_REPO="$P" BASE_INTEGRITY_OFFLINE=1 bash "$rev" TICK-STALE >/dev/null 2>&1 || rc=$?
 [ "$rc" = 0 ] && ok "6 reverting the ancestry check flips STALE to GREEN (check is load-bearing)" \
              || bad "6 reverted gate should pass STALE (got exit $rc) — sed did not neuter the core check"
+
+# (7) PR-ONLY marker (merged:#<N>) + a NON-master --base whose PR merge-commit is UNRESOLVABLE (offline,
+#     no gh) -> UNVERIFIABLE => HARD RED, names the dep. This is the false-GREEN the fix closes: the old
+#     gate WARN-ed and counted the unproven dep as satisfied.   [LOAD-BEARING new case]
+rc=0; out="$(run TICK-PRONLY --base integration 2>&1)" || rc=$?
+[ "$rc" = 1 ] && ok "7 PR-only marker, non-master base, unresolvable -> RED" \
+             || bad "7 PR-only marker, non-master base, unresolvable -> RED (exit $rc)"
+printf '%s\n' "$out" | grep -q "DEP-PRONLY" && ok "7 RED names the unverifiable dep DEP-PRONLY" \
+                                            || bad "7 RED names the unverifiable dep DEP-PRONLY"
+
+# (8) SAME PR-only marker but base==origin/master: a merged dep is contained by definition -> GREEN
+#     (advisory), proving (7)'s RED is the non-master unverifiable guard, not a blanket reject.
+rc=0; run TICK-PRONLY >/dev/null 2>&1 || rc=$?
+[ "$rc" = 0 ] && ok "8 PR-only marker on origin/master -> GREEN (merged==contained)" \
+             || bad "8 PR-only marker on origin/master -> GREEN (exit $rc)"
+
+# (9) PR-only marker whose merge-commit sha IS resolvable (fixture) and IS an ancestor of --base
+#     integration -> GREEN. Proves the PR-resolution + ancestry path (requirement 1) actually works.
+prfix="$d/prsha.tsv"; printf '123\t%s\n' "$STALESHA" > "$prfix"
+rc=0; VERIFY_MERGED_REPO="$P" BASE_INTEGRITY_OFFLINE=1 BASE_INTEGRITY_PR_SHA_FIXTURE="$prfix" \
+      bash "$d/checks/base-integrity.sh" TICK-PRONLY --base integration >/dev/null 2>&1 || rc=$?
+[ "$rc" = 0 ] && ok "9 PR-only marker, resolvable merge-commit ancestor of base -> GREEN" \
+             || bad "9 PR-only marker, resolvable merge-commit ancestor of base -> GREEN (exit $rc)"
+
+# (10) FAIL-ON-REVERT: neuter the UNVERIFIABLE guard -> (7)'s unverifiable PR-only dep wrongly passes.
+rev2="$d/checks/base-integrity.unguarded.sh"
+sed 's|rc=1   # BASE_INTEGRITY_UNVERIFIABLE_GUARD|rc=0|' "$d/checks/base-integrity.sh" > "$rev2"
+rc=0; VERIFY_MERGED_REPO="$P" BASE_INTEGRITY_OFFLINE=1 bash "$rev2" TICK-PRONLY --base integration >/dev/null 2>&1 || rc=$?
+[ "$rc" = 0 ] && ok "10 reverting the unverifiable guard flips PR-only/non-master to GREEN (guard is load-bearing)" \
+             || bad "10 reverted gate should pass unverifiable PR-only (got exit $rc) — sed did not neuter the guard"
 
 rm -rf "$d" "$P"
 echo
