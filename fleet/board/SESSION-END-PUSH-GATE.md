@@ -14,3 +14,9 @@ accept: |
   (autonomous-gated) or refuse LOUDLY with the exact command. Sibling of BASE-INTEGRITY-GATE (same unpushed-local disease, exit side).
   FAIL-ON-REVERT (fleet/tests/end-session-push.test.sh): a repo with an unpushed commit OR a dirty tree -> end-session REFUSES
   to close (revert the check -> closes with work stranded -> RED).
+investigate-first: |
+  Operator directive (cere-junda): the next session INVESTIGATES before wiring auto-push — scope the edge cases first:
+  (1) only auto-push housekeeping/handoff commits on the base branch (master); NEVER auto-push unreviewed feature branches
+      (those go through land.sh review). (2) On a DIVERGED base (origin ahead of local), REFUSE loudly — never force-push.
+  (3) Gate the push on the AUTONOMOUS lever: lever ON -> push; lever OFF -> refuse with the exact copy-paste command.
+  (4) Never push if the public-clean / secret-scan gate is red. Decide the push-vs-refuse policy, THEN wire it into end-session.sh.
