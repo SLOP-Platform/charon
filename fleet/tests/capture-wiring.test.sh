@@ -190,6 +190,35 @@ if [ -n "$f" ]; then
 fi
 rm -rf "$d" "$P"
 
+# ==================== done.sh PREFIXED-REF fallback (ref-scheme divergence) ====================
+# fleet-driod's LABEL form keys the provisional/model-used on "<droid>-<id>" when
+# CHARON_JOB_REF is unset (older runs). done.sh is called with the BARE ticket id and MUST
+# still find the provisional (glob *-<id>, newest) and enqueue the FINAL with THAT ref so the
+# daemon pairs it. A revert to a bare "model-used/<id>"-only lookup silently drops the row —
+# the exact "runners not reporting back" bug this guards.
+echo "== done.sh: prefixed model-used '<droid>-<id>' still finalizes (bare lookup would miss) =="
+d="$(mktemp -d)"
+cp "$SRC/done.sh" "$SRC/retire-done.sh" "$SRC/leak-guard.sh" "$SRC/_lib.sh" "$SRC/verify-merged.sh" "$d/"
+cp -r "$SRC/capture" "$d/"
+mkdir -p "$d/board/archive" "$d/state/done" "$d/state/submitted" "$d/state/claims" "$d/state/needs-push" "$d/state/model-used"
+printf 'tier: strong\nbranch: feat/pfx\nowns: src/present.py\nwork_class: refactor\n' > "$d/board/TICK-PFX.md"
+echo "my-model" > "$d/state/model-used/strong-49432-TICK-PFX"   # PREFIXED only — no bare model-used/TICK-PFX
+spool="$d/spool"; mkdir -p "$spool"
+export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+P="$(mktemp -d)"; git -C "$P" init -q
+mkdir -p "$P/src"; echo x > "$P/src/present.py"; git -C "$P" add -A; git -C "$P" commit -q -m base
+GOODSHA="$(git -C "$P" rev-parse HEAD)"; git -C "$P" update-ref refs/remotes/origin/master "$GOODSHA"
+CAPTURE_SPOOL_DIR="$spool" DONE_CHARON_REPO="$P" \
+  bash "$d/done.sh" TICK-PFX --merged-sha "$GOODSHA" >/dev/null 2>&1 || true
+f="$(req_json_for "$spool" "strong-49432-TICK-PFX")"
+[ -n "$f" ] && ok "prefixed-ref close finalizes via *-<id> fallback (ref=strong-49432-TICK-PFX)" \
+            || bad "REVERT DETECTED: prefixed-ref close did NOT finalize (bare-only lookup drops the row)"
+if [ -n "$f" ]; then
+  [ "$(field "$f" actual_verdict)" = "MERGE" ] && ok "prefixed-ref finalize is actual_verdict=MERGE" || bad "prefixed-ref finalize is actual_verdict=MERGE"
+  [ "$(field "$f" model)" = "my-model" ] && ok "prefixed-ref finalize names the model" || bad "prefixed-ref finalize names the model"
+fi
+rm -rf "$d" "$P"
+
 # ============================ FLAW-1 (2026-07-13): distinct filenames ============================
 # The PROVISIONAL and FINAL for one lifetime deliberately share the SAME
 # run_id (for grader-daemon.py's _handle_capture pairing) but MUST land on

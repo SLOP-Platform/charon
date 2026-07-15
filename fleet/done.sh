@@ -106,16 +106,41 @@ echo "done $id (dependents unblocked)"
 # model-scorecard.tsv itself -- see capture/enqueue-capture.sh). Best-effort:
 # a missing model-used record (e.g. a hand-closed ticket) skips silently.
 CAPTURE_SCRIPT="$FLEET/capture/enqueue-capture.sh"
-model_used_file="$FLEET/state/model-used/$id"
+# Resolve the provisional this ticket's droid run stored. charon-run.sh keys both the
+# provisional row AND the model-used record on ${CHARON_JOB_REF:-$LABEL}: fleet-droid.sh
+# now sets CHARON_JOB_REF="$id" (bare ticket) so model-used/<id> is the common case, but
+# older runs (and any harness that leaves CHARON_JOB_REF unset) key it on the LABEL form
+# "<droid>-<id>". Try the bare id first, then fall back to the newest "*-<id>" so a real
+# close still finalizes. cap_ref MUST equal the provisional's ref for the daemon to pair.
+model_used_file="$FLEET/state/model-used/$id"; cap_ref="$id"
+if [ ! -f "$model_used_file" ]; then
+  alt="$(ls -1t "$FLEET"/state/model-used/*-"$id" 2>/dev/null | head -1 || true)"
+  [ -n "$alt" ] && { model_used_file="$alt"; cap_ref="$(basename "$alt")"; }
+fi
 if [ -x "$CAPTURE_SCRIPT" ] && [ -f "$model_used_file" ]; then
   model="$(cat "$model_used_file" 2>/dev/null || true)"
   wclass="$(meta work_class "$BOARD/$id.md")"; [ -n "$wclass" ] || wclass="$(meta work_class "$BOARD/archive/$id.md")"
   if [ -n "$model" ]; then
     evid="done.sh verified close: $(printf '%s' "$marker_line" | tr '\t' ' ')"
-    "$CAPTURE_SCRIPT" --model "$model" --claimed-result SUCCESS --ref "$id" \
+    if "$CAPTURE_SCRIPT" --model "$model" --claimed-result SUCCESS --ref "$cap_ref" \
       ${wclass:+--work-class "$wclass"} --stage active \
-      --actual-verdict MERGE --actual-gate pass --score 100 --evidence "$evid" \
-      >/dev/null 2>&1 || true
+      --actual-verdict MERGE --actual-gate pass --score 100 --evidence "$evid" >/dev/null 2>&1; then
+      echo "done.sh: scorecard FINAL enqueued for $id (model=$model, ref=$cap_ref -> MERGE/pass)."
+    else
+      echo "done.sh: WARN — scorecard FINAL enqueue FAILED for $id (model=$model); outcome NOT recorded." >&2
+    fi
+  else
+    echo "done.sh: WARN — model-used record for $id is empty; scorecard will NOT record this close." >&2
+  fi
+elif [ -x "$CAPTURE_SCRIPT" ]; then
+  # LOUD (was a silent skip): a verified close with no provisional to finalize means this
+  # ticket's successful work never reaches the scorecard live lane — the exact "runners not
+  # reporting back" failure mode. Surface it so a ref-scheme regression can't silently
+  # swallow the outcome again. An OVERRIDE / hand-run ticket legitimately has no provisional.
+  if [ -n "$override" ]; then
+    echo "done.sh: note — OVERRIDE close for $id; no droid provisional to finalize (scorecard unaffected)." >&2
+  else
+    echo "done.sh: WARN — verified close for $id but NO model-used provisional found (looked for model-used/$id and *-$id); scorecard will NOT record this outcome. If a droid ran this ticket, its capture ref diverged from done.sh." >&2
   fi
 fi
 # MECHANIZED CLOSURE: retire the just-completed ticket off the active board (done tickets can never
