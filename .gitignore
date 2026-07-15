@@ -18,6 +18,7 @@ fleet/state/*
 *.log
 fleet/logs/
 __pycache__/
+*.pyc
 fleet/state/overnight/
 
 # runtime artifacts (regenerated; never source-tracked)
