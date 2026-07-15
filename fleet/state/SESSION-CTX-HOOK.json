@@ -1,0 +1,27 @@
+{
+  "_comment": "SESSION-CTX-PROPAGATE: exact hooks.PreToolUse[] entry to MERGE into ~/.claude/settings.json (replace the existing matcher:\"Agent|Task\" entry with this one -- it keeps the existing nudge_background_agents.py command and ADDS session-ctx-preamble.sh as a second hook in the same array, so both fire on every Agent/Task spawn). Do not add a second matcher:\"Agent|Task\" block; merge into the one that already exists. Applied + verified by the MANAGER, not by this ticket's build session.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /home/stack/.claude/hooks/nudge_background_agents.py",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "bash /home/stack/charon-private/fleet/session-ctx-preamble.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "verify": [
+    "jq -e '.hooks.PreToolUse[] | select(.matcher==\"Agent|Task\") | .hooks | length==2' ~/.claude/settings.json",
+    "bash /home/stack/charon-private/fleet/session-ctx-preamble.sh | jq -e '.hookSpecificOutput.additionalContext | contains(\"MECHANISM-SELECTION LADDER\")'",
+    "spawn a test Agent/Task sub-session and confirm the additionalContext from BOTH commands appears (the existing background-agent nudge is unaffected)"
+  ]
+}
