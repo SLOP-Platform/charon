@@ -23,6 +23,17 @@ accept: |
       slow — NOT `provider-throttled`/`pool-exhausted`/rc=124-hang), re-run it ONCE at 2-3x budget out-of-band and
       RECORD whether it WOULD have finished, so the cutoff is validated by data, not assumed. Throttled/leg-fault
       runs are EXCLUDED from the re-test (no point re-running into a dead/capped leg — those are parked, not slow).
+  STAGED ELIMINATION LADDER (token-economical preflight — folded 2026-07-15, operator ask): run the battery as
+  ESCALATING RUNGS with early-out, NOT one flat 8-min test. Rungs (per tier, difficulty scaled to the tier):
+    R0  leg canary (LEG-PREFLIGHT-CANARY, ~seconds) — reachable + serves-a-working-model; dead/degraded legs OUT.
+    R1  ~3 min — tier-appropriate, VARIETY of skills (bugfix/routing/refactor mini-tasks); screens out weak models.
+    R2  ~5-6 min — broader + harder; screens the mid.
+    R3  ~10+ min — hardest, only for survivors; LOCATES the ceiling.
+  ELIMINATE at each rung: a candidate advances ONLY if it clears the current rung. A model that PEAKS/plateaus at
+  R2 is NOT sent to R3 — we already know its ceiling, so R3's tokens are waste. Record the highest rung cleared as
+  the model's grade; feed results to the scorecard/LEG-RANK AS EACH RUNG COMPLETES (faster data), not only at the end.
+  Budgets per rung are DERIVED (see LATENCY-BUDGET #1), and a rung failure that is leg-fault/throttle (not quality)
+  does NOT eliminate the model — it parks the leg and retries elsewhere ([leg-preflight-canary], S8 >=1-viable).
 candidates: |
   Kimi-K2-Thinking, MiniMax-M2, GPT-OSS-120B, Phi-4, Qwen3.6-27B-MTP, Gemma 4 (31B), GLM 4.7 (Thinking),
   Gemini 2.5 Pro (big Python codebases), GPT-5.1-Codex-Max (complex/refactor). ALSO test PAID variants of models we
