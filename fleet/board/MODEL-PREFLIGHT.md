@@ -5,7 +5,8 @@ branch: feat/model-preflight
 repo: charon-private
 depends_on: BENCH-OOB-GRADING
 real-dep: BENCH-OOB-GRADING — preflight grading MUST run out-of-band (bench-grader user, hidden model-unreadable assertions). In-band grading reproduces the S0-S6 invalidity this fixes. True correctness prereq.
-owns: fleet/benchmark/preflight.sh, fleet/benchmark/preflight-tasks/, fleet/benchmark/graders/preflight.py
+superseded_by: EVAL-PIPELINE-CONSOLIDATE (battery→one pipeline), EVAL-GRADER-PROVISION (grader), EVAL-DERIVED-BUDGETS (budgets). This ticket is now the CANDIDATE SLATE + design-of-record only; its code surfaces moved to the EVAL-* successors per MODEL-TESTING-ADVERSARIAL-REVIEW.md §F12.
+owns: fleet/state/PREFLIGHT-CANDIDATES.md
 accept: |
   DISCRIMINATING, OUT-OF-BAND-graded battery that screens a candidate model on our real failure modes BEFORE it
   enters tier-models.tsv. Grade = the FUNCTIONAL OUTCOME checked OOB, never the model's word. Design of record:

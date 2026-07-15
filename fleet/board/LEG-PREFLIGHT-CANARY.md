@@ -29,6 +29,14 @@ accept: |
     the cheap front half of the S8 >=1-viable invariant (full hold/re-probe lifecycle stays in GRACEFUL-DEGRADE).
   - NEVER trust the model's word — the canary VERDICT is the exec/exact-match check, not the model's output prose.
     Non-Anthropic only (sg-never-anthropic).
+  REVIEW ADD-ONS (MODEL-TESTING-ADVERSARIAL-REVIEW.md): F6 — the ranking harnesses call BASE pool ids that route
+  cheapest-available, so per-provider rank is IMPOSSIBLE today (dogfood-eval.sh:328 admits it). Make leg-pinning
+  END-TO-END: leg-preflight AND the dogfood/sweep path must accept a LEG-SUFFIXED / provider-pinned id (like the
+  prototype's nvidia/… and the existing -ds/-cb/-together aliases) and either disable the gateway's internal
+  cross-provider failover for a ranking run OR correlate the gateway request-log by request-id to recover which leg
+  served — so a rank is per (model,LEG), not an average over whatever served. F14 — run the canary's exec-check of
+  MODEL-EMITTED code in a SUBPROCESS with a resource/ulimit/seccomp boundary (the prototype's bare exec() is a
+  supply-chain hole once productionized).
   FAIL-ON-REVERT (fleet/tests/leg-preflight.test.sh, hermetic — stub the gateway): a stubbed HEALTHY leg (fast,
   correct canary) ranks HEALTHY + is eligible; a stubbed leg that returns wrong/empty content ranks DEGRADED +
   is gated OUT; a stubbed unreachable/timeout leg ranks UNREACHABLE + proposed-park; the sweep-gate hook skips a
