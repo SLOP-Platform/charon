@@ -274,7 +274,11 @@ def _entrypoint_modules(repo_root: Path, modules_info: dict[str, _ModuleInfo]) -
 def _find_module(dotted: str, all_modules: set[str]) -> str | None:
     if dotted in all_modules:
         return dotted
-    for m in all_modules:
+    # DETERMINISM: iterate sorted — all_modules is a set, and returning the FIRST
+    # suffix-match over unseeded set order made reachability (hence the whole dead-set)
+    # depend on PYTHONHASHSEED, so the merge gate returned different verdicts on identical
+    # code. Sorted first-match is stable. (Local patch to vendored KSF; upstream the same.)
+    for m in sorted(all_modules):
         if m == dotted or m.endswith("." + dotted):
             return m
     return None
@@ -400,7 +404,7 @@ def check_inert_code(
     def _norm_entry_mod(name: str) -> str | None:
         if name in all_modules:
             return name
-        for m in all_modules:
+        for m in sorted(all_modules):  # DETERMINISM: stable first-match (see _find_module)
             if m == name or m.endswith("." + name):
                 return m
         return None
