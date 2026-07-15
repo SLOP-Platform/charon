@@ -1,5 +1,23 @@
 # tier-models.tsv — per-tier GATEWAY model FAILOVER CHAIN for the OFF-CLAUDE droid executor.
 #
+# TIER AXIS (EVAL-TIER-CANON / review F-tier fix): the three tier names below
+# (frontier | strong | economy) are the COST-BAND tiers — how expensive a model
+# is, defined OBJECTIVELY by $/Mtok thresholds in fleet/state/TIER-CANON.md.
+# TIER-CANON.md is the single source of truth for what each tier name MEANS;
+# this file is the machine-consumed per-tier failover CHAIN (fleet-droid.sh
+# parses it directly) — the tier DEFINITION lives there, the CHAIN lives here.
+# The two are deliberately split: the cost-band rule is stable, the per-tier
+# failover chain contents below are PROVISIONAL + operator-gated (see memory:
+# charon-no-workhorse-finalized) and can be reordered without touching the
+# cost-band definition, and vice versa.
+#
+# Do NOT confuse the cost-band tiers here with the separate CEILING-GRADE band
+# (Frontier/Strong/Capable/Basic/No-Tier — an OUTPUT of
+# EVAL-PIPELINE-CONSOLIDATE/F9's ramp, defined in
+# fleet/benchmark/lib/tier_chart.py:23-28 TIER_LADDER). Same words, different
+# axis — see TIER-CANON.md's disambiguation table. Cost band is an INPUT
+# (price); ceiling grade is a MEASUREMENT (capability).
+#
 # For the deduped model-candidate roster (cost/funding/Path-C status) and the live provider list,
 # see fleet/state/CG-MODEL-CANDIDATES.md + fleet/state/CG-PROVIDERS.md. This file stays the
 # machine-consumed data source (fleet-droid.sh parses it directly) — edit it for real chain
@@ -22,8 +40,10 @@
 # benchmark testing (see memory: charon-no-workhorse-finalized). Reorder / replace freely.
 #
 # FORMAT: <canonical-tier> <ONE TAB> comma,separated,failover,chain   (cheapest-capable first)
-# Exactly ONE tab between the two columns. Canonical tiers: frontier | strong | economy. Legacy
-# aliases (high/opus, med/sonnet, low/haiku) are normalized to these by fleet-droid.sh before lookup.
+# Exactly ONE tab between the two columns. Canonical tiers: frontier | strong | economy (the
+# COST-BAND tiers — see fleet/state/TIER-CANON.md for the $/Mtok rule that DEFINES them).
+# Legacy aliases (high/opus, med/sonnet, low/haiku) are normalized to these by fleet-droid.sh
+# before lookup (alias fold lives in src/charon/config/tiers.py:_LEGACY_ALIASES).
 # REVISED 2026-07-12 (LIGHT-MODELS-EVAL.md): spread economy/strong load OFF the frontier
 # default deepseek-v4-pro. pro now lives ONLY in frontier (hard money-path work like F29);
 # strong/economy are free-first onto flash-class coders with a paid deepseek-v4-flash leg

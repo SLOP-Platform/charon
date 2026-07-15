@@ -39,6 +39,10 @@ from grades import (  # noqa: E402
     MIN_N, DEFAULT_TSV, ScorecardGradesProvider, _wilson_bound, scores_tie,
     CANONICAL_WORK_CLASSES, _LEGACY_TO_CANONICAL, _live_product_work_classes,
 )
+from assign import (  # noqa: E402
+    CANONICAL_COST_TIERS, load_tier_canon_thresholds,
+    resolve_cost_tier, resolve_model_tier,
+)
 
 # PROVISIONAL-vs-ACTIVE (#20): the promotion gate + a temp end-to-end fixture.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "benchmark"))
@@ -244,6 +248,7 @@ def main() -> int:
     provisional_scoring_checks(grades, no_avail)
     aggregate_n_checks()
     taxonomy_canonicalization_checks(grades)
+    tier_canon_checks(grades, no_avail)
 
     print()
     print("=" * 78)
@@ -468,6 +473,206 @@ def taxonomy_canonicalization_checks(grades: ScorecardGradesProvider) -> None:
             set(live) == set(CANONICAL_WORK_CLASSES),
             f"code={sorted(CANONICAL_WORK_CLASSES)} live={sorted(live)}",
         )
+
+
+def tier_canon_checks(grades: ScorecardGradesProvider, no_avail) -> None:
+    """EVAL-TIER-CANON acceptance — review F-tier fix. Proves the canonical
+    cost-band tier axis is REAL: uncatalogued ids resolve their tier from
+    the $/Mtok band (not a silent pass-through), the catalog tier_hint still
+    wins for curated ids, the threshold source is fleet/state/TIER-CANON.md
+    (the single source — drift guard), and a `--tier strong` query excludes
+    a frontier-priced uncatalogued model. Every assertion FAILS if the
+    cost-band fallback is reverted (uncatalogued ids return None and silently
+    pass the tier filter — the exact F-tier/MED regression).
+    """
+    print()
+    print("=" * 78)
+    print("EVAL-TIER-CANON: canonical cost-band tier (review F-tier fix)")
+    print("=" * 78)
+
+    # (1) An uncatalogued, ECONOMY-priced model resolves tier=economy.
+    # hy3-preview-or is deliberately NOT in model_catalog.py (see fixture
+    # header line 20). Priced at $0.20/Mtok (below the $0.30 economy/strong
+    # cut per TIER-CANON.md), it MUST resolve to economy. Reverting the
+    # cost-band fallback makes resolve_model_tier() return None (the catalog
+    # has no entry) -> this check fails.
+    resolved_eco = resolve_model_tier("hy3-preview-or", {"hy3-preview-or": 0.20})
+    check(
+        "(1) an uncatalogued, economy-priced model resolves tier=economy "
+        "(price $0.20 < $0.30 economy/strong cut)",
+        resolved_eco == "economy",
+        f"resolved={resolved_eco!r} (revert -> None, the F-tier/MED regression)",
+    )
+
+    # (2) An uncatalogued, FRONTIER-priced model resolves tier=frontier.
+    resolved_front = resolve_model_tier("hy3-preview-or", {"hy3-preview-or": 2.10})
+    check(
+        "(2) an uncatalogued, frontier-priced model resolves tier=frontier "
+        "(price $2.10 >= $1.50 strong/frontier cut)",
+        resolved_front == "frontier",
+        f"resolved={resolved_front!r}",
+    )
+
+    # (3) Catalog tier_hint WINS over the cost band for cataloged ids.
+    # glm-5.2 is in model_catalog.py with tier_hint="med". Even if a price
+    # map
+    # prices it in the economy band, the curated catalog hint must win
+    # (keeps catalog_for_tier / `charon tier resolve` semantics unchanged —
+    # see TIER-CANON.md "What changed in assign.py"). A revert that ignores
+    # the catalog and uses only the price would resolve this to "economy".
+    resolved_cat = resolve_model_tier("glm-5.2", {"glm-5.2": 0.20})
+    check(
+        "(3) catalog tier_hint WINS over the cost band for cataloged ids "
+        "(glm-5.2 catalog=med -> strong, even with an economy-band price)",
+        resolved_cat == "strong",
+        f"resolved={resolved_cat!r} (revert -> economy, breaks catalog precedence)",
+    )
+
+    # (4) FAIL-CLOSED: an uncatalogued id with NO price data resolves None
+    # (unknown), NOT silently passed. Pre-EVAL-TIER-CANON this returned None
+    # too — but the BEHAVIORAL difference is in assign() below: pre-fix, None
+    # silently passed the tier filter; now it is EXCLUDED with a surfaced
+    # reason. This asserts the resolution layer; (5) asserts the assign()
+    # layer.
+    resolved_unknown = resolve_model_tier("hy3-preview-or")
+    check(
+        "(4) an uncatalogued id with NO price data resolves None (unknown, "
+        "fail-closed)",
+        resolved_unknown is None,
+        f"resolved={resolved_unknown!r}",
+    )
+
+    # (5) FAIL-ON-REVERT (the headline fix): a `--tier strong` query
+    # EXCLUDES a frontier-priced uncatalogued model. Reverting the cost-band
+    # fallback makes assign() see tier_hint=None for hy3-preview-or and
+    # silently admit it (the F-tier/MED bug); this check fails because
+    # hy3-preview-or would appear in the eligible pick set instead of the
+    # excluded set.
+    r_strong = assign("money-path", grades, no_avail, required_tier="strong",
+                       candidate_models=["claude-opus-4-8", "glm-5.2", "hy3-preview-or"],
+                       price_per_mtok={"hy3-preview-or": 2.10})
+    excluded_map = {c.model: c.excluded_reason for c in r_strong.ranked if c.excluded_reason}
+    check(
+        "(5) FAIL-ON-REVERT: --tier strong EXCLUDES a frontier-priced "
+        "uncatalogued model (hy3-preview-or @ $2.10 -> frontier != strong)",
+        "hy3-preview-or" in excluded_map and "tier mismatch" in excluded_map["hy3-preview-or"],
+        f"excluded={excluded_map} (revert -> silently admitted, the bug)",
+    )
+
+    # (6) FAIL-ON-REVERT (complement): a `--tier economy` query INCLUDES
+    # the same uncatalogued model priced in the ECONOMY band. Reverting the
+    # fallback makes tier_hint=None -> fail-closed EXCLUDES it with "tier
+    # unknown" (the new behavior), which is correct for a TRULY unknown id
+    # but WRONG for one we can resolve. This check fails on revert because
+    # the model would be excluded (tier unknown) instead of eligible.
+    r_eco = assign("money-path", grades, no_avail, required_tier="economy",
+                    candidate_models=["claude-opus-4-8", "glm-5.2", "hy3-preview-or"],
+                    price_per_mtok={"hy3-preview-or": 0.20})
+    eco_eligible = {c.model for c in r_eco.ranked if c.excluded_reason is None}
+    check(
+        "(6) FAIL-ON-REVERT: --tier economy INCLUDES an economy-priced "
+        "uncatalogued model (hy3-preview-or @ $0.20 -> economy == economy)",
+        "hy3-preview-or" in eco_eligible,
+        f"eligible={eco_eligible} (revert -> excluded as 'tier unknown')",
+    )
+
+    # (7) FAIL-CLOSED in assign(): an uncatalogued id with NO price data is
+    # EXCLUDED (not silently admitted) against a --tier query WHEN the caller
+    # opts into cost-band resolution by providing a price_per_mtok map (even
+    # an empty one). Pre-fix this was the silent pass-through; now it must
+    # surface "tier unknown". (When the caller provides NO map at all, the
+    # pre-fix pass-through behavior is preserved for backward compat — see
+    # assign()'s fail_closed_on_unknown docstring.)
+    r_unknown = assign("money-path", grades, no_avail, required_tier="strong",
+                        candidate_models=["hy3-preview-or"],
+                        price_per_mtok={})
+    unknown_excluded = {c.model: c.excluded_reason for c in r_unknown.ranked if c.excluded_reason}
+    check(
+        "(7) FAIL-CLOSED: an uncatalogued id with NO price data is EXCLUDED "
+        "with 'tier unknown' against a --tier query when cost-band resolution "
+        "is opted in (price map provided, even empty)",
+        "hy3-preview-or" in unknown_excluded
+        and "tier unknown" in unknown_excluded["hy3-preview-or"],
+        f"excluded={unknown_excluded} (revert -> silently admitted)",
+    )
+
+    # (7b) Backward compat: when NO price map is provided (None), an
+    # uncatalogued id against a --tier query KEEPS the pre-fix pass-through
+    # behavior (not excluded). This is the opt-in seam — the dispatcher's
+    # real-outcome path and tests with synthetic uncatalogued ids see
+    # unchanged behavior unless they explicitly opt in.
+    r_passthrough = assign("money-path", grades, no_avail, required_tier="strong",
+                            candidate_models=["hy3-preview-or", "claude-opus-4-8"])
+    pt_eligible = {c.model for c in r_passthrough.ranked if c.excluded_reason is None}
+    check(
+        "(7b) backward compat: with NO price map provided, an uncatalogued "
+        "id passes through the --tier filter unchanged (opt-in seam — "
+        "fail-closed only activates when a map is given)",
+        "hy3-preview-or" in pt_eligible,
+        f"eligible={pt_eligible}",
+    )
+
+    # (8) Drift guard: assign.py's threshold source == TIER-CANON.md.
+    # The doc is the SINGLE SOURCE for the $/Mtok thresholds; assign.py
+    # parses them at runtime (load_tier_canon_thresholds), never hardcodes.
+    # Mutating the doc's threshold values, or hardcoding divergent
+    # thresholds in assign.py, makes this check fail. Asserts the parsed
+    # thresholds match the doc's documented cuts (1.50/0.30/0.00 -> frontier/
+    # strong/economy) AND that resolve_cost_tier applies them correctly.
+    th = load_tier_canon_thresholds()
+    check(
+        "(8a) drift guard: load_tier_canon_thresholds() returns the "
+        "documented cuts (1.50/0.30/0.00 -> frontier/strong/economy, "
+        "high-first)",
+        th == [(1.50, "frontier"), (0.30, "strong"), (0.00, "economy")],
+        f"parsed={th}",
+    )
+    # Confirm resolve_cost_tier reads those SAME thresholds (not a hardcoded
+    # divergent copy): boundary checks at every cut.
+    check(
+        "(8b) resolve_cost_tier honors the parsed thresholds (boundary "
+        "checks at each cut: <0.30 -> economy; >=0.30 -> strong; "
+        ">=1.50 -> frontier)",
+        resolve_cost_tier(0.29) == "economy"
+        and resolve_cost_tier(0.30) == "strong"      # rounds UP at boundary
+        and resolve_cost_tier(1.49) == "strong"
+        and resolve_cost_tier(1.50) == "frontier",   # rounds UP at boundary
+        f"0.29->{resolve_cost_tier(0.29)} 0.30->{resolve_cost_tier(0.30)} "
+        f"1.49->{resolve_cost_tier(1.49)} 1.50->{resolve_cost_tier(1.50)}",
+    )
+
+    # (9) Drift guard (bonus, doc): TIER-CANON.md names the canonical
+    # tiers the code uses. Same discipline EVAL-TAXONOMY.md uses for the
+    # canonical class set — code and doc must agree on the axis names.
+    canon_md = Path(__file__).resolve().parent.parent / "state" / "TIER-CANON.md"
+    doc_tiers: set[str] = set()
+    if canon_md.exists():
+        m = re.search(r"CANONICAL_COST_TIERS\s*=\s*(.+)", canon_md.read_text())
+        if m:
+            doc_tiers = {t.strip() for t in m.group(1).split(",") if t.strip()}
+    check(
+        "(9) drift guard: assign.py's CANONICAL_COST_TIERS == the tier set "
+        "documented in fleet/state/TIER-CANON.md",
+        bool(doc_tiers) and doc_tiers == set(CANONICAL_COST_TIERS),
+        f"code={sorted(CANONICAL_COST_TIERS)} doc={sorted(doc_tiers)}",
+    )
+
+    # (10) Disambiguation guard: the cost-band tiers (lowercase, defined
+    # here) and the ceiling-grade band (Title-Case, owned by
+    # EVAL-PIPELINE-CONSOLIDATE in tier_chart.py) are DIFFERENT axes with
+    # DIFFERENT names. This is the conflation the review flags (F9(c),
+    # F-tier) and TIER-CANON.md pins apart. assert NO name overlap.
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "benchmark" / "lib"))
+    import tier_chart as _tc  # noqa: E402
+    ceiling_band_names = {entry[1] for entry in _tc.TIER_LADDER}
+    overlap = set(CANONICAL_COST_TIERS) & ceiling_band_names
+    check(
+        "(10) disambiguation: cost-band tiers (lowercase) and ceiling-grade "
+        "band (Title-Case) share NO names (Frontier/strong are different "
+        "axes per TIER-CANON.md)",
+        not overlap,
+        f"overlap={overlap} (would indicate the conflation F-tier flags)",
+    )
 
 
 def provisional_scoring_checks(grades: ScorecardGradesProvider, no_avail) -> None:
