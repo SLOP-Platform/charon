@@ -1,0 +1,79 @@
+# manifest.tsv — item-bank registry (EVAL-PIPELINE-CONSOLIDATE, review F9+F12).
+#
+# One row per item the adaptive runner may place. The runner reads ONLY
+# this manifest; the model session worktree never sees it. Every item is
+# RED-proof: its grader (in graders/<item_id>.py, dispatched OOB by
+# grader-daemon.py kind=="preflight") returns a JSON {"score","verdict",
+# "gate","reason"} derived from the worktree's OBJECTIVE state, never the
+# model's prose.
+#
+# Columns (TAB-separated):
+#   item_id              unique id (== grader_key the daemon dispatches on)
+#   work_class           CANONICAL (EVAL-TAXONOMY.md: reasoning, coding,
+#                       translation, creative, analysis, general) — a
+#                       legacy fleet class on this column is normalized at
+#                       read time, never stored as the canonical form
+#   difficulty           integer 1..4 on the calibrated ladder
+#                       (TIER-CANON.md rung range: economy D1–D2,
+#                        strong D1–D3, frontier D1–D4)
+#   expected_pass_pct    calibration anchor: the % of known-good models
+#                       expected to clear the item (MUST-PASS control
+#                       typically >= 80; MUST-FAIL control typically <= 20)
+#   mode                 the failure mode the item catches (free-text;
+#                       preflight.sh's T1–T12 modes are the historical
+#                       vocabulary — this column reuses it where
+#                       applicable, adds new modes for the new canonical
+#                       work classes)
+#   brief                the PROMPT.md filename the runner copies (under
+#                       items/<item_id>/)
+#   grader_key           == item_id; the runner's request enqueues with
+#                       {"item_id": <grader_key>, "kind": "preflight"} and
+#                       the daemon dispatches graders/<grader_key>.py
+#   saturated            "1" if a MUST-PASS / MUST-FAIL split has been
+#                       measured and the item discriminates; "0" if the
+#                       item is in the bank on a calibration promise but
+#                       the split is unverified. A "1" row is the
+#                       discrimination proof; "0" rows are draft items
+#                       the runner may use ONLY when no saturated item
+#                       exists for the work_class (a calibration debt
+#                       logged at the bottom of this file). Items with
+#                       saturated="0" are NEVER promoted into the
+#                       scorecard's "active" ledger.
+#   control_pass         control model id expected to PASS (calibration
+#                       anchor — the live runner's MUST-PASS control id)
+#   control_fail         control model id expected to FAIL (calibration
+#                       anchor — the live runner's MUST-FAIL control id,
+#                       conventionally deepseek-v4-flash for the coding
+#                       bank)
+#
+# Every canonical work_class in CANONICAL_WORK_CLASSES (EVAL-TAXONOMY.md)
+# has >=1 item below — the F5 fix ("3 skills are 1 skill"). Items are
+# split across difficulties so the adaptive runner can bracket a ceiling
+# at any rung.
+item_id	work_class	difficulty	expected_pass_pct	mode	brief	grader_key	saturated	control_pass	control_fail
+cod-bugfix-typo	coding	1	90	typo-fix	PROMPT.md	cod-bugfix-typo	1	strong-control	deepseek-v4-flash
+cod-bugfix-kwarg	coding	2	70	add-kwarg-backcompat	PROMPT.md	cod-bugfix-kwarg	1	strong-control	deepseek-v4-flash
+cod-routing-exclude	coding	2	65	route-exclusion	PROMPT.md	cod-routing-exclude	1	strong-control	deepseek-v4-flash
+cod-refactor-rename	coding	3	55	multi-file-rename	PROMPT.md	cod-refactor-rename	1	strong-control	deepseek-v4-flash
+cod-regression-fix	coding	3	50	fix-dont-delete	PROMPT.md	cod-regression-fix	1	strong-control	deepseek-v4-flash
+cod-citation-verify	coding	3	40	citation-verification	PROMPT.md	cod-citation-verify	1	strong-control	deepseek-v4-flash
+cod-secret-hygiene	coding	2	75	secret-hygiene	PROMPT.md	cod-secret-hygiene	1	strong-control	deepseek-v4-flash
+cod-ci-infra-wire	coding	2	65	wire-existing-component	PROMPT.md	cod-ci-infra-wire	1	strong-control	deepseek-v4-flash
+reason-lcm	reasoning	1	90	exact-answer	PROMPT.md	reason-lcm	1	strong-control	deepseek-v4-flash
+reason-coin	reasoning	2	65	parity-argument	PROMPT.md	reason-coin	1	strong-control	deepseek-v4-flash
+reason-knight	reasoning	3	50	constraint-satisfaction	PROMPT.md	reason-knight	1	strong-control	deepseek-v4-flash
+analysis-design	analysis	2	60	design-tradeoff	PROMPT.md	analysis-design	1	strong-control	deepseek-v4-flash
+analysis-bugroot	analysis	2	65	bug-root-cause	PROMPT.md	analysis-bugroot	1	strong-control	deepseek-v4-flash
+translation-en-fr	translation	2	60	translation-exact	PROMPT.md	translation-en-fr	1	strong-control	deepseek-v4-flash
+creative-structured	creative	2	55	structured-generation	PROMPT.md	creative-structured	1	strong-control	deepseek-v4-flash
+general-followinstr	general	1	90	instruction-following	PROMPT.md	general-followinstr	1	strong-control	deepseek-v4-flash
+general-tooluse	general	2	65	tool-use-minimal	PROMPT.md	general-tooluse	1	strong-control	deepseek-v4-flash
+# Calibration debt (unverified MUST-PASS / MUST-FAIL split). Listed here
+# so the bank is auditable; the runner logs a WARN and skips these
+# unless no saturated item exists for the work_class+difficulty.
+cod-frontend-call	frontend(coding)	2	60	multi-file-call	PROMPT.md	cod-frontend-call	0	-	-
+# Calibration debt: legacy work_classes that the canonical mapping folds
+# into 'coding' (EVAL-TAXONOMY.md §_LEGACY_TO_CANONICAL). The runner
+# resolves these to 'coding' on read; the row is recorded under its raw
+# label for traceability.
+cod-tests-author	coding	2	70	test-author	PROMPT.md	cod-tests-author	1	strong-control	deepseek-v4-flash
