@@ -74,17 +74,98 @@ rc=0; run_reconcile || rc=$?
 # (the reverted "first glob match wins" would mis-close the alphabetically-first owner onto un-landed
 # work with a real merged:<sha>). Reverting the >1-owner refusal closes TICK-SH1 -> this test fails.
 echo "== (f) HIGH #2: drifted PR on a file owned by >1 ticket -> NEITHER auto-closed (ambiguous) =="
-printf 'tier: economy\nbranch: feat/sh1-planned\nowns: src/shared.py\nwork_class: docs\n' > "$d/board/TICK-SH1.md"
-printf 'tier: economy\nbranch: feat/sh2-planned\nowns: src/shared.py\nwork_class: docs\n' > "$d/board/TICK-SH2.md"
-printf 'feat/DRIFTED-SHARED\t%s\tsrc/shared.py\t205\n' "$SHA" > "$d/ambig.tsv"
-RECONCILE_MERGED_SRC="$d/ambig.tsv" bash "$d/reconcile-merged.sh" >/dev/null 2>&1
-[ -e "$d/state/done/TICK-SH1" ] && bad "f SH1 NOT auto-closed on ambiguous shared-owner overlap" \
-                                || ok "f SH1 NOT auto-closed on ambiguous shared-owner overlap"
-[ -e "$d/state/done/TICK-SH2" ] && bad "f SH2 NOT auto-closed on ambiguous shared-owner overlap" \
-                                || ok "f SH2 NOT auto-closed on ambiguous shared-owner overlap"
+  printf 'tier: economy\nbranch: feat/sh1-planned\nowns: src/shared.py\nwork_class: docs\n' > "$d/board/TICK-SH1.md"
+  printf 'tier: economy\nbranch: feat/sh2-planned\nowns: src/shared.py\nwork_class: docs\n' > "$d/board/TICK-SH2.md"
+  printf 'feat/DRIFTED-SHARED\t%s\tsrc/shared.py\t205\n' "$SHA" > "$d/ambig.tsv"
+  RECONCILE_MERGED_SRC="$d/ambig.tsv" bash "$d/reconcile-merged.sh" >/dev/null 2>&1
+  [ -e "$d/state/done/TICK-SH1" ] && bad "f SH1 NOT auto-closed on ambiguous shared-owner overlap" \
+                                  || ok "f SH1 NOT auto-closed on ambiguous shared-owner overlap"
+  [ -e "$d/state/done/TICK-SH2" ] && bad "f SH2 NOT auto-closed on ambiguous shared-owner overlap" \
+                                  || ok "f SH2 NOT auto-closed on ambiguous shared-owner overlap"
 
-rm -rf "$d" "$P"
-echo
-echo "--- $PASS passed, $FAIL failed ---"
-[ "$FAIL" -eq 0 ] || exit 1
-echo "ALL RECONCILE-MERGED TESTS PASS"
+  # (g) PERF (PERF-AUDIT.md 2026-07-15): the OLD ticket_for_pr() re-scanned all board+archive files
+  # for EVERY merged PR (O(PRs×files×awk-spawn)). On a fixture with ~200 board+archive files and a
+  # matching set of merged PRs, the old loop would dominate wall-clock. The new code builds a
+  # single index in O(files) and short-circuits on already-done branches — a fresh fixture with
+  # 200 noise files + 5 mergeable PRs must (i) still produce the same close set and (ii) finish in
+  # well under a generous bound (5s — even on a slow CI host the index+5 done.sh runs is <1s).
+  # A regression that re-introduces the per-PR re-scan OR removes the short-circuit would push
+  # this past 5s and fail. Also covers: an ARCHIVED ticket (in board/archive/) is still found by
+  # the index — the old code's glob was "$BOARD"/*.md "$BOARD"/archive/*.md, and the new code
+  # must read both.
+  echo "== (g) PERF: 200-file board+archive fixture + 5 PRs, same closes, fast =="
+  g="$(mktemp -d)"; cp "$SRC/reconcile-merged.sh" "$SRC/done.sh" "$SRC/retire-done.sh" "$SRC/leak-guard.sh" \
+     "$SRC/_lib.sh" "$SRC/verify-merged.sh" "$g/"
+  mkdir -p "$g/board/archive" "$g/state/done" "$g/state/submitted" "$g/state/claims" "$g/state/needs-push"
+  # 5 mergeable tickets, interleaved with 195 noise files (alternate open + archived) so the index
+  # has to walk the full board+archive set — proves the perf win is real, not a fixture cheat.
+  for i in $(seq 1 100); do
+    printf 'tier: economy\nbranch: noise/no-%s\nowns: noise/no-%s.py\nwork_class: docs\n' "$i" "$i" > "$g/board/NO-$i.md"
+  done
+  for i in $(seq 1 95); do
+    printf 'tier: economy\nbranch: noise/arc-%s\nowns: noise/arc-%s.py\nwork_class: docs\n' "$i" "$i" > "$g/board/archive/ARC-$i.md"
+  done
+  # The 5 mergeable tickets — mix of OPEN board and ARCHIVED board to ensure both glob slots are
+  # walked by the index.
+  printf 'tier: economy\nbranch: feat/g1\nowns: src/g1.py\nwork_class: docs\n' > "$g/board/G1.md"
+  printf 'tier: economy\nbranch: feat/g2\nowns: src/g2.py\nwork_class: docs\n' > "$g/board/G2.md"
+  printf 'tier: economy\nbranch: feat/g3\nowns: src/g3.py\nwork_class: docs\n' > "$g/board/G3.md"
+  printf 'tier: economy\nbranch: feat/g4\nowns: src/g4.py\nwork_class: docs\n' > "$g/board/archive/G4.md"
+  printf 'tier: economy\nbranch: feat/g5\nowns: src/g5.py\nwork_class: docs\n' > "$g/board/archive/G5.md"
+  # Pre-existing done marker for G6 — proves the done-branch short-circuit doesn't break the close
+  # of a different PR whose branch happens to equal an already-done ticket's branch (the old code
+  # had the same idempotency guarantee via [ -e "$DONE/$id" ]).
+  printf 'tier: economy\nbranch: feat/g6\nowns: src/g6.py\nwork_class: docs\n' > "$g/board/G6.md"
+  printf '%s\tmerged:%s\tbranch:feat/g6\n' "$(date -u +%FT%TZ)" "$SHA" > "$g/state/done/G6"
+  {
+    printf 'feat/g1\t%s\tsrc/g1.py\t301\n' "$SHA"
+    printf 'feat/g2\t%s\tsrc/g2.py\t302\n' "$SHA"
+    printf 'feat/g3\t%s\tsrc/g3.py\t303\n' "$SHA"
+    printf 'feat/g4\t%s\tsrc/g4.py\t304\n' "$SHA"   # archived ticket
+    printf 'feat/g5\t%s\tsrc/g5.py\t305\n' "$SHA"   # archived ticket
+    printf 'feat/g6\t%s\tsrc/g6.py\t306\n' "$SHA"   # already done -> idempotent skip
+  } > "$g/perf.tsv"
+  _t0=$(date +%s%N)
+  DONE_CHARON_REPO="$P" RECONCILE_REPO_SLUG="x/y" RECONCILE_MERGED_SRC="$g/perf.tsv" \
+      bash "$g/reconcile-merged.sh" >/dev/null 2>&1
+  _t1=$(date +%s%N)
+  _ms=$(( ( _t1 - _t0 ) / 1000000 ))
+  # correctness: G1..G5 closed, G6 still has its original done marker (untouched), nothing else
+  closed=0
+  for _id in G1 G2 G3 G4 G5; do
+    [ -e "$g/state/done/$_id" ] && closed=$((closed+1))
+  done
+  [ "$closed" = 5 ] && ok "g closed all 5 mergeable tickets (G1-G5, mix of open+archived)" \
+                    || bad "g closed only $closed/5 mergeable tickets (expected 5)"
+  [ -e "$g/state/done/G6" ] && ok "g G6 done marker preserved (idempotent on already-closed branch)" \
+                            || bad "g G6 done marker missing"
+  # perf: 5s is a generous bound for the test (even on a slow CI host the index+5 done.sh <1s;
+  # the old per-PR re-scan would have made this >30s on a 200-file fixture). 5s catches a
+  # regression that re-introduces the O(PRs×files) re-scan while still tolerating slow CI.
+  [ "$_ms" -lt 5000 ] && ok "g perf: 200-file board+archive + 6 PRs reconciled in ${_ms}ms (<5000ms)" \
+                       || bad "g perf: took ${_ms}ms (>=5000ms) — re-scan regression?"
+
+  # (h) done-marker branch short-circuit: a PR whose branch ALREADY has a done marker is skipped
+  # without ever invoking done.sh. We verify by giving an INVALID sha so done.sh would refuse if
+  # called — a no-call proves the short-circuit.
+  echo "== (h) short-circuit: PR with a branch already covered by state/done/<id> -> no done.sh call =="
+  h="$(mktemp -d)"; cp "$SRC/reconcile-merged.sh" "$SRC/done.sh" "$SRC/retire-done.sh" "$SRC/leak-guard.sh" \
+     "$SRC/_lib.sh" "$SRC/verify-merged.sh" "$h/"
+  mkdir -p "$h/board" "$h/state/done" "$h/state/submitted" "$h/state/claims" "$h/state/needs-push"
+  printf 'tier: economy\nbranch: feat/h\nowns: src/h.py\nwork_class: docs\n' > "$h/board/H.md"
+  printf '%s\tmerged:%s\tbranch:feat/h\n' "$(date -u +%FT%TZ)" "$SHA" > "$h/state/done/H"
+  printf 'feat/h\tDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF\tsrc/h.py\t401\n' > "$h/sc.tsv"
+  # done.sh with an invalid sha would REFUSE and exit 3 — so the marker MUST still be the old one.
+  orig_marker="$(cat "$h/state/done/H")"
+  DONE_CHARON_REPO="$P" RECONCILE_REPO_SLUG="x/y" RECONCILE_MERGED_SRC="$h/sc.tsv" \
+      bash "$h/reconcile-merged.sh" >/dev/null 2>&1
+  new_marker="$(cat "$h/state/done/H")"
+  [ "$orig_marker" = "$new_marker" ] && ok "h done-branch short-circuit: existing marker untouched (done.sh not called)" \
+                                      || bad "h done-branch short-circuit: marker changed ($orig_marker -> $new_marker)"
+  rm -rf "$g" "$h"
+
+  rm -rf "$d" "$P"
+  echo
+  echo "--- $PASS passed, $FAIL failed ---"
+  [ "$FAIL" -eq 0 ] || exit 1
+  echo "ALL RECONCILE-MERGED TESTS PASS"
