@@ -16,6 +16,15 @@ CHECKS: list[tuple[list[str], str]] = [
     (["python3", "tools/check_test_patterns.py"], "test-patterns"),
     (["python3", "tools/check_workflows.py"], "workflow-policy"),
     (["python3", "tools/check_inert_code.py"], "inert-code"),
+    (["python3", "-m", "pytest", "-q"], "pytest"),
+    # docs/REVIEW-LOG.md is gitignored (generated artifact from the per-ticket
+    # fragments in docs/review-log/). Running in generate mode is idempotent
+    # (deterministic render of the SoT fragments) and is what .github/workflows/ci.yml
+    # already does for the same reason. The --check form would always fail on a fresh
+    # checkout because the rollup doesn't exist yet. Must run BEFORE check-decisions
+    # because D002/D011 reference REVIEW-LOG and the linter will fail if it's missing.
+    (["python3", "tools/render_review_log.py"], "render-review-log"),
+    (["python3", "tools/check_decisions.py", "--check"], "check-decisions"),
 ]
 
 
