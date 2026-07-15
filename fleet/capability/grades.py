@@ -7,6 +7,20 @@ capability/assign.py) and, later, the gateway request-routing consumer
 described in the ADR. Both must see the SAME work_class taxonomy and the
 SAME grade math, so the taxonomy and scoring formula live here, once.
 
+EVAL-TAXONOMY-ALIGN (fixes the adversarial review's F3 BLOCKER / MSOT-BLAST-
+RADIUS-AUDIT.md row #2 — "the eval grades the WRONG taxonomy"): "the SAME
+work_class taxonomy" above used to be FALSE — assign.py fed this module
+fleet board-ticket-shape classes (money-path/ci-infra/bugfix/...) while the
+gateway router's own vocabulary (src/charon/routing_policy/matrix.py
+`WorkClass`) shares zero names with it, so a router query would have
+returned ZERO rows. It is genuinely true now: `grade()`/`_rows_for()` always
+resolve BOTH vocabularies into ONE canonical grading space
+(CANONICAL_WORK_CLASSES below, == the router's own 6 classes) before
+matching rows, so a router-native query ("coding") and a board-ticket-shape
+query ("bugfix") that lands in the same bucket see the SAME underlying
+evidence. See fleet/state/EVAL-TAXONOMY.md for the full decision + mapping
+table (single source of truth for the taxonomy itself).
+
 TODAY's data source is fleet/model-scorecard.tsv (per POOLS-REDESIGN-ADR-v2.md
 §"two consumers": assignment's bar for usefulness is lower than gateway
 routing's, so it can consume real signal now, ahead of the Phase 2a grades
@@ -130,17 +144,98 @@ def scores_tie(score_a: float, band_a: float | None,
     bb = band_b or 0.0
     return abs(score_a - score_b) <= (ba + bb)
 
-# Single source of truth = model-scorecard.sh's VALID_CLASS (line ~21). Duplicated
-# here (stdlib TSV reader, no shared JSON schema between bash and this module) —
-# MUST be kept in lockstep, same discipline tier_chart.py documents for its own
-# duplicated season_for_date() rule. "generalist" is NOT a scorecard work_class;
-# it is this module's aggregate-across-everything fallback bucket (see grade()).
+# ---------------------------------------------------------------------------
+# CANONICAL CAPABILITY-GRADING TAXONOMY (EVAL-TAXONOMY-ALIGN — review F3
+# BLOCKER, MSOT-BLAST-RADIUS-AUDIT.md row #2). Single source of truth =
+# fleet/state/EVAL-TAXONOMY.md, which mirrors the PRODUCT ROUTER's own
+# semantic work_class vocabulary VERBATIM: src/charon/routing_policy/
+# matrix.py:20-27 `WorkClass` Literal, identically mirrored in
+# src/charon/capability/taxonomy.py `_SEED_CLASSES`. This — not WORK_CLASSES
+# below — is the axis `grade()` actually keys the capability signal on.
+# `_live_product_work_classes()` cross-checks this literal copy against the
+# live product module when importable (same resilience pattern as
+# `_load_catalog()`/get_tier_hint below: try live, tolerate unavailable).
+CANONICAL_WORK_CLASSES: tuple[str, ...] = (
+    "reasoning", "coding", "translation", "creative", "analysis", "general",
+)
+
+# WORK_CLASSES = the fleet BOARD-TICKET / assign.py-CLI INPUT vocabulary
+# (ticket SHAPE, not model capability). This is a SEPARATE, disjoint axis
+# from CANONICAL_WORK_CLASSES above — kept, unchanged in content, so
+# assign.py's `--work-class` CLI and validate_board.sh's board-ticket
+# `work_class:` meta-field check keep working exactly as before (neither is
+# owned by EVAL-TAXONOMY-ALIGN; this ticket is taxonomy-only, not a re-tag
+# of the board). Every one of these legacy strings is mapped into the
+# canonical grading space by _LEGACY_TO_CANONICAL below, applied at READ
+# time only (the TSV on disk keeps its original raw strings — nothing is
+# lost or silently rewritten).
+#
+# Known, deliberately UNTOUCHED residual (out of this ticket's owns:): this
+# 11-class list is already diverged from model-scorecard.sh's VALID_CLASS
+# (9 — no rig-meta/design-review) and enqueue-capture.sh's hardcoded copy
+# (same 9) — MSOT-BLAST-RADIUS-AUDIT.md row #2's OTHER divergence, on the
+# fleet-ticket-shape axis itself, not the fleet<->router taxonomy split this
+# ticket fixes. Reconciling that would touch model-scorecard.sh/
+# enqueue-capture.sh (neither owned here) and does not block the fix below.
 WORK_CLASSES: tuple[str, ...] = (
     "money-path", "routing", "ci-infra", "refactor", "bugfix",
     "tests", "greenfield-feature", "docs", "frontend",
     "rig-meta", "design-review",
 )
 GENERALIST = "generalist"
+
+# Fleet ticket-shape -> canonical product-router class. Judgment calls are
+# documented in fleet/state/EVAL-TAXONOMY.md (short version: the review's own
+# F5 finding — "the honest battery is one skill wearing three labels" — means
+# nearly every fleet ticket is the same underlying skill, a small local code
+# change, so most legacy classes fold into "coding"; design-review folds into
+# "analysis" (assessing a tradeoff); docs/rig-meta are non-code/meta prose
+# work, folded into "general"). No fleet class maps to reasoning/translation/
+# creative — the fleet ticket stream has never produced one of those; that is
+# an honest gap this ticket surfaces, not one it manufactures coverage for.
+_LEGACY_TO_CANONICAL: dict[str, str] = {
+    "money-path": "coding", "routing": "coding", "ci-infra": "coding",
+    "refactor": "coding", "bugfix": "coding", "tests": "coding",
+    "greenfield-feature": "coding", "frontend": "coding",
+    "design-review": "analysis",
+    "docs": "general", "rig-meta": "general",
+}
+
+assert set(_LEGACY_TO_CANONICAL) == set(WORK_CLASSES), (
+    "grades.py: WORK_CLASSES and _LEGACY_TO_CANONICAL have drifted apart — "
+    "every legacy fleet class MUST have a canonical mapping (fail loud at "
+    "import time, not a silent None at grade-time)."
+)
+assert set(_LEGACY_TO_CANONICAL.values()) <= set(CANONICAL_WORK_CLASSES), (
+    "grades.py: _LEGACY_TO_CANONICAL maps to a class outside CANONICAL_WORK_CLASSES."
+)
+
+
+def _canonical_of(work_class: str) -> str | None:
+    """Resolve a class string — either native CANONICAL_WORK_CLASSES or
+    legacy WORK_CLASSES — to its canonical bucket. Returns None for a string
+    that is neither (callers must treat None as "cannot be graded in
+    canonical space", never a silent fallback bucket)."""
+    if work_class in CANONICAL_WORK_CLASSES:
+        return work_class
+    return _LEGACY_TO_CANONICAL.get(work_class)
+
+
+def _live_product_work_classes() -> tuple[str, ...] | None:
+    """Best-effort LIVE cross-check against the product's own `WorkClass`
+    Literal (src/charon/routing_policy/matrix.py) — same
+    try-live-then-tolerate-unavailable resilience pattern as
+    `_load_catalog()` below. Returns None (never raises) if the product repo
+    isn't importable in this environment; callers must treat that as
+    "unverifiable here", not "drifted"."""
+    try:
+        if str(_CHARON_SRC) not in sys.path:
+            sys.path.insert(0, str(_CHARON_SRC))
+        import typing as _typing
+        from charon.routing_policy.matrix import WorkClass as _ProductWorkClass
+        return _typing.get_args(_ProductWorkClass)
+    except Exception:
+        return None
 
 _MERGE, _BLOCK = "MERGE", "BLOCK"
 
@@ -342,7 +437,23 @@ class ScorecardGradesProvider(GradesProvider):
         in the ledger but EXCLUDED here, orthogonally to the source allow-list
         (BOTH gates must pass). Promotion tooling / analysis pass
         include_provisional=True to see provisional rows too; the live grade
-        path never does, so an unpromoted unit provably cannot move a grade."""
+        path never does, so an unpromoted unit provably cannot move a grade.
+
+        EVAL-TAXONOMY-ALIGN: `work_class` may be either a native
+        CANONICAL_WORK_CLASSES string (the product router's own vocabulary —
+        e.g. "coding") or a legacy WORK_CLASSES string (the fleet
+        board-ticket-shape vocabulary assign.py feeds in today — e.g.
+        "bugfix"). A CANONICAL query matches every row whose CANONICAL
+        bucket agrees (folding in every mapped legacy row — this is the new
+        capability that lets the router see real, non-zero historical data,
+        per fleet/state/EVAL-TAXONOMY.md). A legacy query matches by EXACT
+        raw string, unchanged from before this ticket — zero behavior change
+        for assign.py / the existing fixture-driven selftest proofs.
+        `_canonical_of()` is resolved PER ROW HERE (query time), not cached
+        at `_load()` time — so `_LEGACY_TO_CANONICAL` is a genuinely live
+        mapping (a revert takes effect immediately, no reload needed; see
+        the selftest's fail-on-revert check)."""
+        canonical_query = work_class is not None and work_class in CANONICAL_WORK_CLASSES
         out = []
         for r in self._rows:
             if r["model"] != model:
@@ -351,8 +462,12 @@ class ScorecardGradesProvider(GradesProvider):
                 continue
             if not include_provisional and r["stage"] != _ACTIVE_STAGE:
                 continue
-            if work_class is not None and r["work_class"] != work_class:
-                continue
+            if work_class is not None:
+                if canonical_query:
+                    if _canonical_of(r["work_class"]) != work_class:
+                        continue
+                elif r["work_class"] != work_class:
+                    continue
             out.append(r)
         return out
 

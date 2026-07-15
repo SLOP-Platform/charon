@@ -71,3 +71,16 @@
 # the stage gate excludes it ORTHOGONALLY to the source gate. Columns 14/15 are
 # tokens_in/out ("-"); column 16 is the new stage field.
 2026-01-26	live	FIX-PROV	routing	T1	glm-5.2	MERGE	-	-	100	-	0	fixture: PROVISIONAL live row - MUST be excluded until promoted	-	-	provisional
+#
+# EVAL-TAXONOMY-ALIGN (review F3 BLOCKER fix): canonical work-class taxonomy
+# rows. tax-native-model has ONLY a native-canonical row (work_class=coding)
+# -> proves grade(model,"coding") works directly for a router-native tag.
+# tax-legacy-model has ONLY legacy fleet-shape rows (bugfix, reasoning) and
+# NO native-canonical row at all -> grade(model,"coding") depends ENTIRELY
+# on _LEGACY_TO_CANONICAL's bugfix->coding mapping (the fail-on-revert case:
+# clearing that mapping must make the query return None), and the sibling
+# "reasoning"-tagged row proves canonical buckets stay disjoint (it must
+# NEVER show up in a "coding" query for the same model).
+2026-01-27	live	FIX-TAX-01	coding	T1	tax-native-model	MERGE	-	-	100	-	0	fixture: TAXONOMY canonical-native row (work_class=coding directly)
+2026-01-28	live	FIX-TAX-02	bugfix	T1	tax-legacy-model	MERGE	-	-	100	-	0	fixture: TAXONOMY legacy-only row (bugfix) - grade(model,"coding") depends entirely on _LEGACY_TO_CANONICAL
+2026-01-29	live	FIX-TAX-03	reasoning	T1	tax-legacy-model	BLOCK	-	-	100	-	1	fixture: TAXONOMY disjoint-bucket check - must NOT be reachable via a bugfix->coding query
