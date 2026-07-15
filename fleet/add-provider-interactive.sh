@@ -88,6 +88,7 @@ declare -A REGISTRY_BASE_URL=(
   [sambanova]="https://api.sambanova.ai/v1"
   [replicate]="https://api.replicate.com/v1"
   [xai]="https://api.x.ai/v1"
+  [nvidia]="https://integrate.api.nvidia.com/v1"
 )
 
 # name -> space-separated "model:upstream" pairs. Deliberately empty for every
