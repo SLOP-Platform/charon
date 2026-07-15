@@ -158,10 +158,19 @@ OWNER_REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)"
 [ -n "$OWNER_REPO" ] || OWNER_REPO="$(git remote get-url origin 2>/dev/null | sed -E 's#.*[:/]([^/]+/[^/.]+)(\.git)?$#\1#')"
 [ -n "$OWNER_REPO" ] || { echo "land: could not resolve owner/repo via gh or remote" >&2; exit 6; }
 gh pr create --repo "$OWNER_REPO" --base "$BASE" --head "$BRANCH" --fill 2>/dev/null || echo "land: (PR may already exist)"
+# NO-FALSE-DONE: a DRAFT PR makes `gh pr merge` fail silently while land still printed
+# "DONE" — false success that nearly recorded phantom lands (recurring LESSON). Mark ready
+# FIRST, merge, then VERIFY the PR is genuinely MERGED and fail LOUD (non-zero) otherwise.
+gh pr ready "$BRANCH" --repo "$OWNER_REPO" 2>/dev/null || true
 gh pr merge "$BRANCH" --repo "$OWNER_REPO" --merge 2>&1 | tail -2
+_land_state="$(gh pr view "$BRANCH" --repo "$OWNER_REPO" --json state -q .state 2>/dev/null)"
+if [ "$_land_state" != "MERGED" ]; then
+  echo "land: MERGE FAILED — '$BRANCH' PR state='${_land_state:-unknown}', NOT merged; refusing to report DONE" >&2
+  exit 7
+fi
 
 # 7. sync local base to origin — DIRTY-SAFE (LAND-SH-SAFE-SYNC). FF-only; never reset --hard /
 # clean over uncommitted or untracked work. See safe_sync_base() above for the full contract.
 safe_sync_base "$REPO" "$BASE" "$BRANCH"
 
-echo "land: DONE — '$BRANCH' merged into '$BASE' on $OWNER_REPO"
+echo "land: DONE — '$BRANCH' merged into '$BASE' on $OWNER_REPO (verified state=MERGED)"
