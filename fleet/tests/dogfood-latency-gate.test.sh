@@ -159,9 +159,12 @@ run_scenario() { # run_scenario <scenario-name> <stub-mode> <budget-s> <model>
 
 card_for() { find "$WORK/results-$1" -maxdepth 1 -name '*.card.md' | head -1; }
 
-# ---- scenario A: streams past budget (leg healthy) -> DETAIN(latency)/BLOCK,
-# NOT REVIEW-READY. Revert the F1 marker fix, the F1 grep fix, OR the F4 gate
-# in dogfood-eval.sh and this goes RED. ----
+# ---- scenario A: streams past budget (leg healthy) -> rc=124 too-slow ->
+# DETAIN(latency)/BLOCK, NOT REVIEW-READY. This is the F1 (marker<->grep)
+# path: revert the charon-run.sh marker text OR the dogfood-attribution.sh
+# grep and this goes RED. NOTE: this does NOT independently guard the F4
+# wall-clock branch — a too-slow attribution is caught by the too-slow branch
+# ABOVE the F4 elif, so F4 is exercised in isolation only by scenario D. ----
 run_scenario "TEST-TOO-SLOW" "too-slow" 2 "stub-model-a"
 CARD_A="$(card_for TEST-TOO-SLOW)"
 if [ -n "$CARD_A" ] && [ -f "$CARD_A" ]; then
@@ -196,6 +199,70 @@ if [ -n "$CARD_C" ] && [ -f "$CARD_C" ]; then
   grep_line "scenario C: latency_verdict is within-budget" "$CARD_C" 'latency_verdict: within-budget'
 else
   bad "scenario C (clean/within-budget): no result card produced at all"
+fi
+
+# ═════════════════════════════════════════════════════════════════════════
+# STAGE 3 — scenario D: the ISOLATED F4 wall-clock guard (glm-5.2 RFL-3 case).
+# A clean rc=0 run that ran OVER the wall-clock budget with NO rc=124 marker
+# and NO too-slow/leg-fault attribution — attribution=ran-to-completion. The
+# ONLY thing that can catch it is the F4 elapsed>=LATENCY_BUDGET_S branch in
+# dogfood-eval.sh; the too-slow/leg-fault/early-ditch branches all miss it.
+# Revert ONLY the F4 branch -> this run falls through to REVIEW-READY -> RED.
+#
+# F4 is attribution-string-independent by design (belt-and-suspenders), so we
+# drive it with a dedicated stub charon-run that decouples the model's own
+# runtime from the timeout: it does REAL work (edits a tracked file), overruns
+# the budget on the wall clock, and exits 0 WITHOUT ever being killed by the
+# `timeout` wrapper (no rc=124). This reproduces the historical glm-5.2 case
+# (wall=499s > budget=480s, exit 0, REVIEW-READY) that F4 exists to catch.
+# ═════════════════════════════════════════════════════════════════════════
+STUB_CRUN="$WORK/stub-charon-run.sh"
+cat > "$STUB_CRUN" <<'EOF'
+#!/usr/bin/env bash
+# stub charon-run.sh — mimics the SUCCESS contract (rc=0 + a real worktree
+# diff + the CHARON_RUN_RESULT=SUCCESS marker) but overruns the wall-clock
+# budget without ever hitting rc=124. Decoupled from the `timeout` wrapper on
+# purpose: this is what a model that finishes cleanly but SLOWLY looks like.
+CWD="$1"; OUT="$2"; shift 3
+M="$1"
+: > "$OUT"
+echo "===== [stub-charon-run] attempt: charon/$M =====" >> "$OUT"
+( cd "$CWD" && printf 'wallclock-overrun change %s\n' "$$" >> README.md )
+echo "[stub-charon-run] SUCCESS on model '$M' (rc=0)" >> "$OUT"
+echo "CHARON_RUN_RESULT=SUCCESS model=$M" >> "$OUT"
+sleep 2   # budget below is 1s -> measured elapsed (>=2) exceeds it; still rc=0
+exit 0
+EOF
+chmod +x "$STUB_CRUN"
+
+RESULTS_D="$WORK/results-TEST-WALLCLOCK"
+mkdir -p "$RESULTS_D"
+DOGFOOD_PRODUCT_REPO="$PRODUCT_REPO" \
+  DOGFOOD_BASE_REF="master" \
+  DOGFOOD_WORKTREE_PARENT="$WORK" \
+  DOGFOOD_RESULTS_DIR="$RESULTS_D" \
+  DOGFOOD_GATE_CMD="true" \
+  DOGFOOD_TEST_CMD="true" \
+  DOGFOOD_LATENCY_BUDGET_S=1 \
+  DOGFOOD_CHARON_RUN="$STUB_CRUN" \
+  DOGFOOD_KEEP_WORKTREE=0 \
+  "$DOGFOOD_EVAL" "TEST-WALLCLOCK" "$BRIEF" "stub-model-d" \
+  >"$WORK/TEST-WALLCLOCK.stdout.log" 2>"$WORK/TEST-WALLCLOCK.stderr.log"
+CARD_D="$(card_for TEST-WALLCLOCK)"
+if [ -n "$CARD_D" ] && [ -f "$CARD_D" ]; then
+  ok "scenario D (clean rc=0, over wall-clock budget): result card produced"
+  # The isolated F4 assertion: exactly DETAIN(latency-wallclock), NOT REVIEW-READY.
+  grep_line "scenario D: F4 wall-clock gate fires -> DETAIN(latency-wallclock)" \
+    "$CARD_D" '^overall verdict: \*\*DETAIN\(latency-wallclock\)\*\*'
+  not_has "scenario D: over-budget clean run is NEVER REVIEW-READY" "$(cat "$CARD_D")" "REVIEW-READY"
+  # Prove the trigger was the wall clock, not an rc=124/too-slow attribution:
+  # attribution must be ran-to-completion (no rc=124 marker involved at all).
+  grep_line "scenario D: attribution is ran-to-completion (rc=0; no rc=124/too-slow)" \
+    "$CARD_D" 'attribution: ran-to-completion'
+  not_has "scenario D: attribution is NOT too-slow (proves F4, not the F1 path, caught it)" \
+    "$(grep '^- failure attribution:' "$CARD_D")" "too-slow"
+else
+  bad "scenario D (clean rc=0, over wall-clock budget): no result card produced at all"
 fi
 
 echo
