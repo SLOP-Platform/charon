@@ -382,14 +382,21 @@ def _select_planner_model(
     config_dir: str | Path | None,
     is_detained: Callable[[str], bool] | None,
 ) -> tuple[str, str, str] | None:
-    """First configured model with a working key that is NOT detained. Reuses
-    ``recommend._find_trusted_models`` for discovery."""
+    """First configured model with a working key that is NOT detained and NOT an
+    Anthropic/Claude model. Reuses ``recommend._find_trusted_models`` for discovery.
+
+    SG-never-Anthropic HARD RULE (PLANNER-ONLY): the planner/decomposer must NEVER
+    select a Claude/Anthropic model. Skip any candidate whose base_url contains
+    ``anthropic`` or whose model_id starts with ``claude``. This guard does NOT apply
+    to the tier-voter path (``recommend.recommend_tiers``), where Anthropic is allowed."""
     from . import recommend
 
     for model_id, base_url, api_key in recommend._find_trusted_models(
         config_dir if config_dir is not None else recommend_default_config_dir()
     ):
         if is_detained is not None and is_detained(model_id):
+            continue
+        if "anthropic" in base_url.lower() or model_id.lower().startswith("claude"):
             continue
         return model_id, base_url, api_key
     return None

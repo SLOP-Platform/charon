@@ -34,10 +34,10 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 def _find_trusted_models(config_dir: str | Path) -> list[tuple[str, str, str]]:
     """Find already-configured models that have working API keys.
     Returns list of (model_id, base_url, api_key) tuples."""
-    from . import config, secrets
+    from . import config, providers, secrets
     secrets.apply_to_env()
     models = config.load_models(config_dir=config_dir)
-    providers = config.load_providers(config_dir=config_dir)
+    providers_cfg = config.load_providers(config_dir=config_dir)
     secs = secrets.load_secrets(cd=config_dir)
     trusted: list[tuple[str, str, str]] = []
     for mid, entry in models.items():
@@ -46,13 +46,22 @@ def _find_trusted_models(config_dir: str | Path) -> list[tuple[str, str, str]]:
         prov_name = entry.get("provider")
         if not prov_name:
             continue
-        prov = providers.get(prov_name)
-        if not prov:
-            continue
-        base_url = prov.get("base_url")
+        prov = providers_cfg.get(prov_name) or {}
+        # Resolve base_url/key_env through the preset registry. A provider added
+        # from a built-in preset (e.g. ``providers add zai``) persists only its
+        # ``key_env`` — its ``base_url`` lives in the preset, NOT in providers.json.
+        # Reading the raw entry alone silently dropped EVERY preset-configured
+        # provider (returning no trusted models even when keys were present);
+        # ``providers.resolve`` is the same lookup ``discover.py`` and the
+        # ``providers test`` CLI already use for exactly these providers.
+        try:
+            resolved = providers.resolve(prov_name, prov)
+        except ValueError:
+            continue  # unknown provider with no base_url anywhere — cannot route
+        base_url = prov.get("base_url") or resolved.base_url
         if not base_url:
             continue
-        key_env = prov.get("key_env")
+        key_env = prov.get("key_env") or resolved.key_env
         if not key_env:
             continue
         api_key = os.environ.get(key_env) or secs.get(key_env)

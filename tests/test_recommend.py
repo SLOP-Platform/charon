@@ -1,7 +1,12 @@
 """Tests for charon.recommend — tier ranking from live catalogs."""
 from __future__ import annotations
 
-from charon.recommend import TierRecommendation, _heuristic_rank, recommend_tiers
+from charon.recommend import (
+    TierRecommendation,
+    _find_trusted_models,
+    _heuristic_rank,
+    recommend_tiers,
+)
 
 
 def test_heuristic_rank_free_model():
@@ -86,6 +91,27 @@ def test_recommend_tiers_anti_hallucination(tmp_path):
         all_ids.update(r.model_ids)
     assert "hallucinated-model" not in all_ids
     assert "real-model" in all_ids
+
+
+def test_find_trusted_models_resolves_preset_base_url(tmp_path, monkeypatch):
+    """FAIL-ON-REVERT: a provider added from a built-in preset persists only its
+    key_env (base_url lives in the preset). ``_find_trusted_models`` MUST resolve
+    the preset base_url — reading the raw providers.json entry alone drops every
+    preset-configured provider and returns no trusted models (the decomposer's
+    "no trusted planner configured" failure). Revert the resolve() call → empty."""
+    from charon import config
+
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    # `charon providers add zai` (preset, no --base-url) → key_env only, NO base_url.
+    config.add_provider("zai", base_url=None, key_env="ZAI_API_KEY")
+    config.add_model("glm-4.6", provider="zai")
+    monkeypatch.setenv("ZAI_API_KEY", "sk-test-key")
+
+    trusted = _find_trusted_models(str(tmp_path))
+    assert [(m, b) for m, b, _k in trusted] == [
+        ("glm-4.6", "https://api.z.ai/api/paas/v4")
+    ]
+    assert trusted[0][2] == "sk-test-key"
 
 
 def test_tier_recommendation_dataclass():
