@@ -12,7 +12,7 @@ accept: |
   so we RANK legs and only send the expensive full honest-battery/dogfood (8-min budget) to legs that pass.
   Motivating waste (2026-07-15): minimax-m2.7 burned ~24 min (3×8min rc=124 hangs) on a dead leg with NO
   pre-check; NVIDIA NIM was proven healthy in ~7s by the prototype canary. Reference impl:
-  scratchpad nim-canary.py (balanced-parens coding task, temp=0, exec-checked 5/5, latency + tok/s).
+  fleet/state/leg-canary-prototype.py (balanced-parens coding task, temp=0, exec-checked 5/5, latency + tok/s).
   DO:
   - fleet/benchmark/preflight-tasks/canary/: a SMALL set (2-3) of short, deterministic, OBJECTIVELY-checkable
     hard-ish tasks (coding one-liner exec-checked + a reasoning exact-answer). Temp=0. Must discriminate a real

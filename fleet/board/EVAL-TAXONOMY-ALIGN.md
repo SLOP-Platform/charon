@@ -15,7 +15,8 @@ accept: |
   - DECIDE ONE canonical taxonomy (the PRODUCT router's semantic work_classes are the meaningful axis — routing serves
     the product, not the build rig). Write the decision + the full class list + the fleet↔product mapping to
     fleet/state/EVAL-TAXONOMY.md as the single source of truth. Cross-check src/charon (matrix.py, taxonomy.py) and the
-    WORKCLASS-TAXONOMY work already on master — reconcile, don't fork again.
+    WORKCLASS-TAXONOMY work already on master — reconcile, don't fork again. NOTE: matrix.py + taxonomy.py
+    live in the PRODUCT repo /home/stack/code/charon/src/charon/ (NOT this rig repo) — read them there.
   - Repoint grades.py to the canonical classes (map/normalize legacy fleet-class rows so historical data isn't lost).
     Do NOT touch assign.py's tier filter here (EVAL-TIER-CANON owns that) — this ticket is taxonomy only.
   FAIL-ON-REVERT (extend the grades.py tests): a scorecard row in a product-router semantic class is graded and is

@@ -47,11 +47,11 @@ Every EVAL ticket's `accept:` cites its review §F-number; the full grounded fix
 - **Verify, don't trust the SUCCESS line.** This session I twice stated a wrong "throttled" cause from a label, and the review found the too-slow path is dead code — confirm every claim against real logs/diffs. `[document-model-self-report-lies]`
 - **Pair every detached run with a tracked waiter**; launch long bg jobs DIRECTLY via run_in_background (no nohup/&). `[background-job-launch-discipline]`
 
-## Operator actions (queued in fleet/pending.sh — R/S/T + new)
-1. `! git -C /home/stack/charon-private push -u origin feat/live-lane-finalizer` (push deny-listed to manager) — 12 commits this session.
-2. **EVAL-GRADER-PROVISION needs bench-grader sudo** provisioning (pytest + perms) — the droid writes the exact commands to GRADER-PROVISION-NOTE.md.
-3. Frontier tier still funding-blocked (nanogpt/openrouter). Optional scorecard conflict-marker cleanup (action T).
-4. NVIDIA NIM cleanup (Task 10): fix add-provider.sh step4 --base-url false-FAIL + add-provider-interactive key-echo; add NIM limits to free_tier_catalog.
+## Operator actions (queued in fleet/pending.sh — R/S/T/U)
+1. **(R)** `! git -C /home/stack/charon-private push -u origin feat/live-lane-finalizer` (push deny-listed to manager) — this session's commits (see `git log origin/master..`).
+2. **(U) CRITICAL PATH — do this FIRST: EVAL-GRADER-PROVISION needs bench-grader sudo** (pytest + snapshot perms). **ALL of Wave 3 (EVAL-PIPELINE-CONSOLIDATE, EVAL-PROMOTION-GATE) is hard-blocked on it** — if it's not provisioned early the autonomous session WILL idle at Wave 3. The Wave-1 droid writes the exact commands to `fleet/state/GRADER-PROVISION-NOTE.md`; run them as sudo the moment it does, don't wait for Wave 3.
+3. **(S)** Frontier tier still funding-blocked (nanogpt/openrouter). **(T)** optional scorecard conflict-marker cleanup.
+4. NVIDIA NIM cleanup (Task 10, tracked in pending.sh): fix add-provider.sh step4 --base-url false-FAIL + add-provider-interactive key-echo; add NIM limits to free_tier_catalog. (F15: fold the inert product-side `is_slow_provider` slow-axis hold into the existing GRACEFUL-DEGRADE board ticket when picked up.)
 
 ---
 

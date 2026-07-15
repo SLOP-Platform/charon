@@ -3,8 +3,9 @@ tier: strong
 difficulty: 3
 work_class: ci-infra
 branch: feat/eval-derived-budgets
-depends_on: EVAL-TAXONOMY-ALIGN
+depends_on: EVAL-TAXONOMY-ALIGN, LEG-PREFLIGHT-CANARY
 dep-kind: build
+real-dep: LEG-PREFLIGHT-CANARY produces LEG-RANK.tsv (per-leg tok_s) that the token/tok_s budget-normalization half consumes; the p95 half can proceed without it, but the full ticket needs it.
 serial_justified: the derivation module + its calibration data + the design-doc write are one cohesive change; budgets are meaningless split from the taxonomy they key on.
 owns: fleet/benchmark/budget-derive.py, fleet/state/PREFLIGHT-DESIGN-V2.md, fleet/tests/budget-derive.test.sh
 accept: |

@@ -15,7 +15,10 @@ accept: |
   - fleet/state/TIER-CANON.md: define the canonical tiers (economy/strong/frontier) by an OBJECTIVE cost-band rule
     ($/Mtok thresholds), and define "tier-appropriate difficulty" concretely (which item-bank difficulty levels a tier's
     rungs draw from). State whether rungs and tiers are the SAME axis, orthogonal, or how they map (the review flags
-    they're currently conflated).
+    they're currently conflated). DISAMBIGUATE two distinct "tier" meanings that must NOT be conflated: the
+    COST-BAND tier (an INPUT — how expensive a model is, defined here) vs the CEILING-GRADE band (an OUTPUT of
+    EVAL-PIPELINE-CONSOLIDATE/F9 — how capable a model proved). TIER-CANON.md owns the cost-band definition;
+    state explicitly how the capability-ceiling output maps back onto (or is independent of) the cost band.
   - Repoint tier-models.tsv + assign.py's tier filter to the canonical rule (assign.py:14 tier filter currently no-ops
     for uncatalogued ids — F-tier/MED — make an uncatalogued id resolve its tier from the cost band, not silently pass).
   FAIL-ON-REVERT (extend assign tests): a model priced in the economy band resolves tier=economy even if uncatalogued
