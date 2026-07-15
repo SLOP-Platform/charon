@@ -118,7 +118,7 @@ b7aa4c8 Merge pull request #126 from SLOP-Platform/chore/gitignore-tooldirs
 > Mechanized: any pre-existing red that names gotcha-class info (e.g. `git push is DENIED`)
 > is auto-prepended below. Fill the session-specific gotchas below the mechanized list.
 
-- `git push` is DENIED to the manager (settings deny-list; verbal authority does NOT override it). The operator pushes. `land.sh` pushes/merges from INSIDE the script (allowed); direct `git -C <path> push` may bypass the deny (push-guard gap).
+- `git push` **AND** `git -C <path> push` are BOTH DENIED to the manager (verified this session — the push-guard gap is closed). SANCTIONED push paths (do NOT ask the operator to push): **`land.sh <branch> <repo> [--gate …]`** (commit→gate→branch→push→PR→merge, for feature work) and **`land-push.sh <branch> [repo] [--gate …]`** (gate→push an already-committed branch/master; self-gates on AUTONOMOUS). This handoff commit was pushed with `land-push.sh master /home/stack/charon-private`.
 - **land.sh prints `land: DONE` even when `gh pr merge` FAILED on a draft PR** — false success. For droid PRs: `gh pr ready <N>` first, then verify `gh pr view <N> --json state` == MERGED.
 - **Local masters DRIFT** — land.sh base-sync skips when master is checked out in the main worktree. `git pull --ff-only` BOTH repos at boot and after each land batch, or landed fixes look broken.
 - **PRICE-REFRESHER is FABRICATED** (PR #104 CLOSED) despite green CI — do NOT land it.
