@@ -163,7 +163,14 @@ gh pr create --repo "$OWNER_REPO" --base "$BASE" --head "$BRANCH" --fill 2>/dev/
 # FIRST, merge, then VERIFY the PR is genuinely MERGED and fail LOUD (non-zero) otherwise.
 gh pr ready "$BRANCH" --repo "$OWNER_REPO" 2>/dev/null || true
 gh pr merge "$BRANCH" --repo "$OWNER_REPO" --merge 2>&1 | tail -2
+# Verify genuinely MERGED. `gh pr view` can briefly RACE right after a merge and return an
+# empty/unknown state on a PR that DID merge — retry once so a real merge is not misreported as
+# failed (which would also skip the auto-done-mark below). Still fails LOUD on a true non-merge.
 _land_state="$(gh pr view "$BRANCH" --repo "$OWNER_REPO" --json state -q .state 2>/dev/null)"
+if [ "$_land_state" != "MERGED" ]; then
+  sleep 2
+  _land_state="$(gh pr view "$BRANCH" --repo "$OWNER_REPO" --json state -q .state 2>/dev/null)"
+fi
 if [ "$_land_state" != "MERGED" ]; then
   echo "land: MERGE FAILED — '$BRANCH' PR state='${_land_state:-unknown}', NOT merged; refusing to report DONE" >&2
   exit 7
