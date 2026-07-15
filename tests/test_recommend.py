@@ -118,3 +118,74 @@ def test_tier_recommendation_dataclass():
     r = TierRecommendation("high", ["m1", "m2"])
     assert r.tier == "high"
     assert r.model_ids == ["m1", "m2"]
+
+
+# --------------------------------------------------------- WORKER env / tier override
+def test_recommend_tiers_env_pinned_worker_queried_first(
+    tmp_path, monkeypatch
+) -> None:
+    # DECOMPOSE-MODEL-WIRING: CHARON_DECOMPOSE_WORKER_MODEL must reorder the trusted
+    # list so the pinned model is queried FIRST, even when it is not the first
+    # configured trusted model. FAIL-ON-REVERT: stripping the sort block reverts to
+    # first-in-list order and this test goes RED.
+    from charon import recommend
+
+    catalog = [{"id": "real-model", "free": False}]
+    monkeypatch.setattr(
+        recommend,
+        "_find_trusted_models",
+        lambda cd: [
+            ("other-model", "https://api.openai.com/v1", "k1"),
+            ("pinned-worker", "https://api.openai.com/v1", "k2"),
+        ],
+    )
+    monkeypatch.setenv("CHARON_DECOMPOSE_WORKER_MODEL", "pinned-worker")
+
+    calls: list[str] = []
+
+    def _fake_ask(model_id, base_url, api_key, _catalog):
+        calls.append(model_id)
+        return None  # heuristic fallback — we only care about call ORDER
+
+    monkeypatch.setattr(recommend, "_ask_model", _fake_ask)
+
+    recommend_tiers("any-provider", catalog, config_dir=str(tmp_path))
+    assert calls, "_ask_model was never called"
+    assert calls[0] == "pinned-worker"
+
+
+def test_recommend_tiers_tier_high_worker_queried_first(
+    tmp_path, monkeypatch
+) -> None:
+    # DECOMPOSE-MODEL-WIRING: with no CHARON_DECOMPOSE_WORKER_MODEL set, a trusted
+    # model whose id is in tiers.tier_members("high") must be queried FIRST even when
+    # not the first configured trusted model. FAIL-ON-REVERT: removing the tier-'high'
+    # sort reverts to first-in-list order and this test goes RED.
+    from charon import recommend
+    from charon.config import tiers as tiers_cfg
+
+    catalog = [{"id": "real-model", "free": False}]
+    monkeypatch.setattr(
+        recommend,
+        "_find_trusted_models",
+        lambda cd: [
+            ("other-model", "https://api.openai.com/v1", "k1"),
+            ("tier-high-model", "https://api.openai.com/v1", "k2"),
+        ],
+    )
+    monkeypatch.delenv("CHARON_DECOMPOSE_WORKER_MODEL", raising=False)
+    monkeypatch.setattr(
+        tiers_cfg, "tier_members", lambda tier, tiers=None: ["tier-high-model"]
+    )
+
+    calls: list[str] = []
+
+    def _fake_ask(model_id, base_url, api_key, _catalog):
+        calls.append(model_id)
+        return None
+
+    monkeypatch.setattr(recommend, "_ask_model", _fake_ask)
+
+    recommend_tiers("any-provider", catalog, config_dir=str(tmp_path))
+    assert calls, "_ask_model was never called"
+    assert calls[0] == "tier-high-model"

@@ -188,9 +188,17 @@ def recommend_tiers(provider_name: str, catalog: list[dict], *,
 
     if config_dir is None:
         config_dir = secrets.config_dir()
-    trusted = _find_trusted_models(config_dir)
+    trusted = list(_find_trusted_models(config_dir))
     if not trusted:
         return _heuristic_rank(catalog)
+
+    pinned = os.environ.get("CHARON_DECOMPOSE_WORKER_MODEL")
+    if pinned:
+        trusted.sort(key=lambda t: t[0] != pinned)
+    else:
+        from .config import tiers as tiers_cfg
+        high_ids = set(tiers_cfg.tier_members("high"))
+        trusted.sort(key=lambda t: t[0] not in high_ids)
 
     votes: dict[str, dict[str, int]] = {"low": {}, "med": {}, "high": {}}
     respondents = 0
