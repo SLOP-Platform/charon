@@ -176,6 +176,41 @@ bash "$rdd/retire-done.sh" >/dev/null 2>&1
 unset VERIFY_MERGED_FIXTURE
 rm -rf "$rdd"
 
+# ============================ G4: repo-aware done.sh ============================
+echo "== G4 repo-aware =="
+g4_setup(){ local d; d="$(mktemp -d)"
+  cp "$SRC/done.sh" "$SRC/retire-done.sh" "$SRC/leak-guard.sh" "$SRC/_lib.sh" "$SRC/verify-merged.sh" "$d/"
+  mkdir -p "$d/board/archive" "$d/state/done" "$d/state/submitted" "$d/state/claims" "$d/state/needs-push"
+  # rig ticket with repo: charon-private
+  printf 'repo: charon-private\ntier: economy\nbranch: fix/rig-pr\nowns: src/rig.py\n' > "$d/board/RIG-T.md"
+  # mock gh: return merged PR only when --repo Nnyan/charon-private matches
+  mkdir -p "$d/bin"
+  cat > "$d/bin/gh" << 'GHMOCK'
+#!/usr/bin/env bash
+for a in "$@"; do [ "$a" = "Nnyan/charon-private" ] && { echo '42'; exit 0; }; done
+exit 0
+GHMOCK
+  chmod +x "$d/bin/gh"
+  echo "$d"; }
+
+# g4a: rig ticket (repo: charon-private) -> repo-map sets Nnyan/charon-private -> mock gh returns PR -> done.
+d="$(g4_setup)"
+rc=0; PATH="$d/bin:$PATH" bash "$d/done.sh" RIG-T >/dev/null 2>&1 || rc=$?
+check "g4a repo-aware done.sh succeeds for charon-private ticket (exit 0)" "$rc" "0"
+grep -q "merged:#42" "$d/state/done/RIG-T" 2>/dev/null \
+  && ok "g4a marker carries merged PR proof from charon-private repo" \
+  || bad "g4a marker carries merged PR proof from charon-private repo"
+rm -rf "$d"
+
+# g4b: product ticket without repo: field -> uses default REPO_SLUG -> mock gh returns nothing -> REFUSED.
+d="$(g4_setup)"
+# overwrite board file to remove repo: field (product ticket)
+printf 'tier: economy\nbranch: fix/prod-pr\nowns: src/prod.py\n' > "$d/board/RIG-T.md"
+rc=0; PATH="$d/bin:$PATH" bash "$d/done.sh" RIG-T >/dev/null 2>&1 || rc=$?
+check "g4b product ticket without repo: field uses default slug and refuses (exit 3)" "$rc" "3"
+[ -e "$d/state/done/RIG-T" ] && bad "g4b no marker on product ticket refuse" || ok "g4b no marker on product ticket refuse"
+rm -rf "$d"
+
 rm -rf "$P"
 echo
 echo "--- $PASS passed, $FAIL failed ---"
