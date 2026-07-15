@@ -7,6 +7,7 @@
 set -u
 PFR_DEBUG="${PFR_DEBUG:-0}"
 dbg() { [ "$PFR_DEBUG" = "1" ] && printf '[charon-run][DEBUG] %s\n' "$*" >&2; return 0; }
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CWD="$1"; OUT="$2"; BRIEF="$3"; shift 3
 MODELS=("$@")
 PROMPT="$(cat "$BRIEF")"
@@ -18,6 +19,60 @@ if [ ! -f "$LEDGER" ]; then
   printf 'ts\tjob\tmodel\tevent\tnote\n' > "$LEDGER" 2>/dev/null || true
 fi
  led() { printf '%s\t%s\t%s\t%s\t%s\n' "$(date -u +%FT%TZ)" "$LABEL" "$1" "$2" "$3" >> "$LEDGER" 2>/dev/null || true; }
+
+# ── FLAW-2 fix (adversarial review 2026-07-13): provider/local/infra faults
+# must NEVER be attributed to the model. Before this, ANY nonzero rc that
+# wasn't a rate-limit signal fell into the generic `elif RC -ne 0` branch
+# below and enqueued a model BLOCK -- so a gateway 5xx, a reset/refused
+# connection, a context-deadline, a local sqlite "database is locked", the
+# `timeout 1800` wrapper firing (rc=124), or an opaque server error (e.g.
+# phi-4's rc=3 UnknownError) all wrongly detained the MODEL for a fault that
+# was the PROVIDER's or the local session's, not the model's. This mirrors
+# the SAME taxonomy benchmark/dogfood-to-scorecard.sh's classify() already
+# uses (`provider-*|error-nonlimit*) -> SKIP`) and benchmark/lib/
+# dogfood-attribution.sh's db-lock/opaque-error buckets -- same categories,
+# reused here rather than forked, adapted to this script's per-attempt
+# (mid-loop, single-attempt tail) shape rather than dogfood-eval.sh's
+# post-hoc whole-log shape.
+# is_infra_fault <rc> <tail_text> -> 0 (true) if this attempt's failure is a
+# provider/local/infra symptom that must enqueue NOTHING (not model quality).
+is_infra_fault() {
+  local rc="$1" tail="$2"
+  # timeout 1800 killed the subprocess: 30 minutes is a hang/infra ceiling on
+  # this direct single-model driver, not a latency-quality judgment (that is
+  # dogfood-eval.sh's much tighter DOGFOOD_LATENCY_BUDGET_S's job) -- so an
+  # rc=124 here is a hang, not evidence the model itself is unfit.
+  [ "$rc" -eq 124 ] && return 0
+  # opaque rc=3 (confirmed real-world signature: phi-4 via a funded DeepInfra
+  # gateway path -- see benchmark/lib/dogfood-attribution.sh's UnknownError
+  # note) -- a bare non-descriptive exit code with no model-attributable
+  # content is an infra/opaque fault, not a model-quality signal.
+  [ "$rc" -eq 3 ] && return 0
+  printf '%s' "$tail" | grep -qiE \
+    '\b5(0[0-9]|[1-9][0-9])\b.*(gateway|server|error)|bad gateway|service unavailable|gateway timeout|connection (reset|refused)|econnreset|econnrefused|context deadline exceeded|database is locked|"name"[[:space:]]*:[[:space:]]*"?unknownerror|internal server error' \
+    && return 0
+  return 1
+}
+
+# ── scorecard capture hook (grader-safe: enqueues to the bench-grader-owned
+# spool; NEVER writes model-scorecard.tsv itself — see capture/enqueue-capture.sh
+# + fleet/ADR-BENCH-OOB-GRADING.md). Best-effort: never fails the run.
+# `ref` comes from CHARON_JOB_REF (set by fleet-droid.sh) falling back to LABEL
+# so a standalone invocation still gets a usable ref.
+CAPTURE_SCRIPT="$SCRIPT_DIR/capture/enqueue-capture.sh"
+CAPTURE_MODEL_USED_DIR="$SCRIPT_DIR/state/model-used"
+cap() {  # cap <model> <claimed-result> [<verdict> <gate> <evidence>]
+  [ -x "$CAPTURE_SCRIPT" ] || return 0
+  local m="$1" claimed="$2" verdict="${3:-}" gate="${4:-}" evid="${5:-}"
+  local args=(--model "$m" --claimed-result "$claimed" --ref "${CHARON_JOB_REF:-$LABEL}")
+  if [ -n "$verdict" ]; then
+    local sc=0; [ "$gate" = "pass" ] && sc=100
+    args+=(--stage active --actual-verdict "$verdict" --actual-gate "$gate" --score "$sc" --evidence "$evid" --call-log-report)
+  else
+    args+=(--stage provisional)
+  fi
+  "$CAPTURE_SCRIPT" "${args[@]}" >/dev/null 2>&1 || true
+}
 for M in "${MODELS[@]}"; do
   echo "===== [charon-run] attempt: charon/$M @ $(basename "$CWD") =====" >> "$OUT"
   MARK=$(wc -l < "$OUT")
@@ -28,7 +83,10 @@ for M in "${MODELS[@]}"; do
   # (see preflight.sh's fd-3 fix + comment) — belt-and-suspenders even when
   # invoked standalone (headless run should never block on / consume tty
   # input either).
-  ( cd "$CWD" && timeout 1800 opencode run --model "charon/$M" "$PROMPT" ) </dev/null >> "$OUT" 2>&1
+  # Honor the caller's latency budget (dogfood-eval/preflight pass CHARON_RUN_TIMEOUT_S);
+  # only fall back to 1800 when unset. Hardcoding 1800 let a hung/edit-loop model burn 30min
+  # instead of its budget (latency-is-a-failure-class).
+  ( cd "$CWD" && timeout "${CHARON_RUN_TIMEOUT_S:-1800}" opencode run --model "charon/$M" "$PROMPT" ) </dev/null >> "$OUT" 2>&1
   RC=$?
   dbg "attempt model=charon/$M exit_code=$RC"
   TAIL=$(tail -n +"$MARK" "$OUT")
@@ -36,14 +94,27 @@ for M in "${MODELS[@]}"; do
   if printf '%s' "$TAIL" | grep -qiE '\b429\b|rate.?limit|quota exceeded|insufficient (funds|credit|balance)|session limit|no capacity|model (is )?(over|exhausted)|out of (credit|quota)'; then
     echo "[charon-run] model '$M' hit a provider/session LIMIT -> failing over" >> "$OUT"
     led "$M" "limit-failover" "rc=$RC; all providers for this model exhausted at gateway"
+    # NOT a scorecard-worthy quality signal (provider/session exhaustion, not model
+    # competence) -- matches dogfood-to-scorecard.sh's classify() SKIP for provider-*.
+    continue
+  elif [ "$RC" -ne 0 ] && is_infra_fault "$RC" "$TAIL"; then
+    echo "[charon-run] model '$M' hit a provider/local/infra FAULT (rc=$RC, not model quality) -> failing over" >> "$OUT"
+    led "$M" "infra-fault-failover" "rc=$RC; provider/local/infra symptom (5xx/reset/refused/deadline/db-lock/timeout/opaque) -- not a model verdict"
+    # NOT a scorecard-worthy quality signal -- matches dogfood-to-scorecard.sh's
+    # classify() SKIP for provider-*/error-nonlimit* (see is_infra_fault above).
     continue
   elif [ "$RC" -ne 0 ]; then
-    echo "[charon-run] model '$M' exited nonzero (rc=$RC, not a limit) -> failing over" >> "$OUT"
-    led "$M" "error-failover" "rc=$RC; non-limit failure"
+    echo "[charon-run] model '$M' exited nonzero (rc=$RC, not a limit, not an infra fault) -> failing over" >> "$OUT"
+    led "$M" "error-failover" "rc=$RC; non-limit, non-infra failure (genuine model-attributable result)"
+    cap "$M" "FAIL" "BLOCK" "fail" "opencode exited rc=$RC (non-limit, non-infra failure, self-evident at run time)"
     continue
   fi
   echo "[charon-run] SUCCESS on model '$M' (rc=0)" >> "$OUT"
   echo "CHARON_RUN_RESULT=SUCCESS model=$M" >> "$OUT"
+  # Claim only (PROVISIONAL) -- the run exiting 0 is not yet a verified MERGE;
+  # done.sh supplies the FINAL actual_verdict/gate once the merge is proof-verified.
+  cap "$M" "SUCCESS"
+  mkdir -p "$CAPTURE_MODEL_USED_DIR" 2>/dev/null && printf '%s\n' "$M" > "$CAPTURE_MODEL_USED_DIR/${CHARON_JOB_REF:-$LABEL}" 2>/dev/null || true
   exit 0
 done
 echo "[charon-run] ALL MODELS EXHAUSTED: ${MODELS[*]}" >> "$OUT"

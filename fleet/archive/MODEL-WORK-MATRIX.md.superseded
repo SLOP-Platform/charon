@@ -1,5 +1,10 @@
 # Model × Work Matrix — first pass (2026-07-05)
 
+> **SUPERSEDED by `fleet/state/CG-MODEL-CANDIDATES.md`** — ARCHIVED 2026-07-14 (purely stale: this
+> doc self-labels "first pass ... to be validated empirically"; its work-type assignments are now
+> folded into the roster's tier column, and `MODEL-ROLE-EVALUATION.md` §3 is the maintained per-role
+> rubric. No unique analysis left un-migrated.
+
 Scope: routing assignment for SLOP/mediastack + Charon work (Python backend, gateway, CLI,
 agentic coding, tests, CI). FIRST PASS from published benchmarks/reputation + our cost data —
 to be **validated empirically** by the `quality_scorer` (live feedback) + an eval harness (budget-gated).

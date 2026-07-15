@@ -3,7 +3,12 @@ difficulty: 1
 work_class: ci-infra
 branch: feat/sync-schedule
 repo: charon-private
-depends_on:
+depends_on: STARTUP-CONTEXT-DIET
+real-dep: STARTUP-CONTEXT-DIET — shared fleet/preflight.sh edit region (this also
+  transitively orders SYNC-SCHEDULE after HANDOFF-MECHANIZE via the existing
+  HANDOFF-MECHANIZE -> HANDOFF-PIPEFAIL -> REPO-DECL-CENTRAL -> STARTUP-CONTEXT-DIET
+  chain, which also owns preflight.sh). Undeclared 3-way owns collision found +
+  fixed per fleet/state/TOOL-AUDIT-COLLISION.md RANK 3 (2026-07-13).
 owns: fleet/preflight.sh, fleet/hooks/session-start.sh
 accept: |
   Keep LOCAL main checkouts' master current with origin on a SENSIBLE SCHEDULE so they never drift stale (the
@@ -17,5 +22,12 @@ accept: |
   → hook SKIPS (no data loss). Revert the wiring → stale local persists → RED.
 scope: mechanize local-checkout freshness (operator directive 2026-07-13). [[investigate-and-backup-before-data-loss]]
 ds: |
-  depends_on: none (sync-checkouts.sh already built). Small rig chore; Sonnet/economy.
-note: script done; this ticket just wires it to SessionStart + preflight for the automatic schedule.
+  depends_on: STARTUP-CONTEXT-DIET (was none — fixed 2026-07-13, see real-dep above).
+  sync-checkouts.sh itself is already built; only the preflight.sh/session-start.sh
+  wiring is pending, and it must land AFTER the HANDOFF-MECHANIZE -> HANDOFF-PIPEFAIL
+  -> REPO-DECL-CENTRAL -> STARTUP-CONTEXT-DIET chain finishes editing preflight.sh.
+  Small rig chore; Sonnet/economy; just gated later than originally scoped.
+note: script done; this ticket just wires it to SessionStart + preflight for the automatic
+  schedule. Sequenced behind the preflight.sh edit chain (HANDOFF-MECHANIZE ... STARTUP-
+  CONTEXT-DIET) to avoid the undeclared 3-way owns collision on preflight.sh (see
+  fleet/state/TOOL-AUDIT-COLLISION.md RANK 3).

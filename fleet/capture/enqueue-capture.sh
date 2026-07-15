@@ -137,10 +137,24 @@ print(json.dumps(d, indent=2))
 JSON="$(_build_json)"
 
 # ── Output ───────────────────────────────────────────────────────────────────
+# FILENAME must be unique per phase/attempt (FLAW-1 fix, adversarial review
+# 2026-07-13): the PROVISIONAL (charon-run.sh SUCCESS) and FINAL (done.sh
+# MERGE) share the SAME run_id by design so grader-daemon.py can pair them
+# (_handle_capture keys off the run_id FIELD, not the filename — confirmed by
+# reading grader-daemon.py). But grader-daemon.py's _scan_requests() dedups
+# by FILENAME via a `seen` set. If both phases wrote to the same
+# `$RUN_ID.json` path, the FINAL write would silently land on a filename
+# already in `seen` and the daemon would never read it -> the FINAL MERGE
+# never reaches the ledger (provisional orphaned forever, PAROLE can never
+# fire). Suffix the ON-DISK name with stage + pid + a nanosecond tiebreaker so
+# every write is a distinct file; `run_id` inside the JSON body stays STABLE
+# for pairing.
+UNIQ_SUFFIX="$$.$(date +%N 2>/dev/null || echo 0)"
+OUT_BASENAME="${RUN_ID}.${STAGE}.${UNIQ_SUFFIX}.json"
 if [ "$DRY_RUN" -eq 1 ]; then
   echo "$JSON"
   echo "---"
-  echo "DRY-RUN: would enqueue to $SPOOL_DIR/$RUN_ID.json"
+  echo "DRY-RUN: would enqueue to $SPOOL_DIR/$OUT_BASENAME"
   exit 0
 fi
 
@@ -149,7 +163,7 @@ if [ ! -d "$SPOOL_DIR" ]; then
   exit 1
 fi
 
-OUT_FILE="$SPOOL_DIR/$RUN_ID.json"
+OUT_FILE="$SPOOL_DIR/$OUT_BASENAME"
 echo "$JSON" > "$OUT_FILE"
 chmod 644 "$OUT_FILE" 2>/dev/null || true
 echo "$PROG: enqueued $OUT_FILE" >&2

@@ -10,7 +10,7 @@ real-dep: PROVIDER-PROBE-FIX shared-file hand-off — this ticket edits the SAME
   probe-validation LOGIC bug first (inline, no new helper needed); this ticket then extracts
   the now-fixed URL construction into the shared helper.
 owns: src/charon/providers.py, src/charon/config.py, src/charon/discover.py, tests/test_providers.py
-accept: PYTHONPATH=src python3 -m pytest tests/test_providers.py tests/test_config.py tests/test_discover.py -q
+accept: PYTHONPATH=src python3 -c "from charon.providers import models_url, chat_url" && python3 -c "import re,sys; c=open('tests/test_providers.py').read(); sys.exit(0 if re.search(r'def test_(models_url|chat_url)_\w+', c) else 1)" && /home/stack/charon-private/fleet/benchmark/lib/grep-code-only.sh 'rstrip\("/"\)[[:space:]]*\+[[:space:]]*"/(v1/)?(models|chat/completions)"' src/charon/providers.py src/charon/discover.py src/charon/config/keyprobe.py && PYTHONPATH=src python3 -m pytest tests/test_providers.py tests/test_config.py tests/test_discover.py -q
 prompt: /home/stack/charon-private/fleet/board/briefs/PROVIDER-URL-HELPER.md
 scope: Fragility finding #9. Provider endpoint URL/path construction is duplicated across
   `providers.py` (`base.rstrip("/") + "/models"` at ~line 248), `config.py`
@@ -35,3 +35,10 @@ scope: Fragility finding #9. Provider endpoint URL/path construction is duplicat
   resolved URL — this is a dedup refactor, not a routing change.
 note: Standard review. Wave 2 relative to PROVIDER-PROBE-FIX (see real-dep above) — the
   fleet auto-claims this once PROVIDER-PROBE-FIX merges+done.sh.
+  TIGHTENED 2026-07-13: test-quality-gate.py flagged the old bare-pytest accept as TOO-EASY (it
+  re-ran a pre-existing suite that already passes on unmodified origin/master, so a do-nothing
+  candidate would pass). The accept: field above now ALSO requires (a) the helper importable,
+  (b) a NEW test named test_models_url_*/test_chat_url_* to exist BY NAME (grep-confirm, not
+  just "suite is green"), (c) no leftover inline rstrip+concat duplication. Verified
+  RED-proof=OK (fails on unmodified master, passes with a real fix) via a throwaway git
+  worktree — see fleet/board/briefs/PROVIDER-URL-HELPER-eval.md.

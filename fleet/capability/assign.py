@@ -220,6 +220,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--tsv", default=None, help="override model-scorecard.tsv path (mainly for tests)")
     ap.add_argument("--live-availability", action="store_true",
                      help="query the live session-bridge for availability (default: unknown for all, since MVP has no live model-tagged sessions to differentiate on — see build report)")
+    # S4 (Gap A rig facet): fleet-droid.sh's tier dispatcher consumer seam. It already owns a
+    # vetted, gateway-proven model set per tier (fleet/tier-models.tsv); it must never let a
+    # real-outcome recommendation introduce a DIFFERENT, unlisted model id into a gateway call.
+    # --candidates restricts ranking to exactly that set (threads straight into assign()'s
+    # existing candidate_models param); --print-model gives a plain, script-friendly single
+    # line (the picked model id, nothing else) instead of the human rationale, so a caller can
+    # do `model="$(assign.py ... --print-model)"` and treat a non-zero exit as "no real-outcome
+    # recommendation available — fall back to your own static ordering."
+    ap.add_argument("--candidates", metavar="M1,M2,...",
+                     help="restrict ranking to this comma-separated candidate model-id set")
+    ap.add_argument("--print-model", action="store_true",
+                     help="print ONLY the picked model id to stdout (nothing if refused); "
+                          "suppresses the human rationale. Exit 0 on a pick, 1 on refusal.")
     args = ap.parse_args(argv)
 
     work_class = args.work_class
@@ -248,7 +261,21 @@ def main(argv: list[str] | None = None) -> int:
     availability: AvailabilityProvider
     availability = SessionBridgeAvailability() if args.live_availability else StaticAvailability()
 
-    result = assign(work_class, grades, availability, required_tier=required_tier, blockers=blockers)
+    candidate_models = None
+    if args.candidates:
+        candidate_models = [m.strip() for m in args.candidates.split(",") if m.strip()]
+
+    result = assign(work_class, grades, availability, required_tier=required_tier, blockers=blockers,
+                     candidate_models=candidate_models)
+
+    if args.print_model:
+        # Machine-readable mode ONLY — no rationale, no claim side-effect. A dispatcher-side
+        # caller (fleet-droid.sh's assign_reorder_chain) wants exactly one thing: is there a
+        # real-outcome pick, yes/no, and if so which model id.
+        if result.picked:
+            print(result.picked)
+            return 0
+        return 1
 
     if ticket_id:
         print(f"TICKET: {ticket_id}")

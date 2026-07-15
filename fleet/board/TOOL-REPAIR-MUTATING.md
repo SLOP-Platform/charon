@@ -1,5 +1,11 @@
 tier: economy
 difficulty: 1  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
+eval-role: SMOKE-TEST-ONLY — non-discriminating (2026-07-13). Confirmed by
+  fleet/benchmark/test-quality-gate.py: its own accept: (a bare pytest re-run) PASSES on
+  unmodified origin/master, and real candidate outcomes
+  (fleet/state/PATH-C-RANKING-CORRECTED.md:71) showed 5/6 clean passes with zero rank signal.
+  Keep only to confirm the dogfood pipe RUNS end-to-end; never score it alone as a ranking
+  signal. See fleet/state/DOGFOOD-BATTERY-DESIGN.md and fleet/state/PATH-C-EVAL-SET.md.
 work_class: bugfix
 branch: feat/tool-repair-mutating-gate
 depends_on:

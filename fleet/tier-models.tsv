@@ -1,5 +1,10 @@
 # tier-models.tsv — per-tier GATEWAY model FAILOVER CHAIN for the OFF-CLAUDE droid executor.
 #
+# For the deduped model-candidate roster (cost/funding/Path-C status) and the live provider list,
+# see fleet/state/CG-MODEL-CANDIDATES.md + fleet/state/CG-PROVIDERS.md. This file stays the
+# machine-consumed data source (fleet-droid.sh parses it directly) — edit it for real chain
+# changes; the two CG- docs are the human-facing reference, not the other way around.
+#
 # Consumed by fleet/fleet-droid.sh to turn a tier arg into the ordered list of gateway model ids
 # it hands the swappable work client ($CHARON_AGENT_CMD -> charon-run.sh). Each id is used as
 # `charon/<id>` against the Charon gateway (4-LOM, http://10.0.1.60:8080), which itself fails over

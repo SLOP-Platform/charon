@@ -35,10 +35,18 @@
 #   too-slow                 — charon-run.sh's own timeout (rc=124) with NO pool-exhaustion
 #                               signal in opencode's log (latency-is-a-failure-class)
 #   provider-degraded->retry — charon-run.sh's own timeout WITH a pool-exhaustion signal
-#   provider-throttled->try-another — charon-run.sh's own limit-failover / ALL-EXHAUSTED
-# A model is NEVER disqualified for a provider symptom (degraded/throttled) — only for
-# early-ditch/quality or too-slow (latency-is-a-failure-class: an intrinsic budget miss
-# fails by itself, regardless of correctness).
+#   provider-throttled->try-another — a REAL limit-hit/all-exhausted signal (see
+#                               lib/dogfood-attribution.sh — local/opaque errors are
+#                               checked FIRST so this bucket isn't a catch-all)
+#   local-error                — a local/opaque failure (sqlite db-lock, opaque gateway
+#                               UnknownError) that is NOT a provider rate-limit; needs
+#                               human triage, never silently folded into provider-*
+# A model is NEVER disqualified for a provider symptom (degraded/throttled/local-error)
+# — only for early-ditch/quality or too-slow (latency-is-a-failure-class: an intrinsic
+# budget miss fails by itself, regardless of correctness). A trailing provider hiccup
+# on a call made AFTER the real diff already graded clean (gate pass + ticket-test pass)
+# is reclassified and still counts as REVIEW-READY — see reclassify_trailing_success in
+# lib/dogfood-attribution.sh.
 #
 # NEVER auto-merges, NEVER pushes, NEVER lands. Output is a per-candidate REVIEW PACKET
 # (result card + saved diff + gate/test logs) for a human to read — pass/fail is a
@@ -47,6 +55,8 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FLEET_DIR="$(cd "$HERE/.." && pwd)"
+# shellcheck source=lib/dogfood-attribution.sh
+source "$HERE/lib/dogfood-attribution.sh"
 
 # ---- configuration (env-overridable; defaults match repo-registry.sh's `charon` repo) ----
 CHARON_RUN="${DOGFOOD_CHARON_RUN:-$FLEET_DIR/charon-run.sh}"
@@ -105,6 +115,51 @@ printf '|---|---|---|---|---|---|---|---|---|---|\n' >> "$SUMMARY_FILE"
 
 git -C "$PRODUCT_REPO" fetch origin --quiet 2>/dev/null || true
 
+# finalize_live_capture <model> <overall> <ref> <gate_verdict> <test_verdict> <out_log> <card>
+# Convert this run's OBJECTIVE grade (charon.cli gate + ticket accept-test — NEVER the
+# model's own claimed SUCCESS) into a paired FINAL capture, so a clean run lands a
+# source=live/stage=active scorecard row instead of evaporating as a lost provisional.
+# The daemon (bench-grader) does the ledger write; we only enqueue to the maildrop spool.
+#
+# SAFETY INVARIANTS (money-path — see charon-run.sh's per-model loop):
+#  * Fire ONLY when out_log has CHARON_RUN_RESULT=SUCCESS — the single state where
+#    charon-run stored a PROVISIONAL + wrote state/model-used/<ref> and did NOT itself
+#    self-finalize a row. This is the double-log guard: charon-run only ever writes a
+#    FINAL row on its rc!=0 non-infra BLOCK path (which never emits this marker), and
+#    SKIPS logging entirely on provider-limit / infra faults (also no marker). So a
+#    SUCCESS marker == exactly one provisional awaiting our FINAL, never a double count.
+#  * At SUCCESS (rc==0) `overall` is only ever REVIEW-READY / FIXES-NEEDED / DETAIN — a
+#    RETRY verdict requires rc!=0 + a provider/local attribution, so an infra/provider
+#    fault is structurally never mapped onto the model here (the Flaw-2 trap).
+#  * Verdict is derived from the objective `overall`, not the model's claim; a
+#    claimed-SUCCESS that grades FIXES/BLOCK is flagged as a discrepancy (--call-log-report).
+finalize_live_capture() {
+  local model="$1" overall="$2" ref="$3" gate_v="$4" test_v="$5" out_log="$6" card="$7"
+  local enq="$FLEET_DIR/capture/enqueue-capture.sh"
+  [ -x "$enq" ] || return 0
+  # Double-log guard: only the true charon-run SUCCESS path (provisional stored,
+  # model-used written, no self-finalized row) is eligible.
+  grep -q '^CHARON_RUN_RESULT=SUCCESS' "$out_log" 2>/dev/null || return 0
+  local v g
+  case "$overall" in
+    REVIEW-READY*) v=MERGE; g=pass ;;
+    FIXES-NEEDED*) v=FIXES; g="$gate_v" ;;
+    DETAIN*)       v=BLOCK; g=fail ;;
+    *)             return 0 ;;  # RETRY*/BLOCKED*/unknown -> not a model outcome; fail closed
+  esac
+  # Normalize gate to the daemon's enum (pass|fail); anything else (skipped/not-given)
+  # is sent empty (the daemon accepts an empty actual_gate).
+  case "$g" in pass|fail) : ;; *) g="" ;; esac
+  local score=0; [ "$g" = pass ] && score=100
+  "$enq" --model "$model" --claimed-result SUCCESS --ref "$ref" \
+    --stage active --actual-verdict "$v" --actual-gate "$g" --score "$score" \
+    ${DOGFOOD_WORK_CLASS:+--work-class "$DOGFOOD_WORK_CLASS"} \
+    --evidence "dogfood-eval OBJECTIVE grade: overall=$overall gate=$gate_v test=$test_v card=$(basename "$card")" \
+    --call-log-report >/dev/null 2>&1 \
+    && echo "[dogfood-eval] live-lane FINAL enqueued: $model ref=$ref -> verdict=$v gate=${g:-<none>} (daemon appends source=live/stage=active)" >&2 \
+    || echo "[dogfood-eval] WARN: live-lane FINAL enqueue failed for $model ref=$ref (non-fatal)" >&2
+}
+
 # run_one <model>
 # Everything about ONE candidate lives here: worktree, run, grade, card. Never merges.
 run_one() {
@@ -146,27 +201,23 @@ run_one() {
 
   local start_epoch end_epoch elapsed rc
   start_epoch="$(date -u +%s)"
-  CHARON_RUN_TIMEOUT_S="$LATENCY_BUDGET_S" "$CHARON_RUN" "$wt" "$out_log" "$wt/DOGFOOD-TICKET-BRIEF.md" "$model"
+  # CHARON_JOB_REF: pin the capture ref to this candidate's unique label so the
+  # provisional charon-run stores (on success) and the FINAL finalize_live_capture
+  # enqueues below pair on the SAME ref (and state/model-used/<ref> confirms it).
+  # CHARON_JOB_WORK_CLASS: the daemon takes a paired FINAL's work_class from the
+  # STORED PROVISIONAL (grader-daemon._handle_capture), so the class must ride on the
+  # provisional charon-run enqueues here — a --work-class on the FINAL alone is ignored.
+  # Unset -> daemon defaults to ci-infra.
+  CHARON_JOB_REF="$label" CHARON_JOB_WORK_CLASS="${DOGFOOD_WORK_CLASS:-}" \
+    CHARON_RUN_TIMEOUT_S="$LATENCY_BUDGET_S" "$CHARON_RUN" "$wt" "$out_log" "$wt/DOGFOOD-TICKET-BRIEF.md" "$model"
   rc=$?
   end_epoch="$(date -u +%s)"
   elapsed=$((end_epoch - start_epoch))
 
-  # ---- failure attribution (reuse charon-run.sh's OWN classification lines; never
-  # re-derive from scratch) ----
-  local attribution="unknown"
-  if [ "$rc" -eq 0 ]; then
-    attribution="ran-to-completion"
-  elif grep -q 'TIMEOUT (rc=124.*CAUSE: gateway pool exhausted' "$out_log" 2>/dev/null; then
-    attribution="provider-degraded->retry(pool-exhausted-on-timeout)"
-  elif grep -q 'TIMEOUT (rc=124.*too-slow FAIL' "$out_log" 2>/dev/null; then
-    attribution="too-slow(latency-budget-exceeded)"
-  elif grep -q "hit a provider/session LIMIT" "$out_log" 2>/dev/null; then
-    attribution="provider-throttled->try-another(limit-hit)"
-  elif grep -q "ALL MODELS EXHAUSTED" "$out_log" 2>/dev/null; then
-    attribution="provider-throttled->try-another(all-exhausted)"
-  elif grep -q "exited nonzero" "$out_log" 2>/dev/null; then
-    attribution="error-nonlimit(rc=$rc; needs human triage, not auto-disqualified as model-quality)"
-  fi
+  # ---- failure attribution (lib/dogfood-attribution.sh; never re-derive inline —
+  # see that file for the mislabel bug this classifier fixes) ----
+  local attribution
+  attribution="$(classify_attribution "$rc" "$out_log")"
 
   local latency_verdict="within-budget"
   [ "$elapsed" -ge "$LATENCY_BUDGET_S" ] && latency_verdict="BUDGET-EXCEEDED(too-slow-is-a-fail-by-itself)"
@@ -222,20 +273,36 @@ run_one() {
     echo "(no DOGFOOD_TEST_CMD given — ticket-specific accept: check not run)" > "$test_log"
   fi
 
+  # ---- reclassify a trailing provider hiccup AFTER the real work already graded clean
+  # (lib/dogfood-attribution.sh) — must run AFTER gate_verdict/test_verdict exist ----
+  attribution="$(reclassify_trailing_success "$attribution" "$rc" "${n_changed:-0}" "$gate_verdict" "$test_verdict")"
+
   # ---- overall verdict (advisory for human review — never an auto-merge signal) ----
+  # Order matters: an intrinsic quality/latency fail always wins (early-ditch/too-slow);
+  # otherwise a real diff that graded clean on BOTH the objective gate and the ticket's
+  # own accept-test is REVIEW-READY regardless of rc — this is what makes the trailing-
+  # provider-hiccup-after-success case (deepseek-v4-flash/kimi-k2.6 on TOOL-REPAIR-
+  # MUTATING) land correctly instead of as a false RETRY/provider-symptom. Only after
+  # that do we fall back to a genuine provider symptom or a local/opaque error (neither
+  # of which disqualifies the model — it's a RETRY, not a FIXES-NEEDED).
   local overall="FIXES-NEEDED"
   if [[ "$attribution" == too-slow* ]]; then
     overall="DETAIN(latency)"
   elif [[ "$attribution" == early-ditch* ]]; then
     overall="DETAIN(quality)"
+  elif [ "${n_changed:-0}" -gt 0 ] && [ "$gate_verdict" = "pass" ] && { [ "$test_verdict" = "pass" ] || [ "$test_verdict" = "not-given" ]; }; then
+    overall="REVIEW-READY(candidate-for-merge; human must still read the diff)"
   elif [[ "$attribution" == provider-*  && "$rc" -ne 0 ]]; then
     overall="RETRY(provider-symptom-not-model-fault)"
-  elif [ "$rc" -eq 0 ] && [ "${n_changed:-0}" -gt 0 ] && [ "$gate_verdict" = "pass" ] && { [ "$test_verdict" = "pass" ] || [ "$test_verdict" = "not-given" ]; }; then
-    overall="REVIEW-READY(candidate-for-merge; human must still read the diff)"
+  elif [[ "$attribution" == local-error* ]]; then
+    overall="RETRY(local-error-not-model-fault; needs human triage)"
   fi
 
   write_card "$card" "$model" "$overall" "$attribution" "$elapsed" "$latency_verdict" "$gate_verdict" "$test_verdict" "$did_real_work" "$scope_verdict" "$diff_stat" "$wt" "$branch" "$out_log" "$gate_log" "$test_log" "$diff_file"
   append_summary "$model" "$overall" "$attribution" "$elapsed" "$LATENCY_BUDGET_S" "$gate_verdict" "$test_verdict" "$did_real_work" "$scope_verdict" "$card"
+  # Close the live-lane loop: objective grade -> paired FINAL capture -> daemon writes a
+  # source=live/stage=active scorecard row (guarded; see finalize_live_capture header).
+  finalize_live_capture "$model" "$overall" "$label" "$gate_verdict" "$test_verdict" "$out_log" "$card"
 
   echo "[dogfood-eval] candidate $model -> $overall (attribution=$attribution, wall_s=$elapsed, card=$card)" >&2
 

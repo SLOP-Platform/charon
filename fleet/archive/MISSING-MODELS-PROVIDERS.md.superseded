@@ -1,5 +1,11 @@
 # Missing-models provider research (2026-07-05)
 
+> **SUPERSEDED by `fleet/state/CG-MODEL-CANDIDATES.md`** — ARCHIVED 2026-07-14 (purely stale: a
+> point-in-time gap analysis of models absent from the catalog; most of the "missing" models here
+> — Kimi K2.6, GLM-5.2, DeepSeek V4-Pro/Flash, MiniMax M2.7 — are now live in the gateway config, and
+> the roster tracks current live/funding status directly. Kept for its per-model source citations
+> (OpenRouter/pricepertoken/Cerebras-blog links) if provenance is ever needed again.
+
 Read-only research for models the operator wants that are absent from Charon's 199-model
 catalog. Goal: identify where each is served and the budget-high-value provider to add,
 prioritizing providers Charon already holds keys for: **nanogpt, groq, cerebras, mistral,
