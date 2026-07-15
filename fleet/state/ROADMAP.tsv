@@ -176,3 +176,12 @@ Router	PROVIDER-CATALOG-REFRESH	done	-	provider-catalog-refresh	auto model<->pro
 Router	ADD-PROVIDER-MECHANIZE	done	-	add-provider-mechanize	one-command gateway provider add	Model-Trust
 Router	DECOMPOSE-EFFORT-AXIS	done	-	decompose-effort-axis	effort axis on the decompose gate (EFFORT-WIRE+ESTIMATOR merged)	Model-Trust
 Router	MODEL-LIFECYCLE	done	-	model-lifecycle	fresh-install onboard + scheduled keep-fresh orchestrator — merged PR #117 (69c115d)	Model-Trust
+FLEET	SESSION-CTX-PROPAGATE	in-review	gate	sub-agent context propagation	sub-agents inherit session context via PreToolUse hook (built feat/session-ctx-propagate, needs land)	session-reliability
+FLEET	BASE-INTEGRITY-GATE	queued	gate	base-integrity launch gate	refuse building a ticket on a base missing its prereqs (root cause of wrong-base bug)	session-reliability
+FLEET	COVERAGE-META-GATE	queued	gate	rule-coverage meta-gate (§11)	port mediastack enforcement_coverage; every gate-able rule must be a gate	session-reliability
+FLEET	WORK-GATE-UNIVERSAL	queued	gate	decompose-sizing + E2E-wired gates	mechanize work-discipline across inline/subsession/detached/tab	session-reliability
+FLEET	ENV-REGISTRY-WIRE	queued	gate	live env-registry at session start	surface CG-PROVIDERS to sessions/sub-agents; kill env-spelunking	session-reliability
+FLEET	SSOT-DRIFT-GATE	queued	gate	SSOT drift merge-gate	converge diverged MSOTs incl board-vs-roadmap; msot-drift.sh	session-reliability
+SECURITY	LEG-SANDBOX-HARDEN	queued	security	leg-preflight sandbox isolation	close cred-exfil vector (ns/seccomp) in canary exec	leg-followups
+FLEET	LEG-F6-REALPATH-TEST	queued	test	close vacuous F6 fail-on-revert	exercise the real urllib pin path	leg-followups
+FLEET	STRANDED-WORK-AUDIT	done	audit	stranded near-done work audit	recover 18 built-unmerged items + FN #49-53	session-reliability
