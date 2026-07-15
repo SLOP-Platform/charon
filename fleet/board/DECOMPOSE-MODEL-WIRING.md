@@ -3,6 +3,7 @@ tier: frontier
 difficulty: 4
 work_class: greenfield-feature
 branch: feat/decompose-model-wiring
+serial_justified: Cohesive ~30-line env-wiring diff (DECOMPOSE-WIRING-PLAN.md §3) — planner+recommend share the CHARON_DECOMPOSE_*_MODEL naming contract; splitting adds contract-coupling/contention risk with zero wall-clock gain (decompose_surface.py is in owns for sequencing only, untouched by the diff).
 depends_on: WORK-DECOMPOSER
 owns: src/charon/decompose_planner.py, src/charon/decompose_surface.py, src/charon/recommend.py, tests/test_decompose_planner.py, tests/test_recommend.py, tests/test_decompose_surface.py
 note: |

@@ -104,6 +104,16 @@ write_ticket "$D" ONESURF 4 "a/one.py"
 bash "$GATE" check ONESURF >/dev/null 2>&1
 [ $? -eq 0 ] && ok "(e2) single owned surface is not splittable -> PASSES" || bad "(e2) single owned surface is not splittable -> PASSES"
 
+# ---- (e3) not splittable: a module + its OWN test are ONE coupled surface, not two ----
+# Fail-on-revert for the test-coupling fix: owns a single source file plus its unit test at
+# difficulty 4. A test path is not an independent parallelizable surface (decompose.sh keeps
+# each module's test riding WITH it), so surf_n collapses to 1 -> NOT splittable -> PASSES.
+# If the test-exclusion in surfaces_of is reverted, test_one.py counts as a 2nd surface and
+# this wrongly FAILS the gate -> this case goes RED.
+write_ticket "$D" MODTEST 4 "src/charon/one.py, tests/test_one.py"
+bash "$GATE" check MODTEST >/dev/null 2>&1
+[ $? -eq 0 ] && ok "(e3) module + its own test = one coupled surface -> PASSES" || bad "(e3) module + its own test = one coupled surface -> PASSES (test-coupling exclusion REVERTED)"
+
 # ---- (f) scan: unjustified splittable ticket is surfaced; scan always exits 0 ----
 out="$(bash "$GATE" scan 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "(f) scan mode always exits 0 (advisory)" || bad "(f) scan mode always exits 0 (advisory) (got $rc)"

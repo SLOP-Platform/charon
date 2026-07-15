@@ -56,13 +56,23 @@ lc(){ printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 # --- owns -> distinct non-prose surfaces (same skip rule as validate_board.sh #4b: an
 # entry containing whitespace or starting with '(' is prose/descriptive, not a real path). --
 surfaces_of(){
-  local f="$1" line parts=() p t out=()
+  local f="$1" line parts=() p t b out=()
   line="$(field "$f" owns)"
   IFS=',' read -ra parts <<< "$line"
   for p in "${parts[@]:-}"; do
     t="$(printf '%s' "$p" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
     [ -n "$t" ] || continue
     case "$t" in *' '*|*$'\t'*|'('*) continue ;; esac
+    # A module's OWN unit test is NOT an independent parallelizable surface: you never hand
+    # "write X" to one agent and "write the test for X" to another — they are one coupled
+    # unit, and fleet/decompose.sh keeps each module's test riding WITH it (never a separate
+    # sub-ticket). Counting test_X.py as a distinct surface from X.py manufactured a whole
+    # class of false SPLITTABLE-SERIAL verdicts (module+test = "2 surfaces") that starved the
+    # board. Exclude test paths from the independent-surface count so the gate measures real
+    # source fan-out, matching how decompose actually splits.
+    b="${t##*/}"
+    case "$t" in tests/*|*/tests/*) continue ;; esac
+    case "$b" in test_*|*_test.*|*_test|conftest.py) continue ;; esac
     out+=("$t")
   done
   printf '%s\n' "${out[@]:-}" | grep -v '^$' | sort -u
