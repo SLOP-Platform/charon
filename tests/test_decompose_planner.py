@@ -222,6 +222,37 @@ def test_detained_model_is_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
     assert picked[0] == "strong-model"
 
 
+def test_planner_never_selects_anthropic(monkeypatch: pytest.MonkeyPatch) -> None:
+    # SG-never-Anthropic HARD RULE (PLANNER-ONLY): the planner must NEVER select a
+    # Claude/Anthropic model, whether flagged by base_url or by a claude-* model_id.
+    # FAIL-ON-REVERT: removing the guard in _select_planner_model flips this RED.
+    from charon import recommend
+
+    monkeypatch.setattr(P, "recommend_default_config_dir", lambda: "/nonexistent")
+
+    # An anthropic base_url AND a claude-* model are both present, plus a non-Claude one.
+    monkeypatch.setattr(
+        recommend,
+        "_find_trusted_models",
+        lambda cd: [
+            ("claude-opus-4", "https://api.anthropic.com/v1", "k1"),
+            ("some-model", "https://api.anthropic.com/v1", "k2"),
+            ("gpt-style-model", "https://api.openai.com/v1", "k3"),
+        ],
+    )
+    picked = P._select_planner_model(config_dir=None, is_detained=None)
+    assert picked is not None
+    assert picked[0] == "gpt-style-model"  # never the anthropic/claude candidates
+
+    # Only an anthropic/claude model configured → no planner (None), NEVER select Claude.
+    monkeypatch.setattr(
+        recommend,
+        "_find_trusted_models",
+        lambda cd: [("claude-sonnet-4", "https://api.anthropic.com/v1", "k1")],
+    )
+    assert P._select_planner_model(config_dir=None, is_detained=None) is None
+
+
 # --------------------------------------------------------- prompt shape
 def test_prompt_lists_surface_and_ticket() -> None:
     surf = P.ChangeSurface.from_facts(R46_SURFACE)
