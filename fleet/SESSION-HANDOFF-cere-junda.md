@@ -9,7 +9,9 @@
 
 Read `fleet/SESSION-HANDOFF-cere-junda.md` in full and follow it — FIRST check on all currently-running sessions/tabs, then drive the EVAL fix-sequence + the session's mechanization tickets to completion in autonomous mode.
 
-### Context discipline (token-burn guard — always on)
+---
+
+## Context discipline (token-burn guard — always on)
 1. **Auto-compact ON.** At startup verify `grep autoCompactEnabled ~/.claude/settings.json` shows `true`. If not, STOP and tell the operator (see `fleet/SETTINGS-GUARD-PROPOSAL.md`) — a never-compacting transcript makes per-turn token cost climb all session.
 2. **Sub-sessions write, don't dump.** A sub-session WRITES its findings to a file and returns only a 2-3 line pointer + the absolute path. NEVER paste a full sub-session report back into the primary.
 3. **Read big docs in narrow slices, once.** Read handoffs/plans by line-range (offset/limit), never the whole file, never re-read each turn.
@@ -725,3 +727,8 @@ files touched, expected benefit.>
      below the auto-state section.
 - **Commit:** commit the completed \`SESSION-HANDOFF-<name>.md\` to the charon-private fleet repo.
 - **Read:** the next session reads ALL \`SESSION-HANDOFF-*.md\` files to ground itself.
+
+---
+
+## Session-bridge
+Register on startup with an unused Jedi name + `repo="charon"` via `mcp__session-bridge__register` if the bridge is up (coordinator = Roci `10.0.1.51` via SSH tunnel; **NEVER** start a local daemon — the opencode session-bridge MCP will log "daemon not running", that is expected and harmless). Fold the heartbeat into real work (`board()` ~600s TTL); unregister at session end. Bridge state is advisory — the **board** (`fleet/status.sh`) is the source of truth. This session (cere-junda) worked solo; the 2 EVAL rebuild sub-sessions were manager Agent tabs (not bridge droids).
