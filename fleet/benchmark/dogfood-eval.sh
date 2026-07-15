@@ -127,6 +127,16 @@ git -C "$PRODUCT_REPO" fetch origin --quiet 2>/dev/null || true
 # source=live/stage=active scorecard row instead of evaporating as a lost provisional.
 # The daemon (bench-grader) does the ledger write; we only enqueue to the maildrop spool.
 #
+# EVAL-PIPELINE-CONSOLIDATE (F12): the SOLE writer of source=live rows is the
+# adaptive runner (fleet/benchmark/item-bank/pipeline.py). dogfood-eval no
+# longer calls enqueue-capture.sh DIRECTLY — it goes through
+# `pipeline.py enqueue-live`, which is the SAME single-capture-path the
+# runner uses. This removes the dogfood/preflight/sweep fork: every
+# source=live row is now emitted by exactly one Python function
+# (`pipeline._enqueue_capture`), and dogfood-eval + the adaptive runner
+# both call it. A grep proves no second writer (see pipeline.py's own
+# FAIL-ON-REVERT (b) self-test).
+#
 # SAFETY INVARIANTS (money-path — see charon-run.sh's per-model loop):
 #  * Fire ONLY when out_log has CHARON_RUN_RESULT=SUCCESS — the single state where
 #    charon-run stored a PROVISIONAL + wrote state/model-used/<ref> and did NOT itself
@@ -141,8 +151,6 @@ git -C "$PRODUCT_REPO" fetch origin --quiet 2>/dev/null || true
 #    claimed-SUCCESS that grades FIXES/BLOCK is flagged as a discrepancy (--call-log-report).
 finalize_live_capture() {
   local model="$1" overall="$2" ref="$3" gate_v="$4" test_v="$5" out_log="$6" card="$7"
-  local enq="$FLEET_DIR/capture/enqueue-capture.sh"
-  [ -x "$enq" ] || return 0
   # Double-log guard: only the true charon-run SUCCESS path (provisional stored,
   # model-used written, no self-finalized row) is eligible.
   grep -q '^CHARON_RUN_RESULT=SUCCESS' "$out_log" 2>/dev/null || return 0
@@ -157,13 +165,28 @@ finalize_live_capture() {
   # is sent empty (the daemon accepts an empty actual_gate).
   case "$g" in pass|fail) : ;; *) g="" ;; esac
   local score=0; [ "$g" = pass ] && score=100
-  "$enq" --model "$model" --claimed-result SUCCESS --ref "$ref" \
-    --stage active --actual-verdict "$v" --actual-gate "$g" --score "$score" \
-    ${DOGFOOD_WORK_CLASS:+--work-class "$DOGFOOD_WORK_CLASS"} \
-    --evidence "dogfood-eval OBJECTIVE grade: overall=$overall gate=$gate_v test=$test_v card=$(basename "$card")" \
-    --call-log-report >/dev/null 2>&1 \
-    && echo "[dogfood-eval] live-lane FINAL enqueued: $model ref=$ref -> verdict=$v gate=${g:-<none>} (daemon appends source=live/stage=active)" >&2 \
-    || echo "[dogfood-eval] WARN: live-lane FINAL enqueue failed for $model ref=$ref (non-fatal)" >&2
+  # Single-capture-path: route through the runner's enqueue-live subcommand.
+  # Pipeline owns the model-scorecard.tsv capture path; dogfood-eval is a
+  # client of the pipeline, not a parallel writer. The runner
+  # (pipeline.py enqueue-live) calls enqueue-capture.sh on the model's
+  # behalf — exactly one place in the codebase calls enqueue-capture.sh
+  # for source=live rows. EVAL-PIPELINE-CONSOLIDATE F12.
+  local pipeline="$FLEET_DIR/benchmark/item-bank/pipeline.py"
+  if [ ! -f "$pipeline" ]; then
+    echo "[dogfood-eval] WARN: consolidated pipeline missing at $pipeline; live-lane capture skipped" >&2
+    return 0
+  fi
+  CHARON_JOB_WORK_CLASS="${DOGFOOD_WORK_CLASS:-}" \
+    python3 "$pipeline" enqueue-live \
+      --model "$model" \
+      --work-class "${DOGFOOD_WORK_CLASS:-ci-infra}" \
+      --verdict "$v" --gate "$g" --score "$score" \
+      --stage active \
+      --ref "$ref" \
+      --evidence "dogfood-eval OBJECTIVE grade: overall=$overall gate=$gate_v test=$test_v card=$(basename "$card")" \
+      >/dev/null 2>&1 \
+    && echo "[dogfood-eval] live-lane FINAL routed via pipeline: $model ref=$ref -> verdict=$v gate=${g:-<none>}" >&2 \
+    || echo "[dogfood-eval] WARN: live-lane FINAL enqueue via pipeline failed for $model ref=$ref (non-fatal)" >&2
 }
 
 # run_one <model>

@@ -5,45 +5,27 @@ branch: feat/model-preflight
 repo: charon-private
 depends_on: BENCH-OOB-GRADING
 real-dep: BENCH-OOB-GRADING — preflight grading MUST run out-of-band (bench-grader user, hidden model-unreadable assertions). In-band grading reproduces the S0-S6 invalidity this fixes. True correctness prereq.
-superseded_by: EVAL-PIPELINE-CONSOLIDATE (battery→one pipeline), EVAL-GRADER-PROVISION (grader), EVAL-DERIVED-BUDGETS (budgets). This ticket is now the CANDIDATE SLATE + design-of-record only; its code surfaces moved to the EVAL-* successors per MODEL-TESTING-ADVERSARIAL-REVIEW.md §F12.
+superseded_by: EVAL-PIPELINE-CONSOLIDATE (battery→one pipeline), EVAL-GRADER-PROVISION (grader), EVAL-DERIVED-BUDGETS (budgets). This ticket is now the CANDIDATE SLATE + design-of-record only; its code surfaces moved to the EVAL-* successors per MODEL-TESTING-ADVERSARIAL-REVIEW.md §F12. The design of record is now fleet/state/EVAL-PIPELINE-DESIGN.md; the candidates below are the slate the adaptive runner places against.
 owns: fleet/state/PREFLIGHT-CANDIDATES.md
 accept: |
-  DISCRIMINATING, OUT-OF-BAND-graded battery that screens a candidate model on our real failure modes BEFORE it
-  enters tier-models.tsv. Grade = the FUNCTIONAL OUTCOME checked OOB, never the model's word. Design of record:
-  fleet/state/PREFLIGHT-DESIGN-V2.md — 14 checks (T1-6 hardened vs gaming vectors + T7-14: refactor, decoys,
-  citation-verify, all-or-nothing, fix-don't-delete, secret-hygiene, regression, cost/latency). Validity: N>=3 per
-  task, disguised fixtures, deepseek-v4-flash MUST-FAIL control + strong MUST-PASS control (per-task discrimination
-  proof). Substrate BUILT (grader-daemon; chunk-0 seam merged). Build chunks: fixtures · graders->$KEYS · runner ·
-  discrimination-proof.
-  LATENCY-BUDGET (hardens T14 cost/latency — folded 2026-07-15, operator ask):
-  (1) DERIVE the budget, don't guess it: state the product per-unit time-budget (max acceptable wall-clock for a
-      real work unit in production) in PREFLIGHT-DESIGN-V2.md and set the eval latency budget = that + margin. Today's
-      480s is only "headroom over the slowest observed real completion (410s)" — make it a derived number with a
-      written rationale, not an arbitrary round figure.
-  (2) CONFIRM-would-finish: when a candidate hits the budget with attribution `too-slow` (healthy legs, genuinely
-      slow — NOT `provider-throttled`/`pool-exhausted`/rc=124-hang), re-run it ONCE at 2-3x budget out-of-band and
-      RECORD whether it WOULD have finished, so the cutoff is validated by data, not assumed. Throttled/leg-fault
-      runs are EXCLUDED from the re-test (no point re-running into a dead/capped leg — those are parked, not slow).
-  STAGED ELIMINATION LADDER (token-economical preflight — folded 2026-07-15, operator ask): run the battery as
-  ESCALATING RUNGS with early-out, NOT one flat 8-min test. Rungs (per tier, difficulty scaled to the tier):
-    R0  leg canary (LEG-PREFLIGHT-CANARY, ~seconds) — reachable + serves-a-working-model; dead/degraded legs OUT.
-    R1  ~3 min — tier-appropriate, VARIETY of skills (bugfix/routing/refactor mini-tasks); screens out weak models.
-    R2  ~5-6 min — broader + harder; screens the mid.
-    R3  ~10+ min — hardest, only for survivors; LOCATES the ceiling.
-  ELIMINATE PER (MODEL × SKILL), NOT per model (operator refinement): each rung tests SEVERAL skill areas
-  (work_classes: bugfix/routing/refactor/reasoning/…), and elimination is tracked PER SKILL. A model that PEAKS
-  in ONE skill at R2 stops being tested IN THAT SKILL (ceiling found — R3-for-that-skill is waste), but STILL
-  GRADUATES to R3 for the OTHER skills it's still clearing. The output is a fine-grained per-(model, work_class)
-  CEILING GRADE — "send refactor to model X, but never routing" — which is exactly what assign.py consumes
-  (model-scorecard.tsv is already keyed per work_class). Feed results to the scorecard/LEG-RANK AS EACH
-  (rung × skill) COMPLETES (faster data), not only at the end.
-  Budgets per rung are DERIVED (see LATENCY-BUDGET #1), and a rung failure that is leg-fault/throttle (not quality)
-  does NOT eliminate the model — it parks the leg and retries elsewhere ([leg-preflight-canary], S8 >=1-viable).
+  CANDIDATE SLATE ONLY. The battery, runner, item-bank, and the single-
+  capture-path are owned by EVAL-PIPELINE-CONSOLIDATE (design of record:
+  fleet/state/EVAL-PIPELINE-DESIGN.md). This file is the human-curated
+  list of models the runner places against, plus the historical
+  acceptance contract for the slate.
+  Design of record: fleet/state/EVAL-PIPELINE-DESIGN.md — ONE item-bank
+  + ONE adaptive runner + ONE capture path. The battery is the item-
+  bank's saturated items, calibrated per (work_class, difficulty), and
+  graded by the ONE OOB grader-daemon path. R0 is the leg-preflight
+  canary (LEG-PREFLIGHT-CANARY); R1–R3 are folded into the adaptive
+  runner's per-(model, work_class) ceiling placement.
 candidates: |
   Kimi-K2-Thinking, MiniMax-M2, GPT-OSS-120B, Phi-4, Qwen3.6-27B-MTP, Gemma 4 (31B), GLM 4.7 (Thinking),
   Gemini 2.5 Pro (big Python codebases), GPT-5.1-Codex-Max (complex/refactor). ALSO test PAID variants of models we
   run free (free tiers often quantized/degraded) — record free-vs-paid as a distinct axis.
-scope: Router Model-Trust — the ENTRY gate for new models. [[charon-bench-grader-substrate]] [[benchmark-not-a-valid-ranker]] [[green-is-not-proof]]
+scope: Router Model-Trust — the ENTRY gate for new models. The slate below is the human-curated list the adaptive runner places against; the battery + ladder + capture path are the EVAL-PIPELINE-CONSOLIDATE pipeline (not owned by this ticket).
 ds: |
-  depends_on: BENCH-OOB-GRADING (OOB substrate). Chunk-0 seam merged; fixtures/graders/runner/proof next. Adversarial review.
-note: the accurate model test; design V2 folds in the adversarial gap-review. Run the candidate slate once built.
+  The accurate model test; the slate is fed into pipeline.py place / run-all
+  (see fleet/state/EVAL-PIPELINE-DESIGN.md). Per-(model, work_class) ceiling
+  grade is the runner's output, fed to model-scorecard.tsv via the SINGLE
+  capture path (pipeline._enqueue_capture → enqueue-capture.sh → daemon).
