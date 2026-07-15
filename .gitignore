@@ -13,6 +13,9 @@ fleet/state/*
 # ...except the REVIEWER-DOGFOOD-REDS ground-truth corpus (durable, git-tracked by
 # design — see REDS-CORPUS.md's own OOB design note).
 !fleet/state/REDS-CORPUS.md
+# ...except the bidirectional rule-coverage audit register (RULE-SYNC-AUDIT
+# ticket) — durable, derived from the sibling frameworks' inventories.
+!fleet/state/RULE-SYNC-REGISTER.tsv
 
 # --- scratch / logs ---
 *.log
