@@ -18,3 +18,5 @@ scope: Rig-only (manager/session memory). basic-memory is AGPL-3.0 — fine for 
   documented swap IF this is ever productized. Store + retrieval is largely solved by basic-memory; the real work is
   the migration + killing the dump.
 ds: Now (rig-only). FN2 + FN3 depend on this store existing. Owns a NEW `fleet/memory/` dir → no owns-collision.
+
+mgr-note (): CODE DRIFTED from this accept — FN1 shipped hand-rolled stdlib search instead of adopting basic-memory (see fleet/state/SESSION-RECALL-CHALLENGE.md). Its PR #105 is CLOSED, gate FAILED. REVIVE: redo with basic-memory MCP per accept, and ALSO wire memory.search into the SESSION-CTX-PROPAGATE preamble so sub-agents (not just the primary) can recall. STRANDED-WORK-AUDIT will surface this for recovery.
