@@ -185,3 +185,4 @@ FLEET	SSOT-DRIFT-GATE	queued	gate	SSOT drift merge-gate	converge diverged MSOTs 
 SECURITY	LEG-SANDBOX-HARDEN	queued	security	leg-preflight sandbox isolation	close cred-exfil vector (ns/seccomp) in canary exec	leg-followups
 FLEET	LEG-F6-REALPATH-TEST	queued	test	close vacuous F6 fail-on-revert	exercise the real urllib pin path	leg-followups
 FLEET	STRANDED-WORK-AUDIT	done	audit	stranded near-done work audit	recover 18 built-unmerged items + FN #49-53	session-reliability
+FLEET	SESSION-END-PUSH-GATE	queued	gate	session-end commit+push gate	refuse session close on uncommitted OR unpushed work (found this session)	session-reliability
