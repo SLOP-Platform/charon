@@ -7,7 +7,9 @@
 
 ## Bootstrap (copy-paste into next session)
 
-Read `fleet/SESSION-HANDOFF-cere-junda.md` in full and follow it — FIRST check on all currently-running sessions/tabs, then drive the EVAL fix-sequence + the session's mechanization tickets to completion in autonomous mode.
+```
+Read fleet/SESSION-HANDOFF-cere-junda.md in full and follow it — FIRST check on all currently-running sessions/tabs, then drive the EVAL fix-sequence and the session's mechanization tickets to completion in autonomous mode.
+```
 
 ---
 
