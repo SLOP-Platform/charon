@@ -30,6 +30,7 @@ Privileged-core rule: stdlib-only (mirrors the rest of ``src/charon``).
 """
 from __future__ import annotations
 
+import functools
 import json
 import os
 import urllib.error
@@ -40,6 +41,13 @@ from pathlib import Path
 from typing import Protocol
 
 from . import decompose_sizing
+from .failover_loop import (
+    FAILOVER,
+    OK,
+    RETRY,
+    AttemptResult,
+    invoke_with_failover,
+)
 from .intake import IntakeError, PlanUnit, assert_disjoint_waves
 from .ledger import validate_task_id
 from .netutil import BROWSER_UA
@@ -52,6 +60,43 @@ class PlannerError(RuntimeError):
     """The planner could not produce a valid, collision-free split (bad/absent model
     reply, hallucinated paths, or a disjointness violation that survived re-prompting).
     Callers fall back to a human, exactly like the mechanical intake does."""
+
+
+# Transport failure taxonomy (fix A). A candidate model can fail two very different
+# ways and the failover loop must tell them apart:
+#   * PROVIDER-level (auth/limit/infra) — the model never gave us a usable 200 reply.
+#     A dead/mis-scoped key (401), an exhausted balance (402/429), or a flaky provider
+#     (5xx/timeout) says NOTHING about the ticket; the right move is to try the NEXT
+#     configured model. Signalled by raising ``PlannerTransportError``.
+#   * PARSE/quality — the model returned a 200 but its body was not a parseable JSON
+#     dict. That is a fault of THIS model's answer, so we re-prompt the SAME model
+#     (up to ``max_reprompts``) before giving up on it. Signalled by returning ``None``.
+# This is the exact distinction the old blanket ``except (...): return None`` collapsed,
+# which made a 401 auth failure indistinguishable from an unparseable plan.
+_AUTH_STATUSES = frozenset({401, 403, 407})
+_LIMIT_STATUSES = frozenset({402, 429})
+
+
+def _classify_status(code: int) -> str:
+    """Map an HTTP status to a provider-level failure class."""
+    if code in _AUTH_STATUSES:
+        return "auth"
+    if code in _LIMIT_STATUSES:
+        return "limit"
+    return "infra"  # 5xx and any other non-2xx transport-level status
+
+
+class PlannerTransportError(RuntimeError):
+    """A PROVIDER-level transport failure (auth / limit / infra) while invoking a planner
+    candidate — distinct from a parse/quality failure of a 200 reply. Carries the failure
+    class and HTTP status (when known) so the failover loop can attribute it and advance
+    to the next candidate. Never leaks ``urllib`` types to callers (stdlib-only seam)."""
+
+    def __init__(self, failure_class: str, status: int | None, detail: str) -> None:
+        self.failure_class = failure_class  # "auth" | "limit" | "infra"
+        self.status = status
+        self.detail = detail
+        super().__init__(detail)
 
 
 # ----------------------------------------------------------------- input contracts
@@ -189,43 +234,95 @@ def plan_decomposition(
     if not surf.files:
         raise PlannerError("empty change surface: nothing to decompose")
 
-    invoke = ask or _default_invoker(config_dir=config_dir, is_detained=is_detained)
     sizing = _size_surface(surface, surf)
 
-    feedback = ""
-    last_error = "no attempts made"
-    for _attempt in range(max_reprompts + 1):
-        prompt = build_prompt(ticket, surf, feedback=feedback, sizing=sizing)
-        raw = invoke(prompt)
-        if not isinstance(raw, dict):
-            last_error = "model returned no parseable JSON object"
-            feedback = last_error
-            continue
-        try:
-            units = _parse_units(raw, surf)
-        except PlannerError as e:
-            last_error = str(e)
-            feedback = last_error
-            continue
-        try:
-            # The existing ADR-0008 contract-#1 HARD gate — the only disjointness
-            # authority. Reverting this call is what lets an overlapping split slip
-            # through (see tests/test_decompose_planner.py fail-on-revert proof).
-            assert_disjoint_waves(units)
-        except IntakeError as e:
-            last_error = str(e)
-            feedback = (
-                f"The previous split was REJECTED by the disjoint-owns gate: {e}. "
-                "Re-split so that any two sub-tickets that could run at the same time "
-                "(neither depends on the other) own DISJOINT files."
+    # Ordered candidate pool. An explicitly-injected ``ask`` (tests / intake seam) is a
+    # single candidate; otherwise every trusted, non-detained, non-Anthropic configured
+    # model is a candidate, in pin → tier-"high" → rest order. The planner is the FIRST
+    # consumer of the generic ``failover_loop.invoke_with_failover`` primitive: the
+    # ordered-candidate iteration, transport-vs-quality classification, and
+    # exhaustion-with-recommendation all live in that reusable helper, not here.
+    candidates: list[_Candidate]
+    if ask is not None:
+        candidates = [_Candidate("<injected model>", ask)]
+    else:
+        ordered = _ordered_planner_candidates(
+            config_dir=config_dir, is_detained=is_detained
+        )
+        if not ordered:
+            raise PlannerError(
+                "no trusted, non-detained planner model is configured; "
+                "the decomposer requires a strong model to split (WORK-DECOMPOSER)"
             )
-            continue
-        return units
+        candidates = [
+            _Candidate(mid, functools.partial(_post_chat, mid, base_url, api_key))
+            for mid, base_url, api_key in ordered
+        ]
 
-    raise PlannerError(
-        f"planner failed to produce a collision-free split after "
-        f"{max_reprompts + 1} attempt(s): {last_error}"
+    def _attempt(cand: _Candidate, feedback: str) -> AttemptResult[list[PlanUnit]]:
+        return _attempt_candidate(cand.call, ticket, surf, sizing, feedback)
+
+    return invoke_with_failover(
+        candidates,
+        _attempt,
+        max_retries=max_reprompts,
+        describe=lambda c: c.model_id,
+        recommendation=(
+            "pool exhausted — configure a chat-capable provider or set "
+            "CHARON_DECOMPOSE_PLANNER_MODEL to a working model"
+        ),
+        error=PlannerError,
     )
+
+
+@dataclass
+class _Candidate:
+    """One planner candidate: a model id (for attribution) and its per-prompt transport
+    ``call`` (prompt → parsed dict, ``None`` on a 200-but-unparseable reply, raising
+    ``PlannerTransportError`` on a provider-level auth/limit/infra fault)."""
+
+    model_id: str
+    call: ModelInvoker
+
+
+def _attempt_candidate(
+    call: ModelInvoker,
+    ticket: BroadTicket,
+    surf: ChangeSurface,
+    sizing: SizingGuidance | None,
+    feedback: str,
+) -> AttemptResult[list[PlanUnit]]:
+    """One planner attempt against one candidate, classified for the failover loop:
+    provider-level transport faults → ``FAILOVER`` (try the next model); a 200 whose body
+    is unparseable, a hallucinated/invalid unit, or a disjointness violation → ``RETRY``
+    (re-prompt the SAME model with the fault as feedback)."""
+    prompt = build_prompt(ticket, surf, feedback=feedback, sizing=sizing)
+    try:
+        raw = call(prompt)
+    except PlannerTransportError as e:
+        status = f" (HTTP {e.status})" if e.status is not None else ""
+        return AttemptResult(kind=FAILOVER, attribution=f"{e.failure_class}{status}: {e.detail}")
+
+    if not isinstance(raw, dict):
+        fb = "model returned no parseable JSON object"
+        return AttemptResult(kind=RETRY, feedback=fb, attribution="quality: unparseable 200 reply")
+    try:
+        units = _parse_units(raw, surf)
+    except PlannerError as e:
+        return AttemptResult(kind=RETRY, feedback=str(e), attribution=f"quality: {e}")
+    try:
+        # The existing ADR-0008 contract-#1 HARD gate — the only disjointness authority.
+        # Reverting this call is what lets an overlapping split slip through (see
+        # tests/test_decompose_planner.py fail-on-revert proof).
+        assert_disjoint_waves(units)
+    except IntakeError as e:
+        fb = (
+            f"The previous split was REJECTED by the disjoint-owns gate: {e}. "
+            "Re-split so that any two sub-tickets that could run at the same time "
+            "(neither depends on the other) own DISJOINT files."
+        )
+        return AttemptResult(kind=RETRY, feedback=fb, attribution=f"disjointness: {e}")
+    return AttemptResult(kind=OK, value=units)
 
 
 # ----------------------------------------------------------------- reply → PlanUnits
@@ -354,42 +451,20 @@ def build_prompt(
 
 
 # ----------------------------------------------------------------- default transport
-def _default_invoker(
+def _ordered_planner_candidates(
     *,
     config_dir: str | Path | None,
     is_detained: Callable[[str], bool] | None,
-) -> ModelInvoker:
-    """A default ``ask`` built on the ``recommend._ask_model`` transport pattern:
-    pick a strong, NON-DETAINED configured model (``recommend._find_trusted_models``) and
-    POST the planner prompt to its ``/chat/completions``. Detention filtering is the seam
-    for DETENTION-REDLINE. Raises ``PlannerError`` if no trusted, non-detained model is
-    configured — the planner refuses to split with an untrusted/absent model."""
-    selected = _select_planner_model(config_dir=config_dir, is_detained=is_detained)
-    if selected is None:
-        raise PlannerError(
-            "no trusted, non-detained planner model is configured; "
-            "the decomposer requires a strong model to split (WORK-DECOMPOSER)"
-        )
-    model_id, base_url, api_key = selected
+) -> list[tuple[str, str, str]]:
+    """The FULL ordered planner-candidate pool (fix: search across providers, don't pick
+    one and hard-fail). Every configured model with a working key that is NOT detained and
+    NOT an Anthropic/Claude model, ordered pin → tier-"high" members → the rest. Reuses
+    ``recommend._find_trusted_models`` for discovery.
 
-    def _ask(prompt: str) -> dict | None:
-        return _post_chat(model_id, base_url, api_key, prompt)
-
-    return _ask
-
-
-def _select_planner_model(
-    *,
-    config_dir: str | Path | None,
-    is_detained: Callable[[str], bool] | None,
-) -> tuple[str, str, str] | None:
-    """First configured model with a working key that is NOT detained and NOT an
-    Anthropic/Claude model. Reuses ``recommend._find_trusted_models`` for discovery.
-
-    SG-never-Anthropic HARD RULE (PLANNER-ONLY): the planner/decomposer must NEVER
-    select a Claude/Anthropic model. Skip any candidate whose base_url contains
-    ``anthropic`` or whose model_id starts with ``claude``. This guard does NOT apply
-    to the tier-voter path (``recommend.recommend_tiers``), where Anthropic is allowed."""
+    SG-never-Anthropic HARD RULE (PLANNER-ONLY): the planner/decomposer must NEVER select a
+    Claude/Anthropic model. Skip any candidate whose base_url contains ``anthropic`` or
+    whose model_id starts with ``claude``. This guard does NOT apply to the tier-voter path
+    (``recommend.recommend_tiers``), where Anthropic is allowed."""
     from . import recommend
     from .config import tiers as tiers_cfg
 
@@ -403,20 +478,36 @@ def _select_planner_model(
             continue
         candidates.append((model_id, base_url, api_key))
     if not candidates:
-        return None
+        return []
 
+    # Stable priority ordering without dropping anyone: pinned first, then tier-"high"
+    # members, then everything else in discovery order. Every candidate appears once.
     pinned = os.environ.get("CHARON_DECOMPOSE_PLANNER_MODEL")
-    if pinned:
-        for m, b, k in candidates:
-            if m == pinned:
-                return m, b, k
-
     high_ids = set(tiers_cfg.tier_members("high"))
-    for m, b, k in candidates:
-        if m in high_ids:
-            return m, b, k
 
-    return candidates[0]
+    def _rank(entry: tuple[str, str, str]) -> int:
+        mid = entry[0]
+        if pinned and mid == pinned:
+            return 0
+        if mid in high_ids:
+            return 1
+        return 2
+
+    # Stable sort preserves discovery order within each rank band.
+    return sorted(candidates, key=_rank)
+
+
+def _select_planner_model(
+    *,
+    config_dir: str | Path | None,
+    is_detained: Callable[[str], bool] | None,
+) -> tuple[str, str, str] | None:
+    """The single top-priority planner candidate — the FIRST of the ordered pool (pin →
+    tier-"high" → rest), or ``None`` when the pool is empty. Kept for callers/tests that
+    ask "which model would the planner pick first"; ``plan_decomposition`` itself now
+    iterates the full ordered pool via ``_ordered_planner_candidates`` and fails over."""
+    ordered = _ordered_planner_candidates(config_dir=config_dir, is_detained=is_detained)
+    return ordered[0] if ordered else None
 
 
 def recommend_default_config_dir() -> str | Path:
@@ -430,7 +521,14 @@ def _post_chat(
 ) -> dict | None:
     """POST ``prompt`` to ``base_url``'s ``/chat/completions`` and parse the reply as JSON.
     Transport copied from ``recommend._ask_model`` (recommend.py:65): browser UA, no-redirect
-    opener, code-fence-stripped JSON parse. Returns the parsed dict, or None on any failure."""
+    opener, code-fence-stripped JSON parse.
+
+    Failure taxonomy (fix A — no longer a blanket ``None``):
+      * PROVIDER-level fault (auth 401/403/407, limit 402/429, infra 5xx / URLError /
+        timeout) → raise ``PlannerTransportError`` so the failover loop tries the NEXT
+        candidate. A dead/mis-scoped key no longer masquerades as an unparseable plan.
+      * 200 but the body/content is not a parseable JSON dict → return ``None`` (a
+        parse/quality fault of THIS model → re-prompt the SAME model)."""
     from . import recommend
 
     raw_base = base_url.rstrip("/")
@@ -442,16 +540,29 @@ def _post_chat(
             "max_tokens": 4000,
         }
     ).encode()
+    req = urllib.request.Request(
+        raw_base + "/chat/completions", data=body, method="POST"
+    )
+    req.add_header("User-Agent", BROWSER_UA)
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Authorization", "Bearer " + api_key)
+    opener = urllib.request.build_opener(recommend._NoRedirect())
     try:
-        req = urllib.request.Request(
-            raw_base + "/chat/completions", data=body, method="POST"
-        )
-        req.add_header("User-Agent", BROWSER_UA)
-        req.add_header("Content-Type", "application/json")
-        req.add_header("Authorization", "Bearer " + api_key)
-        opener = urllib.request.build_opener(recommend._NoRedirect())
         resp = opener.open(req, timeout=timeout)
         raw = resp.read(400_000)
+    except urllib.error.HTTPError as e:
+        # HTTPError is a URLError subclass — catch it first to read the status code.
+        raise PlannerTransportError(
+            _classify_status(e.code), e.code, f"HTTP {e.code} from {model_id}"
+        ) from e
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        raise PlannerTransportError(
+            "infra", None, f"transport error from {model_id}: {e}"
+        ) from e
+
+    # 200 body in hand — a parse failure here is THIS model's answer quality, not a
+    # provider fault, so return None (→ re-prompt the same model), never raise.
+    try:
         data = json.loads(raw.decode("utf-8", "replace"))
         content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
         content = content.strip()
@@ -459,12 +570,6 @@ def _post_chat(
             lines = content.split("\n")
             content = "\n".join(lines[1:-1]) if len(lines) > 2 else content
         parsed = json.loads(content)
-        return parsed if isinstance(parsed, dict) else None
-    except (
-        urllib.error.HTTPError,
-        urllib.error.URLError,
-        json.JSONDecodeError,
-        ValueError,
-        KeyError,
-    ):
+    except (json.JSONDecodeError, ValueError, KeyError, IndexError, AttributeError):
         return None
+    return parsed if isinstance(parsed, dict) else None
