@@ -6,6 +6,8 @@ branch: feat/rule-sync-gate
 serial_justified: One checker script + its test read one register — cohesive single mechanism (port of KSF coverage_ssot); nothing independent to parallelize.
 owns: fleet/checks/rule-sync.sh, fleet/tests/rule-sync.test.sh
 depends_on: RULE-SYNC-AUDIT
+real-dep: RULE-SYNC-AUDIT produces fleet/state/RULE-SYNC-REGISTER.tsv — the gate reads its schema+rows to enforce on; a true build/correctness prereq, not merge-order.
+dep-kind: build
 note: |
   Mechanize the operator's TWO-WAY rule sync (Charon <-> SLOP <-> KSF) so the rule-port
   class stops regressing (this was GAP-REGISTER A3, identified 2026-07-12 but never built).

@@ -1,7 +1,7 @@
 repo: charon-private
 tier: frontier
 difficulty: 3
-work_class: audit
+work_class: rig-meta
 branch: audit/rule-sync-register
 serial_justified: Single new register file (one cohesive classification pass over fixed source inventories) — one owned surface, nothing to parallelize.
 owns: fleet/state/RULE-SYNC-REGISTER.tsv
