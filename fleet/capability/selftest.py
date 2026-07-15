@@ -28,13 +28,17 @@ Exits 0 if every check passes, 1 otherwise (prints PASS/FAIL per check).
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from assign import assign  # noqa: E402
 from availability import StaticAvailability  # noqa: E402
-from grades import MIN_N, DEFAULT_TSV, ScorecardGradesProvider, _wilson_bound, scores_tie  # noqa: E402
+from grades import (  # noqa: E402
+    MIN_N, DEFAULT_TSV, ScorecardGradesProvider, _wilson_bound, scores_tie,
+    CANONICAL_WORK_CLASSES, _LEGACY_TO_CANONICAL, _live_product_work_classes,
+)
 
 # PROVISIONAL-vs-ACTIVE (#20): the promotion gate + a temp end-to-end fixture.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "benchmark"))
@@ -239,6 +243,7 @@ def main() -> int:
 
     provisional_scoring_checks(grades, no_avail)
     aggregate_n_checks()
+    taxonomy_canonicalization_checks(grades)
 
     print()
     print("=" * 78)
@@ -341,6 +346,128 @@ def main() -> int:
           "confidence-aware scoring fixes the small-N inversion, and "
           "availability demonstrably changes the pick.")
     return 0
+
+
+def taxonomy_canonicalization_checks(grades: ScorecardGradesProvider) -> None:
+    """EVAL-TAXONOMY-ALIGN (review F3 BLOCKER — grades.py graded the WRONG
+    taxonomy; the product router's own vocabulary shared zero names with it
+    and would have seen ZERO rows). Four things must be TRUE:
+
+      1. A row tagged NATIVELY with a canonical class (work_class=coding) is
+         retrievable via grade(model, "coding") directly — the router's own
+         query works.
+      2. A LEGACY fleet-class row (work_class=bugfix) is ALSO retrievable via
+         grade(model, "coding") — its mapped canonical bucket — proving
+         historical scorecard data isn't lost by the repoint.
+      3. Canonical buckets stay DISJOINT: the same model's "reasoning"-tagged
+         row must not leak into the "coding" query above.
+      4. FAIL-ON-REVERT: (2) is a REAL dependency on _LEGACY_TO_CANONICAL, not
+         a tautology — clearing the mapping must make the query return None
+         (zero rows), the exact F3 regression for the router.
+      + a drift guard: the code's CANONICAL_WORK_CLASSES == the class set
+        documented in fleet/state/EVAL-TAXONOMY.md == (best-effort) the LIVE
+        product matrix.WorkClass Literal, when importable.
+    """
+    print()
+    print("=" * 78)
+    print("EVAL-TAXONOMY-ALIGN: canonical work-class taxonomy (review F3 fix)")
+    print("=" * 78)
+
+    g_native = grades.grade("tax-native-model", "coding")
+    check(
+        "(1) a native canonical-tagged row (work_class=coding) is retrievable "
+        "via grade(model, 'coding') directly",
+        g_native is not None and g_native.n == 1 and g_native.merge == 1,
+        f"grade={g_native.summary() if g_native else None}",
+    )
+
+    g_legacy_coding = grades.grade("tax-legacy-model", "coding")
+    check(
+        "(2) a LEGACY fleet-class row (work_class=bugfix) IS retrievable via "
+        "its mapped canonical bucket grade(model, 'coding') — historical "
+        "scorecard data is not lost",
+        g_legacy_coding is not None and g_legacy_coding.n == 1 and g_legacy_coding.merge == 1,
+        f"grade={g_legacy_coding.summary() if g_legacy_coding else None}",
+    )
+
+    g_legacy_reasoning = grades.grade("tax-legacy-model", "reasoning")
+    check(
+        "(3) canonical buckets stay disjoint: the same model's native "
+        "'reasoning' row is NOT folded into the 'coding' query above "
+        "(reasoning n=1 with the real BLOCK, coding n=1 unaffected)",
+        g_legacy_reasoning is not None and g_legacy_reasoning.n == 1
+        and g_legacy_reasoning.block == 1 and g_legacy_coding.n == 1,
+        f"reasoning={g_legacy_reasoning.summary() if g_legacy_reasoning else None} "
+        f"coding.n={g_legacy_coding.n}",
+    )
+
+    # (4) FAIL-ON-REVERT: simulate reverting the legacy->canonical mapping —
+    # the exact F3 regression ("the router-class query returns empty").
+    # Mutate the live dict IN PLACE (grade()/_rows_for close over this same
+    # module-level object via `from grades import _LEGACY_TO_CANONICAL`, a
+    # reference to the dict, not a copy) and restore it afterward so this
+    # check is order-independent of any check that runs after it.
+    #
+    # Assert at the _rows_for() layer (the actual "router-class query"),
+    # not grade() — grade() has an intentional, SEPARATE generalist-fallback
+    # safety net (should-fix #3, tested above) that would otherwise mask a
+    # reverted mapping behind a generalist aggregate instead of surfacing
+    # the true "zero direct rows for this canonical class" regression.
+    before = grades._rows_for("tax-legacy-model", "coding")
+    saved = dict(_LEGACY_TO_CANONICAL)
+    try:
+        _LEGACY_TO_CANONICAL.clear()
+        after = grades._rows_for("tax-legacy-model", "coding")
+        check(
+            "(4) FAIL-ON-REVERT: clearing _LEGACY_TO_CANONICAL makes the "
+            "legacy 'bugfix' row unreachable via the canonical 'coding' "
+            "query (_rows_for -> []) — proves the mapping is load-bearing, "
+            "not decorative (before revert: 1 row; after: 0)",
+            len(before) == 1 and len(after) == 0,
+            f"before={len(before)} after={len(after)}",
+        )
+        # grade()'s SEPARATE generalist-fallback safety net still produces a
+        # pick (never a hard crash) — but it must visibly demote to
+        # generalist, not silently keep pretending it has direct evidence.
+        reverted_grade = grades.grade("tax-legacy-model", "coding")
+        check(
+            "(4b) with the mapping reverted, grade() falls back to the "
+            "generalist aggregate (fallback_used=True) rather than "
+            "fabricating direct 'coding' evidence",
+            reverted_grade is not None and reverted_grade.fallback_used
+            and reverted_grade.used_work_class == "generalist",
+            f"grade={reverted_grade.summary() if reverted_grade else None}",
+        )
+    finally:
+        _LEGACY_TO_CANONICAL.clear()
+        _LEGACY_TO_CANONICAL.update(saved)
+
+    # Drift guard: code's canonical set == EVAL-TAXONOMY.md's documented set.
+    taxonomy_md = Path(__file__).resolve().parent.parent / "state" / "EVAL-TAXONOMY.md"
+    doc_classes: set[str] = set()
+    if taxonomy_md.exists():
+        m = re.search(r"CANONICAL_CLASSES\s*=\s*(.+)", taxonomy_md.read_text())
+        if m:
+            doc_classes = {c.strip() for c in m.group(1).split(",") if c.strip()}
+    check(
+        "drift guard: grades.py's CANONICAL_WORK_CLASSES == the class set "
+        "documented in fleet/state/EVAL-TAXONOMY.md",
+        bool(doc_classes) and doc_classes == set(CANONICAL_WORK_CLASSES),
+        f"code={sorted(CANONICAL_WORK_CLASSES)} doc={sorted(doc_classes)}",
+    )
+
+    live = _live_product_work_classes()
+    if live is None:
+        print("  [SKIP] live product src/charon/routing_policy/matrix.py not "
+              "importable here — drift guard against the doc/code copy above "
+              "still ran; this is a bonus best-effort cross-check only")
+    else:
+        check(
+            "drift guard (bonus, live): CANONICAL_WORK_CLASSES == the LIVE "
+            "product matrix.WorkClass Literal (src/charon/routing_policy/matrix.py)",
+            set(live) == set(CANONICAL_WORK_CLASSES),
+            f"code={sorted(CANONICAL_WORK_CLASSES)} live={sorted(live)}",
+        )
 
 
 def provisional_scoring_checks(grades: ScorecardGradesProvider, no_avail) -> None:
