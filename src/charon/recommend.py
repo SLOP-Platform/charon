@@ -3,15 +3,32 @@
 Phase B of TIER-RECS: uses already-configured trusted models to rank a
 provider's model catalog into Charon's tier vocabulary (low/med/high),
 with consensus, anti-hallucination guards, and heuristic fallback.
+
+Failover (DESTIFF-RECOMMEND): the model-invoke is routed through
+``failover_loop.invoke_with_failover`` over the FULL ordered trusted pool, so
+a transport/auth/limit failure on one provider fails over to the next instead
+of zeroing the recommendation. Composes the same primitive
+``decompose_planner`` already uses — class-level fix, not a bespoke loop.
+Unlike the planner, the tier-voter path is allowed to use Anthropic models
+(SG-never-Anthropic is planner-only, see ``decompose_planner``).
 """
 from __future__ import annotations
 
 import json
 import os
+import urllib.error
 import urllib.request
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .failover_loop import (
+    FAILOVER,
+    OK,
+    RETRY,
+    AttemptResult,
+    invoke_with_failover,
+)
 from .netutil import BROWSER_UA  # shared browser-like UA (P5 — Cloudflare 1010)
 
 
@@ -71,10 +88,42 @@ def _find_trusted_models(config_dir: str | Path) -> list[tuple[str, str, str]]:
     return trusted
 
 
-def _ask_model(model_id: str, base_url: str, api_key: str,
-               catalog: list[dict], timeout: float = 30.0) -> dict | None:
-    """Ask one model to rank a catalog into low/med/high. Returns parsed JSON dict
-    with tier keys, or None on failure."""
+# ----------------------------------------------------------------
+# Transport taxonomy (DESTIFF-RECOMMEND — fix the blanket None).
+# A 401/403/407 (auth), 402/429 (limit), 5xx/URLError/timeout (infra), or any
+# other provider-level fault MUST fail OVER to the next candidate — NOT look
+# like an unparseable model reply. The same transport-vs-quality split the
+# planner applies (see decompose_planner._post_chat) is used here.
+# ----------------------------------------------------------------
+_AUTH_STATUSES = frozenset({401, 403, 407})
+_LIMIT_STATUSES = frozenset({402, 429})
+
+
+def _classify_status(code: int) -> str:
+    """Map an HTTP status to a provider-level failure class."""
+    if code in _AUTH_STATUSES:
+        return "auth"
+    if code in _LIMIT_STATUSES:
+        return "limit"
+    return "infra"  # 5xx and any other non-2xx transport-level status
+
+
+class _TierTransportError(RuntimeError):
+    """A PROVIDER-level transport failure while invoking a tier-voter candidate —
+    distinct from a parse/quality failure of a 200 reply. Carries the failure
+    class and HTTP status (when known) so the failover loop can attribute it
+    and advance to the next candidate. Mirrors ``decompose_planner.PlannerTransportError``
+    (stdlib-only seam — never leaks ``urllib`` types to callers)."""
+
+    def __init__(self, failure_class: str, status: int | None, detail: str) -> None:
+        self.failure_class = failure_class
+        self.status = status
+        self.detail = detail
+        super().__init__(detail)
+
+
+def _render_prompt(catalog: list[dict]) -> str:
+    """Build the tier-ranking prompt from a live catalog (model lines + instructions)."""
     model_lines = []
     for m in catalog:
         cw = m.get("context_window", "")
@@ -90,7 +139,7 @@ def _ask_model(model_id: str, base_url: str, api_key: str,
         model_lines.append(f"- {m['id']}{extra}")
     model_list = "\n".join(model_lines[:200])
 
-    prompt = (
+    return (
         "You are ranking LLM models into three tiers for a gateway's failover configuration.\n\n"
         "TIER DEFINITIONS:\n"
         "- high (frontier): most capable, best for complex reasoning/coding; "
@@ -108,6 +157,23 @@ def _ask_model(model_id: str, base_url: str, api_key: str,
         "- Respond with ONLY the JSON, no explanation."
     )
 
+
+def _post_tier_ranking(
+    model_id: str, base_url: str, api_key: str, prompt: str, timeout: float = 30.0
+) -> dict | None:
+    """POST ``prompt`` to ``base_url``'s ``/chat/completions`` and parse the reply as JSON.
+
+    Failure taxonomy (DESTIFF-RECOMMEND — no longer a blanket None):
+      * PROVIDER-level fault (auth 401/403/407, limit 402/429, infra 5xx / URLError /
+        timeout) → raise ``_TierTransportError`` so the failover loop tries the NEXT
+        candidate. A dead/mis-scoped key no longer masquerades as an unparseable
+        ranking.
+      * 200 but the body/content is not a parseable JSON dict → return ``None`` (a
+        parse/quality fault of THIS model → re-prompt the SAME model).
+
+    Stdlib-only; mirrors ``decompose_planner._post_chat`` and the browser-UA /
+    no-redirect opener in the original ``recommend._ask_model``.
+    """
     raw_base = base_url.rstrip("/")
     body = json.dumps({
         "model": model_id,
@@ -115,24 +181,52 @@ def _ask_model(model_id: str, base_url: str, api_key: str,
         "temperature": 0.0,
         "max_tokens": 2000,
     }).encode()
+    req = urllib.request.Request(raw_base + "/chat/completions", data=body, method="POST")
+    req.add_header("User-Agent", BROWSER_UA)
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Authorization", "Bearer " + api_key)
+    opener = urllib.request.build_opener(_NoRedirect())
     try:
-        req = urllib.request.Request(raw_base + "/chat/completions", data=body, method="POST")
-        req.add_header("User-Agent", BROWSER_UA)
-        req.add_header("Content-Type", "application/json")
-        req.add_header("Authorization", "Bearer " + api_key)
-        opener = urllib.request.build_opener(_NoRedirect())
         resp = opener.open(req, timeout=timeout)
         raw = resp.read(200_000)
+    except urllib.error.HTTPError as e:
+        # HTTPError is a URLError subclass — catch it first to read the status code.
+        raise _TierTransportError(
+            _classify_status(e.code), e.code, f"HTTP {e.code} from {model_id}"
+        ) from e
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        raise _TierTransportError(
+            "infra", None, f"transport error from {model_id}: {e}"
+        ) from e
+
+    # 200 body in hand — a parse failure here is THIS model's answer quality, not a
+    # provider fault, so return None (→ re-prompt the same model), never raise.
+    try:
         data = json.loads(raw.decode("utf-8", "replace"))
         content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
         content = content.strip()
         if content.startswith("```"):
             lines = content.split("\n")
             content = "\n".join(lines[1:-1]) if len(lines) > 2 else content
-        return json.loads(content)  # type: ignore[no-any-return]
-    except (urllib.error.HTTPError, urllib.error.URLError,
-            json.JSONDecodeError, ValueError, KeyError):
+        parsed = json.loads(content)
+    except (json.JSONDecodeError, ValueError, KeyError, IndexError, AttributeError):
         return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _ask_model(model_id: str, base_url: str, api_key: str,
+               catalog: list[dict], timeout: float = 30.0) -> dict | None:
+    """Per-candidate tier-ranking transport: render the prompt, POST it, return parsed
+    JSON dict or ``None`` on parse failure. Raises ``_TierTransportError`` on a
+    provider-level transport fault (auth/limit/infra) so the caller can fail over.
+
+    ``recommend_tiers`` itself no longer calls this directly — it routes through
+    ``failover_loop.invoke_with_failover`` over the full trusted pool. This thin
+    wrapper is kept for the per-candidate test seam and any future direct caller.
+    """
+    return _post_tier_ranking(
+        model_id, base_url, api_key, _render_prompt(catalog), timeout=timeout
+    )
 
 
 def _heuristic_rank(catalog: list[dict]) -> list[TierRecommendation]:
@@ -172,16 +266,76 @@ def _heuristic_rank(catalog: list[dict]) -> list[TierRecommendation]:
 # Public API
 # ----------------------------------------------------------------
 
+# Hard cap on how many trusted candidates we walk before giving up. The pool is
+# the user's configured set, not a managed ladder — this prevents a misconfigured
+# 50-model install from burning the gate when every model is dead. Three
+# respondents is plenty for a tier-judge; if the first three all FAIL OVER
+# (transport), the rest are overwhelmingly likely to as well.
+_MAX_TIER_CANDIDATES = 3
+
+
+@dataclass(frozen=True)
+class _TierCandidate:
+    """One tier-voter candidate: (model_id, base_url, api_key). The per-candidate
+    transport is ``_post_tier_ranking`` with the rendered prompt; classification
+    into RETRY vs FAILOVER is done by ``_classify_tier_attempt``."""
+    model_id: str
+    base_url: str
+    api_key: str
+
+
+def _classify_tier_attempt(
+    model_id: str, base_url: str, api_key: str, prompt: str, feedback: str
+) -> AttemptResult[dict]:
+    """One tier-voter attempt against one candidate, classified for the failover loop:
+    provider-level transport faults → ``FAILOVER`` (try the next model); a 200 whose
+    body is unparseable → ``RETRY`` (re-prompt the SAME model with feedback)."""
+    from_feedback = (
+        f"Retry — your previous answer was not valid JSON. {feedback}".strip()
+        if feedback
+        else prompt
+    )
+    try:
+        parsed = _post_tier_ranking(model_id, base_url, api_key, from_feedback)
+    except _TierTransportError as e:
+        status = f" (HTTP {e.status})" if e.status is not None else ""
+        return AttemptResult(
+            kind=FAILOVER,
+            attribution=f"{e.failure_class}{status}: {e.detail}",
+        )
+
+    if not isinstance(parsed, dict):
+        return AttemptResult(
+            kind=RETRY,
+            feedback="reply was not a JSON object with low/med/high keys",
+            attribution="quality: unparseable 200 reply",
+        )
+    # Light shape check — if the model returned {} or junk, treat as quality.
+    if not any(isinstance(parsed.get(tier), list) for tier in ("low", "med", "high")):
+        return AttemptResult(
+            kind=RETRY,
+            feedback="reply must include low/med/high list keys",
+            attribution="quality: missing tier keys",
+        )
+    return AttemptResult(kind=OK, value=parsed)
+
+
 def recommend_tiers(provider_name: str, catalog: list[dict], *,
                      config_dir: str | Path | None = None) -> list[TierRecommendation]:
     """Rank a provider's live model catalog into low/med/high tiers.
 
-    Uses 1–3 already-configured trusted models (with consensus) to rank the
-    catalog. Anti-hallucination: drops any model id not in the real catalog.
-    Falls back to heuristic ranking if no trusted model responds.
+    Walks the ordered pool of already-configured trusted models via
+    ``failover_loop.invoke_with_failover``: a transport/auth/limit failure on one
+    candidate fails OVER to the next; a 200-but-unparseable reply is re-prompted
+    on the SAME model (up to ``max_reprompts=1`` extra times). The first valid
+    ranking wins. The whole pool is exhausted before falling back to heuristic.
 
-    Returns three TierRecommendations (one per tier), each with an ordered list
-    of model ids.
+    Anti-hallucination: any model id not in the real catalog is dropped. The
+    return contract is unchanged — three ``TierRecommendation`` rows in
+    high/med/low order.
+
+    Unlike ``decompose_planner``, the tier-voter path is allowed to use Anthropic
+    models — there is no SG-never-Anthropic guard here.
     """
     from . import secrets
     valid_ids = {m["id"] for m in catalog if isinstance(m.get("id"), str)}
@@ -200,40 +354,51 @@ def recommend_tiers(provider_name: str, catalog: list[dict], *,
         high_ids = set(tiers_cfg.tier_members("high"))
         trusted.sort(key=lambda t: t[0] not in high_ids)
 
-    votes: dict[str, dict[str, int]] = {"low": {}, "med": {}, "high": {}}
-    respondents = 0
-    for model_id, base_url, api_key in trusted[:3]:
-        result = _ask_model(model_id, base_url, api_key, catalog)
-        if result and isinstance(result, dict):
-            respondents += 1
-            for tier in ("low", "med", "high"):
-                tier_models = result.get(tier, [])
-                if isinstance(tier_models, list):
-                    for mid in tier_models:
-                        if isinstance(mid, str) and mid in valid_ids:
-                            vt = votes[tier]
-                            vt[mid] = vt.get(mid, 0) + 1
-
-    if respondents == 0:
+    pool: Sequence[_TierCandidate] = [
+        _TierCandidate(mid, base_url, api_key)
+        for mid, base_url, api_key in trusted[:_MAX_TIER_CANDIDATES]
+    ]
+    if not pool:
         return _heuristic_rank(catalog)
 
-    all_voted: set[str] = set()
-    for vt in votes.values():
-        all_voted.update(vt.keys())
+    prompt = _render_prompt(catalog)
 
+    def _attempt(cand: _TierCandidate, feedback: str) -> AttemptResult[dict]:
+        return _classify_tier_attempt(
+            cand.model_id, cand.base_url, cand.api_key, prompt, feedback
+        )
+
+    try:
+        result = invoke_with_failover(
+            list(pool),
+            _attempt,
+            max_retries=1,  # one extra re-prompt per candidate on quality fault
+            describe=lambda c: c.model_id,
+            recommendation=(
+                f"all tier-voter candidates exhausted for provider {provider_name!r} — "
+                "configure a working chat-capable model or check provider keys"
+            ),
+            error=_RecommendError,
+        )
+    except _RecommendError:
+        return _heuristic_rank(catalog)
+
+    if not isinstance(result, dict):
+        return _heuristic_rank(catalog)
+
+    # Apply the winner's ranking with anti-hallucination: drop any model id the
+    # real catalog doesn't actually have, and bucket the rest by the model's vote.
     model_tiers: dict[str, list[str]] = {"low": [], "med": [], "high": []}
-    for mid in all_voted:
-        best_tier = "med"
-        best_count = 0
-        for tier in ("low", "med", "high"):
-            count = votes[tier].get(mid, 0)
-            if count > best_count:
-                best_count = count
-                best_tier = tier
-        model_tiers[best_tier].append(mid)
+    for tier in ("low", "med", "high"):
+        for mid in result.get(tier, []) or []:
+            if isinstance(mid, str) and mid in valid_ids:
+                model_tiers[tier].append(mid)
 
+    voted: set[str] = set()
+    for ids in model_tiers.values():
+        voted.update(ids)
     for mid in valid_ids:
-        if mid not in all_voted:
+        if mid not in voted:
             model_tiers["med"].append(mid)
 
     return [
@@ -241,3 +406,10 @@ def recommend_tiers(provider_name: str, catalog: list[dict], *,
         TierRecommendation("med", model_tiers["med"]),
         TierRecommendation("low", model_tiers["low"]),
     ]
+
+
+class _RecommendError(RuntimeError):
+    """The tier-voter pool is exhausted. Carries a per-candidate failure summary
+    ending with the actionable recommendation. Surfaces only inside
+    ``recommend_tiers`` (which falls back to heuristic); never leaks to callers
+    of the public API."""
