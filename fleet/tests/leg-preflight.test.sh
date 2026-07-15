@@ -185,6 +185,152 @@ elapsed=$((t1 - t0))
 [ "$elapsed" -lt 30 ] && ok "(h) F14: sandbox timeout bounds the hostile leg's run (${elapsed}s, did not hang)" \
                        || bad "(h) F14: sandbox timeout bounds the hostile leg's run (took ${elapsed}s — looks unbounded)"
 
+# ── (i) F6 REAL-PATH TEST: exercises the real urllib.request call (NOT the stub
+# LPF_PROBE_CMD argv path). A local Python stdlib HTTP server stands in for the
+# gateway on 127.0.0.1, writes every inbound POST body to a capture file, and
+# replies with task-appropriate canned completions. This is the load-bearing
+# pin: the body of the outbound request MUST carry the FULL leg id (e.g.
+# "goodmodel-ds") VERBATIM in the JSON "model" field — if leg-preflight.sh:233
+# is ever reverted to SPLIT_MODEL (the bare "goodmodel") or any other stripped/
+# normalized value, this assertion goes RED. Sections (a)-(h) above all use
+# LPF_PROBE_CMD, which means they exercise the SUBPROCESS branch and never
+# touch leg-preflight.sh:233's `body = json.dumps({... "model": leg ...})` line
+# at all — a silent vacuous pass on the F6 pin guarantee. (i) closes that gap.
+PORT="$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')"
+CAP="$D/real-urllib-capture.ndjson"
+: > "$CAP"
+python3 -u - "$PORT" "$CAP" "$D/canary-prompts" >"$D/gateway.log" 2>&1 <<'PYEOF' &
+import json, os, re, sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+port = int(sys.argv[1])
+cap_path = sys.argv[2]
+prompts_dir = sys.argv[3]
+os.makedirs(prompts_dir, exist_ok=True)
+
+BAL_PROMPT = open(os.path.join(os.path.dirname(prompts_dir), "..", "benchmark", "preflight-tasks", "canary", "bal_parens.prompt")).read() \
+    if os.path.exists(os.path.join(os.path.dirname(prompts_dir), "..", "benchmark", "preflight-tasks", "canary", "bal_parens.prompt")) else None
+
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(n)
+        with open(cap_path, "ab") as f:
+            f.write(body + b"\n")
+        try:
+            d = json.loads(body)
+        except Exception:
+            d = {}
+        prompt = ""
+        try:
+            prompt = d.get("messages", [{}])[0].get("content", "")
+        except Exception:
+            prompt = ""
+        if "is_bal" in prompt or BAL_PROMPT and BAL_PROMPT.strip() in prompt:
+            content = "def is_bal(s):\n    depth=0\n    for c in s:\n        if c==\"(\":\n            depth+=1\n        elif c==\")\":\n            depth-=1\n            if depth<0: return False\n    return depth==0\n"
+        elif "divisible by both 6 and 15" in prompt:
+            content = "120"
+        else:
+            content = "120"
+        resp = json.dumps({
+            "choices": [{"message": {"role": "assistant", "content": content}}],
+            "usage": {"completion_tokens": max(1, len(content.split()))},
+        }).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(resp)))
+        self.end_headers()
+        self.wfile.write(resp)
+    def log_message(self, *a, **k):
+        return
+
+HTTPServer(("127.0.0.1", port), H).serve_forever()
+PYEOF
+GW_PID=$!
+trap 'kill $GW_PID 2>/dev/null || true; rm -rf "$D"' EXIT
+for _ in $(seq 1 50); do
+  python3 -c "import socket,sys;s=socket.socket();s.settimeout(0.2)
+try:
+    s.connect(('127.0.0.1', $PORT)); s.close(); sys.exit(0)
+except Exception: sys.exit(1)" 2>/dev/null && break
+  sleep 0.05
+done
+
+# Force a clean rank file so (i)'s row is unambiguous.
+: > "$RANK"
+# NB: LPF_PROBE_CMD is NOT set here — the whole point of (i) is to exercise the
+# real urllib.request branch in leg-preflight.sh:232-247, NOT the stub argv
+# path that (a)-(h) rely on. Defensive unset in case any future section sets it.
+unset LPF_PROBE_CMD
+LPF_RANK_FILE="$RANK" \
+LPF_GATEWAY_URL="http://127.0.0.1:$PORT/v1/chat/completions" \
+LPF_TOKEN="fake-token-for-hermetic-test" \
+LPF_REQ_TIMEOUT_S=10 \
+LPF_LATENCY_BUDGET_S=20 \
+bash "$SCRIPT" goodmodel-ds >/dev/null 2>&1
+RC_REAL=$?
+
+kill $GW_PID 2>/dev/null || true
+wait $GW_PID 2>/dev/null || true
+
+# 1) The script must have run cleanly (rc 0 — we asked for a HEALTHY leg).
+[ "$RC_REAL" -eq 0 ] && ok "(i) real urllib path: leg-preflight.sh exits 0 when the local fake-gateway replies 200 with a correct canary" \
+                     || bad "(i) real urllib path: leg-preflight.sh exits non-zero (rc=$RC_REAL) — the urllib branch may not have been exercised end-to-end"
+
+# 2) The fake gateway MUST have received at least one POST (proves urllib fired).
+[ -s "$CAP" ] && ok "(i) real urllib path: fake gateway received at least one inbound POST (urllib branch was reached, not the stub)" \
+              || bad "(i) real urllib path: fake gateway received NO inbound POST — urllib path was NOT exercised; F6 pin guarantee is vacuous"
+
+# 3) LOAD-BEARING: every captured body, parsed, has model == FULL leg id
+# ("goodmodel-ds", verbatim — F6 pin). If line 233 is reverted to SPLIT_MODEL
+# ("goodmodel") or any stripped/normalized value, this goes RED.
+PIN_OK=1; PIN_TOTAL=0; PIN_BAD=""
+while IFS= read -r line; do
+  [ -z "$line" ] && continue
+  PIN_TOTAL=$((PIN_TOTAL+1))
+  m="$(printf '%s' "$line" | python3 -c 'import json,sys
+try:
+  d=json.loads(sys.stdin.read())
+  print(d.get("model",""))
+except Exception:
+  print("")')"
+  if [ "$m" != "goodmodel-ds" ]; then
+    PIN_OK=0
+    PIN_BAD="${PIN_BAD}'$m' "
+  fi
+done < "$CAP"
+[ "$PIN_TOTAL" -gt 0 ] && ok "(i) F6 PIN: real urllib path issued $PIN_TOTAL POST(s) to the gateway (load-bearing — not the stub argv path)" \
+                        || bad "(i) F6 PIN: zero POSTs captured — the urllib branch was never exercised"
+[ "$PIN_OK" -eq 1 ] && ok "(i) F6 PIN (load-bearing): every captured body has JSON model == 'goodmodel-ds' VERBATIM (line 233 pin intact; reverting to SPLIT_MODEL or any stripped value goes RED)" \
+                    || bad "(i) F6 PIN (load-bearing): at least one captured body had model != 'goodmodel-ds' (saw: $PIN_BAD) — F6 pin was REVERTED; line 233's verbatim 'leg' was stripped/normalized"
+
+# 4) STRONGER guard: the captured body must NOT simply contain the bare model
+# string as its model field. This catches the most-likely reverts (replacing
+# `leg` with `SPLIT_MODEL` or `leg.split(...)`-style normalization) even if
+# somebody re-adds the suffix somewhere else.
+STRIPPED_LEAK=0
+while IFS= read -r line; do
+  [ -z "$line" ] && continue
+  m="$(printf '%s' "$line" | python3 -c 'import json,sys
+try:
+  d=json.loads(sys.stdin.read())
+  print(d.get("model",""))
+except Exception:
+  print("")')"
+  case "$m" in
+    goodmodel) STRIPPED_LEAK=1 ;;
+  esac
+done < "$CAP"
+[ "$STRIPPED_LEAK" -eq 0 ] && ok "(i) F6 PIN anti-revert: no captured body had model == 'goodmodel' (the bare SPLIT_MODEL) — the leg id was NEVER stripped to the base-pool name before the request" \
+                              || bad "(i) F6 PIN anti-revert: a captured body had model == 'goodmodel' (SPLIT_MODEL) — leg-preflight.sh:233 was REVERTED to strip the leg suffix before sending"
+
+# 5) End-to-end: the leg's rank row must be HEALTHY, proving the real urllib
+# path drove the canary scoring pipeline (exec_check + exact-match) all the way
+# through — not just "sent a request".
+v="$(row_verdict goodmodel ds)"
+[ "$v" = "HEALTHY" ] && ok "(i) real urllib path: the leg's rank is HEALTHY (real path drove the canary scoring end-to-end: outbound request -> response -> exec_check + exact-match -> verdict)" \
+                     || bad "(i) real urllib path: the leg's rank is '$v' — the real urllib path did not drive the canary scoring end-to-end (response -> exec_check / exact-match may have failed)"
+
 echo
 echo "--- $PASS passed, $FAIL failed ---"
 [ "$FAIL" -eq 0 ] || exit 1
