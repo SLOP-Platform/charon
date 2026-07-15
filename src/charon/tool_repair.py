@@ -7,6 +7,21 @@ no third-party dependencies.  Each rule is small, deterministic, and ordered.
 Symmetric to response_normalizer.py: that module repairs content *strings*;
 this module repairs tool-call *arguments*.  Same shape: stdlib-only, a public
 class + small ordered private helper rules, from __future__ import annotations.
+
+Mutating-call gate
+-------------------
+The module does NOT classify tool calls as mutating or non-mutating.  The
+caller supplies an `is_mutating` marker, either:
+
+  * inline on the tool_call dict (`tool_call["is_mutating"]`), or
+  * declared on the JSON-schema dict (top-level `"is_mutating": True/False`).
+
+When `allow_mutating=False` and the call is marked mutating by either source,
+the module short-circuits and returns the original arguments unchanged —
+no rule fires, no counter increments, the caller passes the call through
+untouched.  This gate exists to prevent accidental semantic rewrite of
+state-changing calls; the deferred proxy wiring is responsible for
+classifying the call and for honoring the policy flag from config.
 """
 from __future__ import annotations
 
@@ -238,15 +253,23 @@ class ToolCallRepair:
         schema: dict[str, Any] | None = None,
         *,
         allow_mutating: bool = False,
+        is_mutating: bool | None = None,
     ) -> RepairResult:
         """Repair a single tool call's arguments string.
 
         Args:
             arguments: The raw function.arguments string from a tool_call.
-            schema: Optional declared JSON-schema parameters dict.
-            allow_mutating: When False (default), repair is not attempted on
-                tool calls whose call metadata marks them as state-mutating.
+            schema: Optional declared JSON-schema parameters dict.  May carry
+                a top-level ``is_mutating`` boolean; when set, it is the
+                schema-declared mutating marker and overrides the ``is_mutating``
+                kwarg (the schema is the registry's declaration of intent).
+            allow_mutating: When False (default), repair is short-circuited for
+                tool calls marked as state-mutating — the original arguments
+                string is returned unchanged, no rules fire, no counters move.
                 The caller (deferred proxy wiring) passes this from config.
+            is_mutating: Optional caller-supplied mutating marker.  When None
+                (default) and the schema has no top-level ``is_mutating`` key,
+                the call is treated as non-mutating for gating purposes.
 
         Returns:
             RepairResult with the repaired string (or original), changed flag,
@@ -255,6 +278,18 @@ class ToolCallRepair:
         if not isinstance(arguments, str):
             return RepairResult(
                 arguments=arguments, changed=False, fired_rules=[], unrepaired=True
+            )
+
+        # ---- mutating-call gate ----
+        # Schema-declared is_mutating wins over the kwarg: the schema is the
+        # registry's authoritative declaration of which calls are mutating.
+        if isinstance(schema, dict) and "is_mutating" in schema:
+            mutating = bool(schema["is_mutating"])
+        else:
+            mutating = bool(is_mutating) if is_mutating is not None else False
+        if mutating and not allow_mutating:
+            return RepairResult(
+                arguments=arguments, changed=False, fired_rules=[]
             )
 
         working = arguments
@@ -345,8 +380,10 @@ class ToolCallRepair:
 
         Args:
             tool_calls: List of tool_call dicts (each has function.name
-                and function.arguments).
+                and function.arguments).  May carry a top-level
+                ``is_mutating`` boolean to mark the call as state-mutating.
             schemas: Dict mapping tool name -> JSON schema for its parameters.
+                Each schema may also declare a top-level ``is_mutating``.
             allow_mutating: Forwarded to repair_arguments.
 
         Returns:
@@ -357,8 +394,15 @@ class ToolCallRepair:
             fn = tc.get("function", {})
             name = fn.get("name", "")
             schema = schemas.get(name)
+            # Per-call is_mutating marker on the tool_call dict, so the
+            # caller can flag a single call mutating even when the schema
+            # is shared across many calls.
+            tc_is_mutating = tc.get("is_mutating")
             result = self.repair_arguments(
-                fn.get("arguments", ""), schema, allow_mutating=allow_mutating
+                fn.get("arguments", ""),
+                schema,
+                allow_mutating=allow_mutating,
+                is_mutating=tc_is_mutating,
             )
             if result.changed:
                 fn["arguments"] = result.arguments

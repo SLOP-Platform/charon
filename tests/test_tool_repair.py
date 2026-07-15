@@ -236,27 +236,126 @@ def test_semantic_values_not_altered():
 
 
 # -------------------------------------------------------------------
-# State-mutating default OFF
-# -----------------------------------------------------------------
+# State-mutating gate
+# -------------------------------------------------------------------
 
 
-def test_mutating_flag_passes_as_documented():
-    """The allow_mutating parameter is exposed for deferred proxy wiring.
+def test_mutating_flag_passes_when_flag_off_and_call_non_mutating():
+    """Non-mutating calls repair normally even with allow_mutating=False.
 
-    In this module it is a pass-through flag; the deferred wiring will
-    supply the value from config.  We verify it is functional.
+    The gate is per-call: when the call is not marked mutating, the
+    allow_mutating policy has no effect.
     """
+    rep = ToolCallRepair()
+    args = '{"cmd": "ls -la",}'
+    schema = {"properties": {"cmd": {"type": "string"}}}
+    result = rep.repair_arguments(args, schema, allow_mutating=False)
+    assert result.changed is True
+    assert "fix_trailing_commas" in result.fired_rules
+
+
+def test_mutating_call_short_circuited_when_policy_off():
+    """A mutating call with allow_mutating=False is passed through unchanged."""
+    rep = ToolCallRepair()
+    args = '{"cmd": "rm -rf /",}'
+    schema = {
+        "is_mutating": True,
+        "properties": {"cmd": {"type": "string"}},
+    }
+    result = rep.repair_arguments(args, schema, allow_mutating=False)
+    assert result.changed is False
+    assert result.fired_rules == []
+    assert result.unrepaired is False
+    assert result.arguments == args
+
+
+def test_mutating_call_repairs_when_policy_on():
+    """A mutating call with allow_mutating=True still gets repaired."""
+    rep = ToolCallRepair()
+    args = '{"cmd": "rm -rf /",}'
+    schema = {
+        "is_mutating": True,
+        "properties": {"cmd": {"type": "string"}},
+    }
+    result = rep.repair_arguments(args, schema, allow_mutating=True)
+    assert result.changed is True
+    assert "fix_trailing_commas" in result.fired_rules
+
+
+def test_per_call_is_mutating_kwarg_overrides_default():
+    """is_mutating kwarg (call-site marker) drives the gate when no schema marker."""
     rep = ToolCallRepair()
     args = '{"cmd": "rm -rf /",}'
     schema = {"properties": {"cmd": {"type": "string"}}}
-    result_off = rep.repair_arguments(args, schema, allow_mutating=False)
-    result_on = rep.repair_arguments(args, schema, allow_mutating=True)
-    # Both should repair the trailing comma since allow_mutating is
-    # a caller-owned policy flag — the module itself doesn't classify calls.
-    assert result_off.changed is True
-    assert result_on.changed is True
+    # No schema is_mutating — kwarg drives the gate.
+    result = rep.repair_arguments(
+        args, schema, allow_mutating=False, is_mutating=True
+    )
+    assert result.changed is False
+    assert result.fired_rules == []
+    assert result.arguments == args
 
 
+def test_schema_is_mutating_overrides_call_kwarg():
+    """Schema-declared is_mutating is the registry's authoritative source."""
+    rep = ToolCallRepair()
+    args = '{"cmd": "ls",}'
+    schema = {
+        "is_mutating": True,  # schema says mutating
+        "properties": {"cmd": {"type": "string"}},
+    }
+    # kwarg says non-mutating — schema wins.
+    result = rep.repair_arguments(
+        args, schema, allow_mutating=False, is_mutating=False
+    )
+    assert result.changed is False
+    assert result.arguments == args
+
+
+def test_mutating_gate_does_not_increment_counters():
+    """Short-circuited mutating calls do NOT increment repair-rule counters."""
+    rep = ToolCallRepair()
+    args = '{"cmd": "rm -rf /",}'
+    schema = {
+        "is_mutating": True,
+        "properties": {"cmd": {"type": "string"}},
+    }
+    rep.repair_arguments(args, schema, allow_mutating=False)
+    assert rep.counters() == {}
+
+
+def test_repair_tool_calls_honors_per_call_is_mutating():
+    """repair_tool_calls plumbs is_mutating from each tool_call dict."""
+    rep = ToolCallRepair()
+    tcs = [
+        {
+            "function": {"name": "rm", "arguments": '{"path": "/",}'},
+            "is_mutating": True,
+        },
+        {
+            "function": {"name": "ls", "arguments": '{"path": "/",}'},
+            # no is_mutating marker — non-mutating
+        },
+    ]
+    schemas = {
+        "rm": {
+            "is_mutating": True,
+            "properties": {"path": {"type": "string"}},
+        },
+        "ls": {"properties": {"path": {"type": "string"}}},
+    }
+    repaired, results = rep.repair_tool_calls(tcs, schemas, allow_mutating=False)
+    # rm short-circuited; ls repaired.
+    assert results[0].changed is False
+    assert results[0].fired_rules == []
+    assert results[1].changed is True
+    assert "fix_trailing_commas" in results[1].fired_rules
+    assert repaired[0]["function"]["arguments"] == '{"path": "/",}'
+    assert repaired[1]["function"]["arguments"] == '{"path": "/"}'
+
+
+# -------------------------------------------------------------------
+# counters()
 # -------------------------------------------------------------------
 # counters()
 # -----------------------------------------------------------------
