@@ -253,6 +253,86 @@ def test_planner_never_selects_anthropic(monkeypatch: pytest.MonkeyPatch) -> Non
     assert P._select_planner_model(config_dir=None, is_detained=None) is None
 
 
+# --------------------------------------------------------- PLANNER env / tier override
+def test_planner_env_pinned_model_wins_even_when_not_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # DECOMPOSE-MODEL-WIRING: CHARON_DECOMPOSE_PLANNER_MODEL must reorder selection so
+    # the pinned model is chosen even when it is NOT the first trusted model.
+    # FAIL-ON-REVERT: stripping the pinned/tier-lookup block reverts to plain first-in-
+    # list order, so this test goes RED.
+    from charon import recommend
+
+    monkeypatch.setattr(P, "recommend_default_config_dir", lambda: "/nonexistent")
+    monkeypatch.setenv("CHARON_DECOMPOSE_PLANNER_MODEL", "pinned-model")
+    # Pinned model is SECOND in the mocked trusted list — selection must still pick it.
+    monkeypatch.setattr(
+        recommend,
+        "_find_trusted_models",
+        lambda cd: [
+            ("other-model", "https://api.openai.com/v1", "k1"),
+            ("pinned-model", "https://api.openai.com/v1", "k2"),
+        ],
+    )
+    picked = P._select_planner_model(config_dir=None, is_detained=None)
+    assert picked is not None
+    assert picked[0] == "pinned-model"
+
+
+def test_planner_tier_high_model_preferred_when_unpinned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # DECOMPOSE-MODEL-WIRING: with no CHARON_DECOMPOSE_PLANNER_MODEL set, a trusted
+    # model whose id is in tiers.tier_members("high") must be selected before the
+    # plain first-in-list trusted model.
+    # FAIL-ON-REVERT: removing the tier-'high' lookup reverts to first-in-list order
+    # and this test goes RED.
+    from charon import recommend
+    from charon.config import tiers as tiers_cfg
+
+    monkeypatch.setattr(P, "recommend_default_config_dir", lambda: "/nonexistent")
+    monkeypatch.delenv("CHARON_DECOMPOSE_PLANNER_MODEL", raising=False)
+
+    # Force tier_members("high") → ["tier-high-model"], regardless of persisted tiers.json.
+    monkeypatch.setattr(
+        tiers_cfg, "tier_members", lambda tier, tiers=None: ["tier-high-model"]
+    )
+    # The tier-"high" model is SECOND in the mocked trusted list — selection must still pick it.
+    monkeypatch.setattr(
+        recommend,
+        "_find_trusted_models",
+        lambda cd: [
+            ("other-model", "https://api.openai.com/v1", "k1"),
+            ("tier-high-model", "https://api.openai.com/v1", "k2"),
+        ],
+    )
+    picked = P._select_planner_model(config_dir=None, is_detained=None)
+    assert picked is not None
+    assert picked[0] == "tier-high-model"
+
+
+def test_planner_pinned_model_ignores_anthropic_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # If a non-Claude pinned model exists alongside a Claude first-in-list, the pinned
+    # model wins (the SG-never-Anthropic guard skips Claude first; pinned re-orders after).
+    from charon import recommend
+
+    monkeypatch.setattr(P, "recommend_default_config_dir", lambda: "/nonexistent")
+    monkeypatch.setenv("CHARON_DECOMPOSE_PLANNER_MODEL", "pinned-gpt")
+    monkeypatch.setattr(
+        recommend,
+        "_find_trusted_models",
+        lambda cd: [
+            ("claude-opus-4", "https://api.anthropic.com/v1", "k1"),
+            ("pinned-gpt", "https://api.openai.com/v1", "k2"),
+        ],
+    )
+    picked = P._select_planner_model(config_dir=None, is_detained=None)
+    assert picked is not None
+    assert picked[0] == "pinned-gpt"
+
+
 # --------------------------------------------------------- prompt shape
 def test_prompt_lists_surface_and_ticket() -> None:
     surf = P.ChangeSurface.from_facts(R46_SURFACE)

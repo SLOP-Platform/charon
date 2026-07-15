@@ -31,6 +31,7 @@ Privileged-core rule: stdlib-only (mirrors the rest of ``src/charon``).
 from __future__ import annotations
 
 import json
+import os
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
@@ -390,7 +391,9 @@ def _select_planner_model(
     ``anthropic`` or whose model_id starts with ``claude``. This guard does NOT apply
     to the tier-voter path (``recommend.recommend_tiers``), where Anthropic is allowed."""
     from . import recommend
+    from .config import tiers as tiers_cfg
 
+    candidates: list[tuple[str, str, str]] = []
     for model_id, base_url, api_key in recommend._find_trusted_models(
         config_dir if config_dir is not None else recommend_default_config_dir()
     ):
@@ -398,8 +401,22 @@ def _select_planner_model(
             continue
         if "anthropic" in base_url.lower() or model_id.lower().startswith("claude"):
             continue
-        return model_id, base_url, api_key
-    return None
+        candidates.append((model_id, base_url, api_key))
+    if not candidates:
+        return None
+
+    pinned = os.environ.get("CHARON_DECOMPOSE_PLANNER_MODEL")
+    if pinned:
+        for m, b, k in candidates:
+            if m == pinned:
+                return m, b, k
+
+    high_ids = set(tiers_cfg.tier_members("high"))
+    for m, b, k in candidates:
+        if m in high_ids:
+            return m, b, k
+
+    return candidates[0]
 
 
 def recommend_default_config_dir() -> str | Path:
