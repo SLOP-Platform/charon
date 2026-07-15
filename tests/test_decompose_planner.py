@@ -345,6 +345,126 @@ def test_prompt_lists_surface_and_ticket() -> None:
     assert "you overlapped foo.py" in fb
 
 
+# --------------------------------------------------------- provider failover (fix B)
+def _serve_candidates(
+    monkeypatch: pytest.MonkeyPatch, entries: list[tuple[str, str, str]]
+) -> None:
+    """Point the default-invoker path at a fixed ordered candidate list (no network)."""
+    from charon import recommend
+
+    monkeypatch.setattr(P, "recommend_default_config_dir", lambda: "/nonexistent")
+    monkeypatch.setattr(recommend, "_find_trusted_models", lambda cd: entries)
+
+
+def test_failover_on_auth_advances_to_next_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # First candidate's key 401s (provider-level auth fault) → the planner must FAIL OVER
+    # to the second candidate, which serves a valid plan. Proves it did not just re-prompt
+    # the dead model. FAIL-ON-REVERT: collapse _post_chat back to a blanket None (so a 401
+    # looks like an unparseable plan) and the planner never advances → this goes RED.
+    monkeypatch.delenv("CHARON_DECOMPOSE_PLANNER_MODEL", raising=False)
+    _serve_candidates(
+        monkeypatch,
+        [
+            ("dead-key-model", "https://api.openai.com/v1", "bad"),
+            ("live-model", "https://api.openai.com/v1", "good"),
+        ],
+    )
+
+    def fake_post(model_id, base_url, api_key, prompt, timeout=60.0):
+        if model_id == "dead-key-model":
+            raise P.PlannerTransportError("auth", 401, "HTTP 401 from dead-key-model")
+        return {"units": DISJOINT_3}
+
+    monkeypatch.setattr(P, "_post_chat", fake_post)
+
+    units = P.plan_decomposition(R46_TICKET, R46_SURFACE)  # default invoker → failover
+    assert len(units) == 3  # served by the SECOND model
+
+
+def test_pool_exhaustion_names_each_failure_and_recommends(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # ALL candidates 401 → PlannerError naming each model's failure class AND ending with
+    # the actionable "configure a chat-capable provider" recommendation.
+    monkeypatch.delenv("CHARON_DECOMPOSE_PLANNER_MODEL", raising=False)
+    _serve_candidates(
+        monkeypatch,
+        [
+            ("model-a", "https://api.openai.com/v1", "k1"),
+            ("model-b", "https://api.openai.com/v1", "k2"),
+        ],
+    )
+
+    def fake_post(model_id, base_url, api_key, prompt, timeout=60.0):
+        raise P.PlannerTransportError("auth", 401, f"HTTP 401 from {model_id}")
+
+    monkeypatch.setattr(P, "_post_chat", fake_post)
+
+    with pytest.raises(P.PlannerError) as ei:
+        P.plan_decomposition(R46_TICKET, R46_SURFACE)
+    msg = str(ei.value)
+    assert "model-a" in msg and "model-b" in msg
+    assert "auth" in msg
+    assert "configure a chat-capable provider" in msg
+
+
+def test_garbage_body_reprompts_same_model_not_failover(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A 200 with an unparseable body is a QUALITY fault of THIS model → re-prompt the SAME
+    # model (return None), NOT a failover. With a single candidate and max_reprompts=1 the
+    # model is asked twice, then the pool is exhausted → PlannerError. Proves transport vs
+    # quality are distinguished: None never advances the candidate.
+    monkeypatch.delenv("CHARON_DECOMPOSE_PLANNER_MODEL", raising=False)
+    _serve_candidates(monkeypatch, [("only-model", "https://api.openai.com/v1", "k")])
+
+    calls: list[str] = []
+
+    def fake_post(model_id, base_url, api_key, prompt, timeout=60.0):
+        calls.append(model_id)
+        return None  # 200-but-garbage → quality fault → reprompt SAME model
+
+    monkeypatch.setattr(P, "_post_chat", fake_post)
+
+    with pytest.raises(P.PlannerError):
+        P.plan_decomposition(R46_TICKET, R46_SURFACE, max_reprompts=1)
+    # max_reprompts=1 → 2 attempts, ALL against the same single model (no failover).
+    assert calls == ["only-model", "only-model"]
+
+
+def test_ordered_candidates_pin_first_and_never_anthropic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Guards intact on the FULL ordered list: the pinned model is first, and no
+    # Anthropic/claude candidate ever appears. FAIL-ON-REVERT: drop the pin/guard and this
+    # goes RED.
+    from charon import recommend
+    from charon.config import tiers as tiers_cfg
+
+    monkeypatch.setattr(P, "recommend_default_config_dir", lambda: "/nonexistent")
+    monkeypatch.setenv("CHARON_DECOMPOSE_PLANNER_MODEL", "pinned-model")
+    monkeypatch.setattr(tiers_cfg, "tier_members", lambda tier, tiers=None: ["hi-model"])
+    monkeypatch.setattr(
+        recommend,
+        "_find_trusted_models",
+        lambda cd: [
+            ("claude-opus-4", "https://api.anthropic.com/v1", "k1"),
+            ("some-anthropic", "https://api.anthropic.com/v1", "k2"),
+            ("hi-model", "https://api.openai.com/v1", "k3"),
+            ("pinned-model", "https://api.openai.com/v1", "k4"),
+            ("plain-model", "https://api.openai.com/v1", "k5"),
+        ],
+    )
+    ordered = P._ordered_planner_candidates(config_dir=None, is_detained=None)
+    ids = [m for m, _, _ in ordered]
+    assert ids[0] == "pinned-model"  # pin wins
+    assert ids[1] == "hi-model"  # tier-high before the rest
+    assert "claude-opus-4" not in ids  # never Anthropic
+    assert not any("anthropic" in b.lower() for _, b, _ in ordered)
+
+
 def test_intake_error_is_the_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     # Belt-and-braces: the planner's rejection is driven by assert_disjoint_waves raising
     # IntakeError, not by our own parsing — confirm the overlap payload parses fine but
