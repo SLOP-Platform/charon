@@ -2,16 +2,20 @@
 # session-ctx-preamble.test.sh — FAIL-ON-REVERT self-test for SESSION-CTX-PROPAGATE.
 #
 # Covers:
-#   (a) the preamble emits valid PreToolUse hookSpecificOutput JSON with a non-empty
-#       additionalContext (revert -> empty/malformed output -> FAIL).
-#   (b) the additionalContext contains the required pointer-index markers: the four
-#       guiding docs (MANAGER-OPERATING-RULES, TOOL-INVENTORY, EVAL-REGISTRY, CG-PROVIDERS),
-#       the reuse-check/tool-first reminder, and the mechanism-selection ladder.
-#   (c) the additionalContext stays under the ~40-line HARD size cap (revert -> someone
-#       re-balloons it back into a full-doc dump -> FAIL).
-#   (d) fleet/state/SESSION-CTX-HOOK.json exists, is valid JSON, targets matcher
-#       "Agent|Task", and carries a hook command that points at session-ctx-preamble.sh
-#       ALONGSIDE (not replacing) the existing nudge_background_agents.py entry.
+#   (a) the preamble emits valid SubagentStart hookSpecificOutput JSON with hookEventName
+#       exactly "SubagentStart" and a non-empty additionalContext. Reverting the event name
+#       back to "PreToolUse" (the WRONG lever -- its additionalContext never reaches a
+#       sub-agent) or emptying additionalContext -> FAIL.
+#   (b) the additionalContext contains the required pointer-index markers: the guiding docs
+#       (MANAGER-OPERATING-RULES, TOOL-INVENTORY), the reuse-check/tool-first reminder, and
+#       the mechanism-selection ladder.
+#   (c) the additionalContext points ONLY at git-tracked, fresh-worktree-present paths --
+#       it must NOT reference the gitignored local-only state files EVAL-REGISTRY.md or
+#       CG-PROVIDERS.md (they are absent in the worktrees where sub-agents run -> dangling).
+#   (d) the additionalContext stays under the ~40-line HARD size cap (revert -> someone
+#       re-balloons it into a full-doc dump -> FAIL).
+#   (e) fleet/state/SESSION-CTX-HOOK.json exists, is valid JSON, registers a SubagentStart
+#       hook (NOT PreToolUse), and carries a hook command pointing at session-ctx-preamble.sh.
 #
 # Run:  bash fleet/tests/session-ctx-preamble.test.sh   (exit 0 = all pass)
 set -uo pipefail
@@ -23,7 +27,7 @@ bad(){ FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 PREAMBLE_SH="$SRC/session-ctx-preamble.sh"
 HOOK_JSON="$SRC/state/SESSION-CTX-HOOK.json"
 
-echo "== (a) preamble script exists, runs, emits valid hook JSON =="
+echo "== (a) preamble script exists, runs, emits valid SubagentStart hook JSON =="
 if [ ! -x "$PREAMBLE_SH" ] && [ ! -f "$PREAMBLE_SH" ]; then
   bad "a0 session-ctx-preamble.sh exists"
 else
@@ -41,14 +45,14 @@ if echo "$RAW" | python3 -c "
 import json, sys
 try:
     d = json.load(sys.stdin)
-except Exception as e:
+except Exception:
     sys.exit(1)
 hso = d.get('hookSpecificOutput') or {}
-sys.exit(0 if hso.get('hookEventName') == 'PreToolUse' and hso.get('additionalContext') else 1)
+sys.exit(0 if hso.get('hookEventName') == 'SubagentStart' and hso.get('additionalContext') else 1)
 " 2>/dev/null; then
-  ok "a2 output is valid JSON with hookSpecificOutput.hookEventName=PreToolUse + non-empty additionalContext"
+  ok "a2 valid JSON with hookSpecificOutput.hookEventName=SubagentStart + non-empty additionalContext"
 else
-  bad "a2 output is valid JSON with hookSpecificOutput.hookEventName=PreToolUse + non-empty additionalContext"
+  bad "a2 valid JSON with hookSpecificOutput.hookEventName=SubagentStart + non-empty additionalContext (REVERT -- wrong event name or empty context)"
 fi
 
 CTX="$(echo "$RAW" | python3 -c "
@@ -64,8 +68,6 @@ echo "== (b) required pointer-index markers present =="
 for marker in \
   "MANAGER-OPERATING-RULES" \
   "TOOL-INVENTORY" \
-  "EVAL-REGISTRY" \
-  "CG-PROVIDERS" \
   "reuse-check" \
   "MECHANISM-SELECTION LADDER"
 do
@@ -76,59 +78,66 @@ do
   fi
 done
 
-echo "== (c) size cap: additionalContext stays under ~40 lines =="
+echo "== (c) no dangling gitignored local-only pointers in additionalContext =="
+for absent in "EVAL-REGISTRY.md" "CG-PROVIDERS.md"
+do
+  if printf '%s' "$CTX" | grep -qF "$absent"; then
+    bad "c pointer must NOT reference gitignored local-only file: $absent (dangles in fresh worktrees)"
+  else
+    ok "c no dangling pointer to $absent"
+  fi
+done
+
+echo "== (d) size cap: additionalContext stays under ~40 lines =="
 LINECOUNT="$(printf '%s' "$CTX" | grep -c '')"
 if [ -n "$CTX" ] && [ "$LINECOUNT" -le 40 ]; then
-  ok "c1 preamble line count ($LINECOUNT) <= 40-line cap"
+  ok "d1 preamble line count ($LINECOUNT) <= 40-line cap"
 else
-  bad "c1 preamble line count ($LINECOUNT) <= 40-line cap (REVERT -- re-ballooned to full docs)"
+  bad "d1 preamble line count ($LINECOUNT) <= 40-line cap (REVERT -- re-ballooned to full docs)"
 fi
 
-echo "== (d) hook JSON targets Agent|Task and carries the preamble, alongside the existing nudge =="
+echo "== (e) hook JSON registers a SubagentStart hook pointing at the preamble =="
 if [ -f "$HOOK_JSON" ]; then
-  ok "d0 SESSION-CTX-HOOK.json exists"
+  ok "e0 SESSION-CTX-HOOK.json exists"
 else
-  bad "d0 SESSION-CTX-HOOK.json exists"
+  bad "e0 SESSION-CTX-HOOK.json exists"
 fi
 
 if python3 -c "
 import json, sys
 try:
-    d = json.load(open('$HOOK_JSON'))
+    json.load(open('$HOOK_JSON'))
 except Exception:
     sys.exit(1)
 sys.exit(0)
 " 2>/dev/null; then
-  ok "d1 SESSION-CTX-HOOK.json is valid JSON"
+  ok "e1 SESSION-CTX-HOOK.json is valid JSON"
 else
-  bad "d1 SESSION-CTX-HOOK.json is valid JSON"
+  bad "e1 SESSION-CTX-HOOK.json is valid JSON"
 fi
 
 if python3 -c "
 import json, sys
 d = json.load(open('$HOOK_JSON'))
-entries = d.get('hooks', {}).get('PreToolUse', [])
-matched = [e for e in entries if e.get('matcher') == 'Agent|Task']
-sys.exit(0 if matched else 1)
+hooks = d.get('hooks', {})
+# MUST be a SubagentStart hook, and MUST NOT be a PreToolUse hook (the wrong lever).
+sys.exit(0 if ('SubagentStart' in hooks and 'PreToolUse' not in hooks) else 1)
 " 2>/dev/null; then
-  ok "d2 hook JSON targets matcher Agent|Task"
+  ok "e2 hook JSON registers SubagentStart (and NOT PreToolUse -- the wrong lever)"
 else
-  bad "d2 hook JSON targets matcher Agent|Task (REVERT -- wrong/missing matcher)"
+  bad "e2 hook JSON registers SubagentStart (and NOT PreToolUse) (REVERT -- reverted to a PreToolUse hook that cannot reach sub-agents)"
 fi
 
 if python3 -c "
 import json, sys
 d = json.load(open('$HOOK_JSON'))
-entries = d.get('hooks', {}).get('PreToolUse', [])
-matched = [e for e in entries if e.get('matcher') == 'Agent|Task']
-cmds = ' '.join(h.get('command','') for e in matched for h in e.get('hooks', []))
-has_preamble = 'session-ctx-preamble.sh' in cmds
-has_nudge = 'nudge_background_agents.py' in cmds
-sys.exit(0 if (has_preamble and has_nudge) else 1)
+entries = d.get('hooks', {}).get('SubagentStart', [])
+cmds = ' '.join(h.get('command','') for e in entries for h in e.get('hooks', []))
+sys.exit(0 if 'session-ctx-preamble.sh' in cmds else 1)
 " 2>/dev/null; then
-  ok "d3 hook JSON carries session-ctx-preamble.sh ALONGSIDE the existing nudge_background_agents.py command"
+  ok "e3 SubagentStart hook command points at session-ctx-preamble.sh"
 else
-  bad "d3 hook JSON carries session-ctx-preamble.sh ALONGSIDE the existing nudge_background_agents.py command (REVERT -- lost the preamble wiring or clobbered the existing nudge)"
+  bad "e3 SubagentStart hook command points at session-ctx-preamble.sh (REVERT -- lost the preamble wiring)"
 fi
 
 echo

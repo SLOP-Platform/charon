@@ -1,15 +1,10 @@
 {
-  "_comment": "SESSION-CTX-PROPAGATE: exact hooks.PreToolUse[] entry to MERGE into ~/.claude/settings.json (replace the existing matcher:\"Agent|Task\" entry with this one -- it keeps the existing nudge_background_agents.py command and ADDS session-ctx-preamble.sh as a second hook in the same array, so both fire on every Agent/Task spawn). Do not add a second matcher:\"Agent|Task\" block; merge into the one that already exists. Applied + verified by the MANAGER, not by this ticket's build session.",
+  "_comment": "SESSION-CTX-PROPAGATE: exact hooks.SubagentStart[] entry to MERGE into ~/.claude/settings.json. This registers a NEW SubagentStart hook -- the ONLY hook event whose additionalContext is injected into the SPAWNED sub-agent's own context (a PreToolUse:Agent hook's additionalContext goes to the parent, not the child, so it can never reach a sub-agent). Confirmed against Claude Code hooks docs. The matcher '*' matches ALL sub-agent types (Explore, Plan, general-purpose, custom). SubagentStart cannot block sub-agent creation, so this is inherently fail-open. If a hooks.SubagentStart array already exists, append this entry into it (do NOT add a second SubagentStart key). This does NOT touch the existing PreToolUse:Agent|Task nudge_background_agents.py hook -- that is a separate, unrelated block and stays as-is. Applied + verified by the MANAGER, not by this ticket's build session.",
   "hooks": {
-    "PreToolUse": [
+    "SubagentStart": [
       {
-        "matcher": "Agent|Task",
+        "matcher": "*",
         "hooks": [
-          {
-            "type": "command",
-            "command": "python3 /home/stack/.claude/hooks/nudge_background_agents.py",
-            "timeout": 10
-          },
           {
             "type": "command",
             "command": "bash /home/stack/charon-private/fleet/session-ctx-preamble.sh",
@@ -20,8 +15,8 @@
     ]
   },
   "verify": [
-    "jq -e '.hooks.PreToolUse[] | select(.matcher==\"Agent|Task\") | .hooks | length==2' ~/.claude/settings.json",
-    "bash /home/stack/charon-private/fleet/session-ctx-preamble.sh | jq -e '.hookSpecificOutput.additionalContext | contains(\"MECHANISM-SELECTION LADDER\")'",
-    "spawn a test Agent/Task sub-session and confirm the additionalContext from BOTH commands appears (the existing background-agent nudge is unaffected)"
+    "jq -e '.hooks.SubagentStart[] | select(.matcher==\"*\") | .hooks[] | select(.command | contains(\"session-ctx-preamble.sh\"))' ~/.claude/settings.json",
+    "bash /home/stack/charon-private/fleet/session-ctx-preamble.sh | jq -e '.hookSpecificOutput.hookEventName==\"SubagentStart\" and (.hookSpecificOutput.additionalContext | contains(\"MECHANISM-SELECTION LADDER\"))'",
+    "spawn a real Agent/Task sub-session and confirm the additionalContext appears in the SUB-AGENT's context (not the parent's); confirm the existing PreToolUse background-agent nudge is unchanged"
   ]
 }
