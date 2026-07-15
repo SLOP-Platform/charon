@@ -22,9 +22,14 @@ accept: |
   - RED if any out-of-charon row has action=file-slop-ticket / file-ksf-ticket but no linked
     ticket id recorded (a Charon rule the siblings need that hasn't been assigned across) —
     i.e. the two-way obligation is enforced, not advisory.
-  - Emit, for each such row, the exact cross-repo ticket to file (title + target repo) so the
-    manager/operator can assign it (the "assign a SLOP ticket for anything in Charon SLOP
-    needs" directive). Do NOT auto-create tickets in the foreign repo; PRINT the assignment.
+  - For each out-of-charon row, ACTUALLY CREATE the ticket in the target sibling repo (operator
+    directive: "create a ticket in SLOP for that work" — not just recommend). SLOP create =
+    `python3 /home/stack/code/mediastack/tracking/query.py add --title "<rule> (from Charon)"
+    --batch <BATCH>` (discover the current open batch first); KSF create = its equivalent. Record
+    the created ticket id back into the register row (a new `linked_ticket` column) so the gate
+    can verify it exists. Idempotent: if a linked ticket already exists, do NOT create a duplicate.
+  - Print a summary of every ticket created/would-create so the manager/operator sees the two-way
+    assignments at a glance.
   - Wire it into validate_board.sh as an ADVISORY surface first (like parallelizability scan),
     then note the promotion-to-blocking step in the review-log once the register is clean.
   ## Accept (fail-on-revert)
