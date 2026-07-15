@@ -1,6 +1,8 @@
 tier: frontier
 difficulty: 5  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
 work_class: greenfield-feature
+parked: true
+note: PARKED for the off-Claude fleet — scope (below, L20-23) says "Reserve Claude; do NOT route to an open model". Off-Claude frontier tabs must SKIP this. Also a single net-new module (context_shaper.py + its test = one domain) so it is NOT parallelizable; the parallelizability-gate refusal was a false trigger. A Claude session / the operator builds this one.
 branch: feat/rfl-5-context-compaction
 depends_on:
 owns: src/charon/context_shaper.py, tests/test_context_shaper.py
