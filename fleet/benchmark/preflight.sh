@@ -94,7 +94,10 @@ copy_session_files() {
   local src="$1" dst="$2"
   [ -d "$src" ] || { err "copy_session_files: no such fixture dir: $src"; return 1; }
   mkdir -p "$dst"
-  ( cd "$src" && tar cf - --exclude='__pycache__' --exclude='.pytest_cache' . ) \
+  # Exclude tool caches the daemon (a different unix user) may not be able to
+  # read back out of the session dir it snapshots — see grader-daemon.py
+  # _snapshot_worktree ROOT-CAUSE (b) FIX, part 2 (review F2).
+  ( cd "$src" && tar cf - --exclude='__pycache__' --exclude='.pytest_cache' --exclude='.hypothesis' . ) \
     | ( cd "$dst" && tar xf - )
   local f
   for f in "${PFR_DENY_FILES[@]}"; do

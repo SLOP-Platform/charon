@@ -216,17 +216,48 @@ def _snapshot_worktree(worktree_path: str, run_id: str) -> Path:
     Strips ownership so the agent (who owns the source worktree) does not
     leak read-permissions into the daemon-private snapshot dir.
     Returns the snapshot directory path.
+
+    ROOT-CAUSE (b) FIX, part 2 (review F2 / EVAL-GRADER-PROVISION): the daemon
+    runs as a DIFFERENT unix user (bench-grader) than the agent whose worktree
+    it snapshots. A tool cache the agent's test run created — most commonly
+    ``.hypothesis`` (property-test example database, often written with
+    restrictive perms) — can contain files bench-grader cannot read even after
+    the session root/dir itself is made traversable (preflight.sh:243/282).
+    ``shutil.copytree`` raised on the FIRST such unreadable file, aborting the
+    ENTIRE snapshot (and therefore the grade) over one irrelevant cache
+    artifact — the confirmed mechanism behind a uniform fail-closed BLOCK
+    verdict that is independent of what the model actually did
+    (state/preflight-results/CONTROLS-STATUS.md, attempt 2). Fixed two ways:
+    (i) known cache dirs are excluded by NAME so the daemon never even
+    attempts to read into them; (ii) any OTHER individual file that still
+    can't be read is skipped-and-logged rather than aborting the whole
+    snapshot — the destination tree already has everything copytree managed
+    to copy before it hit the unreadable straggler.
     """
     src = Path(worktree_path)
     dst = WORK_DIR / run_id
     if dst.exists():
         shutil.rmtree(dst)
-    shutil.copytree(
-        src, dst,
-        ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", ".mypy_cache", "node_modules"),
-        symlinks=False,
-        copy_function=shutil.copy,  # do NOT copy metadata / ownership
-    )
+    try:
+        shutil.copytree(
+            src, dst,
+            ignore=shutil.ignore_patterns(
+                "__pycache__", ".pytest_cache", ".mypy_cache", ".hypothesis", "node_modules"
+            ),
+            symlinks=False,
+            copy_function=shutil.copy,  # do NOT copy metadata / ownership
+        )
+    except shutil.Error as exc:
+        # exc.args[0] is a list of (src, dst, why) tuples shutil accumulated —
+        # everything else in the tree was already copied; only these stragglers
+        # failed. Log each and continue: a handful of unreadable cache files
+        # must never fail-closed a grade over an environment artifact.
+        for item in exc.args[0]:
+            bad_src = item[0] if item else "?"
+            why = item[-1] if item else str(exc)
+            log(f"snapshot {run_id}: SKIPPED unreadable file (non-fatal): {bad_src}: {why}")
+        if not dst.exists():
+            raise
     # Make snapshot read-only to the daemon too — the daemon grades against
     # it but should never mutate it.
     for f in dst.rglob("*"):
