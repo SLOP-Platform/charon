@@ -503,6 +503,19 @@ except Exception:
   fi
 }
 
+# --- detect_config_drift: MECHANIZES the operator's "config siloed + drifts INVISIBLY" fix.
+# Provider/model config lives in multiple sources (LOCAL ~/.charon + the 4-LOM CG deploy) and a
+# provider added to ONE (e.g. NVIDIA NIM) strands there unseen. config-drift.sh reconciles every
+# source in state/CONFIG-SOURCES.tsv and flags every provider present-in-one/absent-in-another or
+# base_url/key_env mismatch. ADVISORY at boot (--advisory forces exit 0): it PRINTS + COUNTs so the
+# operator is no longer blind, without hard-blocking startup. The non-zero exit is reserved for
+# explicit gate use (fleet/config-drift.sh with no flag). Read-only; compares key_env names only.
+detect_config_drift(){
+  local script="$HERE/config-drift.sh"
+  [ -x "$script" ] || { echo "config-drift: detector not found/executable at $script"; return 0; }
+  bash "$script" --advisory 2>&1 | grep -E '^(== |  WARN:|  [a-z0-9].*<< DRIFT|DRIFT:|UNREACHABLE:|  NOTE:|  only-in-)' || true
+}
+
 cmd_detect(){
   local full=0
   case "${1:-}" in --full) full=1;; esac
@@ -515,6 +528,7 @@ cmd_detect(){
   detect_inflight_landscape
   detect_cg_drift
   detect_gateway_token_drift
+  detect_config_drift
   echo "--- end detectors ---"
   bash "$HERE/access-check.sh" || true
   return 0
