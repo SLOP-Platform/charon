@@ -29,9 +29,13 @@ accept: |
     R1  ~3 min — tier-appropriate, VARIETY of skills (bugfix/routing/refactor mini-tasks); screens out weak models.
     R2  ~5-6 min — broader + harder; screens the mid.
     R3  ~10+ min — hardest, only for survivors; LOCATES the ceiling.
-  ELIMINATE at each rung: a candidate advances ONLY if it clears the current rung. A model that PEAKS/plateaus at
-  R2 is NOT sent to R3 — we already know its ceiling, so R3's tokens are waste. Record the highest rung cleared as
-  the model's grade; feed results to the scorecard/LEG-RANK AS EACH RUNG COMPLETES (faster data), not only at the end.
+  ELIMINATE PER (MODEL × SKILL), NOT per model (operator refinement): each rung tests SEVERAL skill areas
+  (work_classes: bugfix/routing/refactor/reasoning/…), and elimination is tracked PER SKILL. A model that PEAKS
+  in ONE skill at R2 stops being tested IN THAT SKILL (ceiling found — R3-for-that-skill is waste), but STILL
+  GRADUATES to R3 for the OTHER skills it's still clearing. The output is a fine-grained per-(model, work_class)
+  CEILING GRADE — "send refactor to model X, but never routing" — which is exactly what assign.py consumes
+  (model-scorecard.tsv is already keyed per work_class). Feed results to the scorecard/LEG-RANK AS EACH
+  (rung × skill) COMPLETES (faster data), not only at the end.
   Budgets per rung are DERIVED (see LATENCY-BUDGET #1), and a rung failure that is leg-fault/throttle (not quality)
   does NOT eliminate the model — it parks the leg and retries elsewhere ([leg-preflight-canary], S8 >=1-viable).
 candidates: |
