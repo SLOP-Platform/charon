@@ -38,11 +38,12 @@ fi
 # provider/local/infra symptom that must enqueue NOTHING (not model quality).
 is_infra_fault() {
   local rc="$1" tail="$2"
-  # timeout 1800 killed the subprocess: 30 minutes is a hang/infra ceiling on
-  # this direct single-model driver, not a latency-quality judgment (that is
-  # dogfood-eval.sh's much tighter DOGFOOD_LATENCY_BUDGET_S's job) -- so an
-  # rc=124 here is a hang, not evidence the model itself is unfit.
-  [ "$rc" -eq 124 ] && return 0
+  # rc=124 (the `timeout` wrapper firing) is handled EXPLICITLY in the per-model loop
+  # below, BEFORE this function is ever called -- it distinguishes genuine too-slow
+  # (model streamed output, model-attributable, latency-is-a-failure-class) from a
+  # hung/no-output leg (infra symptom). is_infra_fault no longer blanket-treats
+  # rc=124 as infra (EVAL-LATENCY-GATE fix for the F1 dead-code bug -- see the
+  # rc=124 branch below and lib/dogfood-attribution.sh's classify_attribution).
   # opaque rc=3 (confirmed real-world signature: phi-4 via a funded DeepInfra
   # gateway path -- see benchmark/lib/dogfood-attribution.sh's UnknownError
   # note) -- a bare non-descriptive exit code with no model-attributable
@@ -96,6 +97,29 @@ for M in "${MODELS[@]}"; do
     led "$M" "limit-failover" "rc=$RC; all providers for this model exhausted at gateway"
     # NOT a scorecard-worthy quality signal (provider/session exhaustion, not model
     # competence) -- matches dogfood-to-scorecard.sh's classify() SKIP for provider-*.
+    continue
+  elif [ "$RC" -eq 124 ]; then
+    # EVAL-LATENCY-GATE fix (review F1): the `timeout` wrapper killed the subprocess
+    # at its budget. Distinguish (a) genuine too-slow -- the model streamed real
+    # output but didn't finish in time (model-attributable; latency-is-a-failure-
+    # class) -- from (b) a hung/no-output leg -- literally nothing came back before
+    # the budget (an infra/leg symptom, never the model's fault). TAIL's first line
+    # is always this attempt's own "===== attempt: ... =====" banner (see MARK
+    # above), so strip it before checking for real opencode output.
+    #
+    # The two marker strings below are grepped VERBATIM by lib/dogfood-attribution.sh's
+    # classify_attribution. Change one side, change both, or the F1 dead-code bug
+    # (strings that agree with nothing) returns.
+    OPCODE_TAIL="$(printf '%s' "$TAIL" | tail -n +2)"
+    if printf '%s' "$OPCODE_TAIL" | grep -q '[^[:space:]]'; then
+      echo "[charon-run] model '$M' TIMEOUT (rc=124) budget=${CHARON_RUN_TIMEOUT_S:-1800}s too-slow FAIL (leg healthy: output observed before budget)" >> "$OUT"
+      led "$M" "too-slow-failover" "rc=124; budget=${CHARON_RUN_TIMEOUT_S:-1800}s; model streamed output but did not finish -- latency-is-a-failure-class, model-attributable"
+      cap "$M" "FAIL" "BLOCK" "fail" "charon-run TIMEOUT rc=124 budget=${CHARON_RUN_TIMEOUT_S:-1800}s: model streamed output but exceeded the latency budget"
+    else
+      echo "[charon-run] model '$M' TIMEOUT (rc=124) leg-fault: no output before budget=${CHARON_RUN_TIMEOUT_S:-1800}s (hang, not model-attributable)" >> "$OUT"
+      led "$M" "leg-fault-failover" "rc=124; budget=${CHARON_RUN_TIMEOUT_S:-1800}s; no output observed before the timeout -- leg/infra hang, not a model verdict"
+      # NOT a scorecard-worthy quality signal -- a dead/hung leg is never model-attributable.
+    fi
     continue
   elif [ "$RC" -ne 0 ] && is_infra_fault "$RC" "$TAIL"; then
     echo "[charon-run] model '$M' hit a provider/local/infra FAULT (rc=$RC, not model quality) -> failing over" >> "$OUT"
