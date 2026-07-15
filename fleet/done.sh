@@ -145,4 +145,4 @@ elif [ -x "$CAPTURE_SCRIPT" ]; then
 fi
 # MECHANIZED CLOSURE: retire the just-completed ticket off the active board (done tickets can never
 # accumulate as "active"). retire-done.sh HOLDS any ticket whose marker is not merge-verified.
-bash "$FLEET/retire-done.sh"
+bash "$FLEET/retire-done.sh" "$id"   # FAST: retire ONLY this ticket, not a full re-verify sweep of all markers

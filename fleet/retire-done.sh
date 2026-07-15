@@ -32,8 +32,15 @@ retire_safe(){
   return 1
 }
 
+# FAST PATH: an optional <id> arg retires ONLY that ticket, skipping the full
+# O(all-markers) re-verify sweep. done.sh passes its own id so one done-mark is O(1)
+# instead of re-checking every historical marker — many of which carry only merged:#PR
+# (no sha), forcing a network `gh` round-trip in verify_merged. No arg = full reconcile.
+ONLY_ID="${1:-}"
+if [ -n "$ONLY_ID" ]; then DONE_MARKERS=("$DONE/$ONLY_ID"); else DONE_MARKERS=("$DONE"/*); fi
+
 n=0
-for m in "$DONE"/*; do
+for m in "${DONE_MARKERS[@]}"; do
   [ -f "$m" ] || continue
   id="$(basename "$m")"
   if ! retire_safe "$m" "$id"; then
@@ -59,7 +66,7 @@ NPDIR="$FLEET/state/needs-push"
 if [ -f "$FLEET/leak-guard.sh" ]; then
   source "$FLEET/leak-guard.sh"
   wtn=0
-  for m in "$DONE"/*; do
+  for m in "${DONE_MARKERS[@]}"; do
     [ -f "$m" ] || continue
     id="$(basename "$m")"; wt="$CHARON-fleet-$id"
     [ -e "$wt" ] || continue
