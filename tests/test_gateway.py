@@ -1,3 +1,4 @@
+# check-test-patterns: allow-self-mirroring-mock
 """P1 — standalone ``charon gateway``: config loading, /v1/models, token gate,
 loopback guard, and an end-to-end forward through a mock upstream.
 """

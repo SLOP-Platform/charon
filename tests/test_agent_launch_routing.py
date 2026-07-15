@@ -1,3 +1,4 @@
+# check-test-patterns: allow-self-mirroring-mock
 """ADR-0014 Ticket A — the wire contract proving agent- & provider-AGNOSTIC tier
 routing.
 

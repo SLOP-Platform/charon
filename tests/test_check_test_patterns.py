@@ -213,10 +213,9 @@ class TestSelfMirroringMock:
             + "    assert body['choices'][0]['message']['content'] == 'hi'\n"
         )
         errors, warnings = M.check_file(tmp_path / "test_proxy_mirror.py")
-        assert errors == []
-        mirror_warnings = [w for w in warnings if "self-mirroring mock" in w]
-        assert len(mirror_warnings) == 1, (
-            "self-mirroring-mock rule did not fire on an inline canonical "
+        mirror_errors = [e for e in errors if "self-mirroring mock" in e]
+        assert len(mirror_errors) == 1, (
+            "self-mirroring-mock rule did not fire as ERROR on an inline canonical "
             "`choices` mock whose only assertion reads inside `choices`"
         )
 

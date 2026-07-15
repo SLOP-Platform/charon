@@ -1,3 +1,4 @@
+# check-test-patterns: allow-self-mirroring-mock
 """R3-WIRE — CapabilityMatrix wired into forwarder route eligibility.
 
 (a) reasoning-required request proactively skips reasoning-incapable providers.

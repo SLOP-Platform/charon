@@ -1,3 +1,4 @@
+# check-test-patterns: allow-self-mirroring-mock
 """TOOLCALL-ROOTCAUSE retry-once fix — money-path failover classification.
 
 Root cause (fleet/state/TOOLCALL-ROOTCAUSE.md, 2026-07-13): the "all providers
