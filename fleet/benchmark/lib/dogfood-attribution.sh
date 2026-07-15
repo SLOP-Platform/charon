@@ -41,8 +41,20 @@ classify_attribution() {
   if grep -q 'TIMEOUT (rc=124.*CAUSE: gateway pool exhausted' "$out_log" 2>/dev/null; then
     echo "provider-degraded->retry(pool-exhausted-on-timeout)"; return
   fi
+  # EVAL-LATENCY-GATE fix (F1 dead-code bug): charon-run.sh's per-model loop now emits
+  # this EXACT string ("TIMEOUT (rc=124) budget=...s too-slow FAIL ...") when the
+  # `timeout` wrapper killed the subprocess AND the model had streamed real output
+  # first (a genuine, model-attributable latency-budget miss). Change one side,
+  # change both — see charon-run.sh's matching comment.
   if grep -q 'TIMEOUT (rc=124.*too-slow FAIL' "$out_log" 2>/dev/null; then
     echo "too-slow(latency-budget-exceeded)"; return
+  fi
+  # A no-output hang: the `timeout` wrapper killed the subprocess and NOTHING came
+  # back at all before the budget (charon-run.sh's "leg-fault" marker). This is a
+  # dead/hung leg, never model-attributable — park the leg, don't blame the model
+  # (see dogfood-eval.sh's overall-verdict RETRY(leg-fault*) branch).
+  if grep -q 'TIMEOUT (rc=124).*leg-fault' "$out_log" 2>/dev/null; then
+    echo "leg-fault(hang-no-output; not-model-attributable; park-not-blame)"; return
   fi
   if grep -q "hit a provider/session LIMIT" "$out_log" 2>/dev/null; then
     echo "provider-throttled->try-another(limit-hit)"; return

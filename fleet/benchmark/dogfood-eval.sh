@@ -32,8 +32,11 @@
 # attributed to exactly one of:
 #   early-ditch/quality      — ran to completion, exit 0, but the diff is empty/trivial
 #                               (the model bailed without doing the work)
-#   too-slow                 — charon-run.sh's own timeout (rc=124) with NO pool-exhaustion
-#                               signal in opencode's log (latency-is-a-failure-class)
+#   too-slow                 — charon-run.sh's own timeout (rc=124) where the model DID
+#                               stream real output before the budget killed it (leg was
+#                               healthy) — latency-is-a-failure-class, model-attributable
+#   leg-fault                — charon-run.sh's own timeout (rc=124) with NO output at all
+#                               (a hung/dead leg) — infra symptom, NEVER model-attributable
 #   provider-degraded->retry — charon-run.sh's own timeout WITH a pool-exhaustion signal
 #   provider-throttled->try-another — a REAL limit-hit/all-exhausted signal (see
 #                               lib/dogfood-attribution.sh — local/opaque errors are
@@ -41,12 +44,15 @@
 #   local-error                — a local/opaque failure (sqlite db-lock, opaque gateway
 #                               UnknownError) that is NOT a provider rate-limit; needs
 #                               human triage, never silently folded into provider-*
-# A model is NEVER disqualified for a provider symptom (degraded/throttled/local-error)
-# — only for early-ditch/quality or too-slow (latency-is-a-failure-class: an intrinsic
-# budget miss fails by itself, regardless of correctness). A trailing provider hiccup
-# on a call made AFTER the real diff already graded clean (gate pass + ticket-test pass)
-# is reclassified and still counts as REVIEW-READY — see reclassify_trailing_success in
-# lib/dogfood-attribution.sh.
+# A model is NEVER disqualified for a provider symptom (degraded/throttled/local-error/
+# leg-fault) — only for early-ditch/quality or too-slow (latency-is-a-failure-class: an
+# intrinsic budget miss fails by itself, regardless of correctness). EVAL-LATENCY-GATE
+# (F4) also adds a wall-clock DETAIN(latency-wallclock) independent of the attribution
+# string: elapsed>=LATENCY_BUDGET_S catches a clean rc=0 run that simply ran over budget
+# (e.g. glm-5.2 RFL-3: wall=499s > budget=480s) even when no rc=124 marker exists — see
+# run_one's overall-verdict block. A trailing provider hiccup on a call made AFTER the
+# real diff already graded clean (gate pass + ticket-test pass) is reclassified and
+# still counts as REVIEW-READY — see reclassify_trailing_success in lib/dogfood-attribution.sh.
 #
 # NEVER auto-merges, NEVER pushes, NEVER lands. Output is a per-candidate REVIEW PACKET
 # (result card + saved diff + gate/test logs) for a human to read — pass/fail is a
@@ -290,6 +296,22 @@ run_one() {
     overall="DETAIN(latency)"
   elif [[ "$attribution" == early-ditch* ]]; then
     overall="DETAIN(quality)"
+  elif [[ "$attribution" == leg-fault* ]]; then
+    # EVAL-LATENCY-GATE (F1/F4): rc=124 with NO output before the `timeout` wrapper
+    # killed it -- a hung/dead leg, never the model's fault. Park the leg (RETRY),
+    # NEVER a model BLOCK/DETAIN -- must be checked BEFORE the wall-clock elif below,
+    # since a leg-fault also hits elapsed>=budget (the wrapper fires at the budget
+    # regardless of whether the leg produced output) and would otherwise be
+    # wrongly swept into DETAIN(latency-wallclock).
+    overall="RETRY(leg-fault-not-model-fault; park-leg-not-model)"
+  elif [ "$elapsed" -ge "$LATENCY_BUDGET_S" ]; then
+    # EVAL-LATENCY-GATE (F4): wall-clock safety net, independent of the attribution
+    # string -- a run that streamed past budget and STILL exited 0 (e.g. glm-5.2
+    # RFL-3: wall=499s > budget=480s, attribution=ran-to-completion) must not slip
+    # through as REVIEW-READY just because no rc=124/string-based attribution fired.
+    # Never reached for the too-slow/early-ditch/leg-fault buckets above (already
+    # returned by then).
+    overall="DETAIN(latency-wallclock)"
   elif [ "${n_changed:-0}" -gt 0 ] && [ "$gate_verdict" = "pass" ] && { [ "$test_verdict" = "pass" ] || [ "$test_verdict" = "not-given" ]; }; then
     overall="REVIEW-READY(candidate-for-merge; human must still read the diff)"
   elif [[ "$attribution" == provider-*  && "$rc" -ne 0 ]]; then
