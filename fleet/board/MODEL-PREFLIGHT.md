@@ -14,6 +14,15 @@ accept: |
   task, disguised fixtures, deepseek-v4-flash MUST-FAIL control + strong MUST-PASS control (per-task discrimination
   proof). Substrate BUILT (grader-daemon; chunk-0 seam merged). Build chunks: fixtures · graders->$KEYS · runner ·
   discrimination-proof.
+  LATENCY-BUDGET (hardens T14 cost/latency — folded 2026-07-15, operator ask):
+  (1) DERIVE the budget, don't guess it: state the product per-unit time-budget (max acceptable wall-clock for a
+      real work unit in production) in PREFLIGHT-DESIGN-V2.md and set the eval latency budget = that + margin. Today's
+      480s is only "headroom over the slowest observed real completion (410s)" — make it a derived number with a
+      written rationale, not an arbitrary round figure.
+  (2) CONFIRM-would-finish: when a candidate hits the budget with attribution `too-slow` (healthy legs, genuinely
+      slow — NOT `provider-throttled`/`pool-exhausted`/rc=124-hang), re-run it ONCE at 2-3x budget out-of-band and
+      RECORD whether it WOULD have finished, so the cutoff is validated by data, not assumed. Throttled/leg-fault
+      runs are EXCLUDED from the re-test (no point re-running into a dead/capped leg — those are parked, not slow).
 candidates: |
   Kimi-K2-Thinking, MiniMax-M2, GPT-OSS-120B, Phi-4, Qwen3.6-27B-MTP, Gemma 4 (31B), GLM 4.7 (Thinking),
   Gemini 2.5 Pro (big Python codebases), GPT-5.1-Codex-Max (complex/refactor). ALSO test PAID variants of models we
