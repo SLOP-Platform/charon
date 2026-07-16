@@ -336,7 +336,20 @@ VERDICT_SCORE_FROM_GATE: dict[tuple[str, str], int] = {
 # reds-replay rows per §7/#25), never implicitly. `tier_chart.py` keeps S0
 # alone as the harness sanity/smoke gate and nothing synthetic sets a
 # capability tier position anymore.
-_REAL_OUTCOME_SOURCES = frozenset({"live"})
+#
+# SINGLE SOURCE OF TRUTH (BUDGET-SOURCE-RECONCILE). This module owns the
+# answer to "what counts as a REAL outcome" for the whole rig. It is public
+# (no underscore) because `benchmark/budget-derive.py` IMPORTS it to gate the
+# p95 latency budget on the same definition. It used to keep a private copy
+# under the SAME NAME with a DIFFERENT value ({"live","bench","bench2"}),
+# which let synthetic S0-S6 smoke-test rows steer the real budget. Any
+# consumer needing this allow-list MUST import it from here rather than
+# restate it — a copy can drift, an import cannot.
+REAL_OUTCOME_SOURCES = frozenset({"live"})
+
+# Internal alias: this module's own call sites keep using the private name.
+# It is the SAME object, so the two can never disagree.
+_REAL_OUTCOME_SOURCES = REAL_OUTCOME_SOURCES
 
 # ---------------------------------------------------------------------------
 # PROVISIONAL-vs-ACTIVE staging (BENCH-PROVISIONAL-SCORING, #20 — design of

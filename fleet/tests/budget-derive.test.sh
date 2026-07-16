@@ -175,5 +175,81 @@ has "$gen_line" 'insufficient-data$' "(d) 'general' bucket is insufficient-data 
 has "$gen_line" "$(printf '^general\t2\t0\t0.0\t900.0\t')" "(e) zero-data bucket -> wall_budget_s=900.0 (safe default, not 0)"
 has "$gen_line" 'insufficient-data$' "(e) zero-data bucket -> status=insufficient-data (labeled, not presented as derived)"
 
+# ── (f) BUDGET-SOURCE-RECONCILE: synthetic rows must NEVER steer the budget ──
+# Standing rule: synthetic S0-S6 benchmarks are a SMOKE TEST ONLY — they must
+# never rank a model or steer spend. Real outcomes only (source=live).
+#
+# THE DEFECT THIS PINS: budget-derive.py used to define its OWN
+# `_REAL_OUTCOME_SOURCES = {"live","bench","bench2"}` — the SAME NAME as
+# capability/grades.py's `{"live"}`, a DIFFERENT value. Synthetic bench rows
+# therefore counted as real outcomes for the p95 latency budget. (Severity:
+# every live row in the ledger carries time_s="-", while run.sh DOES record
+# time_s on its synthetic rows — so the first bench run would have made
+# synthetic the ONLY timed rows, i.e. the WHOLE budget.)
+#
+# This is a BEHAVIOURAL pin, not an introspection of the constant: it proves
+# synthetic rows cannot reach the budget no matter HOW the allow-list is
+# expressed. Re-widen the set anywhere and (f2)/(f3) go RED.
+SC2="$D/scorecard-synthetic.tsv"
+OUT2="$D/budgets-synthetic.tsv"
+i=0
+{
+  printf '# fixture: 21 good LIVE coding rows (p95=200) + 10 SYNTHETIC bench/bench2\n'
+  printf '# rows at 9999s. The synthetic rows are MERGE + stage=active — exactly what\n'
+  printf '# benchmark/run.sh:140 appends. They must contribute NOTHING.\n'
+  for t in "${TIMES[@]}"; do
+    c="${CLASSES[$i]}"
+    printf '2026-01-%02d\tlive\tFIX-%03d\t%s\tT1\tglm-5.2\tMERGE\t-\t100\t%s\t-\t0\tfixture good %ss\t-\t-\tactive\n' \
+      "$((i+1))" "$i" "$c" "$t" "$t"
+    i=$((i+1))
+  done
+  # SYNTHETIC tail: MERGE + stage=active + a wildly slow 9999s time. If the
+  # allow-list re-widens, these enter -> n_good 21->31 and p95 200 -> ~9999.
+  for n in 1 2 3 4 5; do
+    printf '2026-02-%02d\tbench\tS%d\tbugfix\tT1\tglm-5.2\tMERGE\t-\t100\t9999\t-\t0\tsynthetic S%d smoke\t-\t-\tactive\n' "$n" "$n" "$n"
+    printf '2026-03-%02d\tbench2\tS%d\tci-infra\tT1\tglm-5.2\tMERGE\t-\t100\t9999\t-\t0\tsynthetic S%d smoke\t-\t-\tactive\n' "$n" "$n" "$n"
+  done
+} > "$SC2"
+
+python3 "$TOOL" --scorecard "$SC2" --results-dir "$EMPTY_DIR" \
+  --leg-rank "$LR" --out "$OUT2" --difficulty 2 >/dev/null 2>&1
+syn_line="$(awk -F'\t' '$1=="coding"' "$OUT2")"
+
+# (f1) the SSOT import is live: budget-derive must reuse grades.py's object.
+#      A re-introduced local literal makes these two different objects -> RED.
+ssot="$(cd "$SRC/benchmark" && python3 -c "
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location('bd', 'budget-derive.py')
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+sys.path.insert(0, '../capability')
+import grades
+same = m._REAL_OUTCOME_SOURCES is grades.REAL_OUTCOME_SOURCES
+print('SSOT_SHARED' if same else 'SSOT_DIVERGED')
+print('SET=' + ','.join(sorted(grades.REAL_OUTCOME_SOURCES)))
+" 2>&1)"
+has "$ssot" 'SSOT_SHARED' "(f1) budget-derive imports grades.REAL_OUTCOME_SOURCES (same object — a local copy would read SSOT_DIVERGED)"
+has "$ssot" 'SET=live' "(f2) the SSOT allow-list is exactly {live} (widening it to bench/bench2 -> RED)"
+
+# (f3) BEHAVIOUR: 10 synthetic MERGE rows at 9999s contribute NOTHING.
+has "$syn_line" "$(printf '^coding\t2\t21\t')" "(f3) n_good=21 — the 10 synthetic bench/bench2 rows are EXCLUDED (a re-widened set gives 31)"
+has "$syn_line" "$(printf '^coding\t2\t21\t200.0\t300.0\t')" "(f3) p95=200.0 / budget=300.0 — synthetic 9999s rows did NOT steer the budget"
+not_has "$syn_line" '9999' "(f3) no synthetic 9999s value reached the derived budget"
+
+# (f4) the degrade is SAFE and HONEST: a ledger of ONLY synthetic rows must
+#      yield insufficient-data + the 900s safe default — never a
+#      synthetic-derived number wearing a 'derived' label.
+SC3="$D/scorecard-synth-only.tsv"; OUT3="$D/budgets-synth-only.tsv"
+{
+  printf '# fixture: ONLY synthetic rows — the budget must refuse to derive.\n'
+  for n in 1 2 3 4 5; do
+    printf '2026-02-%02d\tbench\tS%d\tbugfix\tT1\tglm-5.2\tMERGE\t-\t100\t42\t-\t0\tsynthetic only\t-\t-\tactive\n' "$n" "$n"
+  done
+} > "$SC3"
+python3 "$TOOL" --scorecard "$SC3" --results-dir "$EMPTY_DIR" \
+  --leg-rank "$LR" --out "$OUT3" --difficulty 2 >/dev/null 2>&1
+so_line="$(awk -F'\t' '$1=="coding"' "$OUT3")"
+has "$so_line" "$(printf '^coding\t2\t0\t0.0\t900.0\t')" "(f4) synthetic-only ledger -> n_good=0 + 900s safe default (fails SAFE, not to a synthetic p95 of 63.0)"
+has "$so_line" 'insufficient-data$' "(f4) synthetic-only ledger -> status=insufficient-data (honest label, never 'derived' off smoke data)"
+
 echo "SELFTEST SUMMARY: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1
