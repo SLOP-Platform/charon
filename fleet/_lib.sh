@@ -9,6 +9,24 @@ canon(){ local w="$1" f b; for f in "$FLEET_LIB_BOARD"/*.md; do b="$(basename "$
   [ "${b,,}" = "${w,,}" ] && { printf '%s' "$b"; return 0; }; done
   echo "no board ticket matching '$w'" >&2; return 1; }
 
+# parked_value <ticket-file> -> the raw `parked:` value (first line, lowercased, trimmed).
+parked_value(){ awk '/^parked:[[:space:]]*/{sub(/^parked:[[:space:]]*/,"");print tolower($0);exit}' "$1" \
+  | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'; }
+
+# is_parked_value <value> -> 0 (parked) / 1 (not parked). THE canonical parked predicate.
+# A ticket is PARKED iff `parked:` is present, non-empty, and not an explicit false.
+# NOT `== true`: park reasons are written as prose (e.g. BENCH-PROVISIONAL-SCORING's
+# "operator-led DEEP-DIVE ... Do NOT route to an SG droid"), and a `== true` test silently
+# treats every such operator directive as UNPARKED -> claimable. `parked:` with an EMPTY
+# value means NOT parked (MEMORY-INDEX-COMPACTION relies on this).
+# claim.sh re-implements this rule INLINE in its indexing awk (it must not spawn a helper
+# per file — see the PERF note at claim.sh:26). fleet/tests/parked-semantics.test.sh asserts
+# the two implementations agree on shared fixtures; keep them in lockstep.
+is_parked_value(){ case "${1:-}" in ""|false|no|0) return 1;; *) return 0;; esac; }
+
+# is_parked <ticket-file> -> 0 if the ticket is parked, else 1.
+is_parked(){ is_parked_value "$(parked_value "$1")"; }
+
 # deps_done <comma-separated-list> -> 0 if EVERY dep is done, else 1. Empty list = 0 (no deps).
 # Splits on commas (multi-dep) and canonicalizes each id, so `depends_on: E6, FB4` works.
 deps_done(){ local raw="${1:-}" d dc; [ -n "$raw" ] || return 0

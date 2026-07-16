@@ -161,7 +161,14 @@ for pass in $passes; do
       if (in_set(submitted_set, id_lo) == 0) next
       if (in_set(done_set,      id_lo) == 0) next
       if (in_set(lg_set,        id_lo) == 0) next
-      if (parked == "true" || parked == "yes" || parked == "1") next
+      # PARKED iff `parked:` is present, non-empty, and not an explicit false. This MUST mirror
+      # is_parked_value() in _lib.sh (asserted by fleet/tests/parked-semantics.test.sh); it is
+      # inlined here rather than sourced because the loop must not fork per ticket (PERF note L26).
+      # The old `parked == "true"` test read ONLY the literal string, so a park written as prose
+      # (e.g. "operator-led DEEP-DIVE ... Do NOT route to an SG droid") parsed as UNPARKED and the
+      # ticket stayed CLAIMABLE -- an explicit operator directive was silently ignored.
+      # NOTE: no apostrophes in this awk program -- it is single-quoted; one would end the string.
+      if (parked != "" && parked != "false" && parked != "no" && parked != "0") next
       if (note ~ /PARKED/) next
       if (trank > drank) next
       if (pass == "own") { if (ttier != tier) next } else { if (ttier == tier) next }
