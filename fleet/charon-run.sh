@@ -19,6 +19,15 @@ if [ ! -f "$LEDGER" ]; then
   printf 'ts\tjob\tmodel\tevent\tnote\n' > "$LEDGER" 2>/dev/null || true
 fi
  led() { printf '%s\t%s\t%s\t%s\t%s\n' "$(date -u +%FT%TZ)" "$LABEL" "$1" "$2" "$3" >> "$LEDGER" 2>/dev/null || true; }
+# SALVAGE-STASH-CHARON-RUN (rc=124 disambiguation): read-only peek at opencode's
+# own structured log to tell "model genuinely too slow" apart from "gateway
+# pool exhausted and opencode silently retried" when the `timeout` wrapper
+# kills the subprocess. opencode's CLI stdout does NOT surface "all providers
+# exhausted" (it hangs silently until `timeout` fires) — without this signal
+# the two cases are indistinguishable from $OUT alone, and a pool-exhaustion
+# masquerade was getting charged to the model as a too-slow fault. Callers can
+# override the path (e.g. tests inject a hermetic fake).
+OPENCODE_LOG="${OPENCODE_LOG:-$HOME/.local/share/opencode/log/opencode.log}"
 
 # ── FLAW-2 fix (adversarial review 2026-07-13): provider/local/infra faults
 # must NEVER be attributed to the model. Before this, ANY nonzero rc that
@@ -87,6 +96,12 @@ for M in "${MODELS[@]}"; do
   # Honor the caller's latency budget (dogfood-eval/preflight pass CHARON_RUN_TIMEOUT_S);
   # only fall back to 1800 when unset. Hardcoding 1800 let a hung/edit-loop model burn 30min
   # instead of its budget (latency-is-a-failure-class).
+  # SALVAGE-STASH-CHARON-RUN: capture start wall-clock (epoch + ISO) so the
+  # OPENCODE_LOG peek can be scoped to events that fired DURING this attempt.
+  # Using a local var (not the global `SECONDS` builtin) so a subshell launched
+  # before the `(cd ...)` wouldn't reset the clock.
+  ATTEMPT_START_EPOCH=$(date -u +%s)
+  ATTEMPT_START_ISO=$(date -u -d "@$ATTEMPT_START_EPOCH" +%FT%TZ 2>/dev/null || date -u +%FT%TZ)
   ( cd "$CWD" && timeout "${CHARON_RUN_TIMEOUT_S:-1800}" opencode run --model "charon/$M" "$PROMPT" ) </dev/null >> "$OUT" 2>&1
   RC=$?
   dbg "attempt model=charon/$M exit_code=$RC"
@@ -110,6 +125,39 @@ for M in "${MODELS[@]}"; do
     # The two marker strings below are grepped VERBATIM by lib/dogfood-attribution.sh's
     # classify_attribution. Change one side, change both, or the F1 dead-code bug
     # (strings that agree with nothing) returns.
+    #
+    # SALVAGE-STASH-CHARON-RUN: BEFORE classifying too-slow vs leg-fault, peek at
+    # opencode's own log for "all providers exhausted" events that fired during this
+    # attempt. If the gateway pool was being drained and opencode was silently
+    # retrying in a loop, the rc=124 is a PROVIDER symptom (masquerading as a hang),
+    # never a model-attributable timeout. This is the third sub-case of the rc=124
+    # branch and the only one that does NOT scorecard-BLOCK the model.
+    EXHAUST_HITS=0
+    if [ -f "$OPENCODE_LOG" ]; then
+      # opencode log lines look like:
+      #   timestamp=2026-07-13T20:25:23.537Z level=ERROR ... modelID=$M ... "all providers exhausted"
+      # Timestamps are ISO-8601 UTC -> lexical `>=` against ATTEMPT_START_ISO is
+      # valid and avoids any date parsing. `modelID=$M` is the gateway alias (the
+      # only providerID opencode surfaces client-side), not the upstream sub-provider.
+      EXHAUST_HITS=$(awk -v m="modelID=$M" -v t0="$ATTEMPT_START_ISO" '
+        /^timestamp=/ && $0 ~ m && /all providers exhausted/ {
+          ts = substr($1, index($1, "=") + 1)
+          if (ts >= t0) c++
+        }
+        END { print c+0 }
+      ' "$OPENCODE_LOG" 2>/dev/null || echo 0)
+    fi
+    if [ "${EXHAUST_HITS:-0}" -gt 0 ]; then
+      # SALVAGE-STASH-CHARON-RUN: the EXACT marker text "TIMEOUT (rc=124.*CAUSE:
+      # gateway pool exhausted" is what lib/dogfood-attribution.sh's
+      # classify_attribution greps for (see its line-41 marker check) — change
+      # one side, change both. NOT a model-attributable timeout: the gateway
+      # pool was empty and opencode was retrying silently. Park and move on.
+      echo "[charon-run] model '$M' TIMEOUT (rc=124) budget=${CHARON_RUN_TIMEOUT_S:-1800}s — CAUSE: gateway pool exhausted (${EXHAUST_HITS}x 'all providers exhausted' in opencode log during this attempt) -> provider-side, not model-slow -> failing over" >> "$OUT"
+      led "$M" "pool-exhausted-timeout" "rc=124; budget=${CHARON_RUN_TIMEOUT_S:-1800}s; ${EXHAUST_HITS}x all-providers-exhausted in opencode.log during this attempt; provider-side, not model-attributable"
+      # NOT scorecard-BLOCK'd: pool exhaustion is never a model-quality signal.
+      continue
+    fi
     OPCODE_TAIL="$(printf '%s' "$TAIL" | tail -n +2)"
     if printf '%s' "$OPCODE_TAIL" | grep -q '[^[:space:]]'; then
       echo "[charon-run] model '$M' TIMEOUT (rc=124) budget=${CHARON_RUN_TIMEOUT_S:-1800}s too-slow FAIL (leg healthy: output observed before budget)" >> "$OUT"
