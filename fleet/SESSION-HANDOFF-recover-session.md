@@ -68,9 +68,11 @@ e1cb560 feat: consolidate check_arch.py import-graph builder onto graphify (#157
 
 ### Manager's first actions (priority order — fill below)
 
-1. Boot checklist incl. NEW #7 PROCESS-HEALTH check (`ls /proc | grep -cE '^[0-9]+$'` + orphaned `fleet/(handoff|gate)` loops) — a Claude/opencode crash can orphan a FORK-BOMB (hit ~18.9k procs this session; fixed via reentrancy guard 9dfc85a). See STARTUP-FRICTION-LOG.
-2. `bash fleet/foreman.sh` for tier STARVE/LOW (its auto-fire wiring FOREMAN-MULTI-TRIGGER is still in-flight). Merge-ready on operator OK: rig PR #102 GRAPHIFY-MAP-FRESHNESS (the code-map auto-updater) + product #156.
-3. Do NOT re-unpark BENCH-OOB-GRADING without clearing BOTH gates (#26/#25 design review + #20 BENCH-PROVISIONAL-SCORING, the operator-led deep-dive I ticketed — genuinely open). I wrongly unparked it this session; it is re-parked.
+1. **BOOT:** run boot checklist incl. NEW #7 PROCESS-HEALTH check (`ls /proc | grep -cE '^[0-9]+$'` abnormally high, or `ps -o cmd= -C bash | grep -cE 'fleet/(handoff|gate)'` >0 ⇒ orphaned FORK-BOMB from a crash — hit ~18.9k procs this session; fix is live, 9dfc85a). Then `bash fleet/foreman.sh` for tier STARVE/LOW. Verify the graphify map auto-refreshed at boot (GRAPHIFY-MAP-FRESHNESS #102 merged this session — the auto-updater is now live).
+2. **UNBLOCK THE QUEUE (shallow — 1 economy ready).** The 11 new tickets are sequenced BEHIND in-review tickets that own the same files. To open them, land/redo the LEADERS: `GITHUB-LIMITS-HARDENING` (→ unblocks DONE-SH-INTEGRITY-FIX), `PROJECT-MEMBERSHIP-GATE` (#130 was CLOSED-not-merged → REDO like HANDOFF-PIPEFAIL; → unblocks CREATION-GATE-DECOMPOSE-WIRE), `GATEWAY-NONTOKEN-METERING` #155 (has the kWh→USD money bug → fix via METER-KWH-USD-FIX, then merge; → unblocks FT-WIRE-QUOTA + METER fix). Check each closed-PR leader for the "opencode-crash-mid-session" empty-commit pattern (LAUNCHER-CRASH-PARTIAL-DETECT).
+3. **Merges left:** #135 FT-CATALOG-SEED (stale base ~7000 lines behind — needs a real rebase-reconcile, substantive) ; #155 NOT until its money fix lands. #154/#156/#102 already merged.
+4. **BENCH-OOB-GRADING:** stays PARKED. Do NOT re-unpark without clearing BOTH gates (#26/#25 design review + #20 BENCH-PROVISIONAL-SCORING = the operator-led deep-dive ticket). I wrongly unparked it this session (corrected).
+5. **Deferred sweeps to queue:** wiring-audit's 6 INERT + 1 PARTIAL modules (WIRING-AUDIT-MATRIX.md — decide wire-vs-remove each); the STRANDED-WORK-AUDIT + 4 `.decomposed` files; and build **CHARON-FLOWCHART** (operator wants a printable whole-system diagram — ticket queued).
 
 ---
 ---
