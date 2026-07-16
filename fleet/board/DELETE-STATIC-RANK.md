@@ -4,7 +4,7 @@ work_class: money-path
 branch: feat/delete-static-rank
 repo: charon
 parked: true
-depends_on:  # UNBLOCKED: PRICE-REFRESHER fabricated (phantom); drain-then-park park-at-zero is LIVE (auto-park-on-402 landed) + is subsumed by the demand-driven match (a zero-balance provider simply does not answer the demand)
+depends_on:
 real-dep: PRICE-REFRESHER build — the hand-typed cost_rank cannot be deleted until a LIVE/sourced cost
   magnitude exists to order on; PRICE-REFRESHER supplies the cold-start pull that replaces it. Genuine
   correctness prereq (removing the fallback before the replacement is live = an unordered chain).
