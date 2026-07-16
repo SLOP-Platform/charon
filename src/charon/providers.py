@@ -74,6 +74,62 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 _MAX_MODELS_BYTES = 1_000_000  # cap the /models response (memory-DoS guard)
 
 
+# ── Endpoint URL construction (PROVIDER-URL-HELPER) ─────────────────────────────
+# The ONE place that knows how to turn a stored ``base_url`` into a concrete
+# ``/models`` or ``/chat/completions`` endpoint. Previously each call site
+# (``list_models`` here, ``config.keyprobe.validate_provider_key``,
+# ``discover.discover_provider``) re-implemented ``base.rstrip("/") + "/suffix"``
+# with its own subtly different edge-case handling, so a fix to one (e.g. the
+# SSRF guard) didn't propagate to the others — exactly the drift the provider-
+# probe bug depended on. ``validate_base_url`` consolidates the SSRF/link-local/
+# metadata-host guard that used to live inline in ``config._store._validate_base_url``
+# and ``keyprobe.validate_provider_key``; ``models_url``/``chat_url`` are the
+# thin endpoint-specific entry points callers should reach for.
+
+
+def validate_base_url(base_url: str) -> str:
+    """Validate ``base_url`` and return it with trailing slashes stripped.
+
+    Refuses non-http(s) schemes and link-local / cloud-metadata hosts (the SSRF
+    guard that used to be forked inline in ``config._store`` and
+    ``config.keyprobe``). Returns the base with no trailing ``/`` so a caller
+    can safely ``+ "/" + path``. Raises ``ValueError`` on an invalid base.
+
+    A falsy ``base_url`` (``""`` or ``None``) raises — callers that treat an
+    absent base as non-fatal should branch before calling this (mirrors the old
+    ``raw_base = base_url.rstrip("/") if base_url else ""`` sites, which left
+    empty-string.URL construction to the caller)."""
+    parts = urlsplit(base_url)
+    if parts.scheme not in ("http", "https"):
+        raise ValueError(f"invalid base URL scheme {parts.scheme!r}")
+    host = parts.hostname or ""
+    if host.startswith("169.254.") or host == "metadata.google.internal":
+        raise ValueError(f"refusing link-local / metadata host {host!r}")
+    return base_url.rstrip("/")
+
+
+def join_endpoint(base_url: str, path: str) -> str:
+    """Join ``path`` onto ``base_url`` with exactly one ``/`` between them.
+
+    Strips trailing slashes from the base and any leading slash from ``path``,
+    then joins with a single ``/`` — so a base that already carries a path
+    segment (``https://opencode.ai/zen/v1``) keeps every segment and never gets
+    a double slash. Does NOT re-validate the scheme/host; callers composing from
+    untrusted input should pass through ``validate_base_url`` first (or just use
+    ``models_url`` / ``chat_url`` which do both)."""
+    return base_url.rstrip("/") + "/" + path.lstrip("/")
+
+
+def models_url(base_url: str) -> str:
+    """The ONE place that knows the ``/models`` suffix. Validates + joins."""
+    return join_endpoint(validate_base_url(base_url), "models")
+
+
+def chat_url(base_url: str) -> str:
+    """The ONE place that knows the ``/chat/completions`` suffix. Validates + joins."""
+    return join_endpoint(validate_base_url(base_url), "chat/completions")
+
+
 def _is_free(item: dict) -> bool:
     """Best-effort free detection from an OpenAI-style /models entry: an OpenRouter
     ``:free`` id suffix, or a ``pricing`` map whose prompt+completion are all 0."""
@@ -165,14 +221,7 @@ def list_models(name: str, overrides: dict | None = None, *,
     response is size-capped. Raises ``ValueError`` for a bad base; urllib errors
     propagate (the caller reports them)."""
     preset = resolve(name, overrides)
-    base = preset.base_url
-    parts = urlsplit(base)
-    if parts.scheme not in ("http", "https"):
-        raise ValueError(f"base URL must be http(s), got {parts.scheme!r}")
-    host = parts.hostname or ""
-    if host.startswith("169.254.") or host == "metadata.google.internal":
-        raise ValueError(f"refusing link-local / metadata host {host!r}")
-    url = base.rstrip("/") + "/models"
+    url = models_url(preset.base_url)
     req = urllib.request.Request(url, method="GET")
     req.add_header("User-Agent", BROWSER_UA)
     if api_key:
