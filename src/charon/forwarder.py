@@ -42,6 +42,45 @@ _BANNED_UA_PREFIXES = ("python-urllib", "python-requests")
 # that never carries a model field.
 _STREAM_HEAD_CAP = 65536
 
+# Per ADR-0016 step #5: a structured envelope on terminal 5xx so the caller
+# sees WHICH providers were tried, WHY each failed, and WHEN it re-arms —
+# without reading logs. Sourced from the proxy's own ``balance_tracker``
+# (the single source of truth for funding class) and the per-attempt
+# failovers list; never hand-fabricated. Funding class taxonomy mirrors
+# ``balance.py`` and ``config/providers.py`` (1=free-recurring, 2=flat-sub,
+# 3=drain-then-park, 4=PAYG). Each class has a different re-arm condition
+# (free → auto-reset by quota window, prepaid drain-then-park → operator
+# top-up, flat-sub → next billing cycle, PAYG → top-up / rate-limit cooldown).
+_FUNDING_CLASS_LABEL: dict[int, str] = {
+    1: "free-recurring",
+    2: "flat-sub",
+    3: "drain-then-park",
+    4: "PAYG",
+}
+_FUNDING_CLASS_REARM: dict[int, str] = {
+    1: "auto reset (quota window)",
+    2: "operator top-up (next cycle)",
+    3: "operator top-up",
+    4: "top-up or rate-limit cooldown",
+}
+
+
+def _classify_provider(provider: str, bt) -> tuple[str, str]:
+    """Return ``(class, rearm)`` strings for a provider, sourced from
+    ``bt.funding_class(provider)`` so a per-provider config drift can never
+    diverge from the actual routing decisions. Unknown → ("unknown",
+    "unknown") so the field is always populated (never null) and the caller
+    can still see WHICH provider was tried."""
+    if bt is None:
+        return ("unknown", "unknown")
+    fc = bt.funding_class(provider)
+    if fc is None:
+        return ("unknown", "unknown")
+    try:
+        return (_FUNDING_CLASS_LABEL[int(fc)], _FUNDING_CLASS_REARM[int(fc)])
+    except (KeyError, ValueError):
+        return ("unknown", "unknown")
+
 
 def _spend_to_record(obs, est_cost: float) -> float:
     """Amount to bill the spend limiter for a served 200 response.
@@ -270,10 +309,23 @@ def forward_with_failover(handler, srv) -> None:
     chain = srv.chain_for(requested)
     if not chain:
         srv.observer.observe(requested, 502, {}, {}, count_usage=False)
-        handler._json(502, {"error": {"message": (
-            f"no route for model {requested!r} — no providers configured; "
-            "run 'charon setup' or open http://127.0.0.1:8080/charon/setup"
-        )}})
+        # ADR-0016 step #5: 502 because NO route was configured (distinct from
+        # the 503 below where a route existed but was exhausted). Same envelope
+        # schema so the client only has to learn one shape; ``providers_tried``
+        # is empty (nothing was tried) and ``no_provider_reason`` carries the
+        # actionable operator hint. Retry-After is omitted (502 = permanent
+        # misconfiguration, retrying won't help without a config change).
+        handler._json(502, {"error": {
+            "message": (
+                f"no route for model {requested!r} — no providers configured; "
+                "run 'charon setup' or open http://127.0.0.1:8080/charon/setup"
+            ),
+            "type": "no_route_configured",
+            "requested_model": requested,
+            "no_provider_reason": "no_providers_configured",
+            "retry_after_s": None,
+            "providers_tried": [],
+        }})
         return
 
     # ── capability-based route exclusion ────────────────────────────
@@ -599,12 +651,35 @@ def forward_with_failover(handler, srv) -> None:
                         # real upstream error transparently — nothing was failed over.)
                         failovers.append({"provider": route.label, "status": status,
                                           "reason": obs.note or "exhausted"})
+                        # ADR-0016 step #5: structured envelope so the caller
+                        # sees WHICH providers were tried, WHY each failed, and
+                        # WHEN each re-arms — without reading logs. ``class`` and
+                        # ``rearm`` are sourced from ``bt.funding_class(provider)``
+                        # (the routing-time source of truth) so they can never
+                        # diverge from the actual funding-class decisions.
+                        retry_after_s = srv.retry_after_hint(ordered)
+                        providers_tried = []
+                        for f in failovers:
+                            cls_label, rearm_label = _classify_provider(
+                                f["provider"],
+                                getattr(srv, "balance_tracker", None))
+                            providers_tried.append({
+                                "provider": f["provider"],
+                                "status": f["status"],
+                                "reason": f["reason"],
+                                "class": cls_label,
+                                "rearm": rearm_label,
+                            })
                         handler._send_resp_headers(
                             503, "application/json", route.label, failovers, False,
-                            retry_after=srv.retry_after_hint(ordered))
+                            retry_after=retry_after_s)
                         handler._write(json.dumps({"error": {
                             "message": "all providers exhausted",
                             "type": "all_providers_exhausted",
+                            "requested_model": requested,
+                            "no_provider_reason": None,
+                            "retry_after_s": retry_after_s,
+                            "providers_tried": providers_tried,
                             "failover_reasons": [
                                 f"{f['provider']}={f['status']}" for f in failovers],
                         }}).encode())
