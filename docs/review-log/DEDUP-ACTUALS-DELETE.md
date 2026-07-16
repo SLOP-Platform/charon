@@ -11,7 +11,7 @@ Confirmed inert: `check_inert_code.py` listed `ActualsLedger`/`ActualRow` as sta
 3. **DELETED** `tests/test_actuals_ledger.py` — removed dead-module tests.
 4. **PORTED** ScorecardStore tests from `test_actuals_ledger.py` into
    `tests/test_capability_matrix.py` (ScorecardStore is LIVE code exercised by these tests).
-5. **FILED** `charon-private/fleet/board/TSV-APPEND-UNIFY.md` — follow-up ticket for
+5. **FILED** a follow-up build-rig ticket (TSV-APPEND-UNIFY) for
    TOOL-AUDIT-REDUNDANCY finding 6 (dual TSV appenders, rig-side).
 
 ## Accept verification
@@ -19,4 +19,4 @@ Confirmed inert: `check_inert_code.py` listed `ActualsLedger`/`ActualRow` as sta
 - `grep -rn "ActualsLedger\|ActualRow" src/ tests/` → zero hits.
 - `PYTHONPATH=src python3 tools/check_inert_code.py` → no longer flags them.
 - `PYTHONPATH=src python3 -m pytest -q` → 1827 passed, full suite green.
-- `charon-private/fleet/board/TSV-APPEND-UNIFY.md` exists, references TOOL-AUDIT-REDUNDANCY.md.
+- the TSV-APPEND-UNIFY follow-up ticket exists in the build rig, referencing TOOL-AUDIT-REDUNDANCY.

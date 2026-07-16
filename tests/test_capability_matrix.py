@@ -116,7 +116,7 @@ class TestDefaultProviderDenies:
 
 
 class TestScorecardStore:
-    """ScorecardStore freeze/read/LKG fallback tests (ported from deleted test_actuals_ledger.py)."""
+    """ScorecardStore freeze/read/LKG fallback tests (ported from old test_actuals_ledger.py)."""
 
     def test_freeze_and_read(self, tmp_path: Path) -> None:
         store = ScorecardStore(tmp_path / "scorecards")
