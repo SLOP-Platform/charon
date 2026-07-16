@@ -1,0 +1,6 @@
+# CONFIG-SOURCES.tsv — registry of config sources for config-drift.sh
+# Columns: sid<TAB>kind<TAB>read-cmd-template<TAB>note
+# read-cmd-template: {} is substituted with filename (providers.json, models.json).
+# Add a new row per deploy; no code change needed.
+local	local	cat ~/.charon/{}	CLI config_dir (~/.charon)
+4lom	gateway	ssh -i ~/.ssh/4lom stack@10.0.1.60 "cat /data/{}"	4-LOM CG deploy (docker container /data)
