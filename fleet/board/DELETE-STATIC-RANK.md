@@ -4,7 +4,7 @@ difficulty: 4
 work_class: money-path
 branch: feat/delete-static-rank
 repo: charon
-parked: true
+parked: false
 depends_on:
 real-dep: PRICE-REFRESHER build — the hand-typed cost_rank cannot be deleted until a LIVE/sourced cost
   magnitude exists to order on; PRICE-REFRESHER supplies the cold-start pull that replaces it. Genuine
@@ -59,5 +59,5 @@ ds: |
     collide; un-park ONLY after #3 (PRICE-REFRESHER) and #4 (DRAIN-THEN-PARK) are live-verified, and re-sequence
     it behind whatever still owns config.py at that time (config may be a package post-F29-CONFIG-PKG).
   repo: charon (product).
-note: PARKED — ADR-0016 #6, lands LAST. Un-park only after PRICE-REFRESHER + DRAIN-THEN-PARK are live-verified on
+note: UN-PARKED 2026-07-15 (operator: ADR-0016 deploy is P0). Prior park gated on PRICE-REFRESHER (FABRICATED phantom) + DRAIN-THEN-PARK (park-at-zero is LIVE via auto-park-on-402, + subsumed by the demand-driven match). Droid builds the CODE change (PR); the live 4-LOM deploy is a separate manager/land step.
   .60 (static rank must never be removed while anything still reads it). Filed 2026-07-12.
