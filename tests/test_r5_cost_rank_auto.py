@@ -162,13 +162,26 @@ def test_build_routes_and_pools_applies_cost_class_priority() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 4) explicit cost_rank still wins over metered/configured
+# 4) explicit cost_rank is IGNORED — ADR-0016 step #6 (DELETE-STATIC-RANK)
 # ---------------------------------------------------------------------------
 
-def test_explicit_cost_rank_wins_over_metered() -> None:
-    """An operator-set cost_rank is the escape hatch — it beats live metered cost."""
+def test_explicit_cost_rank_is_ignored_over_metered() -> None:
+    """DELETE-STATIC-RANK (ADR-0016 step #6): a hand-typed ``cost_rank`` is no
+    longer honored — the live metered cost wins.  Previously this test asserted
+    the OLD escape-hatch behavior (``cost_rank=9999`` always wins).  Revert the
+    deletion and this test goes RED.
+    """
     spec = {"cost_rank": 9999, "cost_input": 0.000001, "cost_output": 0.000001}
-    assert derived_cost_rank(spec, metered_cost=0.000001) == 9999
+    # Live metered cost ($0.000001) is the source of truth; the hand-typed
+    # 9999 is ignored.
+    import warnings as _w
+    with _w.catch_warnings():
+        _w.simplefilter("ignore", DeprecationWarning)
+        rank = derived_cost_rank(spec, metered_cost=0.000001)
+    assert rank != 9999, (
+        f"hand-typed cost_rank=9999 leaked into the derived rank={rank} — "
+        f"DELETE-STATIC-RANK is reverted; ADR-0016 step #6 contract broken"
+    )
 
 
 # ---------------------------------------------------------------------------
