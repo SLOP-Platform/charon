@@ -1,4 +1,5 @@
 tier: frontier
+priority: P0  # ADR-0016 gateway deploy — TOP frontier priority (operator 2026-07-15): restores the demand-driven switchboard
 difficulty: 4
 work_class: money-path
 branch: feat/delete-static-rank
