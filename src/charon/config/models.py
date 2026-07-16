@@ -1,6 +1,7 @@
 """Model config store — load/save models, bulk import, enabled toggle."""
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 from ._store import _check_id, _load, _save
@@ -15,6 +16,21 @@ def _normalize_cost_class(value: object) -> str | None:
         return None
     v = str(value).strip().lower()
     return v if v in _COST_CLASSES else None
+
+
+def _warn_static_cost_rank_dropped(model_id: str, cost_rank: object) -> None:
+    """ADR-0016 step #6: ``cost_rank`` is no longer persisted to ``models.json`` —
+    ordering is derived from live/sourced/meter price.  External callers that
+    still pass a hand-typed integer get a one-release deprecation warning; the
+    field is silently dropped from the entry."""
+    warnings.warn(
+        f"cost_rank={cost_rank!r} on model {model_id!r} is deprecated and "
+        f"IGNORED (ADR-0016 step #6). Ordering is now derived from "
+        f"cost_input/cost_output + the live meter; remove the kwarg to "
+        f"silence this warning.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
 
 
 def load_models(*, config_dir: str | Path | None = None) -> dict:
@@ -34,16 +50,22 @@ def add_model(model_id: str, *, provider: str | None = None, upstream_base: str 
     reasoning, vision, audio, cost_input, cost_output, cost_class) are persisted
     only when non-None. ``cost_class`` is one of ``free-daily | expiring |
     prepaid | metered | premium`` (``premium`` is gated out of default-primary
-    routing by the gateway compiler — see SR-6). ``cost_rank`` is persisted only
-    when explicitly set by the operator; when absent the gateway auto-derives it
-    from ``cost_input``/``cost_output`` (SR-6)."""
+    routing by the gateway compiler — see SR-6).
+
+    DELETE-STATIC-RANK (ADR-0016 step #6): the ``cost_rank`` kwarg is ACCEPTED
+    for backward-compat (some internal callers — e.g. ``lifecycle`` — still
+    pass it), but it is NO LONGER PERSISTED and a ``DeprecationWarning`` is
+    emitted when set. Ordering is ALWAYS derived from
+    ``cost_input``/``cost_output`` and the live meter — see
+    ``routing_policy.derived_cost_rank``.
+    """
     _check_id("model", model_id)
     if provider is None and upstream_base is None:
         raise ValueError("a model needs either provider= or upstream_base=")
+    if cost_rank is not None:
+        _warn_static_cost_rank_dropped(model_id, cost_rank)
     models = load_models()
     entry: dict = {"free": bool(free)}
-    if cost_rank is not None:
-        entry["cost_rank"] = int(cost_rank)
     for k, v in (("provider", provider), ("upstream_base", upstream_base),
                  ("upstream_model", upstream_model), ("key_env", key_env)):
         if v is not None:
@@ -66,7 +88,11 @@ def add_models_bulk(entries: list[dict], *, provider: str) -> tuple[list[str], l
     catalog id doubles as the upstream id (no ``upstream_model``). Ids failing
     ``_ID_RE`` are SKIPPED (not raised — an upstream list is untrusted). Optional
     metadata fields (context_window, max_tokens, reasoning, vision, audio,
-    cost_input, cost_output) are carried through if present. Returns ``(added, skipped)``."""
+    cost_input, cost_output) are carried through if present.
+
+    DELETE-STATIC-RANK (ADR-0016 step #6): ``cost_rank`` in an entry is
+    ACCEPTED but NOT PERSISTED, with a ``DeprecationWarning`` when present.
+    Returns ``(added, skipped)``."""
     _check_id("provider", provider)
     from ._store import _ID_RE
     _METADATA_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio",
@@ -80,13 +106,13 @@ def add_models_bulk(entries: list[dict], *, provider: str) -> tuple[list[str], l
             skipped.append(str(mid))
             continue
         free = bool(e.get("free"))
+        cr = e.get("cost_rank")
+        if cr is not None:
+            _warn_static_cost_rank_dropped(mid, cr)
         entry: dict = {
             "free": free,
             "provider": provider,
         }
-        cr = e.get("cost_rank")
-        if cr is not None:
-            entry["cost_rank"] = int(cr)
         models[mid] = entry
         for k in _METADATA_KEYS:
             v = e.get(k)
