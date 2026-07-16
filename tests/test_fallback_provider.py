@@ -1,3 +1,4 @@
+# check-test-patterns: allow-self-mirroring-mock
 """FALLBACK-PROVIDER — global fallback provider chain: config persist/load,
 gateway chain compilation, web setup POST, and end-to-end failover.
 """
