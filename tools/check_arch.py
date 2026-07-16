@@ -225,8 +225,141 @@ def check_gateway_isolation(src_root: Path) -> list[str]:
 # ── check 3: circular imports ───────────────────────────────────────────────
 
 
-def _build_import_graph(src_root: Path) -> dict[str, set[str]]:
-    """Build a directed graph: module → {imported modules} for all src/charon/**/*.py."""
+def _resolve_import_target(
+    node: ast.Import | ast.ImportFrom, pkg: str, mod: str,
+) -> str | None:
+    """Resolve an Import/ImportFrom node to an absolute charon module name, or None."""
+    if isinstance(node, ast.Import):
+        for alias in node.names:
+            head = alias.name.split(".")[0]
+            if head not in _STDLIB_TOPS and head != "charon":
+                continue
+            if alias.name == "charon" or alias.name.startswith("charon."):
+                return alias.name
+        return None
+    if isinstance(node, ast.ImportFrom):
+        target: str | None = None
+        if node.level and node.level > 0:
+            target = _resolve_relative(pkg, node.level, node.module)
+        elif node.module:
+            head = node.module.split(".")[0]
+            if head not in _STDLIB_TOPS and head != "charon":
+                return None
+            target = node.module
+        if target and (target == "charon" or target.startswith("charon.")):
+            return target
+    return None
+
+
+def _scan_module_level_imports(
+    src_root: Path,
+) -> tuple[dict[tuple[str, str], str], set[tuple[str, str]]]:
+    """Scan *src_root*/*.py for module-level charon imports.
+
+    Returns:
+      - bare_relative: ``{(source_file, sibling_name): parent_package}`` for
+        ``from . import X`` forms (resolved to parent pkg, not sibling).
+      - module_edges: ``{(source_mod, target_mod)}`` of module-level charon
+        imports (excluding TYPE_CHECKING-guarded bodies).
+    """
+    base = src_root / "charon"
+    bare_relative: dict[tuple[str, str], str] = {}
+    module_edges: set[tuple[str, str]] = set()
+
+    for py_file in sorted(base.rglob("*.py")):
+        mod = _module_name(py_file)
+        if mod is None:
+            continue
+        tree = ast.parse(py_file.read_text(), filename=str(py_file))
+        pkg = _pkg_of(py_file)
+        tc_ids = _collect_type_checking_import_ids(tree)
+
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                if id(node) in tc_ids:
+                    continue
+                target = _resolve_import_target(node, pkg, mod)
+                if target:
+                    # Record bare relative imports (from . import X)
+                    # for remapping — AST code resolves these to parent pkg.
+                    if (
+                        isinstance(node, ast.ImportFrom)
+                        and node.level is not None
+                        and node.level > 0
+                        and node.module is None
+                    ):
+                        for alias in node.names:
+                            # The parent-package target from _resolve_import_target
+                            # is the parent pkg (e.g. "charon" for level=1).
+                            # We need to record that (rel_source_file, sibling_name)
+                            # maps to this parent pkg.
+                            rel_path = str(py_file.relative_to(src_root.parent))
+                            bare_relative[(rel_path, alias.name)] = target
+                    module_edges.add((mod, target))
+    return bare_relative, module_edges
+
+
+def _build_import_graph_from_graphify(
+    src_root: Path, graph_path: Path,
+    bare_relative: dict[tuple[str, str], str],
+    module_edges: set[tuple[str, str]],
+) -> dict[str, set[str]]:
+    """Build the import graph from graphify's pre-computed graph.json.
+
+    Only edges present in *module_edges* (module-level charon imports,
+    excluding TYPE_CHECKING guards) are included.  ``from . import X``
+    edges are remapped to the parent package.
+    """
+    import json
+
+    data = json.loads(graph_path.read_text())
+    nodes_by_id: dict[str, dict] = {}
+    for n in data["nodes"]:
+        nodes_by_id[n["id"]] = n
+
+    prefix = f"{src_root}/charon/"
+    graph: dict[str, set[str]] = defaultdict(set)
+
+    for link in data["links"]:
+        if link["relation"] not in ("imports", "imports_from"):
+            continue
+
+        source_sf = link.get("source_file", "")
+        if not source_sf.startswith(prefix):
+            continue
+        source_mod = _module_name(Path(source_sf))
+        if source_mod is None:
+            continue
+
+        target_node = nodes_by_id.get(link["target"])
+        if target_node is None:
+            continue
+        target_sf = target_node.get("source_file", "")
+        if not target_sf.startswith(prefix):
+            continue
+        target_mod = _module_name(Path(target_sf))
+        if target_mod is None or target_mod == source_mod:
+            continue
+
+        # Check if this edge is a module-level import (skip TYPE_CHECKING-only).
+        if (source_mod, target_mod) not in module_edges:
+            continue
+
+        # Remap from . import X to parent package.
+        sibling_name = target_mod.split(".")[-1]
+        if (source_sf, sibling_name) in bare_relative:
+            target_mod = bare_relative[(source_sf, sibling_name)]
+
+        graph[source_mod].add(target_mod)
+
+    return dict(graph)
+
+
+def _build_import_graph_from_ast(src_root: Path) -> dict[str, set[str]]:
+    """Build import graph via from-scratch AST walk (fallback path).
+
+    Used when graphify's pre-computed graph is not available.
+    """
     graph: dict[str, set[str]] = defaultdict(set)
     base = src_root / "charon"
     for py_file in sorted(base.rglob("*.py")):
@@ -235,33 +368,31 @@ def _build_import_graph(src_root: Path) -> dict[str, set[str]]:
             continue
         tree = ast.parse(py_file.read_text(), filename=str(py_file))
         pkg = _pkg_of(py_file)
-        # TYPE_CHECKING-guarded imports run only under a type checker, never at
-        # runtime, so they cannot cause a real import cycle — exclude them.
         tc_ids = _collect_type_checking_import_ids(tree)
         for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
                 if id(node) in tc_ids:
                     continue
-                for alias in node.names:
-                    head = alias.name.split(".")[0]
-                    if head not in _STDLIB_TOPS and head != "charon":
-                        continue
-                    if alias.name == "charon" or alias.name.startswith("charon."):
-                        graph[mod].add(alias.name)
-            elif isinstance(node, ast.ImportFrom):
-                if id(node) in tc_ids:
-                    continue
-                target: str | None = None
-                if node.level and node.level > 0:
-                    target = _resolve_relative(pkg, node.level, node.module)
-                elif node.module:
-                    head = node.module.split(".")[0]
-                    if head not in _STDLIB_TOPS and head != "charon":
-                        continue
-                    target = node.module
-                if target and (target == "charon" or target.startswith("charon.")):
+                target = _resolve_import_target(node, pkg, mod)
+                if target:
                     graph[mod].add(target)
     return dict(graph)
+
+
+def _build_import_graph(src_root: Path) -> dict[str, set[str]]:
+    """Build a directed graph: module → {imported modules} for all
+    src/charon/**/*.py.
+
+    Prefers graphify's pre-computed graph (graphify-out/graph.json),
+    falling back to a from-scratch AST walk when unavailable.
+    """
+    graphify_path = src_root.parent / "graphify-out" / "graph.json"
+    if graphify_path.exists():
+        bare_relative, module_edges = _scan_module_level_imports(src_root)
+        return _build_import_graph_from_graphify(
+            src_root, graphify_path, bare_relative, module_edges,
+        )
+    return _build_import_graph_from_ast(src_root)
 
 
 def check_circular_imports(src_root: Path) -> list[str]:
