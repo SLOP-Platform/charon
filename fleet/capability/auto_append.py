@@ -1,68 +1,29 @@
 #!/usr/bin/env python3
-"""auto_append.py — mechanized scorecard row append (F17).
+"""auto_append.py — Python entry point for scorecard row append (F17).
 
-Mirrors model-scorecard.sh's cmd_append validation and 16-column TSV format
-exactly, so every row produced by this helper is indistinguishable from one
-produced by the shell ledger.  Designed for Python call-sites (benchmark
-graders, review hooks, ticket-close automation) that want to append without
-shelling out or hand-editing the TSV.
+TSV-APPEND-UNIFY (fleet/state/TOOL-AUDIT-REDUNDANCY.md finding 6): this
+module used to be a full second implementation of model-scorecard.sh's
+cmd_append, kept in lockstep only by comment discipline.  It is now a THIN
+DELEGATOR: validation and the 16-column TSV write live ONLY in
+fleet/model-scorecard.sh `cmd_append` (one implementation, two callers).
+This wrapper builds the argv/env for the shell appender, points it at the
+caller's ledger via CHARON_SCORECARD_TSV, and maps a rejection back to
+ValueError so Python call-sites (benchmark graders, review hooks,
+ticket-close automation) keep a native API.
 
-Validation is FAIL-CLOSED: any invalid field raises ValueError immediately,
-so a bad row is NEVER written to the append-only ledger.
+Fail-closed as before: the shell validator rejects any invalid field and
+exits non-zero BEFORE writing, so a bad row is NEVER appended; that
+rejection surfaces here as ValueError with the shell's own message.
 """
 from __future__ import annotations
 
-import re
+import os
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-# These sets must stay in lockstep with model-scorecard.sh lines ~20-21.
-VALID_SOURCE = {"live", "bench", "bench2"}
-VALID_CLASS = {
-    "money-path", "routing", "ci-infra", "refactor", "bugfix",
-    "tests", "greenfield-feature", "docs", "frontend",
-}
-VALID_VERDICT = {"MERGE", "FIXES", "BLOCK"}
-VALID_GATE = {"pass", "fail", "-"}
-VALID_STAGE = {"provisional", "active"}
-
-
-def _validate_date(date: str) -> None:
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
-        raise ValueError("date must be YYYY-MM-DD")
-
-
-def _validate_non_negative_int(value: str, name: str) -> None:
-    if value == "-":
-        return
-    if not value.isdigit():
-        raise ValueError(f"{name} must be a non-negative integer or '-'")
-
-
-def _validate_non_negative_number(value: str, name: str) -> None:
-    if value == "-":
-        return
-    try:
-        if float(value) < 0:
-            raise ValueError
-    except ValueError:
-        raise ValueError(f"{name} must be a non-negative number or '-'")
-
-
-def _validate_score(value: str) -> None:
-    if value == "-":
-        return
-    if not value.isdigit():
-        raise ValueError("score must be 0-100 or '-'")
-    v = int(value)
-    if v < 0 or v > 100:
-        raise ValueError("score must be 0-100")
-
-
-def _validate_tier(value: str) -> None:
-    if value not in ("0", "1", "2", "3", "4", "-"):
-        raise ValueError("tier must be 0-4 or '-'")
+SCORECARD_SH = Path(__file__).resolve().parent.parent / "model-scorecard.sh"
 
 
 def append_scorecard_row(
@@ -85,11 +46,12 @@ def append_scorecard_row(
     tokens_out: str = "-",
     stage: str = "active",
 ) -> None:
-    """Append a validated row to *tsv_path*.
+    """Append a validated row to *tsv_path* via model-scorecard.sh `append`.
 
-    Every field is validated exactly as model-scorecard.sh cmd_append does.
-    The TSV must already exist (fail-closed: this helper will NOT seed a new
-    ledger; that is the operator's responsibility).
+    Every field is validated by cmd_append itself (the single source of
+    truth); an invalid field raises ValueError carrying the shell's error
+    message.  The TSV must already exist (fail-closed: this helper will NOT
+    seed a new ledger; that is the operator's responsibility).
 
     Parameters default to the same conventions as cmd_append:
       - date defaults to today UTC if omitted.
@@ -104,35 +66,44 @@ def append_scorecard_row(
     if date is None:
         date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    _validate_date(date)
-    if source not in VALID_SOURCE:
-        raise ValueError(f"source must be one of: {sorted(VALID_SOURCE)}")
-    if work_class not in VALID_CLASS:
-        raise ValueError(f"work_class must be one of: {sorted(VALID_CLASS)}")
-    if verdict not in VALID_VERDICT:
-        raise ValueError(f"verdict must be one of: {sorted(VALID_VERDICT)}")
-    if gate not in VALID_GATE:
-        raise ValueError(f"gate must be one of: {sorted(VALID_GATE)}")
-    _validate_tier(tier)
-    _validate_score(score)
-    _validate_non_negative_number(time_s, "time_s")
-    _validate_non_negative_number(cost_usd, "cost_usd")
-    _validate_non_negative_int(corrections, "corrections")
-    if "\t" in note:
-        raise ValueError("note must not contain tabs")
-    _validate_non_negative_int(tokens_in, "tokens_in")
-    _validate_non_negative_int(tokens_out, "tokens_out")
-    if stage not in VALID_STAGE:
-        raise ValueError(f"stage must be one of: {sorted(VALID_STAGE)}")
+    # Transport guard, NOT field validation (that lives in cmd_append):
+    # these three ride the CHARON_SCORECARD_* env-var channel, whose
+    # `${VAR:-default}` expansion cannot distinguish "" from unset — an
+    # empty string would silently become the default instead of being
+    # rejected. Refuse it here so the fail-closed contract holds.
+    for env_name, env_value in (
+        ("tokens_in", tokens_in),
+        ("tokens_out", tokens_out),
+        ("stage", stage),
+    ):
+        if env_value == "":
+            raise ValueError(
+                f"{env_name} must not be empty "
+                "(env-var channel cannot carry '')"
+            )
 
-    row = [
-        date, source, ref, work_class, tier, model, verdict, gate,
-        score, time_s, cost_usd, corrections, note,
-        tokens_in, tokens_out, stage,
-    ]
-    line = "\t".join(row) + "\n"
-    with open(tsv_path, "a") as fh:
-        fh.write(line)
+    env = os.environ.copy()
+    env["CHARON_SCORECARD_TSV"] = str(tsv_path)
+    env["CHARON_SCORECARD_TOKENS_IN"] = tokens_in
+    env["CHARON_SCORECARD_TOKENS_OUT"] = tokens_out
+    env["CHARON_SCORECARD_STAGE"] = stage
+    proc = subprocess.run(
+        [
+            "bash", str(SCORECARD_SH), "append",
+            date, source, ref, work_class, tier, model, verdict, gate,
+            score, time_s, cost_usd, corrections, note,
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        msg = proc.stderr.strip()
+        if msg.startswith("error: "):
+            msg = msg[len("error: "):]
+        raise ValueError(
+            msg or f"model-scorecard.sh append failed (rc={proc.returncode})"
+        )
 
 
 def main(argv: list[str] | None = None) -> int:

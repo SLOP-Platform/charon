@@ -5,7 +5,12 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TSV="$HERE/model-scorecard.tsv"
+# TSV-APPEND-UNIFY (TOOL-AUDIT-REDUNDANCY finding 6): cmd_append below is the
+# ONE validate+append implementation. capability/auto_append.py is a thin
+# Python delegator that invokes `append` here with CHARON_SCORECARD_TSV set
+# to its caller's ledger path — the env var exists for that delegation and
+# for hermetic tests; unset means the real ledger next to this script.
+TSV="${CHARON_SCORECARD_TSV:-$HERE/model-scorecard.tsv}"
 MARK="$HERE/state/last-scorecard-review"
 TODAY="$(date +%F)"
 TAB=$'\t'
@@ -39,6 +44,9 @@ row_count() {
   awk -F'\t' '!/^#/ && NF>0 {n++} END{print n+0}' "$TSV"
 }
 
+# THE single appender implementation (TSV-APPEND-UNIFY): both the shell CLI
+# (`bash model-scorecard.sh append ...`) and capability/auto_append.py's
+# Python API funnel through this one validate+append path.
 cmd_append() {
   [ $# -ge 12 ] || die "append needs: <date> <source> <ref> <work_class> <tier> <model> <verdict> <gate> <score> <time_s> <cost_usd> <corrections> <note...>"
   local date="$1" source="$2" ref="$3" wclass="$4" tier="$5" model="$6" verdict="$7" gate="$8" score="$9"
