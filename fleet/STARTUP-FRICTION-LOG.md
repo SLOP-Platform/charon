@@ -12,6 +12,18 @@ actions: (1) read this file, (2) run the listed boot checks, (3) FIX/improve any
 4. **`bash fleet/foreman.sh`** — the #1 fix: it surfaces tier starvation + WHY (quarantine/parked/unmarked-dep/collision/undecomposed) LOUDLY. Run it before assuming the board is healthy.
 5. `bash fleet/foreman.sh --fix` clears provably-safe stale blocks (quarantines that pass the decomp gate; merged-unmarked deps). Never auto-unparks.
 6. Money/important/routing PRs get a FOCUSED ADVERSARIAL REVIEW before land — not just gate-green.
+7. **Process-health / runaway check (NEW):** `ls /proc | grep -cE '^[0-9]+$'` (abnormally high ⇒ runaway) and `ps -o cmd= -C bash | grep -cE 'fleet/(handoff|gate|tests/handoff-mechanize)'` (>0 ⇒ orphaned self-check FORK-BOMB left by a crashed session). If found: `pkill -STOP` the loop first (uncatchable ⇒ it can't fork), then `-KILL`; if it self-multiplies faster than kills land, stub the cycle-edge scripts (they're git-committed) to `exit 0`, kill, then `git checkout` to restore. See fleet-selfcheck-forkbomb-class.
+
+---
+
+## post-crash restart / "recover-session" (2026-07-16)
+- **#1 — a Claude-Code crash orphaned a FORK-BOMB runaway that SessionStart did NOT detect.** `handoff.sh`→`gate.sh`→(runs the test suite)→`handoff-mechanize.test.sh`→`handoff.sh` is a concurrent, exponential cycle; orphaned by the crash it reached ~18,900 procs (load >2000, `fork: retry: Resource temporarily unavailable`). Boot was fork-starved before I noticed. → FIXED: reentrancy guard (`gate.sh` exports `CHARON_GATE_ACTIVE`; `handoff.sh` skips its embedded gate when set — commit 9dfc85a; adversarially reviewed). The SAME recursion also blew the GitHub GraphQL cap. Boot-checklist #7 added to catch it next time.
+- **Stale root HANDOFF.md misled recovery:** the top-level `HANDOFF.md` was months stale (GitLab/mvp-routing); real state was in `fleet/state/` + `SESSION-HANDOFF-*`. Don't trust the root file. (OPEN: archive/date it.)
+- **Crash-orphaned claims/worktrees:** 9 dead-PID claims blocked tickets; in-flight SG-tab work had to be reconstructed from `state/claims|submitted|done` (no single in-flight snapshot). reap-orphans (DROID-LIFECYCLE-REAP) + SessionStart wiring both in-flight; until then, at boot scan `state/claims/*` for dead owner PIDs (`kill -0`).
+- **foreman low-water still not auto-firing:** the loud STARVE/LOW warning (`foreman.sh`) exists but its SessionStart/after-land/cadence wiring is FOREMAN-MULTI-TRIGGER (in-flight) — starvation was found manually again. Run `bash fleet/foreman.sh` at boot until it auto-fires.
+- **Operator-action host confusion:** a grader `sudo` command was first run on 4-lom (gateway box) instead of the LOCAL WSL box (Tardis). Operator-action commands MUST name the host; bench-grader is LOCAL-WSL only.
+- **done.sh false-close + wrong-repo:** reconciling `submitted/`, done.sh false-closed an open-PR ticket (owns-files heuristic) and defaulted a rig ticket to the product repo (empty `repo:` field). Ticketed DONE-SH-INTEGRITY-FIX.
+- **Decomposer dead-ended on 429 with ~20 providers idle:** static GLM-family slate, no switchboard routing. Ticketed DECOMPOSER-ROUTE-THROUGH-SWITCHBOARD; architecture recorded in ADR-0011 (the Switchboard: no pools/lists).
 
 ---
 
