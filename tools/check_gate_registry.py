@@ -26,7 +26,7 @@ GATES_PATH = TOOLS_DIR / "gates.json"
 ALL_DOMAINS: frozenset[str] = frozenset({
     "boundary", "security", "arch", "test", "test-patterns",
     "lint", "type", "version", "registry", "gate", "fleet", "docs", "decisions",
-    "public-clean", "inert", "ci-infra", "no-rig-import",
+    "public-clean", "inert", "ci-infra", "no-rig-import", "reachability",
 })
 
 

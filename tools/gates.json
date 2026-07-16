@@ -168,5 +168,15 @@
     "ci_step": true,
     "invariant": "Every 0-caller public symbol in src/charon is either reachable, @inert_by_design, or tracked in tools/inert-code-disposition.json with a {reason, disposition} entry",
     "red_proof": "tests/test_check_inert_code.py"
+  },
+  {
+    "id": "reachability-gate",
+    "name": "Hardcoded cross-boundary path gate",
+    "domain": "reachability",
+    "enforcer": "../charon-private/fleet/checks/no-unreachable-paths.sh",
+    "covers": "hardcoded absolute paths crossing unix-user, volume, fresh-install, or product-vs-rig boundaries",
+    "ci_step": false,
+    "invariant": "No tracked file contains an unallowlisted hardcoded absolute path that is unreachable across a portability boundary",
+    "red_proof": null
   }
 ]
