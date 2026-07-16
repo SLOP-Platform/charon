@@ -612,15 +612,107 @@ show_operator_actions(){
   return 0
 }
 
+# --- startup_budget_gate: MECHANIZES §13 startup context budget (MANAGER-OPERATING-RULES.md).
+# Tracked startup artifact files with per-file byte budgets. A file exceeding its budget
+# AUTO-REGISTERS a blocking P1 red 'startup-budget-exceeded' that self-closes when all files
+# drop back within budget. This is the fail-on-revert gate for the context diet.
+BUDGET_RED_ID="startup-budget-exceeded"
+declare -A STARTUP_BUDGETS=(
+  ["MANAGER-OPERATING-RULES.md"]=26000
+  ["START-SESSION.md"]=3200
+  ["handoff.sh"]=17500
+  ["handoff-check.sh"]=6600
+  ["preflight.sh"]=36000
+)
+TOTAL_BUDGET=89500
+
+_startup_budget_red_status(){ awk -F"$TAB" -v id="$BUDGET_RED_ID" '$1==id{print $7; exit}' "$TSV"; }
+_startup_budget_red_ensure_open(){
+  local st; st="$(_startup_budget_red_status)"
+  if [ -z "$st" ]; then
+    cmd_add "$BUDGET_RED_ID" P1 gate \
+      "startup artifact(s) exceed byte budget — trim MANAGER-OPERATING-RULES.md, START-SESSION.md, handoff.sh, handoff-check.sh, or preflight.sh" \
+      "bash '$0' startup-budget-check >/dev/null 2>&1" >/dev/null 2>&1 || true
+  elif [ "$st" = closed ]; then
+    local tmp; tmp="$(mktemp)"
+    awk -F"$TAB" -v OFS="$TAB" -v id="$BUDGET_RED_ID" \
+      '/^#/{print;next} $1==id{$7="open";$8=""} {print}' "$TSV" > "$tmp" && mv "$tmp" "$TSV"
+  fi
+}
+_startup_budget_red_close_if_open(){
+  [ "$(_startup_budget_red_status)" = open ] && \
+    cmd_close "$BUDGET_RED_ID" --override "auto: all startup artifacts within budget" >/dev/null 2>&1 || true
+}
+startup_budget_check(){
+  local fail=0; local total=0; local budget size f
+  echo "--- STARTUP BUDGET GATE ---"
+  for f in "${!STARTUP_BUDGETS[@]}"; do
+    budget="${STARTUP_BUDGETS[$f]}"
+    if [ -f "$HERE/$f" ]; then
+      size="$(wc -c < "$HERE/$f")"
+      total=$((total + size))
+      if [ "$size" -gt "$budget" ]; then
+        printf '  OVER BUDGET: %s = %d bytes (budget: %d, over by %d)\n' "$f" "$size" "$budget" "$((size - budget))"
+        fail=1
+      else
+        printf '  OK: %s = %d bytes (budget: %d)\n' "$f" "$size" "$budget"
+      fi
+    else
+      printf '  MISSING: %s\n' "$f"
+      fail=1
+    fi
+  done
+  printf '  TOTAL: %d bytes (budget: %d)\n' "$total" "$TOTAL_BUDGET"
+  if [ "$total" -gt "$TOTAL_BUDGET" ]; then
+    printf '  OVER TOTAL BUDGET by %d bytes\n' "$((total - TOTAL_BUDGET))"
+    fail=1
+  fi
+  return $fail
+}
+startup_budget_gate(){
+  local out rc; out="$(startup_budget_check 2>&1)"; rc=$?
+  if [ $rc -eq 0 ]; then
+    echo "startup_budget_gate: all tracked artifacts within budget"
+    _startup_budget_red_close_if_open
+  else
+    _startup_budget_red_ensure_open
+    echo "startup_budget_gate: STARTUP BUDGET EXCEEDED — AUTO-REGISTERED tracked red '$BUDGET_RED_ID' (blocks preflight until files are trimmed)"
+    printf '%s\n' "$out" | grep 'OVER BUDGET\|OVER TOTAL' | head -8 | sed 's/^/    /'
+  fi
+}
+# Blade-runner proof: self-test that the budget gate fires when a file exceeds budget.
+startup_budget_selftest(){
+  local tmpfile; tmpfile="$(mktemp)"
+  # Test: write a dummy MANAGER-OPERATING-RULES.md that's too big
+  dd if=/dev/zero of="$tmpfile" bs=1 count=50000 2>/dev/null
+  # Override HERE temporarily
+  local real_here="$HERE"
+  HERE="$(dirname "$tmpfile")"
+  ln -sf "$tmpfile" "$HERE/MANAGER-OPERATING-RULES.md" 2>/dev/null || true
+  local rc=0
+  startup_budget_check >/dev/null 2>&1 || rc=$?
+  rm -f "$HERE/MANAGER-OPERATING-RULES.md" "$tmpfile"
+  HERE="$real_here"
+  if [ "$rc" -ne 0 ]; then
+    echo "startup-budget-selftest: PASS (gate fires on over-budget file — fail-on-revert verified)"
+    return 0
+  else
+    echo "startup-budget-selftest: FAIL (gate did NOT fire on over-budget file)"
+    return 1
+  fi
+}
+
 # Dispatch ONLY when run directly. When SOURCED (fleet/tests/needs-push-gate.test.sh) the
 # functions above are exposed with NO side effects.
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 case "${1:-scan}" in
-  scan|"") bash "$HERE/reconcile-merged.sh"; board_gate; executor_gate; handoff_gate; done_merge_gate; detect_needs_push; bash "$HERE/retire-done.sh"; cmd_scan; scan_rc=$?; cmd_detect; foreman_advisory; show_operator_actions; exit $scan_rc ;;
+  scan|"") bash "$HERE/reconcile-merged.sh"; board_gate; executor_gate; handoff_gate; done_merge_gate; detect_needs_push; startup_budget_gate; bash "$HERE/retire-done.sh"; cmd_scan; scan_rc=$?; cmd_detect; foreman_advisory; show_operator_actions; exit $scan_rc ;;
   add)     shift; cmd_add "$@" ;;
   close)   shift; cmd_close "$@" ;;
   list)    shift; cmd_list "$@" ;;
   detect)  shift; cmd_detect "$@" ;;
-  *) echo "usage: $0 {scan|add <id> <sev> <area> \"<desc>\" \"<check>\"|close <id> [--override r|--evidence t]|list [open|closed|all]|detect [--full]}" >&2; exit 1 ;;
+  startup-budget-check) startup_budget_check ;;
+  startup-budget-selftest) startup_budget_selftest ;;
+  *) echo "usage: $0 {scan|add <id> <sev> <area> \"<desc>\" \"<check>\"|close <id> [--override r|--evidence t]|list [open|closed|all]|detect [--full]|startup-budget-check|startup-budget-selftest}" >&2; exit 1 ;;
 esac
 fi

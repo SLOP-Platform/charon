@@ -80,11 +80,8 @@ cat <<PREAMBLE
 Read and fully follow /home/stack/charon-private/fleet/SESSION-HANDOFF-$SESSION.md — you are the fresh Charon fleet MANAGER, carry it out, then flip to fleet mode.
 \`\`\`
 
-### Context discipline (token-burn guard — always on)
-1. **Auto-compact ON.** At startup verify \`grep autoCompactEnabled ~/.claude/settings.json\` shows \`true\`. If not, STOP and tell the operator (see \`fleet/SETTINGS-GUARD-PROPOSAL.md\`) — a never-compacting transcript makes per-turn token cost climb all session.
-2. **Sub-sessions write, don't dump.** A sub-session WRITES its findings to a file and returns only a 2-3 line pointer + the absolute path. NEVER paste a full sub-session report back into the primary.
-3. **Read big docs in narrow slices, once.** Read handoffs/plans by line-range (offset/limit), never the whole file, never re-read each turn.
-4. **Keep-alive is a light heartbeat.** Fold the bridge heartbeat into real work (\`board()\` TTL 600s); do NOT run a 4-min idle wakeup loop that reprocesses full context.
+### Context discipline (always on)
+See MANAGER-OPERATING-RULES.md §9 (token-economy is DEFAULT) and §13 (startup budget gate). Key: auto-compact ON; sub-sessions write/don't-dump; read big docs in slices once; keep-alive = light heartbeat folded into real work, NOT a 4-min wakeup loop.
 
 ---
 
@@ -97,10 +94,9 @@ $(freshness_stamp "$PRIV_REPO" "Rig")
 
 ---
 
-## Done / committed@SHA (auto — what the previous session shipped)
+## Done / committed@SHA
 
-> Mechanized: latest 5 SHAs on master (rig + product) + any session-specific branches' HEAD.
-> Edit this section only if you need to highlight specific commits the next session must NOT regress.
+> Latest 5 SHAs on master (rig + product). Edit only to highlight commits the next session must NOT regress.
 PREAMBLE
 
 # --- done / committed@SHA -------------------------------------------------------
@@ -127,13 +123,9 @@ cat <<'PREAMBLE2'
 
 ---
 
-## Next-action / in-flight (auto + manager narrative)
+## Next-action / in-flight
 
-> **Mechanized first-action snapshot:** the live machine state for the current handoff time
-> (active worktrees, in-flight charon-run jobs + their CHARON_RUN_RESULT, and the latest
-> provider-exhaustion-ledger tail) is auto-emitted under \`## Auto-generated state\` below.
-> The \`### Manager's first actions\` subsection is the ONLY place the manager hand-types
-> the next session's priority order — keep it terse (numbered, with one file/script per item).
+> Auto-emitted machine state is under `## Auto-generated state` below. Fill `### Manager's first actions` terse (numbered, one file/script per item).
 
 PREAMBLE2
 
@@ -153,8 +145,7 @@ cat <<'PREAMBLE3'
 
 ## Gotchas (avoid re-discovering / DENIED)
 
-> Mechanized: any pre-existing red that names gotcha-class info (e.g. `git push is DENIED`)
-> is auto-prepended below. Fill the session-specific gotchas below the mechanized list.
+> Auto-surfaced from reds.tsv open reds matching gotcha markers. Fill session-specific below.
 
 - `git push` is DENIED to the manager (settings deny-list; verbal authority does NOT override it). The operator pushes.
 PREAMBLE3
@@ -181,8 +172,7 @@ cat <<'PREAMBLE4'
 
 ## session-bridge (auto — live board)
 
-> Mechanized: live `~/.charon/session-bridge.db` board snapshot at handoff time. If empty,
-> the next session starts with a clean bridge (no coordination sessions in flight).
+> Live `~/.charon/session-bridge.db` snapshot at handoff time.
 
 PREAMBLE4
 
@@ -217,23 +207,13 @@ PY
 } || echo "```\n(session-bridge probe failed)\n```"
 
 cat <<'PREAMBLE5'
-> Coordination rule (read before claiming any work): review the board above for
-> collisions (same files) and blockers (sessions blocked on THIS session's deliverable).
-> If this session is BLOCKED on another session, surface it in `blockers=` on your `register()`.
-> If you INHERIT a session from the board (the previous session timed out), pick a
-> new Jedi name and do NOT re-register the old one.
+> Coordination: review the board above for collisions/blockers before claiming work. If blocked, surface in `blockers=` on `register()`. If inheriting a timed-out session, pick a NEW Jedi name.
 
 ---
 
 ## Auto-generated state
 PREAMBLE5
 
-# --- live state (worktrees / in-flight jobs / ledger) ------------------------
-# These are auto-emitted from disk so facts are accurate by construction. They live
-# UNDER `## Auto-generated state` so handoff-check.sh's HUMAN-scoping filter (the awk
-# at line 92 that skips everything from `## Auto-generated state` onward) excludes
-# their SHAs/paths from the strict SHA-exists + path-exists checks — those are
-# machine snapshots, not human accuracy claims.
 echo "### Active worktrees (\`git worktree list\`)"
 {
   echo '```'
