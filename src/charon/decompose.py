@@ -27,7 +27,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import api, gitutil
+from . import gitutil
 from .coordinator import CostGate, RunResult, _consult_reviewer
 from .fence import Fence, detect_escape, snapshot_outside
 from .ledger import Checkpoint, Ledger
@@ -305,7 +305,7 @@ def run_plan(
     *,
     runner: WaveRunner | None = None,
     max_parallel: int = 4,
-    state_dir: str = api.DEFAULT_STATE_DIR,
+    state_dir: str = ".charon",
     max_cost_usd: float | None = None,
     max_tokens: int | None = None,
     repo: str | None = None,
