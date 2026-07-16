@@ -31,7 +31,9 @@ BOARD_DIR="${BOARD_DIR:-$FLEET/board}"
 
 die() { echo "decompose.sh: FATAL: $*" >&2; exit 1; }
 
-[ $# -ge 1 ] || die "usage: decompose.sh <ticket-id>"
+DRY_RUN=false
+if [ "${1:-}" = "--dry-run" ]; then DRY_RUN=true; shift; fi
+[ $# -ge 1 ] || die "usage: decompose.sh [--dry-run] <ticket-id>"
 TICKET_ID="$1"
 TICKET_FILE="${TICKET_FILE:-$BOARD_DIR/$TICKET_ID.md}"
 [ -f "$TICKET_FILE" ] || die "no such ticket: $TICKET_FILE"
@@ -105,8 +107,11 @@ fi
 # that IS the python script below.
 DEC_PLAN_JSON="$PLAN_JSON" \
   TICKET_FILE="$TICKET_FILE" PARENT="$TICKET_ID" BOARD_DIR="$BOARD_DIR" \
+  DRY_RUN="$DRY_RUN" \
   PYTHONPATH="$CHARON_SRC" python3 <<'PYEMIT'
 import json, os, re, sys
+
+DRY_RUN = os.environ.get("DRY_RUN", "false") == "true"
 
 def die(msg):
     sys.stderr.write("decompose.sh: FATAL: " + msg + "\n"); sys.exit(1)
@@ -192,7 +197,6 @@ work_class = (pf.get("work_class") or "generalist").strip() or "generalist"
 diff = (pf.get("difficulty") or "3").split()[0] if pf.get("difficulty") else "3"
 repo = (pf.get("repo") or "charon").strip() or "charon"
 
-os.makedirs(board, exist_ok=True)
 emitted = []
 for pu in units:
     deps = ", ".join(pu.depends_on)
@@ -207,8 +211,6 @@ for pu in units:
         f"parent: {parent}",
         f"depends_on: {deps}",
     ]
-    # A decompose depends_on IS a real build/sequence prereq; mark it so the WCI
-    # false-blocking-dep gate (disjoint owns + dep) does not RED the emitted ticket.
     if pu.depends_on:
         lines.append("dep-kind: build")
     lines += [
@@ -220,13 +222,20 @@ for pu in units:
         f"note: sub-ticket of {parent} (auto-decomposed).",
     ]
     path = os.path.join(board, f"{pu.id}.md")
-    with open(path, "w") as fh:
-        fh.write("\n".join(lines) + "\n")
+    if DRY_RUN:
+        print(f"[DRY-RUN] would emit: {path}")
+    else:
+        os.makedirs(board, exist_ok=True)
+        with open(path, "w") as fh:
+            fh.write("\n".join(lines) + "\n")
     emitted.append(path)
 
 if len(emitted) < 1:
     die("emitted no sub-tickets")
 for p in emitted:
     print(p)
-sys.stderr.write(f"decompose.sh: emitted {len(emitted)} disjoint sub-ticket(s) for {parent}\n")
+if DRY_RUN:
+    sys.stderr.write(f"decompose.sh: DRY-RUN: would emit {len(emitted)} disjoint sub-ticket(s) for {parent}\n")
+else:
+    sys.stderr.write(f"decompose.sh: emitted {len(emitted)} disjoint sub-ticket(s) for {parent}\n")
 PYEMIT
