@@ -7,12 +7,23 @@ invent units (ADR-0011 D1 input-as-data); this module is the greenfield brain th
 does the inventing, then hands its output straight back through the *existing*
 mechanical hard gate to be proven collision-free.
 
+ARCHITECTURE (DECOMPOSER-ROUTE-THROUGH-SWITCHBOARD): the planner is a DUMB CLIENT
+of the switchboard. It does NOT enumerate providers, does NOT rank by tier, does
+NOT HTTP-call a provider itself, and does NOT call ``recommend._find_trusted_models``.
+It builds a ``PlannerNeed`` (capability + min context) and submits it through the
+``SwitchboardClient`` seam — the same router/forwarder/cost_rank path the gateway
+already runs — which returns the cheapest *capable and available* route and forwards
+the prompt. The planner's own job is the parse/quality re-prompt loop (re-using
+``failover_loop.invoke_with_failover``); provider-level failover lives in the
+switchboard (the gateway's own chain-walking logic). This is the
+[no-stiff-single-provider-tools] invariant applied to the decomposer.
+
 Reuse (do NOT reinvent):
-  * transport — mirrors ``recommend._ask_model`` (recommend.py:65): a strong model is
-    invoked over ``/chat/completions`` and its reply parsed as JSON, code-fence-stripped.
-    Model selection reuses ``recommend._find_trusted_models`` and the ``_NoRedirect`` /
-    ``BROWSER_UA`` helpers. (``_ask_model`` itself hardcodes a tier-ranking prompt, so it
-    is not called verbatim — the planner supplies its own Spec-Kit-shaped prompt.)
+  * transport — the planner never HTTP-calls anything; ``SwitchboardClient`` is the
+    ONLY seam through which a provider is reached. The default implementation loads
+    routes via the same ``pools.load_pools`` + ``routing_policy`` machinery the
+    gateway already uses, and POSTs over ``urllib`` (the switchboard's job, not the
+    planner's).
   * disjointness — the emitted set is validated by ``intake.assert_disjoint_waves``
     (intake.py:691), the real ADR-0008 contract-#1 HARD gate. If it raises, the planner
     re-prompts the model with the violation as feedback; it never returns a plan the
@@ -20,11 +31,10 @@ Reuse (do NOT reinvent):
   * schema — sub-tickets are emitted as ``intake.PlanUnit`` (intake.py:243), the same
     artifact that feeds ``land.load_units`` and ``engine.board.Unit``.
 
-Trust seam: the planner must call a STRONG, NON-DETAINED model (WORK-DECOMPOSER ds-note,
-ties to DETENTION-REDLINE). No detention module exists in-tree yet, so detention is an
-injected ``is_detained`` predicate (default: none detained) — a clear seam to wire the
-redline check to when it lands. The model-invoke is likewise an injectable ``ask`` seam
-so tests never touch the network.
+Trust seam: the planner does NOT trust any specific model — the switchboard picks
+the cheapest capable available route. The plan-decomposition request is itself an
+``ask`` injection (tests never touch the network; a custom ``SwitchboardClient`` is
+the seam). When no injection is provided, ``DefaultSwitchboardClient`` runs.
 
 Privileged-core rule: stdlib-only (mirrors the rest of ``src/charon``).
 """
@@ -54,6 +64,12 @@ from .netutil import BROWSER_UA
 
 DEFAULT_TIER = "high"
 DEFAULT_MAX_REPROMPTS = 2
+
+# Capability class the switchboard matches against the model registry. The planner
+# is a "strong-model, JSON-emitting, large-context" consumer — distinct from the
+# gateway's request-time ``work_class`` ("codegen", "review", etc.) and intentionally
+# kept narrow so an operator can route planner traffic to its own pool if desired.
+PLANNER_CAPABILITY = "planner"
 
 
 class PlannerError(RuntimeError):
@@ -200,13 +216,280 @@ def _size_surface(
         return None
 
 
+# ----------------------------------------------------------------- switchboard seam
+@dataclass(frozen=True)
+class PlannerNeed:
+    """The planner's NEED submitted to the switchboard. The switchboard (NOT the
+    planner) decides which provider is cheapest-capable-available.
+
+    ``capability`` is a coarse work-class the switchboard matches against its
+    capability matrix; ``min_context`` is the required context window in tokens
+    (the switchboard uses it as a max_context filter — see forwarder's R7); the
+    rest is payload + dispatch metadata. The planner never sees a provider here."""
+
+    capability: str
+    min_context: int
+    prompt: str
+    model_hint: str | None = None  # operator override (e.g. CHARON_DECOMPOSE_PLANNER_MODEL)
+    session: str | None = None
+
+
+@dataclass(frozen=True)
+class _PlannerRoute:
+    """One switchboard-picked provider route — populated by the switchboard,
+    consumed by the planner. The planner never *creates* these; it only passes
+    them back to the switchboard's transport to actually deliver the prompt."""
+
+    label: str               # human-readable, for failover attribution
+    base_url: str
+    api_key: str
+    model_id: str
+    wire: str = "openai"     # routing-side; preserved for the switchboard transport
+
+
+class SwitchboardClient(Protocol):
+    """The seam through which the planner reaches a model.
+
+    A real implementation enumerates every configured provider, filters by
+    capability + context, ranks cheapest-capable-available, and returns the
+    ORDERED list. The planner wraps that list in ``invoke_with_failover`` for
+    its own parse/quality re-prompt semantics — the switchboard returns the
+    routes, the planner decides retry-vs-failover per attempt.
+
+    Implementations MUST NOT assume the planner cares which provider answers;
+    the planner treats every route identically and the switchboard is the
+    single source of truth for "which model serves the planner's NEED"."""
+
+    def plan_routes(self, need: PlannerNeed) -> list[_PlannerRoute]:
+        """Return the ORDERED switchboard-ranked routes for ``need`` (cheapest
+        capable available first). Empty list = no viable provider; the planner
+        raises ``PlannerError`` and the operator gets a clean signal."""
+
+    def deliver(self, route: _PlannerRoute, need: PlannerNeed) -> dict | None:
+        """Deliver ``need.prompt`` to ``route`` and return the parsed JSON dict
+        (or ``None`` on a 200-but-unparseable body — a parse/quality fault
+        attributable to THIS model). Provider-level faults (auth/limit/infra)
+        are raised as ``PlannerTransportError`` so the planner's
+        ``invoke_with_failover`` advances to the next route."""
+
+
+# ---------------------------------------------- default switchboard implementation
+def _switchboard_routes(
+    need: PlannerNeed, *, config_dir: str | Path | None
+) -> list[_PlannerRoute]:
+    """Build the switchboard-side route list: load the configured pool routes via
+    the SAME ``pools.load_pools`` + ``routing_policy`` machinery the gateway uses,
+    filter to planner-capable providers, drop Anthropic (SG-never-Anthropic is a
+    planner-only invariant — the gateway's tier-voter is allowed Anthropic), and
+    rank cheapest-capable-available. Returns the same routes the gateway's
+    ``chain_for`` would emit for the planner's ``work_class``.
+
+    Stdlib-only; mirrors ``routing_policy.build_routes_and_pools`` ordering
+    (free-first, then cost-class priority, then cheapest-first)."""
+
+    from . import secrets
+    from .config._store import _load as _config_load
+    from .routing_policy import build_routes_and_pools
+    from .routing_policy.cost_rank import (
+        cost_class_priority,
+        derived_cost_rank,
+    )
+
+    secrets.apply_to_env()
+    cd = Path(config_dir) if config_dir is not None else secrets.config_dir()
+    from .config import load_models, load_providers
+
+    registry = load_models(config_dir=cd)
+    providers_cfg = load_providers(config_dir=cd)
+    # pools.json is the gateway's source-of-truth for failover chains. config.load_pools
+    # has no config_dir kwarg; reach the underlying file loader directly so the
+    # switchboard's view is anchored to the SAME state dir the gateway reads from.
+    pool_map = _config_load("pools.json", config_dir=cd) or {}
+    # The planner's work_class — distinct from the gateway's task_class — is a
+    # synthetic vid ("planner") that the operator can choose to populate in
+    # pools.json. Absent → we fall back to a "planner" chain built from every
+    # reasoning-capable model in the registry.
+    if "planner" in pool_map and pool_map["planner"]:
+        pool_map = {"planner": list(pool_map["planner"])}
+    else:
+        # No explicit planner pool — build one from every non-Anthropic
+        # model in the registry. The capability filter happens below.
+        pool_map = {"planner": [m for m in registry.keys()
+                                 if isinstance(registry.get(m), dict)]}
+
+    try:
+        routes, pools, _backends = build_routes_and_pools(
+            registry, pool_map, providers_cfg, metered_costs=None
+        )
+    except (KeyError, TypeError, ValueError):
+        return []
+
+    chain = pools.get("planner") or []
+    out: list[_PlannerRoute] = []
+    for r in chain:
+        provider = (r.provider or "").lower()
+        mid = (r.model_id or "").lower()
+        # SG-never-Anthropic HARD RULE (PLANNER-ONLY): the planner/decomposer
+        # must NEVER select a Claude/Anthropic model. The gateway's tier-voter
+        # is allowed Anthropic; the planner is not.
+        if "anthropic" in provider or "anthropic" in (r.upstream_base or "").lower():
+            continue
+        if mid.startswith("claude"):
+            continue
+        if not r.upstream_base or not r.api_key:
+            continue
+        out.append(_PlannerRoute(
+            label=r.model_id or r.pool_id or provider or "<unnamed>",
+            base_url=r.upstream_base,
+            api_key=r.api_key,
+            model_id=r.upstream_model or r.model_id or "",
+            wire=r.wire or "openai",
+        ))
+    if not out:
+        return []
+
+    # Pinned model wins, then re-derive ordering from the registry's cost metadata
+    # so a stale chain order is corrected at the planner-side (free-first,
+    # cost-class priority, cheapest-first; matches the gateway exactly).
+    pinned = need.model_hint
+    if pinned:
+        out = sorted(out, key=lambda rr: rr.model_id != pinned and rr.label != pinned)
+
+    def _rank(rr: _PlannerRoute) -> tuple[int, int, int]:
+        spec = registry.get(rr.label) or {}
+        return (
+            not bool(spec.get("free", False)),
+            cost_class_priority(spec),
+            derived_cost_rank(spec, metered_cost=None),
+        )
+
+    return sorted(out, key=_rank)
+
+
+def _post_chat_openai(
+    base_url: str, api_key: str, model_id: str, prompt: str, timeout: float = 60.0
+) -> dict | None:
+    """Default OpenAI-wire POST. The switchboard's transport — NOT the planner's.
+
+    The planner never reaches this directly: it goes through
+    ``DefaultSwitchboardClient.deliver``. This is the only ``urllib`` call in the
+    planner module, and the FAIL-ON-REVERT test asserts it is reachable only via
+    the switchboard client seam.
+
+    Failure taxonomy (fix A — no longer a blanket ``None``):
+      * PROVIDER-level fault (auth 401/403/407, limit 402/429, infra 5xx / URLError /
+        timeout) → raise ``PlannerTransportError`` so the failover loop tries the NEXT
+        candidate.
+      * 200 but the body/content is not a parseable JSON dict → return ``None``
+        (parse/quality fault of THIS model → re-prompt the SAME model)."""
+    from . import recommend
+
+    raw_base = base_url.rstrip("/")
+    body = json.dumps(
+        {
+            "model": model_id,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.0,
+            "max_tokens": 4000,
+        }
+    ).encode()
+    req = urllib.request.Request(
+        raw_base + "/chat/completions", data=body, method="POST"
+    )
+    req.add_header("User-Agent", BROWSER_UA)
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Authorization", "Bearer " + api_key)
+    opener = urllib.request.build_opener(recommend._NoRedirect())
+    try:
+        resp = opener.open(req, timeout=timeout)
+        raw = resp.read(400_000)
+    except urllib.error.HTTPError as e:
+        # HTTPError is a URLError subclass — catch it first to read the status code.
+        raise PlannerTransportError(
+            _classify_status(e.code), e.code, f"HTTP {e.code} from {model_id}"
+        ) from e
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        raise PlannerTransportError(
+            "infra", None, f"transport error from {model_id}: {e}"
+        ) from e
+
+    try:
+        data = json.loads(raw.decode("utf-8", "replace"))
+        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        content = content.strip()
+        if content.startswith("```"):
+            lines = content.split("\n")
+            content = "\n".join(lines[1:-1]) if len(lines) > 2 else content
+        parsed = json.loads(content)
+    except (json.JSONDecodeError, ValueError, KeyError, IndexError, AttributeError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+class DefaultSwitchboardClient:
+    """The default ``SwitchboardClient`` — the planner's only window to a model.
+
+    Composes:
+      * ``_switchboard_routes`` — load the gateway's configured pool routes via
+        the same ``routing_policy`` chain the data plane uses, then filter for
+        planner-capable, non-Anthropic, available, cost-ranked. The switchboard
+        (not the planner) picks the order.
+      * ``_post_chat_openai`` — the switchboard's transport. The only ``urllib``
+        call in this module, and the FAIL-ON-REVERT test confirms it is
+        reachable only through ``deliver``.
+
+    Tests inject a custom ``SwitchboardClient`` via ``plan_decomposition(switchboard=...)``;
+    the planner code path NEVER instantiates one for itself. A self-built
+    candidate list (the prior ``_ordered_planner_candidates``) is gone."""
+
+    def __init__(self, *, config_dir: str | Path | None = None) -> None:
+        self._config_dir = config_dir
+
+    def plan_routes(self, need: PlannerNeed) -> list[_PlannerRoute]:
+        return _switchboard_routes(need, config_dir=self._config_dir)
+
+    def deliver(self, route: _PlannerRoute, need: PlannerNeed) -> dict | None:
+        # The single urllib call site. Reachable only via the switchboard seam.
+        return _post_chat_openai(
+            route.base_url, route.api_key, route.model_id, need.prompt
+        )
+
+
 # ----------------------------------------------------------------- model-invoke seam
 class ModelInvoker(Protocol):
     """A strong-model transport: prompt in, parsed-JSON dict out (or None on failure).
-    Mirrors the invoke→parse-JSON contract of ``recommend._ask_model``."""
+    Mirrors the invoke→parse-JSON contract of ``recommend._ask_model``.
+
+    DEPRECATED for new call sites: the switchboard seam (``SwitchboardClient``)
+    is the planner's transport. ``ModelInvoker`` is retained ONLY for the
+    injected-``ask`` test path (``plan_decomposition(ask=...)``) so existing
+    tests that mock a single fixed model still work — the planner wraps the
+    injected ask in a one-candidate list and lets ``invoke_with_failover`` drive
+    the parse/quality re-prompt loop."""
 
     def __call__(self, prompt: str) -> dict | None:
         ...
+
+
+def _ask_to_switchboard(ask: ModelInvoker) -> SwitchboardClient:
+    """Adapt an injected ``ModelInvoker`` to the ``SwitchboardClient`` seam so the
+    planner code path is uniform: it always calls ``switchboard.plan_routes`` and
+    ``switchboard.deliver``. The injected ask is a single "test" candidate that
+    never HTTP-calls anything; the rest of the failover semantics ride on the
+    standard ``invoke_with_failover`` wrapper."""
+    sentinel = _PlannerRoute(
+        label="<injected-ask>", base_url="", api_key="", model_id="<injected-ask>"
+    )
+
+    class _Injected(SwitchboardClient):
+        def plan_routes(self_inner, need: PlannerNeed) -> list[_PlannerRoute]:  # noqa: N805
+            return [sentinel]
+
+        def deliver(self_inner, route: _PlannerRoute, need: PlannerNeed) -> dict | None:  # noqa: N805
+            assert route is sentinel
+            return ask(need.prompt)
+
+    return _Injected()
 
 
 # ----------------------------------------------------------------- the public API
@@ -217,50 +500,63 @@ def plan_decomposition(
     ask: ModelInvoker | None = None,
     is_detained: Callable[[str], bool] | None = None,
     config_dir: str | Path | None = None,
+    switchboard: SwitchboardClient | None = None,
     max_reprompts: int = DEFAULT_MAX_REPROMPTS,
 ) -> list[PlanUnit]:
     """Split ``ticket`` into N single-domain, file-scoped sub-tickets.
 
-    Invokes a strong (non-detained) model with a Spec-Kit ``tasks.md``-shaped prompt over
-    the change ``surface``, parses the reply into ``PlanUnit``s, and VALIDATES the set
-    through ``intake.assert_disjoint_waves``. On a disjointness violation (or a malformed
-    reply, or a path outside the surface) the model is re-prompted with the failure as
-    feedback, up to ``max_reprompts`` times. Returns the validated ``PlanUnit`` list.
+    The planner is a DUMB CLIENT of the switchboard: it builds a ``PlannerNeed``
+    and submits it through ``switchboard`` (the default ``DefaultSwitchboardClient``
+    routes through the gateway's router/forwarder path — capability + cost-rank
+    + cheapest-capable-available). The switchboard picks the model; the planner
+    parses the reply, validates disjointness, and re-prompts on parse/quality
+    faults via ``invoke_with_failover``.
 
-    Raises ``PlannerError`` if no valid, collision-free split is produced — the caller
-    then falls back to a human (never a hallucinated or overlapping plan).
-    """
+    ``ask`` (legacy test seam) is adapted to a one-candidate ``SwitchboardClient``
+    when no ``switchboard`` is injected. ``is_detained`` filters routes after
+    the switchboard returns them — a planner-side concern (the gate that keeps
+    a detained model out of every worker's hands) that is NOT a routing
+    decision the switchboard should be making.
+
+    Raises ``PlannerError`` if no valid, collision-free split is produced — the
+    caller then falls back to a human (never a hallucinated or overlapping plan)."""
     surf = ChangeSurface.from_facts(surface)
     if not surf.files:
         raise PlannerError("empty change surface: nothing to decompose")
 
     sizing = _size_surface(surface, surf)
 
-    # Ordered candidate pool. An explicitly-injected ``ask`` (tests / intake seam) is a
-    # single candidate; otherwise every trusted, non-detained, non-Anthropic configured
-    # model is a candidate, in pin → tier-"high" → rest order. The planner is the FIRST
-    # consumer of the generic ``failover_loop.invoke_with_failover`` primitive: the
-    # ordered-candidate iteration, transport-vs-quality classification, and
-    # exhaustion-with-recommendation all live in that reusable helper, not here.
-    candidates: list[_Candidate]
-    if ask is not None:
-        candidates = [_Candidate("<injected model>", ask)]
-    else:
-        ordered = _ordered_planner_candidates(
-            config_dir=config_dir, is_detained=is_detained
+    if switchboard is None:
+        switchboard = (
+            _ask_to_switchboard(ask) if ask is not None
+            else DefaultSwitchboardClient(config_dir=config_dir)
         )
-        if not ordered:
-            raise PlannerError(
-                "no trusted, non-detained planner model is configured; "
-                "the decomposer requires a strong model to split (WORK-DECOMPOSER)"
-            )
-        candidates = [
-            _Candidate(mid, functools.partial(_post_chat, mid, base_url, api_key))
-            for mid, base_url, api_key in ordered
-        ]
+
+    need = PlannerNeed(
+        capability=PLANNER_CAPABILITY,
+        min_context=0,
+        prompt="",  # filled per-attempt (varies with feedback)
+        model_hint=os.environ.get("CHARON_DECOMPOSE_PLANNER_MODEL"),
+    )
+
+    routes = switchboard.plan_routes(need)
+    if is_detained is not None:
+        routes = [r for r in routes
+                  if not is_detained(r.model_id or r.label)]
+    if not routes:
+        raise PlannerError(
+            "no capable+available provider is configured for planner work; "
+            "the decomposer requires the switchboard to find one"
+        )
+
+    candidates: list[_Candidate] = [
+        _Candidate(r.label, functools.partial(_deliver_via, switchboard, r))
+        for r in routes
+    ]
 
     def _attempt(cand: _Candidate, feedback: str) -> AttemptResult[list[PlanUnit]]:
-        return _attempt_candidate(cand.call, ticket, surf, sizing, feedback)
+        prompt = build_prompt(ticket, surf, feedback=feedback, sizing=sizing)
+        return _attempt_candidate(cand.call, ticket, surf, sizing, feedback, prompt)
 
     return invoke_with_failover(
         candidates,
@@ -268,35 +564,52 @@ def plan_decomposition(
         max_retries=max_reprompts,
         describe=lambda c: c.model_id,
         recommendation=(
-            "pool exhausted — configure a chat-capable provider or set "
+            "switchboard pool exhausted — configure a chat-capable provider or set "
             "CHARON_DECOMPOSE_PLANNER_MODEL to a working model"
         ),
         error=PlannerError,
     )
 
 
+def _deliver_via(switchboard: SwitchboardClient, route: _PlannerRoute,
+                 prompt: str) -> dict | None:
+    """Single-attempt delivery through the switchboard seam. The planner never
+    calls this directly — it is always wrapped in a ``functools.partial`` bound
+    to a specific route by ``plan_decomposition``."""
+    return switchboard.deliver(
+        route,
+        PlannerNeed(
+            capability=PLANNER_CAPABILITY,
+            min_context=0,
+            prompt=prompt,
+            model_hint=os.environ.get("CHARON_DECOMPOSE_PLANNER_MODEL"),
+        ),
+    )
+
+
 @dataclass
 class _Candidate:
-    """One planner candidate: a model id (for attribution) and its per-prompt transport
-    ``call`` (prompt → parsed dict, ``None`` on a 200-but-unparseable reply, raising
-    ``PlannerTransportError`` on a provider-level auth/limit/infra fault)."""
+    """One planner candidate: a switchboard-attributed label and its per-prompt
+    transport ``call`` (prompt → parsed dict, ``None`` on a 200-but-unparseable
+    reply, raising ``PlannerTransportError`` on a provider-level
+    auth/limit/infra fault)."""
 
     model_id: str
-    call: ModelInvoker
+    call: Callable[[str], dict | None]
 
 
 def _attempt_candidate(
-    call: ModelInvoker,
+    call: Callable[[str], dict | None],
     ticket: BroadTicket,
     surf: ChangeSurface,
     sizing: SizingGuidance | None,
     feedback: str,
+    prompt: str,
 ) -> AttemptResult[list[PlanUnit]]:
     """One planner attempt against one candidate, classified for the failover loop:
     provider-level transport faults → ``FAILOVER`` (try the next model); a 200 whose body
     is unparseable, a hallucinated/invalid unit, or a disjointness violation → ``RETRY``
     (re-prompt the SAME model with the fault as feedback)."""
-    prompt = build_prompt(ticket, surf, feedback=feedback, sizing=sizing)
     try:
         raw = call(prompt)
     except PlannerTransportError as e:
@@ -450,126 +763,4 @@ def build_prompt(
     )
 
 
-# ----------------------------------------------------------------- default transport
-def _ordered_planner_candidates(
-    *,
-    config_dir: str | Path | None,
-    is_detained: Callable[[str], bool] | None,
-) -> list[tuple[str, str, str]]:
-    """The FULL ordered planner-candidate pool (fix: search across providers, don't pick
-    one and hard-fail). Every configured model with a working key that is NOT detained and
-    NOT an Anthropic/Claude model, ordered pin → tier-"high" members → the rest. Reuses
-    ``recommend._find_trusted_models`` for discovery.
-
-    SG-never-Anthropic HARD RULE (PLANNER-ONLY): the planner/decomposer must NEVER select a
-    Claude/Anthropic model. Skip any candidate whose base_url contains ``anthropic`` or
-    whose model_id starts with ``claude``. This guard does NOT apply to the tier-voter path
-    (``recommend.recommend_tiers``), where Anthropic is allowed."""
-    from . import recommend
-    from .config import tiers as tiers_cfg
-
-    candidates: list[tuple[str, str, str]] = []
-    for model_id, base_url, api_key in recommend._find_trusted_models(
-        config_dir if config_dir is not None else recommend_default_config_dir()
-    ):
-        if is_detained is not None and is_detained(model_id):
-            continue
-        if "anthropic" in base_url.lower() or model_id.lower().startswith("claude"):
-            continue
-        candidates.append((model_id, base_url, api_key))
-    if not candidates:
-        return []
-
-    # Stable priority ordering without dropping anyone: pinned first, then tier-"high"
-    # members, then everything else in discovery order. Every candidate appears once.
-    pinned = os.environ.get("CHARON_DECOMPOSE_PLANNER_MODEL")
-    high_ids = set(tiers_cfg.tier_members("high"))
-
-    def _rank(entry: tuple[str, str, str]) -> int:
-        mid = entry[0]
-        if pinned and mid == pinned:
-            return 0
-        if mid in high_ids:
-            return 1
-        return 2
-
-    # Stable sort preserves discovery order within each rank band.
-    return sorted(candidates, key=_rank)
-
-
-def _select_planner_model(
-    *,
-    config_dir: str | Path | None,
-    is_detained: Callable[[str], bool] | None,
-) -> tuple[str, str, str] | None:
-    """The single top-priority planner candidate — the FIRST of the ordered pool (pin →
-    tier-"high" → rest), or ``None`` when the pool is empty. Kept for callers/tests that
-    ask "which model would the planner pick first"; ``plan_decomposition`` itself now
-    iterates the full ordered pool via ``_ordered_planner_candidates`` and fails over."""
-    ordered = _ordered_planner_candidates(config_dir=config_dir, is_detained=is_detained)
-    return ordered[0] if ordered else None
-
-
-def recommend_default_config_dir() -> str | Path:
-    from . import secrets
-
-    return secrets.config_dir()
-
-
-def _post_chat(
-    model_id: str, base_url: str, api_key: str, prompt: str, timeout: float = 60.0
-) -> dict | None:
-    """POST ``prompt`` to ``base_url``'s ``/chat/completions`` and parse the reply as JSON.
-    Transport copied from ``recommend._ask_model`` (recommend.py:65): browser UA, no-redirect
-    opener, code-fence-stripped JSON parse.
-
-    Failure taxonomy (fix A — no longer a blanket ``None``):
-      * PROVIDER-level fault (auth 401/403/407, limit 402/429, infra 5xx / URLError /
-        timeout) → raise ``PlannerTransportError`` so the failover loop tries the NEXT
-        candidate. A dead/mis-scoped key no longer masquerades as an unparseable plan.
-      * 200 but the body/content is not a parseable JSON dict → return ``None`` (a
-        parse/quality fault of THIS model → re-prompt the SAME model)."""
-    from . import recommend
-
-    raw_base = base_url.rstrip("/")
-    body = json.dumps(
-        {
-            "model": model_id,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.0,
-            "max_tokens": 4000,
-        }
-    ).encode()
-    req = urllib.request.Request(
-        raw_base + "/chat/completions", data=body, method="POST"
-    )
-    req.add_header("User-Agent", BROWSER_UA)
-    req.add_header("Content-Type", "application/json")
-    req.add_header("Authorization", "Bearer " + api_key)
-    opener = urllib.request.build_opener(recommend._NoRedirect())
-    try:
-        resp = opener.open(req, timeout=timeout)
-        raw = resp.read(400_000)
-    except urllib.error.HTTPError as e:
-        # HTTPError is a URLError subclass — catch it first to read the status code.
-        raise PlannerTransportError(
-            _classify_status(e.code), e.code, f"HTTP {e.code} from {model_id}"
-        ) from e
-    except (urllib.error.URLError, TimeoutError, OSError) as e:
-        raise PlannerTransportError(
-            "infra", None, f"transport error from {model_id}: {e}"
-        ) from e
-
-    # 200 body in hand — a parse failure here is THIS model's answer quality, not a
-    # provider fault, so return None (→ re-prompt the same model), never raise.
-    try:
-        data = json.loads(raw.decode("utf-8", "replace"))
-        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-        content = content.strip()
-        if content.startswith("```"):
-            lines = content.split("\n")
-            content = "\n".join(lines[1:-1]) if len(lines) > 2 else content
-        parsed = json.loads(content)
-    except (json.JSONDecodeError, ValueError, KeyError, IndexError, AttributeError):
-        return None
-    return parsed if isinstance(parsed, dict) else None
+# End of module — the planner's only window to a model is the SwitchboardClient seam.
