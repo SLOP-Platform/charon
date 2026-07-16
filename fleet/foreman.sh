@@ -22,6 +22,8 @@ set -uo pipefail
 if [ -n "${FOREMAN_FLEET:-}" ]; then FLEET="$FOREMAN_FLEET"
 else FLEET="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; fi
 BOARD="$FLEET/board"; STATE="$FLEET/state"
+# batched merged-PR lookups (ONE gh call per repo, cached) instead of a gh call per blocked ticket
+[ -f "$FLEET/gh-cache.sh" ] && source "$FLEET/gh-cache.sh"
 FIX=0; [ "${1:-}" = "--fix" ] && FIX=1
 meta(){ awk -F': ' -v k="$1" '$1==k{sub(/^[^:]*: ?/,"");print;exit}' "$2" 2>/dev/null; }
 say(){ printf '%s\n' "$*"; }
@@ -75,9 +77,9 @@ for f in "$BOARD"/*.md; do
       [ -e "$STATE/done/$d" ] && continue
       dbr="$(meta branch "$BOARD/$d.md")"; [ -z "$dbr" ] && dbr="$(meta branch "$BOARD/archive/$d.md")"
       merged=""
-      if [ -n "$dbr" ]; then
-        merged="$(gh pr list --repo Nnyan/charon-private --head "$dbr" --state merged --json number -q '.[0].number' 2>/dev/null)"
-        [ -z "$merged" ] && merged="$(gh pr list --repo SLOP-Platform/charon --head "$dbr" --state merged --json number -q '.[0].number' 2>/dev/null)"
+      if [ -n "$dbr" ] && command -v branch_merged_pr >/dev/null 2>&1; then
+        merged="$(branch_merged_pr Nnyan/charon-private "$dbr")"
+        [ -z "$merged" ] && merged="$(branch_merged_pr SLOP-Platform/charon "$dbr")"
       fi
       if [ -n "$merged" ]; then reason="BLOCKED on $d, whose PR #$merged is MERGED (unmarked) -> SAFE to done-mark (blast: unblocks $id)"; safe_dep="$safe_dep $d"
       else reason="blocked on $d (real prereq -- build it)"; fi

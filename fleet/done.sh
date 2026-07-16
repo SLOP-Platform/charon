@@ -16,6 +16,7 @@
 # (TSV lines "<branch>\t<pr#>") injects the merged-PR list instead of gh (see fleet/tests).
 set -euo pipefail
 FLEET="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; S="$FLEET/state"; BOARD="$FLEET/board"
+[ -f "$FLEET/gh-cache.sh" ] && source "$FLEET/gh-cache.sh"   # batched merged-PR lookups (O(repos) not O(tickets))
 CHARON_REPO="${DONE_CHARON_REPO:-/home/stack/code/charon}"
 REPO_SLUG="$(git -C "$CHARON_REPO" remote get-url origin 2>/dev/null | sed -E 's#(git@[^:]*:|https?://[^/]*/)##; s/\.git$//' || true)"
 [ -n "$REPO_SLUG" ] || REPO_SLUG="SLOP-Platform/charon"
@@ -35,7 +36,9 @@ merged_pr_for_branch(){
     return 0
   fi
   command -v gh >/dev/null 2>&1 || return 0
-  gh pr list --repo "$REPO_SLUG" --head "$br" --state merged --json number -q '.[0].number' 2>/dev/null || true
+  # batched: read from the cached per-repo merged list (ONE gh call/repo) not a per-branch gh call
+  if command -v branch_merged_pr >/dev/null 2>&1; then branch_merged_pr "$REPO_SLUG" "$br"
+  else gh pr list --repo "$REPO_SLUG" --head "$br" --state merged --json number -q '.[0].number' 2>/dev/null || true; fi
 }
 
 # merged PR touching ANY of the ticket's `owns:` files (gh only; skipped under the offline fixture).
