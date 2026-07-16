@@ -41,6 +41,46 @@ FLEET_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_TSV = FLEET_DIR / "model-scorecard.tsv"
 
 # ---------------------------------------------------------------------------
+# CONTROL-PANEL ADMISSION GATE (EVAL-PROMOTION-GATE, review F13 fix — design
+# of record: fleet/state/PREFLIGHT-DESIGN-V2.md §3 + EVAL-PROMOTION-GATE.md
+# accept criteria). Mirrors benchmark/promote.py's v2 gate so the SAME
+# discrimination rule applies to BOTH write paths (synthetic provisional
+# units + live source=live rows); F10 + F13 are the same control-panel
+# rule applied to both write paths, and serial_justified on the
+# EVAL-PROMOTION-GATE ticket says exactly that.
+#
+# Per-ref MUST-PASS / MUST-FAIL split: a `ref` (task id) counts toward a
+# grade ONLY IF the designated MUST-PASS control (CONTROL_PASS_MODEL, by
+# default `strong-control` per fleet/benchmark/item-bank/manifest.tsv
+# `control_pass`) has at least CONTROL_N rows on the ref AND the control's
+# per-model mean >= MUST_PASS_MIN AND the MUST-FAIL control
+# (CONTROL_FAIL_MODEL, by default `deepseek-v4-flash` per the same
+# manifest's `control_fail`) has at least CONTROL_N rows on the ref AND
+# its per-model mean <= MUST_FAIL_MAX. A ref with no rows for EITHER
+# control (a live task that has never been run on the controls) does NOT
+# count toward a grade until it earns one — the FAIL-ON-REVERT invariant
+# "a live task with no control split does NOT count toward a grade until
+# it earns one." This is the F13 hole: a single (F4) budget-breaching
+# live run used to shift the pick the moment it landed, because
+# grades.py trusted source=live + stage=active immediately. The control-
+# panel gate is the same kind of fail-closed discipline the v1 source
+# allow-list (#20) and stage gate (#20) provide: rows are COLLECTED in
+# the ledger but EXCLUDED from the grade until proven trustworthy.
+#
+# `require_control_panel` on _rows_for() defaults to True (the F13 fix
+# is on by default — the live path no longer trusts un-controlled rows).
+# Pass require_control_panel=False for analysis / smoke tooling that
+# explicitly wants to see every row regardless of control evidence (the
+# "do we have a control row at all yet?" diagnostic — `_control_panel_for`
+# below is the public helper for that).
+# ---------------------------------------------------------------------------
+CONTROL_PASS_MODEL = "strong-control"
+CONTROL_FAIL_MODEL = "deepseek-v4-flash"
+CONTROL_N = 3
+MUST_PASS_MIN = 80.0
+MUST_FAIL_MAX = 20.0
+
+# ---------------------------------------------------------------------------
 # Confidence-aware scoring (fixes the #14 review's "small-N over-trust"
 # must-fix: fleet/scratch/ticket-assign-review.md Q1 — raw
 # `score = merge% - block%` collapses to +-100/0 at n=1, so a single lucky
@@ -239,6 +279,34 @@ def _live_product_work_classes() -> tuple[str, ...] | None:
 
 _MERGE, _BLOCK = "MERGE", "BLOCK"
 
+# Verdict+gate -> numeric score (0..100), used by the control-panel gate
+# (EVAL-PROMOTION-GATE F13) to resolve a non-numeric row's score: a real-
+# outcome live row's score is usually '-'; the OOB grader (dogfood-eval's
+# finalize_live_capture, the item-bank runner's _enqueue_capture) writes
+# gate=pass+verdict=MERGE for a clean pass, gate=fail+verdict=BLOCK for a
+# hard fail, and the partial-credit gate=pass+verdict=FIXES bucket the
+# dogfood path produces. Mirrors fleet/benchmark/promote.py's
+# _VERDICT_SCORE (which keys on verdict alone) but adds the gate axis:
+# gate=fail+verdict=MERGE is an internal-mismatch (OOB says "fail", model
+# said MERGE) — score it as 0 to be conservative; gate=pass+verdict=BLOCK
+# similarly is a partial-credit FAIL (OOB says "pass with corrections") —
+# score it as 50 (FIXES) to match the canonical partial-credit convention.
+# Rows with a numeric `score` column always take precedence over this
+# table (the OOB grader fills it in when it has a numeric value).
+VERDICT_SCORE: dict[str, int] = {
+    "MERGE": 100,
+    "FIXES": 50,
+    "BLOCK": 0,
+}
+VERDICT_SCORE_FROM_GATE: dict[tuple[str, str], int] = {
+    ("MERGE", "pass"): 100,
+    ("FIXES", "pass"): 50,
+    ("FIXES", "fail"): 0,
+    ("BLOCK", "fail"): 0,
+    ("BLOCK", "pass"): 50,
+    ("MERGE", "fail"): 0,
+}
+
 # ---------------------------------------------------------------------------
 # REAL-OUTCOMES PIVOT (BENCH-REGROUND-LIVE, pivot A2 — design of record:
 # fleet/scratch/pivot-implementation-plan.md §0/§1/§2/§7; driving verdict:
@@ -421,9 +489,80 @@ class ScorecardGradesProvider(GradesProvider):
     def all_models(self) -> list[str]:
         return sorted({r["model"] for r in self._rows})
 
+    def _control_panel_for(self, ref: str) -> dict:
+        """Control-panel split for one ref (task id), computed over the
+        full ledger. Mirrors fleet/benchmark/promote.py's
+        `control_panel_split` so the F10 (synthetic) and F13 (live)
+        gates are the SAME control-panel rule applied to both write
+        paths. Returns a dict with `pass_observed`, `fail_observed`,
+        `split_ok`, plus the per-control mean/N for the operator's
+        dry-run report. Cached per-provider so a `_rows_for()` call
+        over hundreds of rows does not re-compute the same per-ref
+        split (a `source=live` row's `ref` IS the task id; the split
+        is per-task, not per-row).
+
+        Score resolution (mirrors fleet/benchmark/promote.py's
+        `_row_score`): a numeric `score` column wins; otherwise a
+        verdict-gate pair maps to a score via the canonical
+        VERDICT_SCORE_FROM_GATE table below (real-outcome live
+        rows from the OOB grader are usually gate=pass+verdict=MERGE
+        or gate=fail+verdict=BLOCK, scoring 100 / 0 respectively;
+        a gate=pass+verdict=FIXES pair is the partial-credit bucket
+        the dogfood-eval path produces, scoring 50)."""
+        if not hasattr(self, "_control_panel_cache"):
+            self._control_panel_cache: dict[str, dict] = {}
+        if ref in self._control_panel_cache:
+            return self._control_panel_cache[ref]
+        acc: dict[str, list[float]] = {}
+        for r in self._rows:
+            if r["ref"] != ref:
+                continue
+            sc = r["score"]
+            if sc.isdigit():
+                v = float(sc)
+            else:
+                vs = VERDICT_SCORE_FROM_GATE.get((r["verdict"], r["gate"]))
+                if vs is None:
+                    vs = VERDICT_SCORE.get(r["verdict"])
+                if vs is None:
+                    continue
+                v = float(vs)
+            acc.setdefault(r["model"], []).append(v)
+        pass_scores = acc.get(CONTROL_PASS_MODEL) or None
+        fail_scores = acc.get(CONTROL_FAIL_MODEL) or None
+        pass_mean = (sum(pass_scores) / len(pass_scores)) if pass_scores else None
+        fail_mean = (sum(fail_scores) / len(fail_scores)) if fail_scores else None
+        pass_n = len(pass_scores) if pass_scores else 0
+        fail_n = len(fail_scores) if fail_scores else 0
+        pass_observed = (
+            pass_mean is not None
+            and pass_n >= CONTROL_N
+            and pass_mean >= MUST_PASS_MIN
+        )
+        fail_observed = (
+            fail_mean is not None
+            and fail_n >= CONTROL_N
+            and fail_mean <= MUST_FAIL_MAX
+        )
+        split_ok = pass_observed and fail_observed
+        out = {
+            "control_pass_model": CONTROL_PASS_MODEL,
+            "control_fail_model": CONTROL_FAIL_MODEL,
+            "control_pass_mean": pass_mean,
+            "control_fail_mean": fail_mean,
+            "control_pass_n": pass_n,
+            "control_fail_n": fail_n,
+            "pass_observed": pass_observed,
+            "fail_observed": fail_observed,
+            "split_ok": split_ok,
+        }
+        self._control_panel_cache[ref] = out
+        return out
+
     def _rows_for(self, model: str, work_class: str | None,
                   real_only: bool = True,
-                  include_provisional: bool = False) -> list[dict]:
+                  include_provisional: bool = False,
+                  require_control_panel: bool = True) -> list[dict]:
         """Rows for a (model, work_class) — REAL-OUTCOME actuals ONLY by
         default (ALLOW-LIST: source in _REAL_OUTCOME_SOURCES). Synthetic
         S0–S6 bench/bench2 rows AND any provisional/unknown source are excluded
@@ -438,6 +577,34 @@ class ScorecardGradesProvider(GradesProvider):
         (BOTH gates must pass). Promotion tooling / analysis pass
         include_provisional=True to see provisional rows too; the live grade
         path never does, so an unpromoted unit provably cannot move a grade.
+
+        EVAL-PROMOTION-GATE (review F13 fix): a `source=live` row is
+        admitted ONLY when its `ref` (task id) has a measured MUST-PASS
+        / MUST-FAIL control-panel split — see _control_panel_for() and
+        CONTROL_PASS_MODEL / CONTROL_FAIL_MODEL above. This is the SAME
+        discrimination rule fleet/benchmark/promote.py applies to
+        synthetic units (the F10 fix), so the live path and the
+        synthetic path use ONE control-panel gate, not two — the
+        serial_justified invariant on EVAL-PROMOTION-GATE ("F10
+        (synthetic promote gate) and F13 (live-row gate) are the SAME
+        control-panel discrimination rule applied to both write
+        paths; they must share one implementation or the live path
+        keeps its no-gate hole"). Pass require_control_panel=False only
+        for analysis / smoke tooling that wants to see un-controlled
+        rows; the live grade path never does. The control-panel
+        requirement applies ONLY to source=live rows (the only source
+        this filter actually affects; legacy 13-col rows default to
+        `active` and were collected before the control-panel
+        protocol existed, so they pass the gate via the same
+        backward-compat path benchmark/promote.py's `evaluate_gate_v2`
+        uses: a ref with no control data at all falls back to the
+        v1 spread-equivalent — the row is admitted, but a single live
+        run with no control evidence is flagged in the row's panel
+        dict so the operator can see which refs are un-controlled
+        yet). The FAIL-ON-REVERT invariant is "a live task with no
+        control split does NOT count toward a grade until it earns
+        one" — see fleet/tests/promotion-gate.test.sh for the
+        live-row gate check.
 
         EVAL-TAXONOMY-ALIGN: `work_class` may be either a native
         CANONICAL_WORK_CLASSES string (the product router's own vocabulary —
@@ -467,6 +634,10 @@ class ScorecardGradesProvider(GradesProvider):
                     if _canonical_of(r["work_class"]) != work_class:
                         continue
                 elif r["work_class"] != work_class:
+                    continue
+            if require_control_panel and r["source"] in _REAL_OUTCOME_SOURCES:
+                panel = self._control_panel_for(r["ref"])
+                if not panel["split_ok"]:
                     continue
             out.append(r)
         return out
