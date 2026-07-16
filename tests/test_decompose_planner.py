@@ -325,8 +325,11 @@ class _SwitchboardWithRoutes(P.SwitchboardClient):
         self.called_labels: list[str] = []
 
     def plan_routes(self, need: P.PlannerNeed) -> list[P._PlannerRoute]:
-        # The default-switchboard path applies the SG-never-Anthropic guard. Replicate
-        # it here so the test is independent of the production implementation.
+        # NOTE: this seam re-applies the guard so the *planner-side* filter test
+        # (test_default_switchboard_never_selects_anthropic) stays independent of
+        # the production route builder. It is NOT the guard's coverage — that is
+        # test_switchboard_routes_drops_anthropic_route below, which drives the
+        # real ``_switchboard_routes`` and goes RED if the production guard is cut.
         out: list[P._PlannerRoute] = []
         for r in self._routes:
             label = (r.label or "").lower()
@@ -340,6 +343,84 @@ class _SwitchboardWithRoutes(P.SwitchboardClient):
     def deliver(self, route: P._PlannerRoute, need: P.PlannerNeed) -> dict | None:
         self.called_labels.append(route.label)
         return self._reply
+
+
+def test_switchboard_routes_drops_anthropic_route(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # SG-never-Anthropic HARD RULE (PLANNER-ONLY), COVERED AT THE PRODUCTION FILTER.
+    # This drives the REAL ``_switchboard_routes`` (the code path
+    # ``DefaultSwitchboardClient.plan_routes`` runs) against a config dir whose
+    # planner pool lists BOTH a Claude/Anthropic model and a non-Anthropic one.
+    # The production route builder — NOT a re-implemented test copy — must return
+    # only the non-Anthropic route. FAIL-ON-REVERT: delete the anthropic/claude
+    # `continue` guard in ``decompose_planner._switchboard_routes`` and the
+    # anthropic route reappears in the result → this test goes RED. (Verified by
+    # removing the guard locally: result became ['claude-opus-4', 'gpt-worker'].)
+    import json
+
+    monkeypatch.setenv("TEST_ANTHROPIC_KEY", "k-anthropic")
+    monkeypatch.setenv("TEST_GPT_KEY", "k-gpt")
+    (tmp_path / "models.json").write_text(json.dumps({
+        "claude-opus-4": {
+            "upstream_base": "https://api.anthropic.com/v1",
+            "key_env": "TEST_ANTHROPIC_KEY",
+            "reasoning": True,
+        },
+        "gpt-worker": {
+            "upstream_base": "https://api.openai.com/v1",
+            "key_env": "TEST_GPT_KEY",
+            "reasoning": True,
+        },
+    }))
+    (tmp_path / "pools.json").write_text(json.dumps(
+        {"planner": ["claude-opus-4", "gpt-worker"]}
+    ))
+
+    need = P.PlannerNeed(capability="planner", min_context=8000, prompt="split it")
+    routes = P._switchboard_routes(need, config_dir=tmp_path)
+
+    labels = [r.label for r in routes]
+    bases = [r.base_url for r in routes]
+    # The non-Anthropic route survives; the Claude/Anthropic one is dropped.
+    assert "gpt-worker" in labels
+    assert "claude-opus-4" not in labels
+    assert not any("anthropic" in b.lower() for b in bases)
+    assert not any(lab.lower().startswith("claude") for lab in labels)
+
+
+def test_default_switchboard_client_plan_routes_drops_anthropic(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The public seam ``DefaultSwitchboardClient.plan_routes`` (the object the
+    # planner actually instantiates when no switchboard is injected) delegates to
+    # the production ``_switchboard_routes`` — assert the guard holds through that
+    # entry point too, not just the module-level helper.
+    import json
+
+    monkeypatch.setenv("TEST_ANTHROPIC_KEY", "k-anthropic")
+    monkeypatch.setenv("TEST_GPT_KEY", "k-gpt")
+    (tmp_path / "models.json").write_text(json.dumps({
+        "claude-sonnet": {
+            "upstream_base": "https://api.anthropic.com/v1",
+            "key_env": "TEST_ANTHROPIC_KEY",
+            "reasoning": True,
+        },
+        "qwen-coder": {
+            "upstream_base": "https://api.openai.com/v1",
+            "key_env": "TEST_GPT_KEY",
+            "reasoning": True,
+        },
+    }))
+    (tmp_path / "pools.json").write_text(json.dumps(
+        {"planner": ["claude-sonnet", "qwen-coder"]}
+    ))
+
+    sb = P.DefaultSwitchboardClient(config_dir=tmp_path)
+    need = P.PlannerNeed(capability="planner", min_context=8000, prompt="split it")
+    labels = [r.label for r in sb.plan_routes(need)]
+
+    assert labels == ["qwen-coder"]
 
 
 # --------------------------------------------------------- switchboard provider-failover
