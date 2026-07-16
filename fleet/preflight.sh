@@ -18,6 +18,7 @@ FLEET="$HERE"
 source "$HERE/_lib.sh"
 TODAY="$(date +%F)"
 TAB=$'\t'
+FOREMAN_VERDICT_LINES=""
 
 VALID_SEV="P0 P1 P2"
 VALID_AREA="bridge board ci gate routing billing packaging other"
@@ -586,9 +587,27 @@ cmd_detect(){
   return 0
 }
 
+foreman_advisory(){
+  local script="$HERE/foreman.sh"
+  [ -x "$script" ] || { echo "foreman: foreman.sh not found/executable at $script"; return 0; }
+  echo "--- FOREMAN ADVISORY (report-only, never --fix) ---"
+  local out
+  out="$(bash "$script" 2>&1)" || true  # never block
+  FOREMAN_VERDICT_LINES="$(printf '%s\n' "$out" | grep '^== FOREMAN VERDICT:' || true)"
+  printf '%s\n' "$out"
+  echo "--- end foreman advisory ---"
+  return 0
+}
+
 show_operator_actions(){
   echo "--- OPERATOR ACTIONS (things the manager needs YOU to do/decide) ---"
   bash "$HERE/pending.sh" list
+  if [ -n "$FOREMAN_VERDICT_LINES" ]; then
+    echo ""
+    while IFS= read -r line; do
+      echo "!! $line !!"
+    done <<< "$FOREMAN_VERDICT_LINES"
+  fi
   echo "--- end operator actions ---"
   return 0
 }
@@ -597,7 +616,7 @@ show_operator_actions(){
 # functions above are exposed with NO side effects.
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 case "${1:-scan}" in
-  scan|"") bash "$HERE/reconcile-merged.sh"; board_gate; executor_gate; handoff_gate; done_merge_gate; detect_needs_push; bash "$HERE/retire-done.sh"; cmd_scan; scan_rc=$?; cmd_detect; show_operator_actions; exit $scan_rc ;;
+  scan|"") bash "$HERE/reconcile-merged.sh"; board_gate; executor_gate; handoff_gate; done_merge_gate; detect_needs_push; bash "$HERE/retire-done.sh"; cmd_scan; scan_rc=$?; cmd_detect; foreman_advisory; show_operator_actions; exit $scan_rc ;;
   add)     shift; cmd_add "$@" ;;
   close)   shift; cmd_close "$@" ;;
   list)    shift; cmd_list "$@" ;;
