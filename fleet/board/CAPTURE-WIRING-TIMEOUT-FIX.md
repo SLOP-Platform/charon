@@ -4,7 +4,18 @@ difficulty: 2
 work_class: rig-meta
 branch: feat/capture-wiring-timeout-fix
 owns: fleet/charon-run.sh
-depends_on:
+depends_on: SALVAGE-STASH-CHARON-RUN
+dep-kind: build
+real-dep: both own fleet/charon-run.sh. SALVAGE-STASH-CHARON-RUN landed FIRST (rig PR #83, merged
+  2026-07-16T01:18Z) — this ticket sequences onto its landed version rather than co-writing the file.
+  Declared 2026-07-16: validate_board flagged the pair as a LIVE owns-collision with no dep ordering
+  (and as WCI-redundant, identical owns sets). They are NOT duplicates — SALVAGE recovered the
+  stashed charon-run timeout work; this ticket fixes capture wiring in the same file. The dep is
+  already satisfied (state/done/SALVAGE-STASH-CHARON-RUN exists), so this does not block the claim.
+  NOTE: SALVAGE should have been ARCHIVED off the board by retire-done.sh and was not — verify_merged
+  (_lib.sh) hardcodes the PRODUCT repo and never reads a ticket's `repo:` field, so a `repo:
+  charon-private` ticket can NEVER be merge-verified and never retires, leaving stale done tickets
+  colliding with live ones. Ticketed as VERIFY-MERGED-REPO-AWARE; this dep is the local unblock.
 dep-kind:
 work_class_note: scorecard-integrity — a stray capture row skews real-outcome ranking data.
 note: |
