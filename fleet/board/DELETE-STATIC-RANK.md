@@ -12,6 +12,7 @@ real-dep: PRICE-REFRESHER build — the hand-typed cost_rank cannot be deleted u
 real-dep: DRAIN-THEN-PARK build — deletion may only land after the demand-driven ordering (price-pull + meter +
   drain-then-park) is LIVE-VERIFIED end-to-end, so static rank is never removed while anything still reads it.
 owns: src/charon/routing_policy/cost_rank.py, src/charon/pools.py, src/charon/config.py, tests/test_delete_static_rank.py
+serial_justified: Cohesive ADR-0016 switchboard deploy - removing static cost_rank + wiring the single demand-driven selection is ONE coordinated change sharing the selection contract; splitting fragments the ban-static-rank invariant. (per ADR-0016 "removes the last hand-typed data from a mechanism that already exists")
 accept: |
   ADR-0016 step #6 (docs/adr/0016-demand-driven-capability-match.md, "Build decomposition" row 6 + Decision §5).
   DELETE the hand-typed `cost_rank` integer as a config INPUT — ordering must derive from live/sourced/meter price
