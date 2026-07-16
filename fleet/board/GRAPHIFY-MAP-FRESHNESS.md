@@ -14,10 +14,14 @@ note: |
   reinvention. Operator directives (cere-junda): (a) keep the map fresh automatically; (b) BEFORE building
   ANY new tool, audit existing tools (TOOL-INVENTORY.md + a FRESH graph) to confirm it doesn't already exist.
 accept: |
-  - fleet/checks/graphify-freshness.sh: detects a stale/absent code map (graph older than the newest
-    source commit, or missing) and either refreshes it (`graphify update`) or surfaces LOUD in preflight +
-    the reuse-check path. Wire refresh into a chokepoint (land or SessionStart or a scheduled pass) so the
-    map tracks new files, incl. the RIG (build a rig graph too if graphify covers bash; else document the gap).
+  - DYNAMIC-DATA TOOL — mechanize, do NOT leave on-demand ([[dynamic-tools-never-on-demand]]): the map
+    refresh runs on a CADENCE + MULTIPLE smart TRIGGERS, never a "run it manually" instruction:
+    (a) TRIGGER on the event that dirties it — a post-merge/land refresh (source changed);
+    (b) TRIGGER at SessionStart (boot) — refresh + surface staleness;
+    (c) CADENCE — a scheduled periodic refresh as a backstop;
+    (d) fleet/checks/graphify-freshness.sh detects a stale/absent graph and refreshes (`graphify update`) +
+        surfaces LOUD in preflight. Covers the RIG too (build a rig graph if graphify handles bash; else
+        document the gap). DOGFOOD: prove it refreshes after a real new file lands.
   - A REUSE-CHECK entry point the manager runs before creating a tool: given a proposed tool name/purpose,
     query the fresh graph + TOOL-INVENTORY.md and report existing matches ("do we already have X?").
   - fleet/tests/test_graphify_freshness.sh: a stale/absent graph -> freshness check FAILS/flags (fail-on-revert);

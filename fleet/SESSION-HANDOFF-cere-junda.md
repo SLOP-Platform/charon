@@ -38,4 +38,5 @@ Read and fully follow /home/stack/charon-private/fleet/SESSION-HANDOFF-cere-jund
 
 ## STATE
 - Both repos clean, pushed to origin/master. Board STARVING at handoff (refill = first-action #3). No sub-sessions running (all closed).
-- **Code map (graphify) is STALE** — product graph last built 2026-07-13 (missing this session's failover_loop/context_shaper/memory modules); rig has NO graph. `GRAPHIFY-MAP-FRESHNESS` boarded to auto-refresh; run `graphify update /home/stack/code/charon` before relying on reuse-check/review.
+- **Code map (graphify) is STALE** — product graph last built 2026-07-13 (missing this session's failover_loop/context_shaper/memory modules); rig has NO graph. `GRAPHIFY-MAP-FRESHNESS` boarded to AUTO-refresh on a cadence + multiple triggers (post-land + SessionStart + scheduled) per [[dynamic-tools-never-on-demand]] — NOT a manual "run it first" step.
+- **Apply [[dynamic-tools-never-on-demand]] to the tools built this session:** foreman was wired into preflight ONLY — per the principle it needs MORE triggers (SessionStart + post-land + handoff + a cadence), not just preflight. Same audit for every dynamic-data tool (config-drift, gate-ledger, friction-log surfacing). Board the follow-up.
