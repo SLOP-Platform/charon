@@ -344,3 +344,122 @@ def test_join_endpoint_single_slash_no_path_drop():
     assert providers.join_endpoint("https://x.example.com/v1/", "models") == "https://x.example.com/v1/models"
     assert providers.join_endpoint("https://x.example.com/", "/chat/completions") == "https://x.example.com/chat/completions"
 
+
+
+# ─────────────────── SG-never-Anthropic HARD RULE (GATEWAY-WIDE) ────────────────
+# Charon's gateway must NEVER route WORK to Anthropic/Claude on ANY routing path.
+# This rule has regressed before by being narrowed to "planner-only" while the
+# tier-voter was left unguarded, so the guards below are deliberately TWO-LAYER:
+#   1. the shared predicate's vendor-form coverage is locked (below), and
+#   2. every routing SELECTOR is asserted to compose that predicate rather than
+#      re-implement its own (weaker) vendor match (test_..._compose_shared_...).
+# Per-selector behavioural guards live next to each selector:
+#   - planner:     tests/test_decompose_planner.py::test_switchboard_routes_drops_anthropic_route
+#   - tier-voter:  tests/test_recommend.py::test_find_trusted_models_never_returns_anthropic
+
+@pytest.mark.parametrize("kwargs", [
+    # Direct vendor.
+    {"provider": "anthropic"},
+    {"base_url": "https://api.anthropic.com"},
+    {"base_url": "https://api.anthropic.com/v1"},
+    {"model_id": "claude-opus-4"},
+    {"model_id": "claude-3-5-haiku-20241022"},
+    # Namespaced re-sellers / aggregators.
+    {"model_id": "anthropic/claude-3.5-sonnet"},      # OpenRouter
+    {"model_id": "@anthropic-ai/claude-3-haiku"},     # npm-style namespace
+    {"model_id": "us.anthropic.claude-3-sonnet-v1"},  # Bedrock
+    {"model_id": "some-proxy/claude-3-haiku"},        # bare claude behind a proxy
+    # Case-insensitivity — the rule must not be defeated by casing.
+    {"provider": "Anthropic"},
+    {"model_id": "CLAUDE-OPUS-4"},
+    {"base_url": "https://API.ANTHROPIC.COM"},
+])
+def test_is_anthropic_route_covers_vendor_forms(kwargs):
+    """FAIL-ON-REVERT: every shape by which an Anthropic/Claude route can be spelled
+    MUST be recognised. Weakening the predicate (e.g. dropping the namespaced
+    '/claude' check) flips the corresponding row RED."""
+    assert providers.is_anthropic_route(**kwargs) is True
+
+
+@pytest.mark.parametrize("kwargs", [
+    {},
+    {"model_id": "gpt-4o", "provider": "openai", "base_url": "https://api.openai.com/v1"},
+    {"model_id": "glm-4.6", "provider": "zai"},
+    {"model_id": "llama-3-70b", "provider": "groq"},
+    {"model_id": None, "provider": None, "base_url": None},
+    # Near-misses that must NOT be swept up (no over-blocking).
+    {"model_id": "claudia-7b"},          # starts with "claud" but is not claude-*
+    {"model_id": "openai/gpt-4o"},
+])
+def test_is_anthropic_route_does_not_over_block(kwargs):
+    """The rule must not starve the gateway by falsely matching non-Anthropic routes."""
+    assert providers.is_anthropic_route(**kwargs) is False
+
+
+# The routing SELECTORS — every function that picks WHICH route/model receives work.
+# A new selector MUST be added here; that is the point of the guard.
+_ROUTING_SELECTORS = [
+    ("charon.decompose_planner", "_switchboard_routes"),  # planner/decomposer
+    ("charon.recommend", "_find_trusted_models"),         # gateway tier-voter
+]
+
+
+@pytest.mark.parametrize(("module_name", "func_name"), _ROUTING_SELECTORS)
+def test_routing_selectors_compose_shared_never_anthropic_predicate(module_name, func_name):
+    """FAIL-ON-REVERT (the anti-regression guard). Every routing selector must enforce
+    SG-never-Anthropic by COMPOSING ``providers.is_anthropic_route`` — the rule's single
+    home — and must not carry a hand-rolled vendor match of its own.
+
+    This is what stops the documented regression class: a selector that quietly narrows
+    or omits the rule (the tier-voter shipped unguarded while the planner enforced it).
+    Deleting the ``is_anthropic_route`` call from either selector flips this RED, as
+    does re-introducing a bespoke '"anthropic" in provider' style literal filter.
+
+    Comments are invisible to ``ast``; docstrings are skipped explicitly. So a selector
+    may DESCRIBE the rule in prose but must IMPLEMENT it via the shared predicate.
+    """
+    import ast
+    import importlib
+    import inspect
+    import textwrap
+
+    mod = importlib.import_module(module_name)
+    func = getattr(mod, func_name)
+    tree = ast.parse(textwrap.dedent(inspect.getsource(func)))
+
+    calls = {
+        node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    } | {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "is_anthropic_route" in calls, (
+        f"{module_name}.{func_name} does not call providers.is_anthropic_route — the "
+        "SG-never-Anthropic HARD RULE is gateway-wide and every routing selector must "
+        "compose the shared predicate."
+    )
+
+    # No bespoke vendor literal inside the selector (docstrings excluded).
+    docstrings = {
+        node.body[0].value
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module))
+        and node.body
+        and isinstance(node.body[0], ast.Expr)
+        and isinstance(node.body[0].value, ast.Constant)
+        and isinstance(node.body[0].value.value, str)
+    }
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Constant) or node in docstrings:
+            continue
+        if not isinstance(node.value, str):
+            continue
+        low = node.value.lower()
+        assert "anthropic" not in low and "claude" not in low, (
+            f"{module_name}.{func_name} re-implements the Anthropic vendor match with a "
+            f"literal {node.value!r}. Use providers.is_anthropic_route — one home for the "
+            "rule, so it cannot regress in one path while holding in another."
+        )
