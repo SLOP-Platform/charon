@@ -126,7 +126,15 @@ end_session(){
   fi
   # -- regenerate the self-contained HTML roadmap (advisory; never block close) --
   if [ -f "$FLEET/roadmap-html.sh" ]; then
-    bash "$FLEET/roadmap-html.sh" "$PRIV/fleet/state/overnight/roadmap.html" >/dev/null 2>&1 || true
+    local rmap_out="$PRIV/fleet/state/roadmap.html"
+    bash "$FLEET/roadmap-html.sh" "$rmap_out" 2>/dev/null || true
+    say ""
+    say "=== ROADMAP HTML ==="
+    say "Regenerated: $rmap_out"
+    say "To keep the durable web link current, re-publish the file above to Artifact URL:"
+    say "  255411a5-edda-46c1-aded-a23b6d53811d"
+    say "(refresh the artifact at each close to keep the link current)"
+    say "===================="
   fi
 
   say ""
