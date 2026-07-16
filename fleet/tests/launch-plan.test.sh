@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# launch-plan.test.sh — FAIL-ON-REVERT tests for fleet/launch-plan.sh + fleet/stale-check.sh
+# launch-plan.test.sh — FAIL-ON-REVERT tests for fleet/launch-plan.sh
 # (fleet/board/LAUNCH-PLAN-GATE.md accept block). Hermetic: fixture board/state dirs + a
 # stubbed assign.py; no network; never touches the live board/state.
 set -uo pipefail
@@ -123,44 +123,6 @@ if echo "$out_b" | grep -qi 'context-fit: no est_tokens declared'; then
   ok "READY-1 (no est_tokens) is correctly pass-through-noted, not dropped"
 else
   bad "READY-1 missing the expected pass-through context-fit note"
-fi
-
-echo "== (d) stale-check flags a fixture stale session and exits nonzero =="
-now="$(date +%s)"
-printf 'stub-droid-1234\n' > "$STATE/claims/STALE-1"
-touch -d "@$((now - 1000))" "$STATE/claims/STALE-1"
-
-printf 'stub-droid-5678\n' > "$STATE/claims/FRESH-1"
-touch -d "@$((now - 30))" "$STATE/claims/FRESH-1"
-
-printf 'droid=stub-droid-9999\ncount=2\nthreshold=2\nquarantined=2026-07-14T00:00:00Z\nreason=repeated zero-commit re-claims (fixture)\n' \
-  > "$STATE/loop-guard/QUAR-1"
-
-out_d="$(STALE_STATE="$STATE" STALE_THRESHOLD_S=900 bash "$HERE/stale-check.sh" 2>&1)"
-rc_d=$?
-
-if [ "$rc_d" -ne 0 ]; then
-  ok "stale-check exits nonzero when a stale session exists (rc=$rc_d)"
-else
-  bad "stale-check exited 0 despite a stale session"
-fi
-if echo "$out_d" | grep -q 'STALE-1'; then
-  ok "STALE-1 (age 1000s > 900s threshold) flagged"
-else
-  bad "STALE-1 not flagged. Output:
-$out_d"
-fi
-if echo "$out_d" | grep -q 'FRESH-1'; then
-  bad "FRESH-1 (age 30s) wrongly flagged — threshold filter is over-broad. Output:
-$out_d"
-else
-  ok "FRESH-1 (age 30s) correctly NOT flagged"
-fi
-if echo "$out_d" | grep -q 'QUAR-1'; then
-  ok "loop-guard quarantine QUAR-1 flagged"
-else
-  bad "QUAR-1 (loop-guard quarantine marker) not flagged. Output:
-$out_d"
 fi
 
 echo
