@@ -25,8 +25,11 @@ INPUTS (all read-only; this tool NEVER writes the live scorecard):
   - model-scorecard.tsv (model-scorecard.sh ledger): col layout
         date source ref work_class tier model verdict gate score
         time_s cost_usd corrections note tokens_in tokens_out stage
-    KNOWN-GOOD row = source in {live, bench, bench2} AND verdict == MERGE
-    AND stage == active (a provisional MERGE is not yet trustworthy).
+    KNOWN-GOOD row = source in grades.REAL_OUTCOME_SOURCES (== {live}, the
+    SSOT imported from capability/grades.py) AND verdict == MERGE AND
+    stage == active (a provisional MERGE is not yet trustworthy). Synthetic
+    S0-S6 rows (source=bench/bench2) are a SMOKE TEST and are excluded: they
+    must never rank a model or steer spend.
     time_s (col 10) is the wall-clock seconds the runner itself bracketed.
     tokens_out (col 15, may be "-") is the good-model OUTPUT token count.
   - dogfood-eval result-card SUMMARY.md (dogfood-eval.sh writes one per
@@ -92,7 +95,7 @@ REFERENCE_TOK_S = 40.0
 DEFAULT_WALL_S = 900.0
 DEFAULT_TOKEN_BUDGET = 12000.0
 # KNOWN-GOOD verdict filters.
-SCORECARD_GOOD_VERDICT = "MERGE"          # source=live/bench/bench2 + stage=active
+SCORECARD_GOOD_VERDICT = "MERGE"          # + source in grades.REAL_OUTCOME_SOURCES + stage=active
 RESULTCARD_GOOD_VERDICT_PREFIX = "REVIEW-READY"   # dogfood-eval overall verdict
 
 # ── canonical taxonomy (EVAL-TAXONOMY.md, single source of truth) ──────────
@@ -242,13 +245,45 @@ _SC_DATE, _SC_SOURCE, _SC_REF, _SC_WCLASS = 0, 1, 2, 3
 _SC_TIER, _SC_MODEL, _SC_VERDICT, _SC_GATE = 4, 5, 6, 7
 _SC_SCORE, _SC_TIME_S, _SC_COST, _SC_CORR = 8, 9, 10, 11
 _SC_NOTE, _SC_TOK_IN, _SC_TOK_OUT, _SC_STAGE = 12, 13, 14, 15
-_REAL_OUTCOME_SOURCES = {"live", "bench", "bench2"}
+# ── real-outcome allow-list: IMPORTED, never restated (BUDGET-SOURCE-RECONCILE)
+# This file used to define its OWN `_REAL_OUTCOME_SOURCES` — the SAME NAME as
+# capability/grades.py's, with a DIFFERENT value ({"live","bench","bench2"} vs
+# {"live"}). That divergence meant synthetic S0-S6 smoke-test rows (source=
+# bench/bench2) counted as REAL outcomes here and steered the p95 latency
+# budget — violating the standing rule that synthetic benchmarks are a
+# SMOKE TEST ONLY and must never rank models or steer spend.
+#
+# grades.py is the SSOT (it is the ranker; it owns "what is a real outcome"
+# and documents the deliberate-extension rule at the definition). We IMPORT
+# the set instead of copying it: a copy can drift back apart, an import
+# cannot — widen it there and this budget widens with it, by construction.
+#
+# fleet/capability has no __init__.py, so it goes on sys.path explicitly.
+_CAPABILITY_DIR = FLEET_DIR / "capability"
+if str(_CAPABILITY_DIR) not in sys.path:
+    sys.path.insert(0, str(_CAPABILITY_DIR))
+try:
+    from grades import REAL_OUTCOME_SOURCES as _REAL_OUTCOME_SOURCES
+except ImportError as exc:  # noqa: TRY003 — fail LOUD, never degrade
+    # A silent fallback to a local literal is EXACTLY the bug this fixes: it
+    # would re-open the synthetic-steers-spend hole the moment the import
+    # broke. A money-path tool that cannot confirm its trust boundary must
+    # refuse to run, not guess a wider one.
+    raise ImportError(
+        "budget-derive: cannot import REAL_OUTCOME_SOURCES from "
+        f"{_CAPABILITY_DIR}/grades.py — the real-outcome allow-list has ONE "
+        "source of truth and this tool must not guess it (guessing wide is "
+        f"how synthetic rows steer the budget). Original error: {exc}"
+    ) from exc
 
 
 def _is_good_scorecard_row(cols: list[str]) -> bool:
     """KNOWN-GOOD scorecard row = real-outcome source + verdict MERGE + active
     stage. A provisional MERGE is not yet trustworthy; a FIXES/BLOCK/DETAIN
-    row is exactly the too-slow tail we must NOT let raise the p95."""
+    row is exactly the too-slow tail we must NOT let raise the p95.
+
+    `source` is gated on the IMPORTED grades.REAL_OUTCOME_SOURCES ({"live"}),
+    so synthetic bench/bench2 smoke rows can never enter the budget."""
     if len(cols) <= _SC_VERDICT:
         return False
     if cols[_SC_SOURCE] not in _REAL_OUTCOME_SOURCES:
