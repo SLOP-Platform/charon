@@ -309,7 +309,15 @@ echo '```'
 echo "### Gate"
 echo '```'
 GATE_RC=0
-gate_out="$( { FLEET="${FLEET:-/home/stack/charon-private/fleet}"; bash "$FLEET/gate.sh" 2>&1; } )" || GATE_RC=$?
+if [ -n "${CHARON_GATE_ACTIVE:-}" ]; then
+  # REENTRANCY GUARD (2026-07-15 fork-bomb incident): we are already running
+  # INSIDE gate.sh (it runs the fleet test suite, and handoff-mechanize.test.sh
+  # invokes this script). Re-running gate.sh here would recurse exponentially
+  # (handoff->gate->test->handoff->...) and fork-bomb the box. Skip when nested.
+  gate_out="(gate skipped: already inside a gate run — reentrancy guard, see gate.sh CHARON_GATE_ACTIVE)"
+else
+  gate_out="$( { FLEET="${FLEET:-/home/stack/charon-private/fleet}"; bash "$FLEET/gate.sh" 2>&1; } )" || GATE_RC=$?
+fi
 printf '%s\n' "$gate_out" | tail -3
 echo '```'
 

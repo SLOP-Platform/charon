@@ -20,6 +20,14 @@ TESTS_DIR="${FLEET_TESTS_DIR:-$FLEET/tests}"
 PASS=0
 FAIL=0
 
+# REENTRANCY GUARD (2026-07-15 fork-bomb incident): gate.sh runs the fleet test
+# suite; one test (handoff-mechanize.test.sh) invokes handoff.sh, which itself
+# runs gate.sh — an exponential, concurrent handoff->gate->test->handoff->gate...
+# recursion that saturated the box (18k procs). This marker lets handoff.sh (and
+# any other gate-invoking script) detect it is already nested and skip re-running
+# the gate. Any test spawned below inherits it via the exported env.
+export CHARON_GATE_ACTIVE=1
+
 if [ -d "$TESTS_DIR" ]; then
   shopt -s nullglob
   tests=("$TESTS_DIR"/*.test.sh)
