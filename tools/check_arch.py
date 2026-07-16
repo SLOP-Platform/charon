@@ -227,43 +227,57 @@ def check_gateway_isolation(src_root: Path) -> list[str]:
 
 def _resolve_import_target(
     node: ast.Import | ast.ImportFrom, pkg: str, mod: str,
-) -> str | None:
-    """Resolve an Import/ImportFrom node to an absolute charon module name, or None."""
+) -> list[str]:
+    """Resolve an Import/ImportFrom node to one or more absolute charon module names.
+
+    ``from . import a, b`` (level>=1, module=None) yields ONE entry per alias
+    (``<parent>.a``, ``<parent>.b``) — matching the runtime semantics, where
+    each name binds a real submodule.  Earlier versions collapsed this shape
+    to a single edge against the parent package, which masked any cycle the
+    aliases actually closed (e.g. ``decompose.py`` -> ``api``).
+    """
     if isinstance(node, ast.Import):
+        targets: list[str] = []
         for alias in node.names:
             head = alias.name.split(".")[0]
             if head not in _STDLIB_TOPS and head != "charon":
                 continue
             if alias.name == "charon" or alias.name.startswith("charon."):
-                return alias.name
-        return None
+                targets.append(alias.name)
+        return targets
     if isinstance(node, ast.ImportFrom):
-        target: str | None = None
         if node.level and node.level > 0:
+            # Bare-relative multi-alias: ``from . import a, b`` — one edge per alias.
+            if node.module is None:
+                parent = _resolve_relative(pkg, node.level, None)
+                if not (parent == "charon" or parent.startswith("charon.")):
+                    return []
+                return [f"{parent}.{a.name}" for a in node.names if a.name]
             target = _resolve_relative(pkg, node.level, node.module)
-        elif node.module:
+            if target and (target == "charon" or target.startswith("charon.")):
+                return [target]
+            return []
+        if node.module:
             head = node.module.split(".")[0]
             if head not in _STDLIB_TOPS and head != "charon":
-                return None
-            target = node.module
-        if target and (target == "charon" or target.startswith("charon.")):
-            return target
-    return None
+                return []
+            if node.module == "charon" or node.module.startswith("charon."):
+                return [node.module]
+    return []
 
 
 def _scan_module_level_imports(
     src_root: Path,
-) -> tuple[dict[tuple[str, str], str], set[tuple[str, str]]]:
-    """Scan *src_root*/*.py for module-level charon imports.
+) -> set[tuple[str, str]]:
+    """Scan *src_root*/*.py for module-level charon import edges.
 
-    Returns:
-      - bare_relative: ``{(source_file, sibling_name): parent_package}`` for
-        ``from . import X`` forms (resolved to parent pkg, not sibling).
-      - module_edges: ``{(source_mod, target_mod)}`` of module-level charon
-        imports (excluding TYPE_CHECKING-guarded bodies).
+    Returns ``module_edges = {(source_mod, target_mod)}`` for every charon
+    import outside ``if TYPE_CHECKING:`` guards.  ``from . import a, b``
+    yields ONE entry per alias (``(mod, parent.a)`` and ``(mod, parent.b)``),
+    matching the runtime semantics — so the graph builder sees the same
+    edges the import system actually executes.
     """
     base = src_root / "charon"
-    bare_relative: dict[tuple[str, str], str] = {}
     module_edges: set[tuple[str, str]] = set()
 
     for py_file in sorted(base.rglob("*.py")):
@@ -278,37 +292,21 @@ def _scan_module_level_imports(
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 if id(node) in tc_ids:
                     continue
-                target = _resolve_import_target(node, pkg, mod)
-                if target:
-                    # Record bare relative imports (from . import X)
-                    # for remapping — AST code resolves these to parent pkg.
-                    if (
-                        isinstance(node, ast.ImportFrom)
-                        and node.level is not None
-                        and node.level > 0
-                        and node.module is None
-                    ):
-                        for alias in node.names:
-                            # The parent-package target from _resolve_import_target
-                            # is the parent pkg (e.g. "charon" for level=1).
-                            # We need to record that (rel_source_file, sibling_name)
-                            # maps to this parent pkg.
-                            rel_path = str(py_file.relative_to(src_root.parent))
-                            bare_relative[(rel_path, alias.name)] = target
+                for target in _resolve_import_target(node, pkg, mod):
                     module_edges.add((mod, target))
-    return bare_relative, module_edges
+    return module_edges
 
 
 def _build_import_graph_from_graphify(
     src_root: Path, graph_path: Path,
-    bare_relative: dict[tuple[str, str], str],
     module_edges: set[tuple[str, str]],
 ) -> dict[str, set[str]]:
     """Build the import graph from graphify's pre-computed graph.json.
 
     Only edges present in *module_edges* (module-level charon imports,
-    excluding TYPE_CHECKING guards) are included.  ``from . import X``
-    edges are remapped to the parent package.
+    excluding TYPE_CHECKING guards) are included.  Bare-relative aliases
+    are already resolved per-alias by the AST pass, so no remap is needed
+    here.
     """
     import json
 
@@ -345,11 +343,6 @@ def _build_import_graph_from_graphify(
         if (source_mod, target_mod) not in module_edges:
             continue
 
-        # Remap from . import X to parent package.
-        sibling_name = target_mod.split(".")[-1]
-        if (source_sf, sibling_name) in bare_relative:
-            target_mod = bare_relative[(source_sf, sibling_name)]
-
         graph[source_mod].add(target_mod)
 
     return dict(graph)
@@ -358,7 +351,10 @@ def _build_import_graph_from_graphify(
 def _build_import_graph_from_ast(src_root: Path) -> dict[str, set[str]]:
     """Build import graph via from-scratch AST walk (fallback path).
 
-    Used when graphify's pre-computed graph is not available.
+    Used when graphify's pre-computed graph is not available.  Emits one
+    edge per alias for ``from . import a, b`` (not a single collapsed edge
+    against the parent package) so the DFS sees the same back-edges the
+    runtime would.
     """
     graph: dict[str, set[str]] = defaultdict(set)
     base = src_root / "charon"
@@ -373,8 +369,7 @@ def _build_import_graph_from_ast(src_root: Path) -> dict[str, set[str]]:
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 if id(node) in tc_ids:
                     continue
-                target = _resolve_import_target(node, pkg, mod)
-                if target:
+                for target in _resolve_import_target(node, pkg, mod):
                     graph[mod].add(target)
     return dict(graph)
 
@@ -388,9 +383,9 @@ def _build_import_graph(src_root: Path) -> dict[str, set[str]]:
     """
     graphify_path = src_root.parent / "graphify-out" / "graph.json"
     if graphify_path.exists():
-        bare_relative, module_edges = _scan_module_level_imports(src_root)
+        module_edges = _scan_module_level_imports(src_root)
         return _build_import_graph_from_graphify(
-            src_root, graphify_path, bare_relative, module_edges,
+            src_root, graphify_path, module_edges,
         )
     return _build_import_graph_from_ast(src_root)
 
