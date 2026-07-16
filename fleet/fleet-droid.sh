@@ -13,7 +13,7 @@
 #
 # DEFAULT is --wait 3: a bare `fleet-droid.sh <tier>` self-feeds (waits through empty checks)
 # rather than quitting on the first empty claim. Pass `--wait 0` for the old one-shot behavior
-# (claim once, stand down when empty); raise `--retries` to ride out longer dependency gaps.
+# (claim once, stand down when empty); raise `--retries` to ride out longer dependency gaps, or `--retries 0` = NEVER stand down (persistent tab: polls every --wait min forever, auto-claiming as work appears).
 set -euo pipefail
 FLEET="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHARON="/home/stack/code/charon"   # DEFAULT product repo (a ticket's `repo:` field overrides per-ticket)
@@ -175,9 +175,10 @@ while true; do
   # empty-at-own-tier for >= PATIENCE wait-cycles (gives lower tiers a head start).
   mode=both; [ "$empties" -lt "$PATIENCE" ] && mode=own-only
   if ! res="$(bash "$FLEET/claim.sh" "$TIER" "$DROID" "$mode")"; then
-    if [ "$WAIT_MIN" -gt 0 ] && [ "$empties" -lt "$RETRIES" ]; then
+    if [ "$WAIT_MIN" -gt 0 ] && { [ "$RETRIES" -eq 0 ] || [ "$empties" -lt "$RETRIES" ]; }; then
       empties=$((empties+1))
-      echo "[$DROID] no $TIER-eligible work — waiting ${WAIT_MIN}m (empty $empties/$RETRIES)…"
+      rmax="$RETRIES"; [ "$RETRIES" -eq 0 ] && rmax="∞"
+      echo "[$DROID] no $TIER-eligible work — waiting ${WAIT_MIN}m (empty $empties/$rmax)…"
       sleep "$((WAIT_MIN*60))"; continue
     fi
     echo "[$DROID] no $TIER-eligible work left — standing down."; break
