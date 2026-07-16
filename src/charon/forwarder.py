@@ -131,6 +131,53 @@ def _normalize_message_content(body_bytes: bytes, normalizer) -> bytes:
     return json.dumps(obj).encode()
 
 
+def _tool_schemas_from_request(orig_bj: dict) -> dict[str, dict]:
+    """Map tool name -> declared JSON-schema parameters from the client's
+    ``tools`` array (OpenAI ``[{"type": "function", "function": {"name",
+    "parameters"}}, ...]`` shape). Malformed/missing entries are skipped —
+    ``tool_repair`` treats an absent schema as "no schema-guided coercion",
+    never an error."""
+    schemas: dict[str, dict] = {}
+    for entry in orig_bj.get("tools") or []:
+        if not isinstance(entry, dict):
+            continue
+        fn = entry.get("function")
+        if not isinstance(fn, dict):
+            continue
+        name = fn.get("name")
+        params = fn.get("parameters")
+        if name and isinstance(params, dict):
+            schemas[name] = params
+    return schemas
+
+
+def _repair_tool_call_response(body_bytes: bytes, tool_repair, tools: dict) -> bytes:
+    """Run schema-only tool-call repair over ONLY ``choices[0].message.tool_calls``,
+    never the whole JSON envelope.
+
+    Symmetric to ``_normalize_message_content``: a response with no tool_calls, or
+    whose arguments already parse+validate, passes through byte-for-byte
+    (``tool_repair.repair_tool_calls`` is itself a validate-then-repair guard —
+    this wrapper adds only the "is there anything to repair at all" short-circuit
+    and the JSON envelope re-encode). Anything unparseable/shape-mismatched also
+    passes through unchanged (never corrupt a body we can't safely address)."""
+    try:
+        obj = json.loads(body_bytes)
+    except (ValueError, TypeError):
+        return body_bytes
+    try:
+        message = obj["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError):
+        return body_bytes
+    tool_calls = message.get("tool_calls")
+    if not isinstance(tool_calls, list) or not tool_calls:
+        return body_bytes
+    _repaired, results = tool_repair.repair_tool_calls(tool_calls, tools)
+    if not any(r.changed for r in results):
+        return body_bytes
+    return json.dumps(obj).encode()
+
+
 def _build_upstream_req(handler, srv, route: UpstreamRoute, orig_bj: dict,
                         raw_body: bytes) -> urllib.request.Request:
     """Build the upstream request for ONE attempt from the ORIGINAL request —
@@ -711,6 +758,17 @@ def forward_with_failover(handler, srv) -> None:
                     canon = adapter.normalize_response(parsed)
                     if canon is not parsed:  # only re-encode if it actually changed
                         body_bytes = json.dumps(canon).encode()
+                # CG-critical: repair malformed tool_calls[].function.arguments
+                # (bad JSON from a flaky provider) BEFORE classify/cache/serve see
+                # this body. Guarded no-op — byte-identical when tool_repair is
+                # unset or the response carries no tool_calls / is already valid.
+                # getattr (not attribute) read: proxy_server only materializes a
+                # tool_repair attr when one is injected via modules= (F29), so
+                # direct-server tests and unconfigured gateways are unaffected.
+                _tool_repair = getattr(srv, "tool_repair", None)
+                if _tool_repair is not None:
+                    body_bytes = _repair_tool_call_response(
+                        body_bytes, _tool_repair, _tool_schemas_from_request(orig_bj))
                 observed = _extract(body_bytes, ctype)  # now sees top-level model+usage
                 obs = srv.observer.classify(okey, 200, rhdrs, observed, expected_model=expected)
                 latency_ms = int((time.monotonic() - start) * 1000)

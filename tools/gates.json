@@ -178,5 +178,15 @@
     "ci_step": true,
     "invariant": "Every catalog entry has a canonical id; no two entries collide under normalization",
     "red_proof": "tests/test_catalog_gate_wire.py"
+  },
+  {
+    "id": "reachability-gate",
+    "name": "Hardcoded cross-boundary path gate",
+    "domain": "reachability",
+    "enforcer": "../charon-private/fleet/checks/no-unreachable-paths.sh",
+    "covers": "hardcoded absolute paths crossing unix-user, volume, fresh-install, or product-vs-rig boundaries",
+    "ci_step": false,
+    "invariant": "No tracked file contains an unallowlisted hardcoded absolute path that is unreachable across a portability boundary",
+    "red_proof": null
   }
 ]

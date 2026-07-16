@@ -28,10 +28,15 @@ def discover_provider(base_url: str, api_key: str | None,
     Returns a list of raw model dicts (each with at least ``"id"``), or None on
     any error.
     """
-    if strip_v1:
-        url = base_url.rstrip("/") + "/models"
-    else:
-        url = base_url.rstrip("/") + "/v1/models"
+    # Endpoint construction + SSRF guard delegated to the shared helper
+    # (PROVIDER-URL-HELPER): previously this function did its own bare
+    # ``base_url.rstrip("/") + "/models"`` with no scheme/host check at all,
+    # so a bad base could surface as a confusing urllib error instead of None.
+    path = "models" if strip_v1 else "v1/models"
+    try:
+        url = providers.join_endpoint(providers.validate_base_url(base_url), path)
+    except ValueError:
+        return None
 
     req = urllib.request.Request(url, method="GET")
     req.add_header("User-Agent", BROWSER_UA)

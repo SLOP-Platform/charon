@@ -38,32 +38,35 @@ def validate_provider_key(
 
     Security: non-http(s) bases and link-local/metadata hosts are refused (SSRF
     guard). Redirects are disabled (no cross-host key leak)."""
-    from urllib.parse import urlsplit
+    from .. import providers
 
     if skip_probe:
         return {"valid": True, "message": "probe skipped by operator request",
                 "models_count": 0, "skipped": True}
 
-    parts = urlsplit(base_url or "")
-    if parts.scheme not in ("http", "https"):
-        return {"valid": False, "message": f"invalid base URL scheme {parts.scheme!r}"}
-    host = parts.hostname or ""
-    if host.startswith("169.254.") or host == "metadata.google.internal":
-        return {"valid": False, "message": "refusing link-local / metadata host"}
+    # SSRF guard + endpoint construction now live in the shared helper
+    # (providers.validate_base_url / models_url / chat_url) — see
+    # PROVIDER-URL-HELPER. Previously this function carried its own inline copy
+    # of the scheme/link-local/metadata-host check and ``raw_base + "/suffix"``
+    # concat, which drifted from the other call sites.
+    try:
+        models_endpoint = providers.models_url(base_url or "")
+        chat_endpoint = providers.chat_url(base_url or "")
+    except ValueError as exc:
+        return {"valid": False, "message": str(exc)}
 
     class _NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, *a, **k):  # noqa: ANN002, ANN003
             return None
 
     opener = urllib.request.build_opener(_NoRedirect())
-    raw_base = base_url.rstrip("/") if base_url else ""
 
     # Probe 1: GET /models — cheap, tells us the key works + model count
     models_count = 0
     models_ok = False
     first_model_id: str | None = None
     try:
-        req = urllib.request.Request(raw_base + "/models", method="GET")
+        req = urllib.request.Request(models_endpoint, method="GET")
         req.add_header("User-Agent", _VALIDATE_UA)
         req.add_header("Authorization", "Bearer " + api_key)
         resp = opener.open(req, timeout=_VALIDATE_TIMEOUT)
@@ -98,7 +101,7 @@ def validate_provider_key(
             "messages": [{"role": "user", "content": "hi"}],
             "max_tokens": 1,
         }).encode()
-        req = urllib.request.Request(raw_base + "/chat/completions", data=body, method="POST")
+        req = urllib.request.Request(chat_endpoint, data=body, method="POST")
         req.add_header("User-Agent", _VALIDATE_UA)
         req.add_header("Content-Type", "application/json")
         req.add_header("Authorization", "Bearer " + api_key)

@@ -178,3 +178,169 @@ def test_extract_pricing_no_pricing_field():
     entry: dict = {}
     providers._extract_pricing({"id": "x"}, entry)
     assert entry == {}
+
+
+# ── PROVIDER-URL-HELPER: shared endpoint URL construction ──────────
+#
+# ``models_url`` / ``chat_url`` are the ONE place that knows the /models and
+# /chat/completions suffixes. The guard below pins their exact resolved URL for
+# every provider preset (hardcoded strings, including the nested-path bases like
+# opencode-zen / opencode-go / zai) so the dedup refactor can't silently change
+# any provider's actual endpoint — the "no behavior change" correctness bar.
+
+# Expected (base.rstrip("/") + suffix) for every preset that shipped BEFORE the
+# refactor — this is the regression guard the acceptance criteria require.
+# Includes the nested-path bases (opencode-zen, opencode-go, zai, groq,
+# cline-pass, fireworks) that a naive join would mangle.
+_EXPECTED_MODELS_URLS = {
+    "anthropic": "https://api.anthropic.com/models",
+    "chutes": "https://llm.chutes.ai/v1/models",
+    "cline-pass": "https://api.cline.bot/api/v1/models",
+    "cohere": "https://api.cohere.ai/v1/models",
+    "deepseek": "https://api.deepseek.com/v1/models",
+    "fireworks": "https://api.fireworks.ai/inference/v1/models",
+    "groq": "https://api.groq.com/openai/v1/models",
+    "huggingface": "https://router.huggingface.co/v1/models",
+    "jan": "http://localhost:1337/v1/models",
+    "lmstudio": "http://localhost:1234/v1/models",
+    "local": "http://localhost:1234/v1/models",
+    "mistral": "https://api.mistral.ai/v1/models",
+    "nanogpt": "https://nano-gpt.com/api/v1/models",
+    "neuralwatt": "https://api.neuralwatt.com/v1/models",
+    "ollama": "http://localhost:11434/v1/models",
+    "openai": "https://api.openai.com/v1/models",
+    "opencode-go": "https://opencode.ai/zen/go/v1/models",
+    "opencode-zen": "https://opencode.ai/zen/v1/models",
+    "openrouter": "https://openrouter.ai/api/v1/models",
+    "perplexity": "https://api.perplexity.ai/models",
+    "replicate": "https://api.replicate.com/v1/models",
+    "sambanova": "https://api.sambanova.ai/v1/models",
+    "together": "https://api.together.xyz/v1/models",
+    "vllm": "http://localhost:8000/v1/models",
+    "xai": "https://api.x.ai/v1/models",
+    "zai": "https://api.z.ai/api/paas/v4/models",
+}
+
+_EXPECTED_CHAT_URLS = {
+    "anthropic": "https://api.anthropic.com/chat/completions",
+    "chutes": "https://llm.chutes.ai/v1/chat/completions",
+    "cline-pass": "https://api.cline.bot/api/v1/chat/completions",
+    "cohere": "https://api.cohere.ai/v1/chat/completions",
+    "deepseek": "https://api.deepseek.com/v1/chat/completions",
+    "fireworks": "https://api.fireworks.ai/inference/v1/chat/completions",
+    "groq": "https://api.groq.com/openai/v1/chat/completions",
+    "huggingface": "https://router.huggingface.co/v1/chat/completions",
+    "jan": "http://localhost:1337/v1/chat/completions",
+    "lmstudio": "http://localhost:1234/v1/chat/completions",
+    "local": "http://localhost:1234/v1/chat/completions",
+    "mistral": "https://api.mistral.ai/v1/chat/completions",
+    "nanogpt": "https://nano-gpt.com/api/v1/chat/completions",
+    "neuralwatt": "https://api.neuralwatt.com/v1/chat/completions",
+    "ollama": "http://localhost:11434/v1/chat/completions",
+    "openai": "https://api.openai.com/v1/chat/completions",
+    "opencode-go": "https://opencode.ai/zen/go/v1/chat/completions",
+    "opencode-zen": "https://opencode.ai/zen/v1/chat/completions",
+    "openrouter": "https://openrouter.ai/api/v1/chat/completions",
+    "perplexity": "https://api.perplexity.ai/chat/completions",
+    "replicate": "https://api.replicate.com/v1/chat/completions",
+    "sambanova": "https://api.sambanova.ai/v1/chat/completions",
+    "together": "https://api.together.xyz/v1/chat/completions",
+    "vllm": "http://localhost:8000/v1/chat/completions",
+    "xai": "https://api.x.ai/v1/chat/completions",
+    "zai": "https://api.z.ai/api/paas/v4/chat/completions",
+}
+
+
+def test_models_url_preserves_all_preset_endpoints_exactly():
+    """No-behavior-change guard: for EVERY preset in PRESETS, models_url(base)
+    must equal the exact string the old inline `base.rstrip("/") + "/models"`
+    produced — including the nested-path bases (opencode-zen, opencode-go, zai,
+    groq, cline-pass, fireworks) that a naive join could drop or double-slash."""
+    missing = set(providers.PRESETS) - set(_EXPECTED_MODELS_URLS)
+    extra = set(_EXPECTED_MODELS_URLS) - set(providers.PRESETS)
+    assert not missing, f"preset(s) without a pinned models_url expectation: {sorted(missing)}"
+    assert not extra, f"stale expectation(s) for a removed preset: {sorted(extra)}"
+    for name, preset in providers.PRESETS.items():
+        got = providers.models_url(preset.base_url)
+        exp = _EXPECTED_MODELS_URLS[name]
+        assert got == exp, f"{name}: models_url drifted\n  got: {got!r}\n  exp: {exp!r}"
+
+
+def test_chat_url_preserves_all_preset_endpoints_exactly():
+    """No-behavior-change guard for chat_url — mirrors the models_url guard.
+    Catches an accidental `/v1/chat/completions` vs `/chat/completions` drift on
+    the nested-path bases (opencode-zen, opencode-go, zai)."""
+    missing = set(providers.PRESETS) - set(_EXPECTED_CHAT_URLS)
+    extra = set(_EXPECTED_CHAT_URLS) - set(providers.PRESETS)
+    assert not missing, f"preset(s) without a pinned chat_url expectation: {sorted(missing)}"
+    assert not extra, f"stale expectation(s) for a removed preset: {sorted(extra)}"
+    for name, preset in providers.PRESETS.items():
+        got = providers.chat_url(preset.base_url)
+        exp = _EXPECTED_CHAT_URLS[name]
+        assert got == exp, f"{name}: chat_url drifted\n  got: {got!r}\n  exp: {exp!r}"
+
+
+def test_models_url_keeps_nested_path_segments():
+    """A base that already ends in a path segment (opencode-zen's
+    .../zen/v1) must keep every segment — not collapse to .../zen/models or
+    produce a double slash. This is the specific edge case the dedup was
+    introduced to handle consistently."""
+    assert providers.models_url("https://opencode.ai/zen/v1") == "https://opencode.ai/zen/v1/models"
+    assert providers.models_url("https://opencode.ai/zen/go/v1") == "https://opencode.ai/zen/go/v1/models"
+    assert providers.models_url("https://api.z.ai/api/paas/v4") == "https://api.z.ai/api/paas/v4/models"
+
+
+def test_chat_url_strips_trailing_slash_once():
+    """A base with a trailing slash resolves to a single slash before the suffix
+    (no `//models`), and a base without one is untouched."""
+    assert providers.chat_url("https://api.example.com/v1/") == "https://api.example.com/v1/chat/completions"
+    assert providers.chat_url("https://api.example.com/v1") == "https://api.example.com/v1/chat/completions"
+    assert "//chat/completions" not in providers.chat_url("https://api.example.com/v1/")
+
+
+def test_models_url_rejects_link_local_and_metadata_hosts():
+    """The SSRF guard survived the move from config.py's inline check to the
+    shared helper — a link-local (169.254.x) or GCP metadata base is refused,
+    not silently constructed into a probeable URL. This is the security
+    regression guard the acceptance criteria require."""
+    with pytest.raises(ValueError):
+        providers.models_url("http://169.254.169.254/latest/meta-data/")
+    with pytest.raises(ValueError):
+        providers.models_url("http://metadata.google.internal/computeMetadata/v1/")
+
+
+def test_chat_url_rejects_link_local_and_metadata_hosts():
+    """Same SSRF guard applies to chat_url — a cloud-metadata host can't be
+    turned into a /chat/completions URL (where an Authorization Bearer would
+    ride). The guard moved intact, not just on the /models path."""
+    with pytest.raises(ValueError):
+        providers.chat_url("http://169.254.169.254/")
+    with pytest.raises(ValueError):
+        providers.chat_url("http://metadata.google.internal/")
+
+
+def test_validate_base_url_rejects_non_https_scheme():
+    """A non-http(s) base (ftp/file/gopher) is refused — the SSRF-adjacent scheme
+    check moved with the host check."""
+    for bad in ("ftp://example.com", "file:///etc/passwd", "gopher://x"):
+        with pytest.raises(ValueError):
+            providers.validate_base_url(bad)
+
+
+def test_validate_base_url_accepts_http_and_https_and_strips_trailing_slash():
+    """http (localhost) and https are both valid; trailing slashes are stripped
+    so the caller can safely append. Local providers (ollama/lmstudio/vllm) ship
+    http://localhost bases and must still resolve."""
+    assert providers.validate_base_url("https://api.example.com/v1/") == "https://api.example.com/v1"
+    assert providers.validate_base_url("http://localhost:1234/v1") == "http://localhost:1234/v1"
+    assert providers.validate_base_url("https://x.example.com///") == "https://x.example.com"
+
+
+def test_join_endpoint_single_slash_no_path_drop():
+    """join_endpoint guarantees exactly one slash between base and path, never
+    drops a path segment, and tolerates a path with or without a leading slash."""
+    assert providers.join_endpoint("https://x.example.com/v1", "models") == "https://x.example.com/v1/models"
+    assert providers.join_endpoint("https://x.example.com/v1", "/models") == "https://x.example.com/v1/models"
+    assert providers.join_endpoint("https://x.example.com/v1/", "models") == "https://x.example.com/v1/models"
+    assert providers.join_endpoint("https://x.example.com/", "/chat/completions") == "https://x.example.com/chat/completions"
+

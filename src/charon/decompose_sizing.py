@@ -51,13 +51,12 @@ from . import decompose_effort
 # --------------------------------------------------------------------- constants
 #
 # TODO(calibration): these are sane SEEDED defaults, not measured truth. Once
-# capability.actuals.ActualsLedger accumulates enough real (model, work_class)
-# rows, recompute:
+# enough real (model, work_class) run data accumulates, recompute:
 #   exec_rate      = median(chunk_effort / wall_clock_ms) over real runs
 #   O_setup/review/merge = median observed per-chunk branch/review/merge time
 # and update the defaults below (or feed calibrated values in via the
-# ``overhead=``/``exec_rate=`` kwargs — this module never reads the ledger
-# itself so it stays network/clock-free).
+# ``overhead=``/``exec_rate=`` kwargs — this module never reads a ledger
+# directly so it stays network/clock-free).
 
 DEFAULT_EXEC_RATE = 1.0  # effort-units per minute of build time; TODO calibrate
 DEFAULT_EPSILON = 0.05  # diminishing-returns margin (5% of current wallclock)
