@@ -1,0 +1,366 @@
+diff --git a/fleet/benchmark/graders/preflight_checks/_pf_common.py b/fleet/benchmark/graders/preflight_checks/_pf_common.py
+index f83730a..b02a913 100755
+--- a/fleet/benchmark/graders/preflight_checks/_pf_common.py
++++ b/fleet/benchmark/graders/preflight_checks/_pf_common.py
+@@ -172,10 +172,29 @@ def sha256_file(path: Path) -> str | None:
+ # ── execution helpers (run product code, observe EFFECT) ─────────────────────
+ 
+ def copy_to_scratch(worktree: Path) -> Path:
++    """Copy ``worktree`` into a private, WRITABLE scratch dir a grader can
++    mutate (e.g. to apply a behavioral mutant) without touching the daemon's
++    own read-only snapshot.
++
++    ROOT-CAUSE (b) FIX: the daemon's snapshot (grader-daemon.py
++    ``_snapshot_worktree``) is deliberately chmod'd read-only (0o444 files /
++    0o555 dirs) so the daemon itself can never mutate it. ``shutil.copytree``
++    defaults to ``copy2``, which PRESERVES those permission bits into the
++    scratch copy too — so any grader that writes into its scratch copy (e.g.
++    header-redaction-test.py applying a mutant to ``gateway/headers.py``)
++    crashed with ``PermissionError`` before it ever compared behavior,
++    surfacing as a uniform fail-closed BLOCK regardless of the model's actual
++    diff. Force the scratch copy writable immediately after the copy.
++    """
+     scratch = Path(tempfile.mkdtemp(prefix="pf-grade-"))
+     dest = scratch / "wt"
+     shutil.copytree(worktree, dest,
+                     ignore=shutil.ignore_patterns(*IGNORE_NAMES))
++    for p in dest.rglob("*"):
++        try:
++            p.chmod(0o755 if p.is_dir() else 0o644)
++        except OSError:
++            pass
+     return dest
+ 
+ 
+diff --git a/fleet/benchmark/preflight.sh b/fleet/benchmark/preflight.sh
+index 0e7f8f7..2f382d2 100755
+--- a/fleet/benchmark/preflight.sh
++++ b/fleet/benchmark/preflight.sh
+@@ -214,6 +214,16 @@ main() {
+     own_session_root=1
+   fi
+   mkdir -p "$session_root"
++  # mktemp -d hardcodes 0700 on the dir it creates. The grader-daemon runs as
++  # a DIFFERENT unix user (bench-grader) and must be able to traverse into
++  # this tree to snapshot the worktree for OOB grading (_snapshot_worktree in
++  # grader-daemon.py) — a 0700 session_root blocks that traversal even though
++  # every file/dir underneath is otherwise world-readable, causing every run
++  # to come back as a spurious daemon-side PermissionError (not a real
++  # pass/fail verdict). Relax just the top-level dir so the daemon can walk
++  # in; per-run dirs below are created via plain mkdir/tar and are already
++  # 0755 by default umask.
++  chmod 755 "$session_root" 2>/dev/null || true
+   log "candidate model: $candidate"
+   log "session root:    $session_root"
+   log "runs per task:    $PFR_RUNS_N  (pass threshold: >=${PFR_PASS_NUM}/${PFR_PASS_DEN})"
+@@ -247,6 +257,17 @@ main() {
+         err "task=$task_id run=$i: model command not found/executable: $PFR_MODEL_CMD"
+       fi
+ 
++      # Model/test tooling run in this worktree (e.g. hypothesis's cache
++      # writer) can leave files at 0600 or similar. The grader-daemon reads
++      # this tree as a DIFFERENT unix user (bench-grader) to snapshot it for
++      # OOB grading — an unreadable file anywhere in the tree aborts the
++      # whole snapshot with a PermissionError, which surfaces as a spurious
++      # daemon-side FAIL that has nothing to do with the candidate's actual
++      # task result. Force the tree world-readable/traversable right before
++      # handoff so grading reflects task correctness, not incidental tool
++      # umask/chmod behavior.
++      chmod -R a+rX "$session_dir" 2>/dev/null || true
++
+       submit_grade_job "$run_id" "$candidate" "$grader_key" "$session_dir" \
+         || { err "task=$task_id run=$i: could not submit grade job (spool write failed) — treating as FAIL"; continue; }
+ 
+diff --git a/fleet/charon-run.sh b/fleet/charon-run.sh
+index aa2e40c..41c9773 100755
+--- a/fleet/charon-run.sh
++++ b/fleet/charon-run.sh
+@@ -14,25 +14,86 @@ LEDGER="${CHARON_EXHAUST_LEDGER:-/home/stack/charon-private/fleet/provider-exhau
+ if [ ! -f "$LEDGER" ]; then
+   printf 'ts\tjob\tmodel\tevent\tnote\n' > "$LEDGER" 2>/dev/null || true
+ fi
++# Per-attempt wall-clock budget. Default unchanged (1800s) for ordinary ticket
++# work; callers that want a tighter "too-slow == FAIL" budget (e.g. the
++# MODEL-PREFLIGHT battery) set CHARON_RUN_TIMEOUT_S in the environment.
++RUN_TIMEOUT_S="${CHARON_RUN_TIMEOUT_S:-1800}"
++# Where opencode's own structured log lives — used ONLY as a best-effort,
++# read-only signal to distinguish "model genuinely slow" from "gateway pool
++# exhausted and opencode silently retried in a loop" on a timeout. opencode's
++# CLI stdout does NOT surface "all providers exhausted" (confirmed: it hangs
++# silently until the outer `timeout` kills it), so without this the two cases
++# are indistinguishable from $OUT alone.
++OPENCODE_LOG="${OPENCODE_LOG:-$HOME/.local/share/opencode/log/opencode.log}"
+  led() { printf '%s\t%s\t%s\t%s\t%s\n' "$(date -u +%FT%TZ)" "$LABEL" "$1" "$2" "$3" >> "$LEDGER" 2>/dev/null || true; }
+ for M in "${MODELS[@]}"; do
+   echo "===== [charon-run] attempt: charon/$M @ $(basename "$CWD") =====" >> "$OUT"
+   MARK=$(wc -l < "$OUT")
+-  ( cd "$CWD" && timeout 1800 opencode run --model "charon/$M" "$PROMPT" ) >> "$OUT" 2>&1
++  ATTEMPT_START_EPOCH=$(date -u +%s)
++  ATTEMPT_START_ISO=$(date -u -d "@$ATTEMPT_START_EPOCH" +%FT%TZ 2>/dev/null || date -u +%FT%TZ)
++  ( cd "$CWD" && timeout -k 10 "$RUN_TIMEOUT_S" opencode run --model "charon/$M" "$PROMPT" ) >> "$OUT" 2>&1
+   RC=$?
++  ATTEMPT_END_EPOCH=$(date -u +%s)
++  ELAPSED_S=$((ATTEMPT_END_EPOCH - ATTEMPT_START_EPOCH))
+   TAIL=$(tail -n +"$MARK" "$OUT")
+-  # Hard failure OR limit-signal in this attempt's tail -> fail over to next model.
+-  if printf '%s' "$TAIL" | grep -qiE '\b429\b|rate.?limit|quota exceeded|insufficient (funds|credit|balance)|session limit|no capacity|model (is )?(over|exhausted)|out of (credit|quota)'; then
++
++  # real-diff-or-bail: did the model touch anything in the worktree beyond its
++  # own captured stdout log? (best-effort proxy; no git repo present in these
++  # session worktrees, so we use mtime-after-BRIEF-was-staged instead of a diff.)
++  CHANGED_N=$(find "$CWD" -type f -newer "$BRIEF" ! -name "$(basename "$OUT")" 2>/dev/null | wc -l | tr -d ' ')
++  if [ "${CHANGED_N:-0}" -gt 0 ]; then
++    DIFF_STATE="real-diff(files=$CHANGED_N)"
++  else
++    DIFF_STATE="bail-no-diff"
++  fi
++
++  # Best-effort provider attribution: NOT available client-side. opencode's
++  # own session DB/log only ever records providerID="charon" (the gateway
++  # alias) — the upstream sub-provider (nanoGPT/OpenRouter/etc) is never
++  # surfaced to the client. Real per-run attribution would need the GATEWAY's
++  # own request log (e.g. docker logs on the gateway host) correlated by
++  # timestamp+model — not reachable from this host in this session.
++  PROVIDER_NOTE="provider=unknown-clientside(gateway alias only; needs gateway-log correlation)"
++
++  echo "[charon-run] attempt-metrics model=$M elapsed_s=${ELAPSED_S} rc=$RC diff=$DIFF_STATE $PROVIDER_NOTE" >> "$OUT"
++
++  if [ "$RC" -eq 124 ]; then
++    # Timed out. Disambiguate: did opencode's own log show repeated
++    # "all providers exhausted" stream errors for this model during the
++    # attempt window (gateway-pool exhaustion masquerading as a hang), or
++    # nothing at all (a genuine slow-model / long-agentic-turn timeout)?
++    EXHAUST_HITS=0
++    if [ -f "$OPENCODE_LOG" ]; then
++      # Lines look like: timestamp=2026-07-13T20:25:23.537Z level=ERROR ... modelID=$M ... "all providers exhausted"
++      # Timestamps are ISO-8601 UTC -> lexical >= comparison against the
++      # attempt's own start timestamp is valid and cheap (no date parsing).
++      EXHAUST_HITS=$(awk -v m="modelID=$M" -v t0="$ATTEMPT_START_ISO" '
++        /^timestamp=/ && $0 ~ m && /all providers exhausted/ {
++          ts = substr($1, index($1, "=") + 1)
++          if (ts >= t0) c++
++        }
++        END { print c+0 }
++      ' "$OPENCODE_LOG" 2>/dev/null || echo 0)
++    fi
++    if [ "${EXHAUST_HITS:-0}" -gt 0 ]; then
++      echo "[charon-run] model '$M' TIMEOUT (rc=124, ${ELAPSED_S}s) — CAUSE: gateway pool exhausted (${EXHAUST_HITS}x 'all providers exhausted' in opencode log during this attempt) -> provider-side, not model-slow -> failing over" >> "$OUT"
++      led "$M" "timeout-pool-exhausted" "rc=124; elapsed_s=${ELAPSED_S}; ${EXHAUST_HITS}x all-providers-exhausted; ${DIFF_STATE}; try a different provider for this model"
++    else
++      echo "[charon-run] model '$M' TIMEOUT (rc=124, ${ELAPSED_S}s) — too-slow FAIL, no pool-exhaustion signal found -> failing over" >> "$OUT"
++      led "$M" "timeout-too-slow" "rc=124; elapsed_s=${ELAPSED_S}; ${DIFF_STATE}; latency-is-a-failure-class"
++    fi
++    continue
++  elif printf '%s' "$TAIL" | grep -qiE '\b429\b|rate.?limit|quota exceeded|insufficient (funds|credit|balance)|session limit|no capacity|model (is )?(over|exhausted)|out of (credit|quota)'; then
+     echo "[charon-run] model '$M' hit a provider/session LIMIT -> failing over" >> "$OUT"
+-    led "$M" "limit-failover" "rc=$RC; all providers for this model exhausted at gateway"
++    led "$M" "limit-failover" "rc=$RC; elapsed_s=${ELAPSED_S}; all providers for this model exhausted at gateway; ${DIFF_STATE}"
+     continue
+   elif [ "$RC" -ne 0 ]; then
+-    echo "[charon-run] model '$M' exited nonzero (rc=$RC, not a limit) -> failing over" >> "$OUT"
+-    led "$M" "error-failover" "rc=$RC; non-limit failure"
++    echo "[charon-run] model '$M' exited nonzero (rc=$RC, not a limit, not a timeout) -> failing over" >> "$OUT"
++    led "$M" "error-failover" "rc=$RC; elapsed_s=${ELAPSED_S}; non-limit failure; ${DIFF_STATE}"
+     continue
+   fi
+-  echo "[charon-run] SUCCESS on model '$M' (rc=0)" >> "$OUT"
+-  echo "CHARON_RUN_RESULT=SUCCESS model=$M" >> "$OUT"
++  echo "[charon-run] SUCCESS on model '$M' (rc=0, ${ELAPSED_S}s, $DIFF_STATE)" >> "$OUT"
++  echo "CHARON_RUN_RESULT=SUCCESS model=$M elapsed_s=${ELAPSED_S}" >> "$OUT"
+   exit 0
+ done
+ echo "[charon-run] ALL MODELS EXHAUSTED: ${MODELS[*]}" >> "$OUT"
+diff --git a/fleet/provider-exhaustion-ledger.tsv b/fleet/provider-exhaustion-ledger.tsv
+index 0feb2a5..09c7045 100644
+--- a/fleet/provider-exhaustion-ledger.tsv
++++ b/fleet/provider-exhaustion-ledger.tsv
+@@ -23,3 +23,25 @@ ts	job	model	event	note
+ 2026-07-12T21:34:29Z	economy-4060859-B4-BRANCH-REAPER	deepseek-v4-flash	limit-failover	rc=1; all providers for this model exhausted at gateway
+ 2026-07-12T21:39:36Z	strong-4060858-A1-LAND-GATE	glm-5.2	limit-failover	rc=0; all providers for this model exhausted at gateway
+ 2026-07-12T23:59:08Z	strong-4162761-FAIL-LOUD-CONTRACT	deepseek-v4-flash	limit-failover	rc=0; all providers for this model exhausted at gateway
++2026-07-13T13:30:36Z	.model-out.log	deepseek-v4-flash	limit-failover	rc=0; all providers for this model exhausted at gateway
++2026-07-13T13:30:36Z	.model-out.log	deepseek-v4-flash	ALL-EXHAUSTED	every model failed over; POOL TOO THIN -> consider adding providers
++2026-07-13T13:31:31Z	.model-out.log	deepseek-v4-flash	limit-failover	rc=0; all providers for this model exhausted at gateway
++2026-07-13T13:31:31Z	.model-out.log	deepseek-v4-flash	ALL-EXHAUSTED	every model failed over; POOL TOO THIN -> consider adding providers
++2026-07-13T13:35:03Z	.model-out.log	deepseek-v4-flash	limit-failover	rc=0; all providers for this model exhausted at gateway
++2026-07-13T13:35:03Z	.model-out.log	deepseek-v4-flash	ALL-EXHAUSTED	every model failed over; POOL TOO THIN -> consider adding providers
++2026-07-13T13:35:51Z	.model-out.log	deepseek-v4-flash	limit-failover	rc=0; all providers for this model exhausted at gateway
++2026-07-13T13:35:51Z	.model-out.log	deepseek-v4-flash	ALL-EXHAUSTED	every model failed over; POOL TOO THIN -> consider adding providers
++2026-07-13T13:41:21Z	.model-out.log	deepseek-v4-flash	limit-failover	rc=0; all providers for this model exhausted at gateway
++2026-07-13T13:41:21Z	.model-out.log	deepseek-v4-flash	ALL-EXHAUSTED	every model failed over; POOL TOO THIN -> consider adding providers
++2026-07-13T18:50:25Z	.model-out.log	deepseek-v4-flash	limit-failover	rc=0; all providers for this model exhausted at gateway
++2026-07-13T18:50:25Z	.model-out.log	deepseek-v4-flash	ALL-EXHAUSTED	every model failed over; POOL TOO THIN -> consider adding providers
++2026-07-13T18:51:14Z	.model-out.log	deepseek-v4-flash	limit-failover	rc=0; all providers for this model exhausted at gateway
++2026-07-13T18:51:14Z	.model-out.log	deepseek-v4-flash	ALL-EXHAUSTED	every model failed over; POOL TOO THIN -> consider adding providers
++2026-07-13T18:56:34Z	.model-out.log	deepseek-v4-flash	limit-failover	rc=0; all providers for this model exhausted at gateway
++2026-07-13T18:56:34Z	.model-out.log	deepseek-v4-flash	ALL-EXHAUSTED	every model failed over; POOL TOO THIN -> consider adding providers
++2026-07-13T19:23:20Z	.model-out.log	gpt-5.4	error-failover	rc=124; non-limit failure
++2026-07-13T19:23:20Z	.model-out.log	gpt-5.4	ALL-EXHAUSTED	every model failed over; POOL TOO THIN -> consider adding providers
++2026-07-13T19:53:42Z	.model-out.log	gpt-5.4	error-failover	rc=124; non-limit failure
++2026-07-13T19:53:42Z	.model-out.log	gpt-5.4	ALL-EXHAUSTED	every model failed over; POOL TOO THIN -> consider adding providers
++2026-07-13T20:33:54Z	out.log	nonexistent-model-xyz	error-failover	rc=1; elapsed_s=1; non-limit failure; bail-no-diff
++2026-07-13T20:33:54Z	out.log	nonexistent-model-xyz	ALL-EXHAUSTED	every model failed over; POOL TOO THIN -> consider adding providers
+diff --git a/fleet/roadmap-html.sh b/fleet/roadmap-html.sh
+index bb289e6..5c13a44 100755
+--- a/fleet/roadmap-html.sh
++++ b/fleet/roadmap-html.sh
+@@ -17,7 +17,33 @@ OUTFILE="${1:-}"
+ 
+ [ -f "$ROADMAP" ] || { echo "roadmap-html.sh: ROADMAP not found: $ROADMAP" >&2; exit 1; }
+ 
+-html="$(awk -F'\t' -v genby="roadmap-html.sh" '
++# ACTIVE_MODE=recent: git-recency signal. Union the auto-detect (building/in-review)
++# with any project whose ROADMAP.tsv rows flipped status to done/building within the
++# last ~15 commits that touched that file. Derived here (git) and passed to awk.
++RECENT_ACTIVE=""
++if [ "${ACTIVE_MODE:-}" = "recent" ]; then
++  RECENT_ACTIVE="$(git -C "$SELF_DIR/.." log -15 -p -- fleet/state/ROADMAP.tsv 2>/dev/null \
++    | grep -E '^\+' | grep -vE '^\+\+\+' \
++    | awk -F'\t' '$3=="done" || $3=="building" { sub(/^\+/,"",$1); print $1 }' \
++    | sort -u | tr '\n' ' ')"
++fi
++
++html="$(awk -F'\t' -v genby="roadmap-html.sh" -v active_override="${ACTIVE_OVERRIDE:-}" -v recent_active="${RECENT_ACTIVE:-}" '
++BEGIN {
++  # ACTIVE_OVERRIDE: space-separated project names. When set, these projects
++  # (not building/in-review auto-detection) are the ACTIVE ones.
++  if (active_override != "") {
++    override_on = 1
++    no = split(active_override, oa, " ")
++    for (oi=1; oi<=no; oi++) { if (oa[oi] != "") override_set[oa[oi]] = 1 }
++  }
++  # recent_active: git-recency project set (ACTIVE_MODE=recent). Unioned with
++  # auto-detect. Ignored when ACTIVE_OVERRIDE is set (manual wins).
++  if (active_override == "" && recent_active != "") {
++    nr = split(recent_active, ra, " ")
++    for (ri=1; ri<=nr; ri++) { if (ra[ri] != "") recent_set[ra[ri]] = 1 }
++  }
++}
+ function esc(s) {
+   gsub(/&/, "\\&amp;", s)
+   gsub(/</, "\\&lt;", s)
+@@ -52,6 +78,7 @@ function status_class(s) {
+   n = ++cnt[proj]
+   P[proj,n,"id"]=id; P[proj,n,"st"]=st; P[proj,n,"name"]=name; P[proj,n,"goal"]=goal; P[proj,n,"wave"]=wave
+   if (wave != "") haswave[proj]=1
++  if (!override_on && (st=="building" || st=="in-review")) active[proj]=1
+   tally[st]++
+   ptally[proj,st]++
+ }
+@@ -60,6 +87,20 @@ END {
+   nrows = 0
+   for (i=1; i<=np; i++) { nrows += cnt[order[i]] }
+ 
++  # ACTIVE_OVERRIDE: mark listed projects active (only if they exist in data).
++  if (override_on) {
++    for (i=1; i<=np; i++) { if (order[i] in override_set) active[order[i]]=1 }
++  } else {
++    # ACTIVE_MODE=recent: union git-recency set with auto-detect (already set).
++    for (i=1; i<=np; i++) { if (order[i] in recent_set) active[order[i]]=1 }
++  }
++
++  # Two-pass reorder: active projects first (preserving first-appearance order
++  # among themselves), then remaining projects in original first-appearance order.
++  ro = 0
++  for (i=1; i<=np; i++) { if (order[i] in active) { renderOrder[++ro]=order[i] } }
++  for (i=1; i<=np; i++) { if (!(order[i] in active)) { renderOrder[++ro]=order[i] } }
++
+   print "<!DOCTYPE html>"
+   print "<html lang=\"en\">"
+   print "<head>"
+@@ -105,9 +146,16 @@ END {
+   print "    .project { background: var(--project-bg); border: 1px solid var(--project-border); border-radius: 12px; padding: 16px; margin-bottom: 18px; }"
+   print "    .project-header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }"
+   print "    .project-title { font-size: 1.15rem; font-weight: 700; margin: 0; }"
++  print "    .project-title-active { color: var(--st-done-fg); }"
++  print "    .active-marker { font-size: 0.85rem; font-weight: 600; margin-right: 4px; }"
+   print "    .project-totals { display: flex; flex-wrap: wrap; gap: 6px 10px; font-size: 0.82rem; color: var(--muted); }"
+   print "    .wave { margin-top: 10px; }"
+-  print "    .wave-title { font-size: 0.95rem; font-weight: 600; color: var(--wave-fg); background: var(--wave-bg); padding: 6px 10px; border-radius: 8px; margin: 0 0 8px; }"
++  print "    .wave > .wave-body { margin-top: 8px; }"
++  print "    .wave-title { font-size: 0.95rem; font-weight: 600; color: var(--wave-fg); background: var(--wave-bg); padding: 6px 10px; border-radius: 8px; margin: 0; cursor: pointer; list-style: none; user-select: none; }"
++  print "    .wave-title::-webkit-details-marker { display: none; }"
++  print "    .wave-title::before { content: \"\\25B8\"; display: inline-block; margin-right: 6px; font-size: 0.8em; transition: transform 0.15s; }"
++  print "    details[open] > .wave-title::before { transform: rotate(90deg); }"
++  print "    .wave-title-done { color: var(--st-done-fg); }"
+   print "    .ticket { display: grid; grid-template-columns: 90px 1fr auto; gap: 10px; align-items: start; padding: 8px 6px; border-bottom: 1px solid var(--border); }"
+   print "    .ticket:last-child { border-bottom: none; }"
+   print "    .id { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.9rem; font-weight: 600; color: var(--muted); }"
+@@ -144,10 +192,15 @@ END {
+   print "    </div>"
+ 
+   for (i=1; i<=np; i++) {
+-    proj = order[i]
++    proj = renderOrder[i]
++    isactive = (proj in active)
+     print "    <section class=\"project\">"
+     print "      <div class=\"project-header\">"
+-    print "        <h2 class=\"project-title\">" esc(proj) "</h2>"
++    if (isactive) {
++      print "        <h2 class=\"project-title project-title-active\"><span class=\"active-marker\">&#9679; active</span>" esc(proj) "</h2>"
++    } else {
++      print "        <h2 class=\"project-title\">" esc(proj) "</h2>"
++    }
+     print "        <div class=\"project-totals\">"
+     for (k=1; k<=7; k++) {
+       s = ord[k]
+@@ -170,8 +223,19 @@ END {
+       }
+       for (wi=1; wi<=wc; wi++) {
+         label = worder[wi]
+-        print "      <div class=\"wave\">"
+-        print "        <div class=\"wave-title\">" esc(label) "</div>"
++        # Determine if every ticket in this wave is done.
++        alldone = 1; wtickets = 0
++        for (n=1; n<=cnt[proj]; n++) {
++          w = P[proj,n,"wave"]; il = (w=="") ? "Unscheduled" : w
++          if (il == label) { wtickets++; if (P[proj,n,"st"] != "done") alldone = 0 }
++        }
++        if (wtickets == 0) alldone = 0
++        # All-done wave: collapsed + green summary. Otherwise: open + normal.
++        openattr = alldone ? "" : " open"
++        sumcls = alldone ? " wave-title-done" : ""
++        print "      <details class=\"wave\"" openattr ">"
++        print "        <summary class=\"wave-title" sumcls "\">" esc(label) "</summary>"
++        print "        <div class=\"wave-body\">"
+         for (n=1; n<=cnt[proj]; n++) {
+           w = P[proj,n,"wave"]; il = (w=="") ? "Unscheduled" : w
+           if (il == label) {
+@@ -189,7 +253,8 @@ END {
+             print "        </div>"
+           }
+         }
+-        print "      </div>"
++        print "        </div>"
++        print "      </details>"
+       }
+     } else {
+       for (n=1; n<=cnt[proj]; n++) {
+diff --git a/fleet/state/ROADMAP.tsv b/fleet/state/ROADMAP.tsv
+index 2fc2ba5..0f714fb 100644
+--- a/fleet/state/ROADMAP.tsv
++++ b/fleet/state/ROADMAP.tsv
+@@ -81,6 +81,8 @@ Fleet	F24	done	-	fleet-gate-repoint	gate runs fleet tests not product ones	Wave
+ Fleet	F27	done	-	access-check	probe+report host access at boot	Wave D — gate & reporting
+ Fleet	F44	done	-	web-roadmap-generator	self-refreshing web roadmap from ROADMAP.tsv	Wave D — gate & reporting
+ Fleet	F45	designed	next	project-audit-gate	fact-audit + re-sequence at project/wave start	Wave H — board & gate
++Fleet	REACHABILITY-GATE	queued	next	reachability-gate	audit hardcoded cross-boundary-unreachable paths + mechanize a fail-loud gate (HIGH — bench-grader wall root cause)	Wave H — board & gate
++Fleet	GATE-REGISTRY-BACKFILL	designed	next	gate-registry-backfill	wire check_workflows into the gate — resolve SHA-pin vs bare-tag policy (18 violations)	Wave H — board & gate
+ Fleet	F11	queued	next	work-optimizer	schedule work for max parallelism	Wave E — automation brains
+ Fleet	F12	queued	next	auto-close	close stale and landed tickets	Wave E — automation brains
+ Fleet	F13	queued	next	recurrence-auditor	catch repeat failures automatically	Wave E — automation brains
+@@ -89,7 +91,7 @@ Fleet	F23	building	now	session-end-deploy	auto-update 4-LOM at session close	Wav
+ Fleet	F28	queued	next	startup-context-diet	cut startup context and token cost	Wave F — session lifecycle
+ Fleet	F16	designed	next	autonomous-ttl	time-box unattended runs	Wave F — session lifecycle
+ Fleet	F19	not-started	next	bridge-unregister-trap	unregister the bridge on exit	Wave F — session lifecycle
+-Fleet	F15	designed	next	worktree-cleanup	clean up orphaned worktrees	Wave G — quality & hygiene
++Fleet	F15	done	-	worktree-cleanup	clean up orphaned worktrees	Wave G — quality & hygiene
+ Fleet	F17	done	-	scorecard-auto-append	record model scores automatically	Wave G — quality & hygiene
+ Fleet	F18	done	-	auto-log-model-lies	log models that claim false success	Wave G — quality & hygiene
+ Fleet	F25	designed	next	repo-decl-central	declare product vs fleet repo once	Wave G — quality & hygiene
+@@ -175,4 +177,4 @@ Fleet	LAND-SH-SAFE-SYNC	next	next	land-sh-safe-sync	land.sh sync must never dest
+ Router	PROVIDER-CATALOG-REFRESH	done	-	provider-catalog-refresh	auto model<->provider mapping on a schedule (wired)	Model-Trust
+ Router	ADD-PROVIDER-MECHANIZE	done	-	add-provider-mechanize	one-command gateway provider add	Model-Trust
+ Router	DECOMPOSE-EFFORT-AXIS	done	-	decompose-effort-axis	effort axis on the decompose gate (EFFORT-WIRE+ESTIMATOR merged)	Model-Trust
+-Router	MODEL-LIFECYCLE	designed	next	model-lifecycle	fresh-install onboard + scheduled keep-fresh orchestrator	Model-Trust
++Router	MODEL-LIFECYCLE	done	-	model-lifecycle	fresh-install onboard + scheduled keep-fresh orchestrator	Model-Trust
