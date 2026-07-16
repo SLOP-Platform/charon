@@ -3,7 +3,7 @@ difficulty: 1
 work_class: ci-infra
 branch: feat/sync-schedule
 repo: charon-private
-depends_on: STARTUP-CONTEXT-DIET
+depends_on: STARTUP-CONTEXT-DIET, FOREMAN-WIRE
 real-dep: STARTUP-CONTEXT-DIET — shared fleet/preflight.sh edit region (this also
   transitively orders SYNC-SCHEDULE after HANDOFF-MECHANIZE via the existing
   HANDOFF-MECHANIZE -> HANDOFF-PIPEFAIL -> REPO-DECL-CENTRAL -> STARTUP-CONTEXT-DIET

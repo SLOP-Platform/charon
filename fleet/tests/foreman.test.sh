@@ -36,6 +36,7 @@ mk SPLIT-Q economy 4 "src/x.py, src/y.py"; : > "$D/state/loop-guard/SPLIT-Q"
 out="$(FOREMAN_FLEET="$D" bash "$D/foreman.sh" --fix 2>&1)"
 
 has "$out" "FED-OK"                 "(a) claimable ticket surfaces / tier fed"
+has "$out" "[LOW]" "(a2) almost-empty tier flagged LOW (proactive)"
 has "$out" "PARKED-ONE"             "(b) parked ticket is reported"
 no  "$out" "cleared quarantine PARKED-ONE" "(b) parked ticket is NOT auto-cleared"
 has "$out" "DID: cleared quarantine STALE-Q"    "(c) stale single-surface quarantine IS cleared"

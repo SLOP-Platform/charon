@@ -41,9 +41,14 @@ for t in frontier strong economy; do
   done
   for id in $ids; do rm -f "$STATE/claims/$id"; done
   n=$(printf '%s' "$ids" | wc -w)
-  if [ "$n" -eq 0 ]; then say "  [STARVE] $t: 0 claimable -- feed it"; starving="$starving $t"
+  # graduated depth: 0 = STARVE (down now), 1..LOW_WATER = LOW (almost empty, feed proactively),
+  # above = ok. LOW_WATER default 2 (tune via FOREMAN_LOW_WATER).
+  low_water="${FOREMAN_LOW_WATER:-2}"
+  if [ "$n" -eq 0 ]; then say "  [STARVE] $t: 0 claimable -- feed it NOW"; starving="$starving $t"
+  elif [ "$n" -le "$low_water" ]; then say "  [LOW]    $t: $n claimable ->$ids -- almost empty, feed proactively"; low="${low:-} $t"
   else say "  [ok]     $t: $n claimable ->$ids"; fi
 done
+[ -n "${low:-}" ] && say "  (LOW-WATER tiers:${low} -- top up before they starve)"
 
 # --- 2. diagnose non-claimable tickets + collect provably-safe remedies ------------------------
 say "== FOREMAN: non-claimable tickets (reason + blast radius) =="

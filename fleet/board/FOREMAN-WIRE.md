@@ -14,7 +14,7 @@ note: |
   STARVE/COLLISION verdict prominently in the operator-actions output. Non-blocking (advisory) — it
   REPORTS, the manager acts.
 accept: |
-  - preflight.sh scan runs foreman.sh and prints its verdict line ([STARVE]/[COLLISION]/[OK]) in the
+  - preflight.sh scan AND fleet/handoff.sh run foreman.sh (report-only) and print its verdict line ([STARVE]/[LOW]/[COLLISION]/[OK]) in the
     surfaced operator actions; a starving tier or a live collision shows LOUDLY (not buried).
   - preflight NEVER runs foreman --fix (report-only there; acting stays a manager decision).
   - fleet/tests/test_foreman_wire.sh: a fixture where a tier starves -> preflight scan output contains
