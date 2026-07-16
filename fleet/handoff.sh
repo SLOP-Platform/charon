@@ -341,6 +341,12 @@ echo '```'
 bash /home/stack/charon-private/fleet/validate_board.sh 2>&1 || true
 echo '```'
 
+# --- foreman tier-health (auto) ----------------------------------------------
+echo "### Foreman tier-health (auto)"
+echo '```'
+bash /home/stack/charon-private/fleet/foreman-cadence.sh handoff 2>&1 || true
+echo '```'
+
 # --- parked tickets ----------------------------------------------------------
 echo "### Parked tickets"
 echo '```'
