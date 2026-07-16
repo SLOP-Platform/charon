@@ -2,7 +2,6 @@ tier: strong
 difficulty: 3
 work_class: money-path
 branch: feat/price-refresher
-parked: true
 repo: charon
 depends_on:
 owns: src/charon/routing_policy/price_refresher.py, tests/test_price_refresher.py
@@ -71,3 +70,6 @@ ds: |
   repo: charon (product).
 note: ADR-0016 #3, ADOPT-NOT-BUILD (renamed from LIVE-PRICE-PULL 2026-07-12 per PRICING-TOOLS-EVAL.md). NEW disjoint
   file — READY, runs now (concurrent with FAIL-LOUD-CONTRACT).
+  UN-PARKED 2026-07-16 (operator-approved, crash-recovery session): the `parked: true` flag contradicted this
+  note ("READY, runs now") and its own concurrency condition was already met — FAIL-LOUD-CONTRACT was submitted
+  as PR #151. Stale flag, not a live directive. Owns a NEW disjoint file, so no collision risk.

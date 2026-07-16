@@ -31,14 +31,24 @@ done < <(ps -eo pid=,etime=,args= 2>/dev/null | grep '[f]leet-droid\.sh')
 
 # --- BOARD: every ticket + state + who/how-long ---
 printf '\n  BOARD\n  %-6s %-7s %-9s %-22s %s\n' ID TIER STATE BRANCH 'HELD-BY / NOTE'
-ready=0; claimed=0; propen=0; rdone=0; blocked=0
+ready=0; claimed=0; propen=0; rdone=0; blocked=0; nparked=0
 for f in "$B"/*.md; do
   [ -e "$f" ] || continue; id="$(basename "$f" .md)"
   tier="$(meta tier "$f")"; br="$(meta branch "$f")"; dep="$(meta depends_on "$f")"
+  # PARKED is reported BELOW the real progress states (a parked ticket that is already
+  # submitted is still PR-OPEN) but ABOVE blocked/ready — an unclaimable ticket must never
+  # print as `ready`, or the manager plans a wave around work no droid can take.
+  # Predicate lives in _lib.sh (is_parked) and mirrors claim.sh's skip rule.
   if   [ -e "$S/done/$id" ];      then st=DONE;    note="-"; rdone=$((rdone+1))
   elif [ -e "$S/submitted/$id" ]; then st=PR-OPEN; note="$(age_of "$S/submitted/$id") ago"; propen=$((propen+1))
   elif [ -e "$S/needs-push/$id" ]; then st=NEEDS-PUSH; note="committed, NO PR — land-needs-push.sh $id"
   elif [ -e "$S/claims/$id" ];    then st=claimed; note="$(awk 'NR==1{print $1}' "$S/claims/$id") · $(age_of "$S/claims/$id")"; claimed=$((claimed+1))
+  elif is_parked "$f"; then st=PARKED
+    pv="$(parked_value "$f")"
+    # A bare `parked: true` carries no reason — the reason (if any) lives in note:. A prose
+    # park IS its own reason, so echo it: that is the operator directive the manager must see.
+    case "$pv" in true|yes|1) note="unclaimable — see note:";; *) note="unclaimable — ${pv:0:44}";; esac
+    nparked=$((nparked+1))
   elif ! deps_done "$dep"; then st=blocked; note="needs $dep"; blocked=$((blocked+1))
   else st=ready; note="-"; ready=$((ready+1)); fi
   printf '  %-6s %-7s %-9s %-22s %s\n' "$id" "$tier" "$st" "$br" "$note"
@@ -53,6 +63,6 @@ if command -v gh >/dev/null 2>&1; then
   printf '  (CI per PR:  gh pr checks <n> --repo %s)\n' "$REPO_SLUG"
 else echo "  (gh not installed)"; fi
 
-printf '\n  SUMMARY  droids:%d   ready:%d  claimed:%d  PR-open:%d  done:%d  blocked:%d\n\n' \
-  "$ndroid" "$ready" "$claimed" "$propen" "$rdone" "$blocked"
+printf '\n  SUMMARY  droids:%d   ready:%d  claimed:%d  PR-open:%d  done:%d  blocked:%d  parked:%d\n\n' \
+  "$ndroid" "$ready" "$claimed" "$propen" "$rdone" "$blocked" "$nparked"
 printf '  (token/usage is NOT faked here — see Claude'\''s own /usage. board.sh = the quick view.)\n\n'
