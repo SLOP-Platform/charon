@@ -11,6 +11,14 @@ The pool is sorted **free-first, then by cost-class priority, then cheapest-firs
 order breaks ties) — this is the operator's "minimize cost, keep working" policy
 expressed as data. ``code_safe`` lets a role refuse providers that train on /
 leak proprietary code.
+
+DELETE-STATIC-RANK (ADR-0016 step #6): ``cost_rank`` is ALWAYS derived from
+live/sourced/meter price (see ``routing_policy.derived_cost_rank``).  The
+hand-typed integer is no longer a config INPUT — a magnitude a scalar could
+never be trusted to keep in sync with the meter.  ``cost_class`` is RETAINED:
+it is the funding-class CATEGORY axis (free-daily / expiring / prepaid /
+metered) an operator-set ENUMERATED value validated against the reactive
+signal — the ADR's honest floor, not a decaying magnitude.
 """
 from __future__ import annotations
 
@@ -32,7 +40,7 @@ class PoolEntry:
     agent: str  # ACP backend that executes (e.g. "opencode", "codex")
     model: str  # provider/model id the agent is pinned to (e.g. "openrouter/qwen3-coder")
     cost_tier: str  # free | flat | ptk | premium (display/grouping)
-    cost_rank: int  # lower = cheaper; the cost-first sort key
+    cost_rank: int  # lower = cheaper; the cost-first sort key (ALWAYS derived from price)
     code_safe: bool  # defensible for proprietary code (no-train + jurisdiction)
     free: bool  # genuinely $0 (free-first sort key)
     cost_class: str | None = None  # e.g. "free-daily", "prepaid", "metered", "premium"
@@ -93,6 +101,13 @@ def load_pools(
     from the live R4 meter.  When present, the metered cost OVERRIDES the
     configured ``cost_input``/``cost_output`` for rank derivation; when absent
     the configured fallback is used.
+
+    DELETE-STATIC-RANK (ADR-0016 step #6): ``cost_rank`` is NEVER read from
+    the spec — it is ALWAYS derived.  An external ``cost_rank`` on a model
+    entry is ignored for ordering (with a ``DeprecationWarning`` from
+    ``routing_policy.derived_cost_rank``).  Ordering is exclusively the
+    function of live/sourced/meter price and the operator-set
+    ``cost_class`` / ``free`` / ``code_safe`` flags.
     """
     state_dir = Path(state_dir)
     models_path = state_dir / "models.json"

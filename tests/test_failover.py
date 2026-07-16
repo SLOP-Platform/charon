@@ -34,12 +34,18 @@ def _outcome() -> Outcome:
     return Outcome(status=OutcomeStatus.PROGRESSED, provider="mock", commit="abc")
 
 _MODELS = {
+    # DELETE-STATIC-RANK (ADR-0016 step #6): ordering is derived from
+    # cost_input/cost_output (SR-6), not a hand-typed cost_rank integer.  The
+    # pricing below yields the same cheap→dear ordering the old hand-typed
+    # cost_rank integers did.
     "openrouter/qwen3-coder": {"agent": "opencode", "cost_tier": "free",
-                               "cost_rank": 10, "code_safe": False, "free": True},
+                               "code_safe": False, "free": True},
     "nano-gpt/kimi-k2": {"agent": "opencode", "cost_tier": "flat",
-                         "cost_rank": 20, "code_safe": True, "free": False},
+                         "cost_input": 0.0000001, "cost_output": 0.0000001,
+                         "code_safe": True, "free": False},
     "zen/claude-opus": {"agent": "claude-code", "cost_tier": "premium",
-                        "cost_rank": 99, "code_safe": True, "free": False},
+                        "cost_input": 0.000001, "cost_output": 0.000003,
+                        "code_safe": True, "free": False},
 }
 _POOLS = {"coder": ["openrouter/qwen3-coder", "nano-gpt/kimi-k2", "zen/claude-opus"]}
 

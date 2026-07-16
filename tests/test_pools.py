@@ -15,14 +15,21 @@ from charon.pools import PoolConfigError, choose_from_pool, load_pools
 from charon.router import StaticRouter
 
 _MODELS = {
+    # DELETE-STATIC-RANK (ADR-0016 step #6): ordering is derived from
+    # cost_input/cost_output (SR-6), not a hand-typed cost_rank integer.  The
+    # pricing values below yield the same cheap→dear sort the old hand-typed
+    # cost_rank integers did, so the pool contract tests remain valid.
     "openrouter/qwen3-coder": {"agent": "opencode", "cost_tier": "free",
-                               "cost_rank": 10, "code_safe": False, "free": True},
+                               "code_safe": False, "free": True},
     "nano-gpt/kimi-k2": {"agent": "opencode", "cost_tier": "flat",
-                         "cost_rank": 20, "code_safe": True, "free": False},
+                         "cost_input": 0.0000001, "cost_output": 0.0000001,
+                         "code_safe": True, "free": False},
     "opencode-go/glm": {"agent": "opencode", "cost_tier": "flat",
-                        "cost_rank": 30, "code_safe": True, "free": False},
+                        "cost_input": 0.0000003, "cost_output": 0.0000003,
+                        "code_safe": True, "free": False},
     "zen/claude-opus": {"agent": "claude-code", "cost_tier": "premium",
-                        "cost_rank": 99, "code_safe": True, "free": False},
+                        "cost_input": 0.000001, "cost_output": 0.000003,
+                        "code_safe": True, "free": False},
 }
 _POOLS = {"coder": ["zen/claude-opus", "openrouter/qwen3-coder",  # deliberately mis-ordered
                     "opencode-go/glm", "nano-gpt/kimi-k2"]}

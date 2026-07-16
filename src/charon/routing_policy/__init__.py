@@ -113,8 +113,11 @@ def build_routes_and_pools(
     matching `pools.load_pools` (D4).
 
     Effective ``cost_rank`` (SR-6 + R5) is **derived** from per-token pricing when
-    present, or from live metered per-(model,provider) cost when available. An
-    explicit ``cost_rank`` override still wins (operator escape hatch).
+    present, or from live metered per-(model,provider) cost when available.
+    DELETE-STATIC-RANK (ADR-0016 step #6): a hand-typed ``cost_rank`` override is
+    no longer honored — ordering is always derived from price.  An external
+    config that still stamps ``cost_rank`` emits a ``DeprecationWarning`` and the
+    integer is silently dropped from ordering.
     Genuinely-free models (``free:true``) sort first regardless. Models with
     ``cost_class: "premium"`` are GATED OUT of pool chains — they're usable only
     when explicitly requested or in a premium role, never the cheap-first default.
@@ -227,9 +230,13 @@ def _live_rank_key(
 ) -> tuple[bool, int, int]:
     """Tuple to sort routes cheapest-first using LIVE metered cost.
 
-    Falls back to the registry's configured cost_rank when the meter has
-    no data for this (model, provider).  None-safe: missing registry entries
-    sort last (``not free`` True, cost_class_priority 4, cost_rank 1000)."""
+    Falls back to the registry's configured ``cost_input``/``cost_output`` when
+    the meter has no data for this (model, provider).  None-safe: missing
+    registry entries sort last (``not free`` True, cost_class_priority 4,
+    cost_rank 1000).
+
+    DELETE-STATIC-RANK (ADR-0016 step #6): a hand-typed ``cost_rank`` in the
+    registry is NEVER honored here — the field is derived, not read."""
     mid = route.model_id or route.pool_id or ""
     spec = registry.get(mid, {}) if isinstance(registry.get(mid), dict) else {}
     provider = route.provider or ""

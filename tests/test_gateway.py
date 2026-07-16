@@ -325,12 +325,15 @@ def test_sr6_derived_rank_orders_by_blended_cost(tmp_path):
     ]
 
 
-def test_sr6_explicit_cost_rank_override_wins(tmp_path):
-    """An explicit `cost_rank` is the operator escape hatch — it OVERRIDES the
-    derived-from-pricing rank (preserves SR-5b hand-set behavior).
+def test_sr6_explicit_cost_rank_override_ignored(tmp_path):
+    """DELETE-STATIC-RANK (ADR-0016 step #6): a hand-typed ``cost_rank`` is no
+    longer an operator escape hatch — it is IGNORED.  force-dear is naturally
+    cheaper ($0.10/1M) than natural ($2/1M); the operator's hand-typed
+    ``cost_rank = 9999`` is ignored, and force-dear sorts FIRST.
 
-    force-dear would naturally be cheaper ($0.10/1M) than natural ($2/1M), but
-    the operator force-ranks it dear (9999) → it sorts LAST."""
+    This test is the FAIL-ON-REVERT companion to the old
+    ``test_sr6_explicit_cost_rank_override_wins``: revert the deletion (re-honor
+    explicit cost_rank) and this assertion goes RED."""
     toml = tmp_path / "charon.toml"
     toml.write_text(
         '[models."force-dear"]\nupstream_base = "http://a/v1"\n'
@@ -339,9 +342,17 @@ def test_sr6_explicit_cost_rank_override_wins(tmp_path):
         'cost_input = 0.000002\ncost_output = 0.000002\n\n'
         '[pools]\nauto = ["force-dear", "natural"]\n'
     )
-    cfg = gateway.load_config(toml_path=toml)
+    import warnings as _w
+    with _w.catch_warnings():
+        _w.simplefilter("ignore", DeprecationWarning)
+        cfg = gateway.load_config(toml_path=toml)
     chain = cfg.pools["auto"]
-    assert [r.upstream_base for r in chain] == ["http://b/v1", "http://a/v1"]
+    # DELETE-STATIC-RANK: cost_rank=9999 is IGNORED, so the cheaper-by-price
+    # model sorts first.
+    assert [r.upstream_base for r in chain] == ["http://a/v1", "http://b/v1"], (
+        "hand-typed cost_rank=9999 leaked into the sort — DELETE-STATIC-RANK is "
+        "reverted; ADR-0016 step #6 contract broken"
+    )
 
 
 def test_sr6_missing_pricing_falls_back_to_default_rank(tmp_path):
@@ -474,22 +485,37 @@ def test_sr6_derived_rank_from_add_models_bulk_production_path(tmp_path, monkeyp
     assert derived_cost_rank(models["cheap"]) < derived_cost_rank(models["dear"])
 
 
-def test_sr6_explicit_cost_rank_via_add_model_still_honored(tmp_path, monkeypatch):
-    """An operator-set cost_rank via add_model is still honored — the derivation
-    must NOT overwrite a genuine operator override (SR-6 escape hatch)."""
+def test_sr6_explicit_cost_rank_via_add_model_ignored(tmp_path, monkeypatch):
+    """DELETE-STATIC-RANK (ADR-0016 step #6): a hand-typed ``cost_rank`` via
+    ``add_model`` is IGNORED — the derivation wins.  The field is also no
+    longer PERSISTED to ``models.json`` (see
+    ``tests/test_delete_static_rank.py`` for the persistence assertion).
+
+    Previously this test asserted the SR-5b escape-hatch behavior; the deletion
+    contract flips that — revert the deletion and this test goes RED."""
     from charon import config as _config
     monkeypatch.setenv("CHARON_HOME", str(tmp_path))
 
-    # force-dear would naturally be cheap ($0.10/1M) but operator ranks it 9999
-    _config.add_model("force-dear", upstream_base="http://a/v1",
-                      cost_input=0.0000001, cost_output=0.0000001, cost_rank=9999)
+    # force-dear is naturally cheap; operator's hand-typed 9999 is ignored
+    with pytest.warns(DeprecationWarning, match=r"cost_rank=9999"):
+        _config.add_model("force-dear", upstream_base="http://a/v1",
+                          cost_input=0.0000001, cost_output=0.0000001, cost_rank=9999)
     _config.add_model("natural", upstream_base="http://b/v1",
                       cost_input=0.000002, cost_output=0.000002)
 
     _config.set_pool("auto", ["force-dear", "natural"])
     cfg = gateway.load_config(state_dir=tmp_path)
     chain = cfg.pools["auto"]
-    assert [r.upstream_base for r in chain] == ["http://b/v1", "http://a/v1"]
+    # DELETE-STATIC-RANK: hand-typed 9999 is ignored; cheaper-by-price wins.
+    assert [r.upstream_base for r in chain] == ["http://a/v1", "http://b/v1"], (
+        "hand-typed cost_rank via add_model leaked into the sort — "
+        "DELETE-STATIC-RANK is reverted; ADR-0016 step #6 contract broken"
+    )
+    # And the field is NOT persisted.
+    persisted = _config.load_models()
+    assert "cost_rank" not in persisted["force-dear"], (
+        f"cost_rank leaked into models.json: {persisted['force-dear']!r}"
+    )
 
 
 # ---- DRAIN-AND-PARK: balance tracker construction ---------------------------
