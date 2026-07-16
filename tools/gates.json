@@ -170,6 +170,16 @@
     "red_proof": "tests/test_check_inert_code.py"
   },
   {
+    "id": "catalog-case-quant",
+    "name": "Catalog case/quant mismatch detector",
+    "domain": "catalog",
+    "enforcer": "tools/check_catalog_case_quant.py",
+    "covers": "catalog model ids are canonical (no case mismatches, no quantization suffix, no namespace prefix, no normalization collisions)",
+    "ci_step": true,
+    "invariant": "Every catalog entry has a canonical id; no two entries collide under normalization",
+    "red_proof": "tests/test_catalog_gate_wire.py"
+  },
+  {
     "id": "reachability-gate",
     "name": "Hardcoded cross-boundary path gate",
     "domain": "reachability",
