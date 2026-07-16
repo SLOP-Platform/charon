@@ -7,13 +7,21 @@ actions: (1) read this file, (2) run the listed boot checks, (3) FIX/improve any
 
 ## BOOT CHECKLIST (do these first, every session — derived from repeated frictions below)
 1. `SESSION=<name> bash fleet/handoff.sh` reads latest `SESSION-HANDOFF-*.md` (all of them).
-2. `git -C /home/stack/charon-private pull --ff-only origin master` AND same for `/home/stack/code/charon` (local masters DRIFT).
+2. `git -C /home/stack/charon-private pull --ff-only` AND same for `/home/stack/code/charon` (local masters DRIFT). Use the BARE form (no `origin master`) — passing an explicit refspec after a prior `git fetch origin master` leaves multiple for-merge entries in FETCH_HEAD and trips `fatal: Cannot fast-forward to multiple branches`. Bare uses the upstream tracking ref and never trips it.
 3. `charon providers list` runs (CLI shim can silently die). Provider truth is the GATEWAY (4-LOM), not local `~/.charon`.
 4. **`bash fleet/foreman.sh`** — the #1 fix: it surfaces tier starvation + WHY (quarantine/parked/unmarked-dep/collision/undecomposed) LOUDLY. Run it before assuming the board is healthy.
 5. `bash fleet/foreman.sh --fix` clears provably-safe stale blocks (quarantines that pass the decomp gate; merged-unmarked deps). Never auto-unparks.
 6. Money/important/routing PRs get a FOCUSED ADVERSARIAL REVIEW before land — not just gate-green.
 
 ---
+
+## (next session — post-cere-junda, 2026-07-16)
+- **multi-FETCH_HEAD FF error (operator-flagged, FIXED):** `git pull --ff-only origin master` after a separate
+  `git fetch origin master` trips `fatal: Cannot fast-forward to multiple branches` (FETCH_HEAD holds multiple
+  for-merge entries) even when the repo IS current. Harmless (repo was at origin/master) but noisy. → Boot-checklist
+  line 2 now uses the BARE `git pull --ff-only` (upstream-tracking, single ref). Verified clean (EXIT 0).
+- **GraphQL exhausted at boot (0/5000, REST core fine at 4999/5000):** `gh pr list --json` uses GraphQL and hard-fails;
+  route PR listing through REST (`gh api repos/OWNER/REPO/pulls`) or `fleet/gh-cache.sh`. Check `gh api rate_limit --jq .resources` first.
 
 ## cere-junda (2026-07-16)
 - **#1 recurring: silent tier-starvation.** Tabs starved for a long time before I found the cause: a
