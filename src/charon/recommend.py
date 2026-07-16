@@ -93,7 +93,7 @@ def _find_trusted_models(config_dir: str | Path) -> list[tuple[str, str, str]]:
 # A 401/403/407 (auth), 402/429 (limit), 5xx/URLError/timeout (infra), or any
 # other provider-level fault MUST fail OVER to the next candidate — NOT look
 # like an unparseable model reply. The same transport-vs-quality split the
-# planner applies (see decompose_planner._post_chat) is used here.
+# planner applies (see decompose_planner._post_chat_openai) is used here.
 # ----------------------------------------------------------------
 _AUTH_STATUSES = frozenset({401, 403, 407})
 _LIMIT_STATUSES = frozenset({402, 429})
@@ -171,7 +171,7 @@ def _post_tier_ranking(
       * 200 but the body/content is not a parseable JSON dict → return ``None`` (a
         parse/quality fault of THIS model → re-prompt the SAME model).
 
-    Stdlib-only; mirrors ``decompose_planner._post_chat`` and the browser-UA /
+    Stdlib-only; mirrors ``decompose_planner._post_chat_openai`` and the browser-UA /
     no-redirect opener in the original ``recommend._ask_model``.
     """
     raw_base = base_url.rstrip("/")
