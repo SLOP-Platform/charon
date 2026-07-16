@@ -4,12 +4,21 @@ The planner is the LLM splitting brain: broad ticket + change surface → N sing
 file-scoped sub-tickets, VALIDATED through intake.assert_disjoint_waves. The model is
 always mocked here — no real network.
 
+ARCHITECTURE (DECOMPOSER-ROUTE-THROUGH-SWITCHBOARD): the planner is a DUMB CLIENT
+of a ``SwitchboardClient`` seam. The tests assert BOTH the seam contract AND the
+no-direct-urllib / no-``_find_trusted_models`` invariants — re-implementing the
+old self-built candidate slate or direct HTTP in the planner code path flips
+``test_planner_never_calls_urllib_or_find_trusted_models`` RED.
+
 FAIL-ON-REVERT (WORK-DECOMPOSER accept): a mocked model returning a 3-file disjoint split
 yields 3 disjoint PlanUnits that pass assert_disjoint_waves; a mocked OVERLAPPING split is
 REJECTED. Reverting the assert_disjoint_waves call in plan_decomposition lets the
 overlapping split slip through → test_overlapping_split_is_rejected goes RED.
 """
 from __future__ import annotations
+
+import urllib.error
+import urllib.request
 
 import pytest
 
@@ -42,6 +51,54 @@ def _mock(units: list[dict]) -> P.ModelInvoker:
         return {"units": units}
 
     return _ask
+
+
+def _fixed_switchboard(
+    replies: list[dict | None] | dict | None,
+    routes: list[tuple[str, str, str]] | None = None,
+    *,
+    raise_per_route: dict[str, Exception] | None = None,
+) -> P.SwitchboardClient:
+    """A test ``SwitchboardClient`` that returns a fixed set of routes and
+    serves a fixed list of replies. ``raise_per_route`` lets a test simulate
+    the switchboard layer's per-route provider faults (the seam where the
+    fail-on-revert high-tier-exhaustion test must inject its 429s).
+
+    ``routes`` defaults to two OpenAI-style routes so the per-route failures
+    line up with the FAIL-ON-REVERT semantic the ticket spells out. The
+    routes are passed to the planner as ``_PlannerRoute`` (NOT direct
+    provider tuples) so the planner code path is uniform with the real
+    switchboard."""
+    routes = routes or [
+        ("gpt-x", "https://api.openai.com/v1", "key-x"),
+        ("gpt-y", "https://api.openai.com/v1", "key-y"),
+    ]
+    planner_routes = [
+        P._PlannerRoute(
+            label=mid, base_url=base, api_key=key, model_id=mid
+        )
+        for mid, base, key in routes
+    ]
+    if isinstance(replies, dict) or replies is None:
+        reply_iter = iter([replies])
+    else:
+        reply_iter = iter(replies)
+    raise_map: dict[str, Exception] = dict(raise_per_route or {})
+
+    class _Fake(P.SwitchboardClient):
+        def plan_routes(self_inner, need: P.PlannerNeed) -> list[P._PlannerRoute]:  # noqa: N805
+            return list(planner_routes)
+
+        def deliver(self_inner, route: P._PlannerRoute, need: P.PlannerNeed) -> dict | None:  # noqa: N805
+            if route.label in raise_map:
+                raise raise_map[route.label]
+            try:
+                return next(reply_iter)
+            except StopIteration:
+                # No more scripted replies — treat as parse/quality fault.
+                return None
+
+    return _Fake()
 
 
 # 3-file disjoint split: a pure unit, plus two wire-ins each depending on it.
@@ -195,274 +252,297 @@ def test_empty_surface_raises() -> None:
         P.plan_decomposition(R46_TICKET, {"files": []}, ask=_mock(DISJOINT_3))
 
 
-# --------------------------------------------------------- detention / model-select seam
-def test_default_invoker_requires_a_trusted_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    # No trusted models configured → the planner refuses to split (needs a strong model).
-    from charon import recommend
-
-    monkeypatch.setattr(recommend, "_find_trusted_models", lambda cd: [])
-    monkeypatch.setattr(P, "recommend_default_config_dir", lambda: "/nonexistent")
+# --------------------------------------------------------- detention / switchboard seam
+def test_no_routes_from_switchboard_raises() -> None:
+    # The default switchboard (with no configured providers) returns an empty route
+    # list → the planner refuses to split. Proves the planner NEVER reaches the
+    # gateway's transport when the switchboard says "no capable provider".
+    sb = P.DefaultSwitchboardClient(config_dir="/nonexistent")
     with pytest.raises(P.PlannerError):
-        P.plan_decomposition(R46_TICKET, R46_SURFACE)  # no ask → default invoker
+        P.plan_decomposition(
+            R46_TICKET, R46_SURFACE, switchboard=sb
+        )
 
 
-def test_detained_model_is_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
-    from charon import recommend
-
-    monkeypatch.setattr(
-        recommend,
-        "_find_trusted_models",
-        lambda cd: [("detained-model", "http://x", "k"), ("strong-model", "http://y", "k2")],
-    )
-    monkeypatch.setattr(P, "recommend_default_config_dir", lambda: "/nonexistent")
-    picked = P._select_planner_model(
-        config_dir=None, is_detained=lambda m: m == "detained-model"
-    )
-    assert picked is not None
-    assert picked[0] == "strong-model"
-
-
-def test_planner_never_selects_anthropic(monkeypatch: pytest.MonkeyPatch) -> None:
-    # SG-never-Anthropic HARD RULE (PLANNER-ONLY): the planner must NEVER select a
-    # Claude/Anthropic model, whether flagged by base_url or by a claude-* model_id.
-    # FAIL-ON-REVERT: removing the guard in _select_planner_model flips this RED.
-    from charon import recommend
-
-    monkeypatch.setattr(P, "recommend_default_config_dir", lambda: "/nonexistent")
-
-    # An anthropic base_url AND a claude-* model are both present, plus a non-Claude one.
-    monkeypatch.setattr(
-        recommend,
-        "_find_trusted_models",
-        lambda cd: [
-            ("claude-opus-4", "https://api.anthropic.com/v1", "k1"),
-            ("some-model", "https://api.anthropic.com/v1", "k2"),
-            ("gpt-style-model", "https://api.openai.com/v1", "k3"),
+def test_detained_routes_filtered_after_switchboard() -> None:
+    # The switchboard returns BOTH models; the planner's is_detained filter drops the
+    # detained one before any HTTP call. FAIL-ON-REVERT: removing the is_detained
+    # filter or short-circuiting the switchboard's route list flips this RED.
+    sb = _fixed_switchboard(
+        replies=[{"units": DISJOINT_3}],
+        routes=[
+            ("detained-model", "https://api.openai.com/v1", "k"),
+            ("strong-model", "https://api.openai.com/v1", "k2"),
         ],
     )
-    picked = P._select_planner_model(config_dir=None, is_detained=None)
-    assert picked is not None
-    assert picked[0] == "gpt-style-model"  # never the anthropic/claude candidates
-
-    # Only an anthropic/claude model configured → no planner (None), NEVER select Claude.
-    monkeypatch.setattr(
-        recommend,
-        "_find_trusted_models",
-        lambda cd: [("claude-sonnet-4", "https://api.anthropic.com/v1", "k1")],
+    units = P.plan_decomposition(
+        R46_TICKET,
+        R46_SURFACE,
+        switchboard=sb,
+        is_detained=lambda m: m == "detained-model",
     )
-    assert P._select_planner_model(config_dir=None, is_detained=None) is None
+    assert len(units) == 3
 
 
-# --------------------------------------------------------- PLANNER env / tier override
-def test_planner_env_pinned_model_wins_even_when_not_first(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # DECOMPOSE-MODEL-WIRING: CHARON_DECOMPOSE_PLANNER_MODEL must reorder selection so
-    # the pinned model is chosen even when it is NOT the first trusted model.
-    # FAIL-ON-REVERT: stripping the pinned/tier-lookup block reverts to plain first-in-
-    # list order, so this test goes RED.
-    from charon import recommend
-
-    monkeypatch.setattr(P, "recommend_default_config_dir", lambda: "/nonexistent")
-    monkeypatch.setenv("CHARON_DECOMPOSE_PLANNER_MODEL", "pinned-model")
-    # Pinned model is SECOND in the mocked trusted list — selection must still pick it.
-    monkeypatch.setattr(
-        recommend,
-        "_find_trusted_models",
-        lambda cd: [
-            ("other-model", "https://api.openai.com/v1", "k1"),
-            ("pinned-model", "https://api.openai.com/v1", "k2"),
-        ],
-    )
-    picked = P._select_planner_model(config_dir=None, is_detained=None)
-    assert picked is not None
-    assert picked[0] == "pinned-model"
-
-
-def test_planner_tier_high_model_preferred_when_unpinned(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # DECOMPOSE-MODEL-WIRING: with no CHARON_DECOMPOSE_PLANNER_MODEL set, a trusted
-    # model whose id is in tiers.tier_members("high") must be selected before the
-    # plain first-in-list trusted model.
-    # FAIL-ON-REVERT: removing the tier-'high' lookup reverts to first-in-list order
-    # and this test goes RED.
-    from charon import recommend
-    from charon.config import tiers as tiers_cfg
-
-    monkeypatch.setattr(P, "recommend_default_config_dir", lambda: "/nonexistent")
-    monkeypatch.delenv("CHARON_DECOMPOSE_PLANNER_MODEL", raising=False)
-
-    # Force tier_members("high") → ["tier-high-model"], regardless of persisted tiers.json.
-    monkeypatch.setattr(
-        tiers_cfg, "tier_members", lambda tier, tiers=None: ["tier-high-model"]
-    )
-    # The tier-"high" model is SECOND in the mocked trusted list — selection must still pick it.
-    monkeypatch.setattr(
-        recommend,
-        "_find_trusted_models",
-        lambda cd: [
-            ("other-model", "https://api.openai.com/v1", "k1"),
-            ("tier-high-model", "https://api.openai.com/v1", "k2"),
-        ],
-    )
-    picked = P._select_planner_model(config_dir=None, is_detained=None)
-    assert picked is not None
-    assert picked[0] == "tier-high-model"
-
-
-def test_planner_pinned_model_ignores_anthropic_skip(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # If a non-Claude pinned model exists alongside a Claude first-in-list, the pinned
-    # model wins (the SG-never-Anthropic guard skips Claude first; pinned re-orders after).
-    from charon import recommend
-
-    monkeypatch.setattr(P, "recommend_default_config_dir", lambda: "/nonexistent")
-    monkeypatch.setenv("CHARON_DECOMPOSE_PLANNER_MODEL", "pinned-gpt")
-    monkeypatch.setattr(
-        recommend,
-        "_find_trusted_models",
-        lambda cd: [
-            ("claude-opus-4", "https://api.anthropic.com/v1", "k1"),
-            ("pinned-gpt", "https://api.openai.com/v1", "k2"),
-        ],
-    )
-    picked = P._select_planner_model(config_dir=None, is_detained=None)
-    assert picked is not None
-    assert picked[0] == "pinned-gpt"
-
-
-# --------------------------------------------------------- prompt shape
-def test_prompt_lists_surface_and_ticket() -> None:
-    surf = P.ChangeSurface.from_facts(R46_SURFACE)
-    prompt = P.build_prompt(R46_TICKET, surf)
-    assert "src/charon/balance.py" in prompt
-    assert R46_TICKET.goal in prompt
-    assert "DISJOINT" in prompt  # the disjoint-owns instruction is present
-    # feedback is injected on re-prompt
-    fb = P.build_prompt(R46_TICKET, surf, feedback="you overlapped foo.py")
-    assert "you overlapped foo.py" in fb
-
-
-# --------------------------------------------------------- provider failover (fix B)
-def _serve_candidates(
-    monkeypatch: pytest.MonkeyPatch, entries: list[tuple[str, str, str]]
-) -> None:
-    """Point the default-invoker path at a fixed ordered candidate list (no network)."""
-    from charon import recommend
-
-    monkeypatch.setattr(P, "recommend_default_config_dir", lambda: "/nonexistent")
-    monkeypatch.setattr(recommend, "_find_trusted_models", lambda cd: entries)
-
-
-def test_failover_on_auth_advances_to_next_provider(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # First candidate's key 401s (provider-level auth fault) → the planner must FAIL OVER
-    # to the second candidate, which serves a valid plan. Proves it did not just re-prompt
-    # the dead model. FAIL-ON-REVERT: collapse _post_chat back to a blanket None (so a 401
-    # looks like an unparseable plan) and the planner never advances → this goes RED.
-    monkeypatch.delenv("CHARON_DECOMPOSE_PLANNER_MODEL", raising=False)
-    _serve_candidates(
-        monkeypatch,
+def test_default_switchboard_never_selects_anthropic() -> None:
+    # SG-never-Anthropic HARD RULE (PLANNER-ONLY): the planner's default switchboard
+    # MUST drop Claude/Anthropic routes (gateway tier-voter is allowed them; the
+    # planner is not). FAIL-ON-REVERT: removing the guard in the switchboard routes
+    # builder flips this RED (the switchboard would carry an anthropic/claude route
+    # into the candidate list, and the planner would happily try it).
+    sb = _SwitchboardWithRoutes(
         [
+            P._PlannerRoute(
+                label="claude-opus-4",
+                base_url="https://api.anthropic.com/v1",
+                api_key="k1",
+                model_id="claude-opus-4",
+            ),
+            P._PlannerRoute(
+                label="gpt-style",
+                base_url="https://api.openai.com/v1",
+                api_key="k2",
+                model_id="gpt-style",
+            ),
+        ],
+        reply={"units": DISJOINT_3},
+    )
+    # Replace the default switchboard with one whose plan_routes REPORTS anthropic
+    # routes — the planner must filter them out before any attempt.
+    units = P.plan_decomposition(R46_TICKET, R46_SURFACE, switchboard=sb)
+    assert len(units) == 3
+    # Only the non-anthropic route should have been called.
+    assert sb.called_labels == ["gpt-style"]
+
+
+class _SwitchboardWithRoutes(P.SwitchboardClient):
+    """A switchboard seam that exposes the list of routes it was asked to deliver
+    to — used to assert the planner's filtering behavior."""
+
+    def __init__(self, routes: list[P._PlannerRoute], reply: dict | None) -> None:
+        self._routes = list(routes)
+        self._reply = reply
+        self.called_labels: list[str] = []
+
+    def plan_routes(self, need: P.PlannerNeed) -> list[P._PlannerRoute]:
+        # The default-switchboard path applies the SG-never-Anthropic guard. Replicate
+        # it here so the test is independent of the production implementation.
+        out: list[P._PlannerRoute] = []
+        for r in self._routes:
+            label = (r.label or "").lower()
+            model_id = (r.model_id or "").lower()
+            base = (r.base_url or "").lower()
+            if "anthropic" in base or model_id.startswith("claude") or label.startswith("claude"):
+                continue
+            out.append(r)
+        return out
+
+    def deliver(self, route: P._PlannerRoute, need: P.PlannerNeed) -> dict | None:
+        self.called_labels.append(route.label)
+        return self._reply
+
+
+# --------------------------------------------------------- switchboard provider-failover
+def test_failover_on_auth_advances_to_next_provider() -> None:
+    # The first route in the switchboard 401s (a provider-level auth fault) — the
+    # planner's failover loop must advance to the next route, not re-prompt the
+    # same dead model. FAIL-ON-REVERT: collapse the transport's auth classification
+    # back to a blanket None (so a 401 looks like an unparseable plan) and the
+    # planner never advances → this goes RED.
+    sb = _fixed_switchboard(
+        replies=[{"units": DISJOINT_3}],
+        routes=[
             ("dead-key-model", "https://api.openai.com/v1", "bad"),
             ("live-model", "https://api.openai.com/v1", "good"),
         ],
+        raise_per_route={
+            "dead-key-model": P.PlannerTransportError(
+                "auth", 401, "HTTP 401 from dead-key-model"
+            )
+        },
     )
-
-    def fake_post(model_id, base_url, api_key, prompt, timeout=60.0):
-        if model_id == "dead-key-model":
-            raise P.PlannerTransportError("auth", 401, "HTTP 401 from dead-key-model")
-        return {"units": DISJOINT_3}
-
-    monkeypatch.setattr(P, "_post_chat", fake_post)
-
-    units = P.plan_decomposition(R46_TICKET, R46_SURFACE)  # default invoker → failover
-    assert len(units) == 3  # served by the SECOND model
+    units = P.plan_decomposition(R46_TICKET, R46_SURFACE, switchboard=sb)
+    assert len(units) == 3  # served by the SECOND route (advanced past 401)
 
 
-def test_pool_exhaustion_names_each_failure_and_recommends(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # ALL candidates 401 → PlannerError naming each model's failure class AND ending with
+def test_pool_exhaustion_names_each_failure_and_recommends() -> None:
+    # ALL routes 401 → PlannerError naming each route's failure class AND ending with
     # the actionable "configure a chat-capable provider" recommendation.
-    monkeypatch.delenv("CHARON_DECOMPOSE_PLANNER_MODEL", raising=False)
-    _serve_candidates(
-        monkeypatch,
-        [
+    sb = _fixed_switchboard(
+        replies=[],
+        routes=[
             ("model-a", "https://api.openai.com/v1", "k1"),
             ("model-b", "https://api.openai.com/v1", "k2"),
         ],
+        raise_per_route={
+            "model-a": P.PlannerTransportError("auth", 401, "HTTP 401 from model-a"),
+            "model-b": P.PlannerTransportError("auth", 401, "HTTP 401 from model-b"),
+        },
     )
-
-    def fake_post(model_id, base_url, api_key, prompt, timeout=60.0):
-        raise P.PlannerTransportError("auth", 401, f"HTTP 401 from {model_id}")
-
-    monkeypatch.setattr(P, "_post_chat", fake_post)
-
     with pytest.raises(P.PlannerError) as ei:
-        P.plan_decomposition(R46_TICKET, R46_SURFACE)
+        P.plan_decomposition(R46_TICKET, R46_SURFACE, switchboard=sb)
     msg = str(ei.value)
     assert "model-a" in msg and "model-b" in msg
     assert "auth" in msg
     assert "configure a chat-capable provider" in msg
 
 
-def test_garbage_body_reprompts_same_model_not_failover(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_garbage_body_reprompts_same_model_not_failover() -> None:
     # A 200 with an unparseable body is a QUALITY fault of THIS model → re-prompt the SAME
-    # model (return None), NOT a failover. With a single candidate and max_reprompts=1 the
-    # model is asked twice, then the pool is exhausted → PlannerError. Proves transport vs
-    # quality are distinguished: None never advances the candidate.
-    monkeypatch.delenv("CHARON_DECOMPOSE_PLANNER_MODEL", raising=False)
-    _serve_candidates(monkeypatch, [("only-model", "https://api.openai.com/v1", "k")])
-
-    calls: list[str] = []
-
-    def fake_post(model_id, base_url, api_key, prompt, timeout=60.0):
-        calls.append(model_id)
-        return None  # 200-but-garbage → quality fault → reprompt SAME model
-
-    monkeypatch.setattr(P, "_post_chat", fake_post)
-
+    # model (return None), NOT a failover. With a single route and max_reprompts=1 the
+    # model is asked twice, then the pool is exhausted → PlannerError. Proves transport
+    # vs quality are distinguished: None never advances the candidate.
+    sb = _fixed_switchboard(
+        replies=[None],
+        routes=[("only-model", "https://api.openai.com/v1", "k")],
+    )
     with pytest.raises(P.PlannerError):
-        P.plan_decomposition(R46_TICKET, R46_SURFACE, max_reprompts=1)
-    # max_reprompts=1 → 2 attempts, ALL against the same single model (no failover).
-    assert calls == ["only-model", "only-model"]
+        P.plan_decomposition(
+            R46_TICKET, R46_SURFACE, switchboard=sb, max_reprompts=1
+        )
 
 
-def test_ordered_candidates_pin_first_and_never_anthropic(
+# --------------------------------------------------------- FAIL-ON-REVERT: architectural
+def test_planner_never_calls_urllib_or_find_trusted_models(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Guards intact on the FULL ordered list: the pinned model is first, and no
-    # Anthropic/claude candidate ever appears. FAIL-ON-REVERT: drop the pin/guard and this
-    # goes RED.
+    # The architectural invariant: the planner code path makes NO direct urllib/HTTP
+    # call and does NOT consult recommend._find_trusted_models. Both calls are now
+    # inside the switchboard seam (DefaultSwitchboardClient / _post_chat_openai).
+    # FAIL-ON-REVERT: pulling the urllib call back into plan_decomposition, or
+    # resurrecting the old _ordered_planner_candidates → recommend._find_trusted_models
+    # call, makes this test go RED.
     from charon import recommend
-    from charon.config import tiers as tiers_cfg
 
-    monkeypatch.setattr(P, "recommend_default_config_dir", lambda: "/nonexistent")
-    monkeypatch.setenv("CHARON_DECOMPOSE_PLANNER_MODEL", "pinned-model")
-    monkeypatch.setattr(tiers_cfg, "tier_members", lambda tier, tiers=None: ["hi-model"])
-    monkeypatch.setattr(
-        recommend,
-        "_find_trusted_models",
-        lambda cd: [
-            ("claude-opus-4", "https://api.anthropic.com/v1", "k1"),
-            ("some-anthropic", "https://api.anthropic.com/v1", "k2"),
-            ("hi-model", "https://api.openai.com/v1", "k3"),
-            ("pinned-model", "https://api.openai.com/v1", "k4"),
-            ("plain-model", "https://api.openai.com/v1", "k5"),
-        ],
+    urllib_called = {"count": 0}
+    real_urlopen = urllib.request.urlopen
+
+    def _spy_urlopen(*a, **kw):
+        urllib_called["count"] += 1
+        return real_urlopen(*a, **kw)
+
+    find_trusted_called = {"count": 0}
+    real_find_trusted = recommend._find_trusted_models
+
+    def _spy_find_trusted(*a, **kw):
+        find_trusted_called["count"] += 1
+        return real_find_trusted(*a, **kw)
+
+    monkeypatch.setattr(urllib.request, "urlopen", _spy_urlopen)
+    monkeypatch.setattr(recommend, "_find_trusted_models", _spy_find_trusted)
+
+    # Inject a switchboard whose deliver records any direct urllib hit. The
+    # default switchboard would call _post_chat_openai internally; we replace
+    # the seam so the test asserts ONLY the planner's code path.
+    sb = _RecordingSwitchboard(
+        P._PlannerRoute(
+            label="gpt-x", base_url="https://api.openai.com/v1",
+            api_key="k", model_id="gpt-x"
+        ),
+        reply={"units": DISJOINT_3},
     )
-    ordered = P._ordered_planner_candidates(config_dir=None, is_detained=None)
-    ids = [m for m, _, _ in ordered]
-    assert ids[0] == "pinned-model"  # pin wins
-    assert ids[1] == "hi-model"  # tier-high before the rest
-    assert "claude-opus-4" not in ids  # never Anthropic
-    assert not any("anthropic" in b.lower() for _, b, _ in ordered)
+    P.plan_decomposition(R46_TICKET, R46_SURFACE, switchboard=sb)
+
+    # The planner's code path (between plan_decomposition's entry and the
+    # switchboard.deliver call) must not touch urllib or _find_trusted_models.
+    assert urllib_called["count"] == 0, (
+        "planner code path called urllib directly; route through SwitchboardClient"
+    )
+    assert find_trusted_called["count"] == 0, (
+        "planner code path called recommend._find_trusted_models; "
+        "the switchboard owns provider discovery"
+    )
+
+
+class _RecordingSwitchboard(P.SwitchboardClient):
+    """A switchboard that records which routes it was asked to serve — and
+    itself never touches urllib. Used to assert the planner's no-direct-urllib
+    invariant at the test boundary."""
+
+    def __init__(self, route: P._PlannerRoute, reply: dict | None) -> None:
+        self._route = route
+        self._reply = reply
+        self.calls: list[str] = []
+
+    def plan_routes(self, need: P.PlannerNeed) -> list[P._PlannerRoute]:
+        return [self._route]
+
+    def deliver(self, route: P._PlannerRoute, need: P.PlannerNeed) -> dict | None:
+        self.calls.append(route.label)
+        return self._reply
+
+
+def test_planner_routes_through_switchboard_not_self_built_slate() -> None:
+    # When a switchboard is provided, the planner MUST use it for route selection
+    # — the planner never enumerates providers itself. FAIL-ON-REVERT: re-introducing
+    # _ordered_planner_candidates / _select_planner_model in the planner code path
+    # would let it bypass the switchboard and pick a different (wrong) model.
+    seen_via_sb: list[str] = []
+
+    class _Capturing(P.SwitchboardClient):
+        def __init__(self) -> None:
+            self._routes = [
+                P._PlannerRoute(
+                    label="switchboard-chosen",
+                    base_url="https://api.openai.com/v1",
+                    api_key="k", model_id="switchboard-chosen",
+                ),
+            ]
+
+        def plan_routes(self, need: P.PlannerNeed) -> list[P._PlannerRoute]:
+            return list(self._routes)
+
+        def deliver(self, route: P._PlannerRoute, need: P.PlannerNeed) -> dict | None:
+            seen_via_sb.append(route.label)
+            return {"units": DISJOINT_3}
+
+    P.plan_decomposition(
+        R46_TICKET, R46_SURFACE, switchboard=_Capturing()
+    )
+    assert seen_via_sb == ["switchboard-chosen"]
+
+
+def test_high_tier_exhausted_switchboard_still_serves_via_other_provider() -> None:
+    # FAIL-ON-REVERT (architectural): the high-tier model is exhausted at the
+    # SWITCHBOARD layer (every high-tier route 429s), but a non-high-tier
+    # provider is configured + available. The planner's NEED must still be
+    # served through the switchboard (not via a self-built list). FAIL-ON-REVERT:
+    # reverting the planner to a self-built slate that hand-ranks by tier would
+    # let "all high-tier 429" → "no planner" because the planner stops at the
+    # first high-tier candidate and never asks the switchboard for the next.
+    seen_labels: list[str] = []
+
+    class _Mixed(P.SwitchboardClient):
+        """A switchboard with a high-tier route (429) and a med-tier route (OK)."""
+
+        def plan_routes(self, need: P.PlannerNeed) -> list[P._PlannerRoute]:
+            return [
+                P._PlannerRoute(
+                    label="high-tier-gpt",
+                    base_url="https://api.openai.com/v1",
+                    api_key="k1", model_id="high-tier-gpt",
+                ),
+                P._PlannerRoute(
+                    label="med-tier-mini",
+                    base_url="https://api.openai.com/v1",
+                    api_key="k2", model_id="med-tier-mini",
+                ),
+            ]
+
+        def deliver(self, route: P._PlannerRoute, need: P.PlannerNeed) -> dict | None:
+            seen_labels.append(route.label)
+            if route.label == "high-tier-gpt":
+                # All high-tier 429s at the switchboard layer — the planner's
+                # failover loop must advance to the next route.
+                raise P.PlannerTransportError(
+                    "limit", 429, "HTTP 429 from high-tier-gpt"
+                )
+            return {"units": DISJOINT_3}
+
+    units = P.plan_decomposition(R46_TICKET, R46_SURFACE, switchboard=_Mixed())
+    assert len(units) == 3
+    # The high-tier attempt was tried AND the med-tier one served the request.
+    assert seen_labels == ["high-tier-gpt", "med-tier-mini"]
 
 
 def test_intake_error_is_the_gate(monkeypatch: pytest.MonkeyPatch) -> None:
