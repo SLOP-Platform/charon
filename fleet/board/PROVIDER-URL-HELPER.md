@@ -2,7 +2,7 @@ tier: strong
 difficulty: 3  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
 work_class: refactor
 branch: refactor/provider-url-helper
-depends_on: PROVIDER-PROBE-FIX
+depends_on: DELETE-STATIC-RANK
 real-dep: PROVIDER-PROBE-FIX shared-file hand-off — this ticket edits the SAME
   `validate_provider_key` URL-construction region in config.py (and the same
   `providers.py` base_url handling) that PROVIDER-PROBE-FIX edits; it must rebase onto that
