@@ -16,16 +16,12 @@
 from __future__ import annotations
 
 import json
-import threading
 from unittest.mock import MagicMock, patch
 
 from charon.balance import BalanceTracker, DegradationState
-from charon.failover import (backpressure_delay, classify_routing_health,
-                              emit_degradation_alert)
+from charon.failover import backpressure_delay, classify_routing_health, emit_degradation_alert
 from charon.pools import PoolEntry
 from charon.router import StaticRouter
-from charon.types import Tier
-
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
