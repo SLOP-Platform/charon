@@ -35,6 +35,7 @@ from .guardrails import Guardrails
 from .netutil import is_loopback
 from .observability import Observability
 from .policy_router import PolicyRouter
+from .proxy import GatewayProxy, ProxyObservation
 from .proxy_server import GatewayProxyServer, UpstreamRoute
 from .quality_scorer import QualityScorer
 from .request_inspector import RequestInspector
@@ -43,6 +44,7 @@ from .routing_policy.catalog_refresh import CatalogRefresher
 from .session_affinity import SessionAffinity
 from .speculative_execution import SpeculativeExecutor
 from .spend_limits import SpendLimiter
+from .types import Usage
 from .virtual_keys import VirtualKeyManager
 
 # ── module registry (F29) ─────────────────────────────────────────────────────
@@ -351,6 +353,98 @@ def _check_failover_safety(cfg: GatewayConfig) -> None:
           "or open http://127.0.0.1:8080/charon/setup", file=sys.stderr)
 
 
+# ── non-token cost extraction (GATEWAY-NONTOKEN-METERING) ──────────────
+
+_NON_TOKEN_COST_FIELDS = ("total_cost", "energy_cost", "energy_kwh", "total_cost_usd")
+
+
+def _extract_non_token_cost(body: dict | None) -> float | None:
+    """Extract non-token cost from a provider response body.
+
+    Checks fields that non-token billing providers use (e.g., NeuralWatt's
+    energy cost fields) at both the response top level and the usage sub-object.
+    Returns the parsed cost in USD, or None if no non-token cost field found.
+    Extensible to additional non-token billing shapes by adding field names
+    to ``_NON_TOKEN_COST_FIELDS``."""
+    if not isinstance(body, dict):
+        return None
+
+    for key in _NON_TOKEN_COST_FIELDS:
+        val = body.get(key)
+        if val is not None:
+            try:
+                fval = float(val)
+                if fval > 0:
+                    return fval
+            except (TypeError, ValueError):
+                pass
+
+    usage = body.get("usage")
+    if isinstance(usage, dict):
+        for key in _NON_TOKEN_COST_FIELDS:
+            val = usage.get(key)
+            if val is not None:
+                try:
+                    fval = float(val)
+                    if fval > 0:
+                        return fval
+                except (TypeError, ValueError):
+                    pass
+
+    return None
+
+
+class _NonTokenAwareProxy(GatewayProxy):
+    """GatewayProxy subclass that also parses non-token cost fields
+    from upstream responses (NeuralWatt energy, flat-rate, request-cap).
+
+    Delegates standard cost extraction to the parent and only intervenes
+    when the standard path yields zero cost but a non-token cost field
+    is present in the response body."""
+
+    def classify(
+        self,
+        requested_model: str,
+        status: int,
+        headers: dict | None = None,
+        body: dict | None = None,
+        expected_model: str | None = None,
+    ) -> ProxyObservation:
+        obs = super().classify(
+            requested_model, status, headers, body, expected_model)
+        # Extract a top-level non-token cost when either (a) the standard path
+        # produced a usage dict whose cost is zero, or (b) there is NO usage dict
+        # at all. Case (b) is the defining energy-billed shape (e.g. NeuralWatt):
+        # the response carries only a top-level ``energy_cost``/``total_cost`` and
+        # no OpenAI-style ``usage`` object, so ``_gateway_usage`` returns None and
+        # ``obs.usage`` is None. Gating on ``obs.usage is not None`` there would
+        # skip the very case this feature exists to meter, recording $0.
+        if status == 200 and (obs.usage is None or obs.usage.cost_usd == 0):
+            ntc = _extract_non_token_cost(body)
+            if ntc is not None and ntc > 0:
+                u = obs.usage
+                new_usage = Usage(
+                    tokens_in=u.tokens_in if u is not None else 0,
+                    tokens_out=u.tokens_out if u is not None else 0,
+                    cost_usd=ntc,
+                    latency_ms=u.latency_ms if u is not None else 0,
+                )
+                obs = ProxyObservation(
+                    requested_model=obs.requested_model,
+                    returned_model=obs.returned_model,
+                    status=obs.status,
+                    exhausted=obs.exhausted,
+                    pseudo_success=obs.pseudo_success,
+                    dropped=obs.dropped,
+                    transient=obs.transient,
+                    retry_after=obs.retry_after,
+                    usage=new_usage,
+                    note=obs.note,
+                    cost_source="provider",
+                )
+        return obs
+
+
 def build_server(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> GatewayProxyServer:
     """Construct the gateway server. Enforces the loopback/token invariant HERE —
     at bind time — so it holds for ANY caller, not just ``run`` (security review
@@ -364,6 +458,8 @@ def build_server(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> 
             f"the gateway holds your provider keys. Set CHARON_GATEWAY_TOKEN / "
             f"--token, or bind 127.0.0.1 for local use (ADR-0005 D5/R8)."
         )
+    # Use non-token-aware observer so NeuralWatt energy cost et al. are parsed
+    observer = _NonTokenAwareProxy(model_pricing=cfg.model_pricing)
     server = GatewayProxyServer(
         routes=cfg.routes, pools=cfg.pools, host=cfg.host, port=cfg.port,
         token=cfg.token, model_ids=cfg.model_ids, model_meta=cfg.model_meta,
@@ -372,6 +468,7 @@ def build_server(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> 
         anthropic_prompt_cache=cfg.anthropic_prompt_cache,
         modules=cfg.modules,
         balance_tracker=cfg.balance_tracker,
+        observer=observer,
     )
     # DRAIN-AND-PARK: wire the observer meter as the spend source for class-3
     # drain-then-park providers (anti-sprawl: one spend source, not two).
