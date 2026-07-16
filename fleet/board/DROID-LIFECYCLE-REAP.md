@@ -23,6 +23,13 @@ note: |
     3. DATA-LOSS TRAP: manually cleaning an orphaned worktree/branch is dangerous — a Claude session in
        this very session `git branch -D`'d a branch that had 2 committed work commits (recovered by SHA).
        Any automated cleanup MUST preserve committed work.
+    4. **SEVERITY-P0 — WORKTREE-CREATE FORCE-RESETS AN EXISTING BRANCH:** fleet-droid.sh's worktree
+       creation recreates the ticket branch from origin/master (reflog: "Created from origin/master",
+       equivalent to `git worktree add -B <branch> origin/master`). If that branch ALREADY EXISTS with
+       unmerged commits (e.g. a prior droid's completed-but-unlanded work, or a manager mid-land rebase),
+       the `-B`/recreate SILENTLY DISCARDS those commits. Observed twice this session on
+       FLEET-DEMAND-DRIVEN-ROUTING (the switchboard work + auth fix), recovered by SHA both times. This is
+       the most dangerous variant: NO human error needed — a routine re-claim destroys unmerged work.
 accept: |
   - `cleanup()` (fleet-droid.sh) removes the ticket's worktree on stand-down, but NEVER with blind
     `--force` over unsaved work: commit-or-stash any uncommitted changes first; committed work stays on
@@ -37,6 +44,11 @@ accept: |
   - fail-on-revert test `fleet/tests/test_droid_reap.sh`: (a) a dead-PID claim + orphaned worktree whose
     branch has a committed change -> reaper releases the claim, removes the worktree, and the branch's
     commit SURVIVES + ticket ends up submitted (not lost); (b) a LIVE-PID claim is left untouched.
+  - **P0 (consequence #4): the worktree-creation path MUST NOT force-recreate/reset a branch that already
+    exists with unmerged commits.** Before creating a worktree, if the ticket branch exists and has
+    `origin/master..<branch>` commits, REUSE it (check it out into the worktree) rather than `-B`-resetting
+    it from origin/master; if it must rebase, do so non-destructively and never drop commits. fail-on-revert
+    test: a ticket branch pre-seeded with a commit -> a re-claim's worktree creation PRESERVES that commit.
   - `charon.cli gate` / rig gate GREEN.
 scope: |
   Root-cause fix for the claim-release churn + SIGKILL-orphan starvation + the data-loss footgun the
