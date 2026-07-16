@@ -9,15 +9,7 @@
   },
   "charon.cache.format_stats": {
     "disposition": "keep-detector-false-positive-module-unreachable-cascade",
-    "reason": "Referenced 3x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
-  },
-  "charon.capability.actuals.ActualRow": {
-    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
-    "reason": "Referenced 18x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
-  },
-  "charon.capability.actuals.ActualsLedger": {
-    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
-    "reason": "Referenced 10x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
+    "reason": "Referenced 3x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade — false positive, not dead code."
   },
   "charon.context_shaper.ShapeResult": {
     "disposition": "keep-pending-wiring-rider",
