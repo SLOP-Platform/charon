@@ -392,10 +392,59 @@ def _compute_discrepancy(claimed: str, actual_verdict: str, actual_gate: str) ->
     return False
 
 
+# STAGE-DEMUX (2026-07-16): the spool's `stage` field is OVERLOADED — it
+# means two different things in two subsystems (PHASE = write-now vs hold,
+# vs TRUST = may-this-row-steer-a-live-number). The PHASE flag is derived
+# from `actual_verdict` presence (the two-phase spool protocol), not from
+# any on-the-wire field; the TRUST axis is the new 16th column on the
+# ledger. To keep the on-the-wire name (currently `stage`, written by
+# capture/enqueue-capture.sh) and the ledger column (also `stage`,
+# consumed by grades.py / budget-derive.py) from colliding in this
+# daemon, the daemon now reads a new explicit field ``trust_stage`` for
+# the ledger column. ``stage`` is still accepted as a legacy alias so
+# the existing enqueue-capture.sh writer continues to work without
+# modification; the fail-closed STAGE-FAILCLOSED follow-up will switch
+# enqueue-capture.sh to the new name and flip the default. See
+# fleet/session-notes/2026-07-16-evidence/bench-provisional-deepdive.md §6.
+_VALID_TRUST_STAGES = ("active", "provisional")
+_DEFAULT_TRUST_STAGE = "active"
+
+
+def _resolve_trust_stage(req: dict) -> str:
+    """Return the requested ledger column-16 trust value for *req*.
+
+    Accepts the canonical ``trust_stage`` field (going forward) and the
+    legacy ``stage`` field (what capture/enqueue-capture.sh currently
+    writes). Invalid values are clamped to the default rather than
+    rejected — the request may have other valid content, and a malformed
+    trust tag must not break the FINAL path entirely. The fail-closed
+    flip (``STAGE-FAILCLOSED``) is a separate ticket; this one only
+    makes the trust axis EXPRESSIBLE end-to-end.
+    """
+    raw = req.get("trust_stage")
+    if raw is None or (isinstance(raw, str) and raw.strip() == ""):
+        raw = req.get("stage")
+    if raw is None or (isinstance(raw, str) and raw.strip() == ""):
+        return _DEFAULT_TRUST_STAGE
+    raw = str(raw).strip()
+    if raw not in _VALID_TRUST_STAGES:
+        return _DEFAULT_TRUST_STAGE
+    return raw
+
+
 def _append_capture_row(model: str, ref: str, work_class: str, difficulty: str,
                         claimed_result: str, actual_verdict: str, actual_gate: str,
-                        score: int, evidence: str, ledger_path: Path) -> None:
-    """Append a source=live capture row to the ledger."""
+                        score: int, evidence: str, ledger_path: Path,
+                        trust_stage: str = "active") -> None:
+    """Append a source=live capture row to the ledger.
+
+    STAGE-DEMUX (2026-07-16): the 16th column is the TRUST axis
+    (provisional/active). Pre-demux the daemon hardcoded the literal
+    ``"active"`` here, which made the trust axis inert in production
+    (live row 45/45 = active, zero provisional ever). Now the value
+    comes from the request's ``trust_stage`` (or legacy ``stage``)
+    field; see ``_resolve_trust_stage`` for the precedence rules.
+    """
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     discrepancy = _compute_discrepancy(claimed_result, actual_verdict, actual_gate)
 
@@ -407,7 +456,7 @@ def _append_capture_row(model: str, ref: str, work_class: str, difficulty: str,
     row = [
         today, "live", ref, work_class, difficulty, model,
         actual_verdict, actual_gate, str(score),
-        "-", "-", "-", note, "-", "-", "active",
+        "-", "-", "-", note, "-", "-", trust_stage,
     ]
     line = "\t".join(row) + "\n"
 
@@ -415,7 +464,7 @@ def _append_capture_row(model: str, ref: str, work_class: str, difficulty: str,
         fh.write(line)
 
     tag = "FALSE-SUCCESS " if discrepancy else ""
-    log(f"capture: appended {tag}live row: {model} / {ref} / {actual_verdict} score={score}")
+    log(f"capture: appended {tag}live row: {model} / {ref} / {actual_verdict} score={score} trust_stage={trust_stage}")
 
 
 # FLAW-3 fix (adversarial review 2026-07-13) -- GRADER-SECFIX-RECONCILE: fold
@@ -527,11 +576,24 @@ def _handle_capture(req: dict, ledger_override: Path | None = None) -> bool:
         score = 0
     score_int = int(score)
 
+    # ── STAGE-DEMUX (2026-07-16): the 16th column is the trust axis ──────
+    # Pre-demux, the daemon hardcoded the literal "active" into every row
+    # and never read req["stage"], so no code path could emit
+    # source=live/stage=provisional — 45/45 live rows were active, zero
+    # provisional ever (bench-provisional-deepdive.md §1). Now the value
+    # is resolved from the request's trust_stage (canonical) or stage
+    # (legacy alias) field; invalid values fall back to "active". This
+    # makes the trust axis EXPRESSIBLE end-to-end. The fail-closed flip
+    # (default active -> provisional) is STAGE-FAILCLOSED's job, not
+    # this ticket's.
+    trust_stage = _resolve_trust_stage(req)
+
     _append_capture_row(
         model=stored_model, ref=stored_ref, work_class=stored_wclass,
         difficulty=stored_diff, claimed_result=stored_claimed,
         actual_verdict=str(actual_verdict), actual_gate=str(actual_gate),
         score=score_int, evidence=evidence, ledger_path=ledger,
+        trust_stage=trust_stage,
     )
 
     # Also append to versioned scorecard artifact
