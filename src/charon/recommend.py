@@ -9,8 +9,11 @@ Failover (DESTIFF-RECOMMEND): the model-invoke is routed through
 a transport/auth/limit failure on one provider fails over to the next instead
 of zeroing the recommendation. Composes the same primitive
 ``decompose_planner`` already uses — class-level fix, not a bespoke loop.
-Unlike the planner, the tier-voter path is allowed to use Anthropic models
-(SG-never-Anthropic is planner-only, see ``decompose_planner``).
+
+SG-never-Anthropic HARD RULE (GATEWAY-WIDE): the tier-voter, exactly like the
+planner, must NEVER invoke a Claude/Anthropic model. Enforced at candidate
+selection in ``_find_trusted_models`` via the shared
+``providers.is_anthropic_route`` predicate — the single home for the rule.
 """
 from __future__ import annotations
 
@@ -49,7 +52,8 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def _find_trusted_models(config_dir: str | Path) -> list[tuple[str, str, str]]:
-    """Find already-configured models that have working API keys.
+    """Find already-configured models that have working API keys, EXCLUDING every
+    Claude/Anthropic route (SG-never-Anthropic HARD RULE, gateway-wide).
     Returns list of (model_id, base_url, api_key) tuples."""
     from . import config, providers, secrets
     secrets.apply_to_env()
@@ -77,6 +81,14 @@ def _find_trusted_models(config_dir: str | Path) -> list[tuple[str, str, str]]:
             continue  # unknown provider with no base_url anywhere — cannot route
         base_url = prov.get("base_url") or resolved.base_url
         if not base_url:
+            continue
+        # SG-never-Anthropic HARD RULE (GATEWAY-WIDE): the tier-voter must NEVER
+        # invoke a Claude/Anthropic model, exactly like the planner. Checked once
+        # base_url is resolved so a preset-configured provider (whose base_url
+        # lives in the preset, not providers.json) cannot slip through.
+        if providers.is_anthropic_route(
+            model_id=mid, provider=prov_name, base_url=base_url
+        ):
             continue
         key_env = prov.get("key_env") or resolved.key_env
         if not key_env:
@@ -334,8 +346,9 @@ def recommend_tiers(provider_name: str, catalog: list[dict], *,
     return contract is unchanged — three ``TierRecommendation`` rows in
     high/med/low order.
 
-    Unlike ``decompose_planner``, the tier-voter path is allowed to use Anthropic
-    models — there is no SG-never-Anthropic guard here.
+    SG-never-Anthropic HARD RULE (GATEWAY-WIDE): Claude/Anthropic models are
+    excluded from the candidate pool by ``_find_trusted_models`` and are never
+    invoked here — the same rule the planner enforces, from the same predicate.
     """
     from . import secrets
     valid_ids = {m["id"] for m in catalog if isinstance(m.get("id"), str)}

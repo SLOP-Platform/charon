@@ -313,3 +313,66 @@ def test_recommend_tiers_quality_fault_reprompts_same_model(
     # garbage-model is retried (max_retries=1 → 2 attempts), then advanced.
     assert calls.count("garbage-model") == 2
     assert calls[-1] == "live-model"
+
+
+# ─────────────────── SG-never-Anthropic HARD RULE (GATEWAY-WIDE) ────────────────
+def test_find_trusted_models_never_returns_anthropic(tmp_path, monkeypatch):
+    """SG-never-Anthropic HARD RULE (GATEWAY-WIDE), COVERED AT THE PRODUCTION FILTER.
+
+    Drives the REAL ``_find_trusted_models`` against a config dir where the operator
+    has deliberately configured the built-in ``anthropic`` preset WITH a live key —
+    the exact condition under which the tier-voter used to happily invoke Claude
+    (the voter shipped with NO never-Anthropic guard while the planner had one).
+    Only the non-Anthropic model may be trusted.
+
+    FAIL-ON-REVERT: delete the ``is_anthropic_route`` guard in ``_find_trusted_models``
+    and 'claude-opus-4' reappears in the trusted list → RED. (Verified by removing the
+    guard locally: trusted became ['claude-opus-4', 'glm-4.6'].)
+    """
+    from charon import config
+
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    # `charon providers add anthropic` — preset carries base_url + ANTHROPIC_API_KEY.
+    config.add_provider("anthropic", base_url=None, key_env="ANTHROPIC_API_KEY")
+    config.add_model("claude-opus-4", provider="anthropic")
+    config.add_provider("zai", base_url=None, key_env="ZAI_API_KEY")
+    config.add_model("glm-4.6", provider="zai")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-live-key")
+    monkeypatch.setenv("ZAI_API_KEY", "sk-zai-key")
+
+    trusted = _find_trusted_models(str(tmp_path))
+
+    assert [m for m, _b, _k in trusted] == ["glm-4.6"]
+    assert not any("anthropic" in b.lower() for _m, b, _k in trusted)
+
+
+def test_recommend_tiers_never_invokes_anthropic(tmp_path, monkeypatch):
+    """End-to-end companion: even with an Anthropic model configured AND sorted to the
+    front of the pool (tiers.json's absent-file default seeds Anthropic names into the
+    'high' tier, which ``recommend_tiers`` queries FIRST), no Anthropic route may ever
+    reach ``_post_tier_ranking``. Guards the INVOCATION, not just the candidate list."""
+    from charon import config, recommend
+
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    config.add_provider("anthropic", base_url=None, key_env="ANTHROPIC_API_KEY")
+    config.add_model("claude-opus-4", provider="anthropic")
+    config.add_provider("zai", base_url=None, key_env="ZAI_API_KEY")
+    config.add_model("glm-4.6", provider="zai")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-live-key")
+    monkeypatch.setenv("ZAI_API_KEY", "sk-zai-key")
+
+    posted: list[tuple[str, str]] = []
+
+    def _fake_post(model_id, base_url, api_key, _prompt, timeout=30.0):
+        posted.append((model_id, base_url))
+        return {"low": [], "med": ["real-model"], "high": []}
+
+    monkeypatch.setattr(recommend, "_post_tier_ranking", _fake_post)
+
+    recommend_tiers("some-provider", [{"id": "real-model"}], config_dir=str(tmp_path))
+
+    assert posted, "_post_tier_ranking was never called — test would vacuously pass"
+    for model_id, base_url in posted:
+        assert "claude" not in model_id.lower()
+        assert "anthropic" not in model_id.lower()
+        assert "anthropic" not in base_url.lower()

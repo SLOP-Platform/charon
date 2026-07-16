@@ -33,6 +33,43 @@ WIRE_ANTHROPIC = "anthropic"  # Anthropic /v1/messages wire (SR-6 prompt-cache t
 ANTHROPIC_PROMPT_CACHE_KEY = "anthropic_prompt_cache"
 
 
+# ── SG-never-Anthropic HARD RULE (GATEWAY-WIDE) ───────────────────────────────
+# Charon's gateway must NEVER route WORK to Anthropic/Claude — on ANY routing
+# path (planner/decomposer, tier-voter, or any future selector). This predicate
+# is the SINGLE home for that rule: every routing path composes it rather than
+# re-implementing the vendor string match, so the rule cannot regress in one
+# path while holding in another (it has regressed exactly that way before).
+#
+# SCOPE — this bans SELECTING an Anthropic route to send work to. It does NOT
+# ban Anthropic *wire* support (``WIRE_ANTHROPIC``/``translate.py``) or the
+# ``anthropic`` preset existing: those describe how to speak to a provider the
+# operator may deliberately configure for non-routing reasons, and the SR-6
+# prompt-cache feature is built on them. Reachability is what is guarded.
+def is_anthropic_route(
+    *,
+    model_id: str | None = None,
+    provider: str | None = None,
+    base_url: str | None = None,
+) -> bool:
+    """True when any of ``model_id``/``provider``/``base_url`` identifies an
+    Anthropic/Claude route. Covers the direct vendor (``anthropic`` provider,
+    ``api.anthropic.com``), namespaced re-sellers (``anthropic/claude-3.5-sonnet``
+    on OpenRouter, ``@anthropic-ai/...``), and Bedrock-style ids
+    (``us.anthropic.claude-...``). Any hit ⇒ the route MUST NOT be selected."""
+    for field in (model_id, provider, base_url):
+        if not field:
+            continue
+        low = field.lower()
+        if "anthropic" in low:
+            return True
+    mid = (model_id or "").lower()
+    # Bare/namespaced Claude ids that never spell the vendor (e.g. "claude-opus-4",
+    # "some-host/claude-3-haiku").
+    if mid.startswith("claude") or "/claude" in mid:
+        return True
+    return False
+
+
 @dataclass(frozen=True)
 class ProviderPreset:
     base_url: str

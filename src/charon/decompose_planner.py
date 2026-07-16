@@ -280,14 +280,15 @@ def _switchboard_routes(
     """Build the switchboard-side route list: load the configured pool routes via
     the SAME ``pools.load_pools`` + ``routing_policy`` machinery the gateway uses,
     filter to planner-capable providers, drop Anthropic (SG-never-Anthropic is a
-    planner-only invariant — the gateway's tier-voter is allowed Anthropic), and
-    rank cheapest-capable-available. Returns the same routes the gateway's
+    GATEWAY-WIDE invariant — EVERY routing path enforces it, planner and
+    tier-voter alike), and rank cheapest-capable-available. Returns the same
+    routes the gateway's
     ``chain_for`` would emit for the planner's ``work_class``.
 
     Stdlib-only; mirrors ``routing_policy.build_routes_and_pools`` ordering
     (free-first, then cost-class priority, then cheapest-first)."""
 
-    from . import secrets
+    from . import providers, secrets
     from .config._store import _load as _config_load
     from .routing_policy import build_routes_and_pools
     from .routing_policy.cost_rank import (
@@ -328,13 +329,13 @@ def _switchboard_routes(
     out: list[_PlannerRoute] = []
     for r in chain:
         provider = (r.provider or "").lower()
-        mid = (r.model_id or "").lower()
-        # SG-never-Anthropic HARD RULE (PLANNER-ONLY): the planner/decomposer
-        # must NEVER select a Claude/Anthropic model. The gateway's tier-voter
-        # is allowed Anthropic; the planner is not.
-        if "anthropic" in provider or "anthropic" in (r.upstream_base or "").lower():
-            continue
-        if mid.startswith("claude"):
+        # SG-never-Anthropic HARD RULE (GATEWAY-WIDE): the planner/decomposer must
+        # NEVER select a Claude/Anthropic model — and neither may ANY other routing
+        # path (the tier-voter included). ``providers.is_anthropic_route`` is the
+        # rule's single home; compose it, never re-implement the vendor match.
+        if providers.is_anthropic_route(
+            model_id=r.model_id, provider=provider, base_url=r.upstream_base
+        ):
             continue
         if not r.upstream_base or not r.api_key:
             continue
