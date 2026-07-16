@@ -162,6 +162,10 @@ gh pr create --repo "$OWNER_REPO" --base "$BASE" --head "$BRANCH" --fill 2>/dev/
 # "DONE" — false success that nearly recorded phantom lands (recurring LESSON). Mark ready
 # FIRST, merge, then VERIFY the PR is genuinely MERGED and fail LOUD (non-zero) otherwise.
 gh pr ready "$BRANCH" --repo "$OWNER_REPO" 2>/dev/null || true
+# PACE merges: GitHub's SECONDARY content-creation limit (~80/min, not shown in gh api rate_limit)
+# trips on rapid merge BURSTS (observed: 8 rapid lands -> temporary block). A small delay keeps a
+# sequential land batch under it. Tune/disable via LAND_PACE_S.
+sleep "${LAND_PACE_S:-2}"
 gh pr merge "$BRANCH" --repo "$OWNER_REPO" --merge 2>&1 | tail -2
 # Verify genuinely MERGED. `gh pr view` can briefly RACE right after a merge and return an
 # empty/unknown state on a PR that DID merge — retry once so a real merge is not misreported as
