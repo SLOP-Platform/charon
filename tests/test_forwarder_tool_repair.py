@@ -127,6 +127,13 @@ def _drive(tmp_path: Path, *, wire_tool_repair: bool) -> dict:
     finally:
         gw.shutdown()
         up.shutdown()
+    # Top-level response contract: the client must observe an OpenAI-shaped
+    # envelope -- a top-level `choices` list and `usage` dict -- not a foreign
+    # wrapper. A mis-shaped body (e.g. cline's {"data": .., "success": true})
+    # has neither and would fail HERE rather than pass unnoticed while the
+    # in-`choices` assertions below drill blindly into a self-mirrored mock.
+    assert isinstance(served.get("choices"), list) and served["choices"]
+    assert isinstance(served.get("usage"), dict) and served["usage"]
     return served
 
 
@@ -206,5 +213,10 @@ def test_well_formed_tool_call_unchanged_when_repair_wired(tmp_path: Path) -> No
     finally:
         gw.shutdown()
         up.shutdown()
+    # Top-level response contract (see `_drive`): a foreign envelope with no
+    # top-level `choices`/`usage` would fail here, not slip past the in-choices
+    # assertion below.
+    assert isinstance(served.get("choices"), list) and served["choices"]
+    assert isinstance(served.get("usage"), dict) and served["usage"]
     tc = served["choices"][0]["message"]["tool_calls"][0]
     assert tc["function"]["arguments"] == '{"city": "Paris", "days": 3}'
