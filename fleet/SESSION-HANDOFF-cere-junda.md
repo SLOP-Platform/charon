@@ -1,5 +1,8 @@
 # Charon Fleet — Session Handoff — cere-junda (2026-07-16)
 
+**Session:** cere-junda
+**Rig HEAD committed@:** 05c7d0f (both charon-private + code/charon clean, pushed to origin/master)
+
 ## Bootstrap (paste into next session)
 ```
 Read and fully follow /home/stack/charon-private/fleet/SESSION-HANDOFF-cere-junda.md — you are the fresh Charon fleet MANAGER, carry it out, then flip to fleet mode.
@@ -11,6 +14,7 @@ Read and fully follow /home/stack/charon-private/fleet/SESSION-HANDOFF-cere-jund
 2. **`bash fleet/foreman.sh`** — surfaces tier starvation + WHY, loudly (built this session, 8/8 tests, wired into `preflight.sh`). `--fix` clears provably-safe stale blocks. #1 fix for the recurring "tabs idle / board starved" problem.
 3. **Feed the idle tabs.** At handoff the board was STARVING (all tiers 0 claimable) — most ready work is consumed or blocked. Refill: land open PRs (auto-done-marks → cascade-unblocks) + un-park/serial-justify the P0 chain.
 4. **Money/important/routing PRs get a FOCUSED ADVERSARIAL REVIEW before land** — not just gate-green.
+4b. **Before building ANY new tool: REUSE-CHECK it doesn't already exist** (operator directive) — audit `TOOL-INVENTORY.md` + a FRESH graphify map (`GRAPHIFY-MAP-FRESHNESS` boarded — refresh the stale map first). Don't reinvent.
 5. **HIGH-PRIORITY INVESTIGATION (operator directive): `GATE-CREATION-STANDARDIZE` (boarded, frontier).** Research every case where a GREEN gate missed a real issue (this session had several) → build a durable `GATE-GAP-LEDGER.tsv` (appended on every future miss) + a standardized gate-creation checklist + a meta-gate. Goal: eliminate issues at the CLASS level, not one-off. Read the ticket for scope.
 
 ## DELIVERED THIS SESSION (headlines)
@@ -29,5 +33,9 @@ Read and fully follow /home/stack/charon-private/fleet/SESSION-HANDOFF-cere-jund
 - **land.sh false-DONE on a fresh PR:** mergeability=UNKNOWN briefly → land.sh correctly refuses; retry once it computes.
 - **GitHub secondary content-creation limit** trips on burst lands — `gh api rate_limit` shows exact reset (free call); land.sh now paces.
 
+## session-bridge
+- No active bridge sessions at handoff (single manager session cere-junda; no coordination sessions in flight). Next session picks a fresh name; do not re-register cere-junda.
+
 ## STATE
 - Both repos clean, pushed to origin/master. Board STARVING at handoff (refill = first-action #3). No sub-sessions running (all closed).
+- **Code map (graphify) is STALE** — product graph last built 2026-07-13 (missing this session's failover_loop/context_shaper/memory modules); rig has NO graph. `GRAPHIFY-MAP-FRESHNESS` boarded to auto-refresh; run `graphify update /home/stack/code/charon` before relying on reuse-check/review.
