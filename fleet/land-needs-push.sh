@@ -20,5 +20,17 @@ wt="$RR_WT"; REPO_SLUG="$(repo_owner_repo "$RR_PATH")"
 [ -d "$wt" ] || { echo "land-needs-push: worktree $wt missing — work may be lost." >&2; exit 4; }
 echo "land-needs-push: $id  branch=$branch  worktree=$wt  repo=$REPO_SLUG  base=$RR_BASE"
 bash "$FLEET/land-push.sh" "$branch" "$wt" || { echo "land-needs-push: push blocked (see above) — flip the lever or push, then re-run." >&2; exit 5; }
-gh pr create --repo "$REPO_SLUG" --base "$RR_BASE" --head "$branch" --draft --fill || true
+# CLASS FIX (2026-07-15): `gh pr create --fill` derives title/body from the
+# base..head commit range and resolves the base as the LOCAL ref. In a fleet
+# worktree the local `$RR_BASE` (e.g. master) is frequently stale or absent
+# (droids branch off origin/master and never create a local master), so --fill
+# died with "ambiguous argument 'master...<branch>'" and NO PR was opened for
+# EVERY recovered branch. Compute title/body explicitly against origin/$RR_BASE
+# (always present after the push above) so the PR opens regardless of local refs.
+pr_title="$(git -C "$wt" log -1 --pretty=%s "$branch" 2>/dev/null)"
+pr_body="$(git -C "$wt" log --reverse --pretty='- %s' "origin/$RR_BASE..$branch" 2>/dev/null)"
+[ -n "$pr_title" ] || pr_title="$id"
+[ -n "$pr_body" ] || pr_body="Recovered branch — see commits."
+gh pr create --repo "$REPO_SLUG" --base "$RR_BASE" --head "$branch" --draft \
+  --title "$pr_title" --body "$pr_body" || true
 bash "$FLEET/submit.sh" "$id"
