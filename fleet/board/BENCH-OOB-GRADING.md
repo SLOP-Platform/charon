@@ -1,7 +1,7 @@
 repurpose-2026-07-10: grade REAL tasks (reds-replay + sub-session actuals), NOT synthetic S0-S6; write VERSIONED frozen scorecard artifacts consumed via freeze-ring (GATEWAY-PROGRAM).
 tier: frontier
 difficulty: 5  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
-parked: true
+parked:
 work_class: ci-infra
 branch: feat/bench-oob-grading
 depends_on:
@@ -12,6 +12,7 @@ real-dep: BENCH-PROVISIONAL-SCORING — shared single-owner of benchmark/bench.s
   for stage plumbing; must rebase onto #20, never co-write. Logically parallel per pivot §1 but
   file-sequenced after #20.
 owns: benchmark/bench.sh, benchmark/lib/grade_state.py, model-scorecard.sh, benchmark/grader-daemon.py, benchmark/graders, benchmark/RUN-BENCHMARK.md, START-SESSION.md, preflight.sh
+serial_justified: Remaining work is a single cohesive VERIFICATION pass of an already-built integrity system (13 graders + daemon deployed & live via bench-grader-setup.sh 2026-07-16); difficulty:5 is a placeholder auto-seed (see its own comment 'refine when purpose is fresh'), not a real size estimate, and the 8 owns are surfaces the built work TOUCHED, not 8 independent remaining builds. Accept is verify-and-human-sign-off (unreadable keys, forged-score rejection, deterministic re-grade) — inherently serial, not parallelizable.
 accept: human sign-off — from the graded-agent user, `cat` of any grader source/baseline fixture FAILS (permission denied); a fabricated agent-pasted score does NOT change the ledger (only the daemon's computed score lands); re-grading the snapshot is deterministic
 prompt: /home/stack/charon-private/prompts/bench-oob-grading.md
 scope: #26 (P0 INTEGRITY — the top fix; nothing the benchmark says is trustworthy until it lands).
