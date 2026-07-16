@@ -1,0 +1,50 @@
+# config-manifest.tsv — CONFIG SINGLE SOURCE OF TRUTH (SSOT) for the Charon fleet.
+#
+# MECHANISM: every fleet-managed provider is declared EXACTLY ONCE here (in git, in the PRIVATE
+# rig). The SYNC tool propagates this manifest to every config source (local ~/.charon + the 4-LOM
+# gateway /data volume), and the GATE REDs whenever any source's providers.json diverges from this
+# manifest. Editing a provider on disk is no longer a thing — the workflow is: edit the manifest,
+# then `fleet/config-sync.sh`.
+#
+# FORMAT — TSV, one row per provider, columns:
+#   1. provider    provider id (lowercase; matches `name` in providers.json; the `add-provider.sh`
+#                  1st positional)
+#   2. key_env     env var carrying the API key (NAME only — never a value; the manifest is
+#                  committed to a PRIVATE rig because the operator's active-provider set is
+#                  sensitive, but key names are public-safe and not secret)
+#   3. base_url    OpenAI-compatible endpoint (http(s)://.../v1); may be empty for providers
+#                  whose preset owns the URL (rare; manifest authors prefer explicit)
+#   4. tiers       space-separated tiers the provider is eligible for (free|paid|probe) — a
+#                  hint for the manager (free = usable on free-tier models, paid = metered,
+#                  probe = one-shot capability test); the routing engine still picks per-pool
+#   5. note        human-readable note (1 line; tab-free)
+#
+# IDEMPOTENT: re-running `fleet/config-sync.sh` from this manifest is a no-op when already in sync.
+#
+# EDIT POLICY: this is the only place to add/remove/update a fleet-managed provider. NEVER hand-
+# edit providers.json on a target — `config-sync.sh` will overwrite your edit on the next run.
+#
+# SOURCE (the 11 providers keyed on the 4-LOM gateway, per `fleet/state/CG-PROVIDERS.md` 2026-07-14
+# + 1 active-pending-key provider the operator has marked ACTIVE). The locally-mirrored subset is
+# the intersection of (manifest) and (whatever is currently on disk at a target); the gate names
+# any delta so the operator can re-sync.
+#
+# IMPORTANT: this manifest is committed to the PRIVATE rig (charon-private). Do NOT mirror it to a
+# public repo — the operator's active-provider set is sensitive (a public view leaks which providers
+# the operator is keyed into, an attack-surface enumeration).
+#
+# Row grammar check: every row MUST have exactly 5 tab-separated fields. `awk -F'\t' 'NF!=5' this`
+# on a clean manifest yields nothing.
+
+provider	key_env	base_url	tiers	note
+nanogpt	NANOGPT_API_KEY	https://api.nanogpt.com/v1	paid free	dominant leg (47/50 pool aliases); weekly input-token cap sensitive
+openrouter	OPENROUTER_API_KEY	https://openrouter.ai/api/v1	paid free	49/50 pool aliases; was drained in 00:20-02:08 incident (recovered)
+deepseek	DEEPSEEK_API_KEY	https://api.deepseek.com/v1	paid	prepaid PAYG; cheapest raw DeepSeek tokens (2 model legs)
+huggingface	HUGGINGFACE_API_KEY	https://api-inference.huggingface.co/v1	paid	DRAINED (402 monthly credits depleted 2026-07-13) — pre-paid top-up or PRO to resume
+neuralwatt	NEURALWATT_API_KEY	https://api.neuralwatt.com/v1	paid	owned PAYG; tertiary overflow per PROVIDER-BEST-PER-MODEL
+cline-pass	CLINE_API_KEY	https://api.cline.bot/v1	paid	5 model legs (glm-5.2/kimi-k2.6/deepseek-v4)
+groq	GROQ_API_KEY	https://api.groq.com/openai/v1	free	3 free-tier models (llama-3.1/3.3/gpt-oss-120b)
+cerebras	CEREBRAS_API_KEY	https://api.cerebras.ai/v1	free	2 free-tier models (gpt-oss-120b/gemma-4-31b); 1M TPD
+mistral	MISTRAL_API_KEY	https://api.mistral.ai/v1	free	1 free "Experiment" tier model (Codestral); personal-only ToS
+together	TOGETHER_API_KEY	https://api.together.xyz/v1	paid	1 model leg (minimax-m3-together); already keyed
+zai	ZAI_API_KEY	https://api.zai.com/v1	free	2 free-tagged models (glm-4.5/4.7-flash); rate-limited 2026-07-14
