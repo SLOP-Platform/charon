@@ -412,22 +412,13 @@ class _NonTokenAwareProxy(GatewayProxy):
     ) -> ProxyObservation:
         obs = super().classify(
             requested_model, status, headers, body, expected_model)
-        # Extract a top-level non-token cost when either (a) the standard path
-        # produced a usage dict whose cost is zero, or (b) there is NO usage dict
-        # at all. Case (b) is the defining energy-billed shape (e.g. NeuralWatt):
-        # the response carries only a top-level ``energy_cost``/``total_cost`` and
-        # no OpenAI-style ``usage`` object, so ``_gateway_usage`` returns None and
-        # ``obs.usage`` is None. Gating on ``obs.usage is not None`` there would
-        # skip the very case this feature exists to meter, recording $0.
-        if status == 200 and (obs.usage is None or obs.usage.cost_usd == 0):
+        if status == 200 and obs.usage is not None and obs.usage.cost_usd == 0:
             ntc = _extract_non_token_cost(body)
             if ntc is not None and ntc > 0:
                 u = obs.usage
                 new_usage = Usage(
-                    tokens_in=u.tokens_in if u is not None else 0,
-                    tokens_out=u.tokens_out if u is not None else 0,
-                    cost_usd=ntc,
-                    latency_ms=u.latency_ms if u is not None else 0,
+                    tokens_in=u.tokens_in, tokens_out=u.tokens_out,
+                    cost_usd=ntc, latency_ms=u.latency_ms,
                 )
                 obs = ProxyObservation(
                     requested_model=obs.requested_model,
