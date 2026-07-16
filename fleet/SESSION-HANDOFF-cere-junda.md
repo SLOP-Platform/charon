@@ -15,6 +15,7 @@ Read and fully follow /home/stack/charon-private/fleet/SESSION-HANDOFF-cere-jund
 3. **Feed the idle tabs.** At handoff the board was STARVING (all tiers 0 claimable) — most ready work is consumed or blocked. Refill: land open PRs (auto-done-marks → cascade-unblocks) + un-park/serial-justify the P0 chain.
 4. **Money/important/routing PRs get a FOCUSED ADVERSARIAL REVIEW before land** — not just gate-green.
 4b. **Before building ANY new tool: REUSE-CHECK it doesn't already exist** (operator directive) — audit `TOOL-INVENTORY.md` + a FRESH graphify map (`GRAPHIFY-MAP-FRESHNESS` boarded — refresh the stale map first). Don't reinvent.
+4c. **`ON-DEMAND-TOOL-AUDIT` (boarded, frontier — operator directive):** audit every tool that's on-demand-only / has no trigger / has never or rarely run → ledger + mechanize (cadence + triggers) or retire. Applies [[dynamic-tools-never-on-demand]].
 5. **HIGH-PRIORITY INVESTIGATION (operator directive): `GATE-CREATION-STANDARDIZE` (boarded, frontier).** Research every case where a GREEN gate missed a real issue (this session had several) → build a durable `GATE-GAP-LEDGER.tsv` (appended on every future miss) + a standardized gate-creation checklist + a meta-gate. Goal: eliminate issues at the CLASS level, not one-off. Read the ticket for scope.
 
 ## DELIVERED THIS SESSION (headlines)
