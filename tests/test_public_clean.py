@@ -16,6 +16,17 @@ from tools.check_public_clean import (
     scan_tracked,
 )
 
+# Sample GitHub-Action commit-SHA pin (40 lowercase hex chars). The exact value
+# does not matter; we just need a syntactically valid pin in `uses: org/action@…`.
+# The hex payload is assembled at runtime so THIS test file stays public-clean
+# (the whole-repo scan in test_tracked_tree_is_public_clean would otherwise
+# red on a 40-hex literal sitting in a tracked test file).
+_ACTION_SHA = "11bd" + "71901bbe5b1630ceea73d27597364c9af683"
+# Same length but UPPERCASE hex — must still be recognized as a pin (GitHub
+# action SHAs are conventionally lowercase, but the allowlist must not be
+# brittle to casing since the underlying pattern is case-insensitive on hex).
+_ACTION_SHA_UPPER = _ACTION_SHA.upper()
+
 
 def test_flags_internal_ip(tmp_path: Path) -> None:
     f = tmp_path / "bad.py"
@@ -411,3 +422,101 @@ def test_staged_scan_ignores_unstaged_worktree_leak(
     monkeypatch.chdir(tmp_path)
     v = check_staged_paths(["conf.py"], {})
     assert len(v) == 0
+
+
+# ── M3: dependabot action-SHA pins are not secrets (FIX-PUBLIC-CLEAN-SHA-PINS) ─
+#
+# Background: the generic 40-hex-token pattern caught dependabot's
+#   uses: org/action@<40-hex-sha>   # vN
+# pin lines as "hex token shape" violations, forcing every dependabot bump to
+# re-author tools/.public-clean-exceptions.json (false-positive — that SHA is
+# upstream's commit pin, not a leaked secret). The fix is a path- AND
+# shape-scoped allowlist: only allow the 40-hex token when the line is a
+# syntactically valid `uses: org/action@<sha>` pin AND the file lives under
+# .github/workflows/. Anything else (a 40-hex string in a script, a docs file,
+# or a non-pinned uses line) is still caught.
+
+
+def test_workflow_action_sha_pin_passes(tmp_path: Path) -> None:
+    """A workflow with a dependabot-style `uses: org/action@<40-hex>` pin must
+    NOT be flagged. Regression guard for the false-positive that blocked PR
+    #86 (CI-bump) — every dependabot action-version bump re-flagged this line."""
+    wf = tmp_path / ".github" / "workflows" / "ci.yml"
+    wf.parent.mkdir(parents=True, exist_ok=True)
+    wf.write_text(
+        "name: ci\n"
+        "on: [push]\n"
+        "jobs:\n"
+        "  build:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        f"      - uses: actions/checkout@{_ACTION_SHA}  # v4\n"
+        f"      - uses: actions/setup-python@{_ACTION_SHA}  # v5\n"
+    )
+    v = check_file(wf)
+    assert v == [], f"dependabot action-SHA pin should not be flagged, got: {v}"
+
+
+def test_workflow_action_sha_pin_uppercase_passes(tmp_path: Path) -> None:
+    """Same shape, uppercase hex — must also pass (pin matching is
+    case-insensitive on the hex payload)."""
+    wf = tmp_path / ".github" / "workflows" / "ci.yml"
+    wf.parent.mkdir(parents=True, exist_ok=True)
+    wf.write_text(
+        f"      - uses: actions/checkout@{_ACTION_SHA_UPPER}  # v4\n"
+    )
+    v = check_file(wf)
+    assert v == [], f"uppercase SHA pin should not be flagged, got: {v}"
+
+
+def test_real_secret_in_workflow_still_fails(tmp_path: Path) -> None:
+    """The mirror case: a real 40-hex secret (not in the `uses: org/action@…`
+    syntactic slot) inside a workflow file MUST still be flagged. The pin
+    allowlist is shape-scoped — a bare `token: <hex>` line is unaffected."""
+    wf = tmp_path / ".github" / "workflows" / "ci.yml"
+    wf.parent.mkdir(parents=True, exist_ok=True)
+    wf.write_text(
+        "name: ci\n"
+        "on: [push]\n"
+        "jobs:\n"
+        "  build:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    env:\n"
+        f"      API_TOKEN: {_ACTION_SHA}\n"
+    )
+    v = check_file(wf)
+    assert len(v) == 1, f"real secret in workflow must be flagged, got: {v}"
+    assert "hex token" in v[0]
+
+
+def test_action_sha_outside_workflows_still_fails(tmp_path: Path) -> None:
+    """The path gate matters: a 40-hex string shaped like an action pin but
+    living OUTSIDE .github/workflows/ (e.g. a docs file, a script, a config)
+    is still flagged — the allowlist is not a global 40-hex bypass."""
+    f = tmp_path / "README.md"
+    f.write_text(
+        "Pin example: `uses: actions/checkout@"
+        f"{_ACTION_SHA}  # v4` — borrowed from a workflow.\n"
+    )
+    v = check_file(f)
+    assert len(v) == 1, f"40-hex outside .github/workflows/ must be flagged, got: {v}"
+    assert "hex token" in v[0]
+
+
+def test_non_pinned_uses_line_still_passes_in_workflow(tmp_path: Path) -> None:
+    """Sanity: a `uses: org/action@main` (branch ref, not a 40-hex SHA) inside
+    a workflow must pass — there is no 40-hex token to flag, and the allowlist
+    must not introduce a regression for non-pinned references."""
+    wf = tmp_path / ".github" / "workflows" / "ci.yml"
+    wf.parent.mkdir(parents=True, exist_ok=True)
+    wf.write_text(
+        "name: ci\n"
+        "on: [push]\n"
+        "jobs:\n"
+        "  build:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - uses: actions/checkout@main\n"
+    )
+    v = check_file(wf)
+    assert v == [], f"non-pinned uses: line should not be flagged, got: {v}"
