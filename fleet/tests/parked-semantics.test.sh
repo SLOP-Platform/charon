@@ -72,5 +72,40 @@ grep -q 'is_parked' "$FLEET/status.sh" \
   && ok "status.sh consults the parked predicate" \
   || bad "status.sh ignores parked: — parked tickets print as 'ready' (the display bug)"
 
+# ── 5. EVERY parked-reading site agrees — no site keeps a private literal rule ─────────
+# The bug was one rule copied into four places and fixed in none. foreman.sh decides whether a
+# quarantine is a human hold; launch-plan.sh decides what is launchable. A literal test in
+# either resurrects the defect on a different surface.
+grep -vE '^[[:space:]]*#' "$FLEET/foreman.sh" | grep -qE 'in true\|yes\|1\)' \
+  && bad "foreman.sh keeps a literal parked test — prose parks not seen as a human hold" \
+  || ok "foreman.sh no longer literal-matches parked"
+grep -q 'source "\$FLEET/_lib.sh"' "$FLEET/foreman.sh" \
+  && ok "foreman.sh sources the canonical predicate" \
+  || bad "foreman.sh does not source _lib.sh — its parked rule can drift again"
+
+# launch-plan.sh's rule is PYTHON — exercise the real function rather than eyeballing it.
+if command -v python3 >/dev/null 2>&1; then
+  py_out="$(python3 - "$FLEET/launch-plan.sh" <<'PY' 2>/dev/null
+import re, sys
+src = open(sys.argv[1]).read()
+m = re.search(r"^def is_parked\(tf\):\n(?:[ ].*\n|\n)*", src, re.M)
+if not m: print("EXTRACT-FAIL"); sys.exit(0)
+ns = {"field": lambda tf, k: tf.get(k, "")}
+exec(m.group(0), ns)
+f = ns["is_parked"]
+cases = [({"parked": "operator-led DEEP-DIVE — do NOT route", "note": ""}, True),
+         ({"parked": "true",  "note": ""}, True),
+         ({"parked": "",      "note": ""}, False),
+         ({"parked": "false", "note": ""}, False)]
+print("OK" if all(f(tf) is exp for tf, exp in cases) else "MISMATCH")
+PY
+)"
+  case "$py_out" in
+    OK) ok "launch-plan.sh is_parked() agrees (prose=parked, empty=claimable)";;
+    MISMATCH) bad "launch-plan.sh is_parked() disagrees with the canonical rule";;
+    *) bad "could not exercise launch-plan.sh is_parked() ($py_out)";;
+  esac
+else ok "python3 absent — launch-plan.sh check skipped"; fi
+
 printf '\n  parked-semantics: %s\n\n' "$([ "$fails" -eq 0 ] && echo 'GREEN' || echo "RED ($fails failed)")"
 [ "$fails" -eq 0 ]

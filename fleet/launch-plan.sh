@@ -97,8 +97,13 @@ def owns_of(tf):
 
 
 def is_parked(tf):
+    # PARKED iff `parked:` is present, non-empty, and not an explicit false. Mirrors
+    # is_parked_value() in _lib.sh and the inline rule in claim.sh (fleet/tests/
+    # parked-semantics.test.sh asserts all three agree). The old `in ("true","yes","1")`
+    # test read ONLY literals, so a park written as prose parsed as UNPARKED and the plan
+    # offered an operator-held ticket as launchable.
     p = field(tf, "parked").strip().lower()
-    if p in ("true", "yes", "1"):
+    if p not in ("", "false", "no", "0"):
         return True
     return "PARKED" in field(tf, "note").upper()
 

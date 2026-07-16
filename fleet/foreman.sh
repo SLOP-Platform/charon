@@ -22,6 +22,10 @@ set -uo pipefail
 if [ -n "${FOREMAN_FLEET:-}" ]; then FLEET="$FOREMAN_FLEET"
 else FLEET="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; fi
 BOARD="$FLEET/board"; STATE="$FLEET/state"
+# is_parked / parked_value — THE canonical parked predicate (see _lib.sh). Sourced rather than
+# re-implemented: foreman decides whether a quarantine is a human hold, and a private copy of the
+# rule is exactly how this drifted from claim.sh in the first place.
+[ -f "$FLEET/_lib.sh" ] && source "$FLEET/_lib.sh"
 # batched merged-PR lookups (ONE gh call per repo, cached) instead of a gh call per blocked ticket
 [ -f "$FLEET/gh-cache.sh" ] && source "$FLEET/gh-cache.sh"
 FIX=0; [ "${1:-}" = "--fix" ] && FIX=1
@@ -61,7 +65,9 @@ for f in "$BOARD"/*.md; do
   [ -e "$STATE/submitted/$id" ] && continue
   [ -e "$STATE/done/$id" ] && continue
   reason=""
-  case "$(meta parked "$f" | tr 'A-Z' 'a-z')" in true|yes|1) reason="PARKED (human hold) -- NOT auto-cleared; confirm still intended";; esac
+  # Was `in true|yes|1)`, which missed PROSE park reasons -> foreman did not see them as a human
+  # hold and could recommend clearing their quarantine, making an operator-parked ticket claimable.
+  is_parked "$f" && reason="PARKED (human hold) -- NOT auto-cleared; confirm still intended"
   [ -z "$reason" ] && case "$(meta note "$f")" in *PARKED*) reason="PARKED-via-note -- confirm still intended";; esac
   if [ -z "$reason" ] && [ -e "$STATE/loop-guard/$id" ]; then
     if bash "$FLEET/checks/parallelizability-gate.sh" check "$id" >/dev/null 2>&1; then
