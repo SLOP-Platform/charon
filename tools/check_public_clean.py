@@ -28,6 +28,19 @@ _PATTERNS: list[tuple[re.Pattern, str]] = [
 _WAIVER_RE = re.compile(r'public-clean:\s*allow\b')
 _EXCEPTIONS_PATH = Path("tools/.public-clean-exceptions.json")
 
+# GitHub Actions uses lines look like:
+#     uses: org/action@<40-hex-sha>   # vN
+# (or a 'uses: org/action@<sha>  # tag' comment, or a non-pinned branch like @main).
+# The 40-hex token in that specific syntactic slot is the *commit-SHA pin* that
+# dependabot supplies and updates — not a leaked secret. Scanning it would force
+# every dependabot bump to re-author the exceptions ledger (false-positive).
+# This regex is matched against the LINE; we additionally gate on the FILE path
+# being under .github/workflows/ so the same 40-hex string in any other context
+# (a script, a config, a docs file) is still flagged by the generic pattern.
+_ACTION_SHA_PIN_RE = re.compile(
+    r'^\s*-?\s*uses:\s*[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[0-9a-fA-F]{40}\b'
+)
+
 
 def _load_exceptions(config_path: Path | None = None) -> dict[str, set[str]]:
     """Load the exceptions config.
@@ -48,6 +61,34 @@ def _load_exceptions(config_path: Path | None = None) -> dict[str, set[str]]:
     return {fp: set(lines) for fp, lines in data.items()}
 
 
+def _is_action_sha_pin(rel: str, line: str) -> bool:
+    """True iff ``line`` is a GitHub-Actions ``uses: org/action@<40-hex>`` pin AND
+    ``rel`` lives under ``.github/workflows/``.
+
+    The 40-hex token in that specific syntactic slot is dependabot's commit-SHA
+    pin for a third-party action — not a leaked secret. Scanning it forces
+    every dependabot bump to re-author the exceptions ledger (false-positive).
+    Gating on BOTH the syntactic shape AND the workflow file path means a bare
+    40-hex string anywhere else (script, config, docs) is still caught by the
+    generic pattern, and a non-pinned ``uses:`` (e.g. ``@main``) is unaffected.
+
+    The path check is tolerant of absolute paths (``check_file`` passes
+    ``str(path)`` directly) by matching the ``.github/workflows/`` segment
+    against the path parts, so ``/tmp/x/.github/workflows/ci.yml`` and
+    ``.github/workflows/ci.yml`` are both recognized — and the order matters
+    (``.github`` must immediately precede ``workflows``), so a docs file that
+    happens to mention ``workflows`` is not mis-classified.
+    """
+    parts = Path(rel).parts
+    try:
+        idx = parts.index(".github")
+    except ValueError:
+        return False
+    if idx + 1 >= len(parts) or parts[idx + 1] != "workflows":
+        return False
+    return bool(_ACTION_SHA_PIN_RE.match(line))
+
+
 def _scan_content(
     rel: str, content: str, exceptions: dict[str, set[str]] | None = None
 ) -> list[str]:
@@ -65,6 +106,8 @@ def _scan_content(
         if line in exempt:
             continue
         if _WAIVER_RE.search(line):
+            continue
+        if _is_action_sha_pin(rel, line):
             continue
         for pat, desc in _PATTERNS:
             if pat.search(line):
