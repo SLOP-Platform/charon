@@ -4,6 +4,11 @@ Tier 1 is a **static policy** loaded from disk (reconciliation BR-3: NO network
 gateway enters the privileged loop). The policy is *data, not code*, so it tunes
 without a redeploy. Per-turn gateway routing and success-rate feedback are
 Tier 2+.
+
+GRACEFUL-DEGRADE: the router accepts a ``parked_keys`` set so the shared park/
+degrade state machine (balance.py / failover.py / router.py) can exclude parked
+pool entries at routing time.  The forwarder wires it from the balance tracker's
+``parked_providers()``, mapping provider labels → pool entry keys.
 """
 from __future__ import annotations
 
@@ -39,6 +44,10 @@ class StaticRouter:
         self.policy = policy or dict(_DEFAULT_POLICY)
         self.backends = backends or []
         self.pools = pools or {}
+        # GRACEFUL-DEGRADE: provider → pool-entry-key mapping for parked
+        # providers.  Set by the forwarder from the balance tracker; the
+        # router merges these into the per-call ``exclude`` set.
+        self.parked_keys: set[str] = set()
 
     @classmethod
     def from_file(cls, path: Path, backends: list[str]) -> StaticRouter:
@@ -62,12 +71,14 @@ class StaticRouter:
     def route_pool(self, role: str, *, exclude: set[str] | None = None,
                    code_safe_only: bool = False) -> PoolEntry:
         """Pick the next (agent, model) profile for ``role`` — free-first,
-        cheapest-first, skipping exhausted entries (H6). Cross-model failover is
-        just re-running this with the exhausted entry's key excluded."""
+        cheapest-first, skipping exhausted AND parked entries (H6 + GRACEFUL-
+        DEGRADE). Cross-model failover is just re-running this with the
+        exhausted entry's key excluded."""
         pool = self.pools.get(role)
         if not pool:
             raise RuntimeError(f"no pool configured for role {role!r}")
-        return choose_from_pool(pool, exclude=exclude, code_safe_only=code_safe_only)
+        merged_exclude = (exclude or set()) | self.parked_keys
+        return choose_from_pool(pool, exclude=merged_exclude, code_safe_only=code_safe_only)
 
     def tier_for(self, task_class: str) -> Tier:
         """The capability tier ``task_class`` maps to under the static policy. Pure

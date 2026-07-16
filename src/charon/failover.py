@@ -7,6 +7,14 @@ them, so cross-model failover (H6) is automatic: a 429 / pseudo-success on the
 current model marks it excluded, and the next route for that role picks the next
 cheapest live profile.
 
+GRACEFUL-DEGRADE (shared park/degrade state machine with router + balance):
+  ``classify_routing_health(router, role, proxy, bt)`` — NORMAL / THROTTLED /
+      DEGRADED classification for the current pool state.
+  ``backpressure_candidate(router, role, proxy, bt)`` — when THROTTLED, the
+      rate-limited provider to throttle to (with Retry-After seconds).
+  ``emit_degradation_alert(bt, provider, reason)`` — fire the operator alert
+      when routing enters a degraded state.
+
 Also provides ``ReviewerCircuitBreaker``: a transparent ``Reviewer`` wrapper that
 opens after ``threshold`` consecutive failures and refuses calls until ``cooldown_s``
 elapses (then half-opens for one probe; success closes, failure re-opens).  Lives
@@ -139,3 +147,52 @@ class ReviewerCircuitBreaker:
     def _record_success(self) -> None:
         self._consecutive_failures = 0
         self._state = _State.CLOSED
+
+
+# ---------------------------------------------------------------------------
+# GRACEFUL-DEGRADE state machine helpers (shared with router + balance)
+# ---------------------------------------------------------------------------
+
+
+def classify_routing_health(
+    viable_candidates: int,
+    rate_limited_candidates: int,
+) -> str:
+    """Classify routing health from pool candidate counts.
+
+    Returns one of:
+      ``"normal"`` — at least one viable (non-exhausted, non-parked) candidate.
+      ``"throttled"`` — no viable candidates but at least one is rate-limited
+          (last-resort throttle target exists).
+      ``"degraded"`` — no viable AND no rate-limited candidates remain.
+
+    The caller (forwarder) is responsible for counting: walk the pool, classify
+    each entry's health (viable / rate-limited / dead), and pass the two totals
+    here.  This keeps the decision logic unit-provable without needing the full
+    provider→pool-entry mapping."""
+    if viable_candidates > 0:
+        return "normal"
+    if rate_limited_candidates > 0:
+        return "throttled"
+    return "degraded"
+
+
+def backpressure_delay(retry_after_s: float) -> float:
+    """Compute the throttle delay for a last-resort rate-limited provider.
+
+    Returns the Retry-After seconds, capped at 60s so a long upstream delay
+    (e.g. 300s from Cloudflare) doesn't hang the session indefinitely.  The
+    caller should sleep this long before re-dispatching."""
+    return min(max(retry_after_s, 1.0), 60.0)
+
+
+def emit_degradation_alert(bt, provider: str, reason: str) -> None:
+    """Fire the operator alert through the balance tracker's degradation callback.
+
+    *reason* is ``"throttled"`` (last-resort rate-limited) or ``"exhausted"``
+    (prepaid leg hit zero).  Safe no-op when no callback is wired — the money
+    path must never break on alert delivery."""
+    if reason == "throttled":
+        bt.notify_throttled(provider)
+    else:
+        bt.notify_exhausted(provider)

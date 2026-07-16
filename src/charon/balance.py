@@ -24,11 +24,24 @@ Public API:
   ``record_exhaustion(provider)`` (request-path auto-park on a deterministic
   drained-key 402 — distinct counter from an operator-triggered ``park()``)
 
+GRACEFUL-DEGRADE state machine (shared across router / failover / balance):
+  ``record_rate_limit(provider, retry_after_s)`` — track 429 throttle
+  ``is_rate_limited(provider) -> bool`` — provider is in a rate-limit window
+  ``rate_limit_seconds_remaining(provider) -> float`` — seconds until expiry
+  ``set_degradation_callback(fn)`` — wire operator alert channel
+  ``top_up(provider, amount)`` — fc=3 auto-re-arms a parked provider on top-up
+
 Park state persists to ``<state_dir>/balance_park.json`` (atomic write) when
 constructed with a ``state_dir`` — survives a gateway restart. A poll-mode
 provider (deepseek/openrouter/nanogpt) auto-re-arms the moment its balance
-poll shows recovered funds (see ``remaining()``); a fixed-mode class-3
-provider re-arms via ``top_up()`` (operator) as before.
+poll shows recovered funds (see ``remaining()``), UNLESS it has funding_class=3
+(prepaid drain-then-park) which requires explicit ``top_up()``.
+
+Funding-class-aware re-arm (AUTO-RECOVER on refill):
+  fc=1 (free-recurring), fc=2 (flat-sub): auto-rearm on poll recovery
+  fc=3 (prepaid drain-then-park): re-arm only on operator ``top_up()``
+  fc=4 (PAYG): auto-rearm on poll recovery
+  No funding_class: auto-rearm on poll recovery (backward-compatible)
 """
 from __future__ import annotations
 
@@ -38,6 +51,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
+from enum import Enum, auto
 from pathlib import Path
 from threading import Lock
 from typing import Any
@@ -158,6 +172,21 @@ _DEFAULT_POLL_TTL = 300.0  # seconds
 
 
 # ---------------------------------------------------------------------------
+# Degradation state machine (GRACEFUL-DEGRADE: shared across router/failover/
+# balance — the three behaviors share ONE park/degrade state).
+# ---------------------------------------------------------------------------
+
+
+class DegradationState(Enum):
+    """Routing health: NORMAL → THROTTLED (last-resort rate-limited) → DEGRADED
+    (parked leg, prepaid zero).  AUTO-RECOVER transitions back to NORMAL when
+    the condition clears (refill + probe)."""
+    NORMAL = auto()
+    THROTTLED = auto()
+    DEGRADED = auto()
+
+
+# ---------------------------------------------------------------------------
 # Balance tracker — thread-safe, config-driven
 # ---------------------------------------------------------------------------
 
@@ -217,6 +246,11 @@ class BalanceTracker:
         # the two are acquired _save_lock→_lock, never the reverse, so no
         # inversion. See ``_save_parked``.
         self._save_lock = Lock()
+
+        # GRACEFUL-DEGRADE: rate-limit tracking (429 Retry-After)
+        self._rate_limits: dict[str, float] = {}
+        # GRACEFUL-DEGRADE: operator alert channel
+        self._degradation_callback: Callable[[str, str], None] | None = None
 
         # _build_configs_internal normalises the raw providers.json config into
         # the internal per-provider dict the tracker expects.
@@ -440,6 +474,84 @@ class BalanceTracker:
             self._counters["auto_park"] = self._counters.get("auto_park", 0) + 1
         self.park(provider)
 
+    # -- graceful-degrade: rate-limit tracking (THROTTLE behavior) ---------
+
+    def record_rate_limit(self, provider: str, retry_after_s: float | None) -> None:
+        """Record a 429 throttle on *provider* with its ``Retry-After`` seconds.
+
+        Callers (proxy/failover) feed the upstream's Retry-After header here so
+        the degradation state machine knows which providers are currently rate-
+        limited and when they recover."""
+        with self._lock:
+            if retry_after_s is not None and retry_after_s > 0:
+                self._rate_limits[provider] = self._now() + float(retry_after_s)
+            else:
+                self._rate_limits.pop(provider, None)
+
+    def is_rate_limited(self, provider: str) -> bool:
+        """True if *provider* is within a rate-limit window (429 + Retry-After
+        has not yet elapsed).  Expired windows are cleared lazily."""
+        with self._lock:
+            until = self._rate_limits.get(provider)
+            if until is None:
+                return False
+            if self._now() >= until:
+                del self._rate_limits[provider]
+                return False
+            return True
+
+    def rate_limit_seconds_remaining(self, provider: str) -> float:
+        """Seconds until *provider*'s rate limit expires.  0.0 if not rate-
+        limited or the window has already elapsed."""
+        with self._lock:
+            until = self._rate_limits.get(provider)
+            if until is None:
+                return 0.0
+            remaining = until - self._now()
+            if remaining <= 0:
+                del self._rate_limits[provider]
+                return 0.0
+            return remaining
+
+    # -- graceful-degrade: operator alert channel (ALERT ON IMPACT) ---------
+
+    def set_degradation_callback(
+        self, fn: Callable[[str, str], None] | None,
+    ) -> None:
+        """Wire the operator alert channel.
+
+        ``fn(provider, reason)`` is called when routing degrades (THROTTLED
+        last-resort OR a prepaid leg hits zero).  Set to None to silence."""
+        self._degradation_callback = fn
+
+    def _notify_degraded(self, provider: str, reason: str) -> None:
+        """Emit a degradation alert to the operator callback, if wired.
+
+        Alert failure is silently swallowed — the money path must never break
+        on an alert delivery problem."""
+        cb = self._degradation_callback
+        if cb is not None:
+            try:
+                cb(provider, reason)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def notify_throttled(self, provider: str) -> None:
+        """Emit a THROTTLED alert: last-resort rate-limited provider."""
+        self._notify_degraded(
+            provider,
+            f"performance impacted; refill {provider} — "
+            f"last-resort rate-limited provider is throttled",
+        )
+
+    def notify_exhausted(self, provider: str) -> None:
+        """Emit a DEGRADED alert: provider exhausted/drained."""
+        self._notify_degraded(
+            provider,
+            f"performance impacted; refill {provider} — "
+            f"prepaid leg exhausted",
+        )
+
     # -- persistence (survive a gateway restart) -------------------------
 
     def _load_parked(self) -> None:
@@ -516,10 +628,18 @@ class BalanceTracker:
 
     def _maybe_auto_unpark(self, provider: str) -> None:
         """Re-arm *provider* if it is currently parked (idempotent no-op
-        otherwise) — the poll-recovery path in ``remaining()``."""
+        otherwise) — the poll-recovery path in ``remaining()``.
+
+        FUNDING-CLASS-AWARE (GRACEFUL-DEGRADE): fc=3 (prepaid drain-then-park)
+        providers do NOT auto-rearm on poll recovery — they require explicit
+        operator ``top_up()``.  All other funding classes (and unclassified
+        providers) auto-rearm on recovered balance as before."""
         with self._lock:
             was_parked = provider in self._parked
         if not was_parked:
+            return
+        fc = self.funding_class(provider)
+        if fc == 3:
             return
         self.unpark(provider)
         with self._lock:
@@ -581,8 +701,8 @@ class BalanceTracker:
     def top_up(self, provider: str, amount_usd: float) -> None:
         """Add *amount_usd* to a fixed provider's configured starting_balance.
 
-        This re-arms a parked class-3 provider by giving it fresh credit.
-        """
+        This re-arms a parked class-3 provider by giving it fresh credit
+        (GRACEFUL-DEGRADE: prepaid re-arms only on operator top-up)."""
         amt = float(amount_usd)
         if amt <= 0:
             return
@@ -595,6 +715,13 @@ class BalanceTracker:
             if cfg.get("mode") == "fixed":
                 cur = self._fixed_balances.get(provider, 0.0)
                 self._fixed_balances[provider] = cur + amt
+        # GRACEFUL-DEGRADE: fc=3 (prepaid) re-arms on operator top-up
+        fc = self.funding_class(provider)
+        if fc == 3 and self.is_parked(provider):
+            # Probe: top-up implies the operator has refilled → credit is real
+            self.unpark(provider)
+            with self._lock:
+                self._counters["auto_unpark"] = self._counters.get("auto_unpark", 0) + 1
 
     def configure(
         self,
