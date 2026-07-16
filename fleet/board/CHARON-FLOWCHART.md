@@ -1,7 +1,7 @@
 repo: charon
 tier: strong
 difficulty: 3
-work_class: doc-deliverable
+work_class: docs
 branch: docs/charon-flowchart
 serial_justified: One cohesive whole-system diagram — the value is a single coherent map; splitting produces disconnected fragments.
 owns: docs/CHARON-FLOWCHART.md

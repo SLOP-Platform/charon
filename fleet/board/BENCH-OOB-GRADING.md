@@ -1,7 +1,7 @@
 repurpose-2026-07-10: grade REAL tasks (reds-replay + sub-session actuals), NOT synthetic S0-S6; write VERSIONED frozen scorecard artifacts consumed via freeze-ring (GATEWAY-PROGRAM).
 tier: frontier
 difficulty: 5  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
-parked:
+parked: true
 work_class: ci-infra
 branch: feat/bench-oob-grading
 depends_on:
