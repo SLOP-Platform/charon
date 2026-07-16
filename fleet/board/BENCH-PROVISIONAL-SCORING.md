@@ -2,7 +2,6 @@ repo: charon-private
 tier: strong
 difficulty: 4
 work_class: design-review
-parked: operator-led DEEP-DIVE next session — the operator will personally investigate/design this before it is built (2026-07-16). Do NOT route to an SG droid; unpark only after the operator's design deep-dive lands. It also gates BENCH-OOB-GRADING (#26) which stays parked until this resolves.
 branch: feat/bench-provisional-scoring
 serial_justified: One cohesive stage-plumbing design + rewire across the shared scorecard call sites; splitting fractures the provisional→active contract.
 owns: fleet/state/BENCH-PROVISIONAL-SCORING-DESIGN.md
@@ -20,6 +19,27 @@ note: |
   is file-sequenced AFTER it (must rebase onto #20, never co-write) and stays parked until it lands.
   OPERATOR (2026-07-16): "bench-provisional-scoring was supposed to be something I would have next
   session do a deep dive." So this ticket is that deep-dive: investigate + DESIGN first, then build.
+  CORRECTED (2026-07-16, operator): "that directive is WRONG it's for YOU to investigate not the
+  operator." The deep-dive is CLAUDE's to run, not the operator's. This ticket is therefore
+  CLAUDE-RESERVED — the MANAGER investigates it via its own background Claude sub-session (see
+  [[claude-reserved-tickets-manager-builds]]); it is NOT operator-led and NOT starved waiting on a
+  human. The old `parked:` line asserting operator-led / "do NOT route to an SG droid" is REMOVED.
+  NO `claude_reserved:` FIELD IS SET HERE ON PURPOSE. A first draft added one; nothing in the rig
+  reads it (grep: zero consumers), so it would have been DECORATION that LOOKS like a guard and
+  isn't — the same failure mode as the prose park above, which also looked like a guard and let an
+  SG droid through. The gap is real (no mechanism means "not for SG droids, but DO work it via
+  Claude" — parked means nobody works it, which this ticket must never be), so it is ticketed as
+  CLAUDE-RESERVED-ROUTING rather than faked with an inert field.
+  UN-PARK NOTE: that park never actually held. It was written as PROSE, and every consumer tested
+  `parked == "true"` literally, so claim.sh read it as UNPARKED — an SG droid claimed this ticket
+  anyway and produced the 425-line design in PR #107. The park was fiction; the predicate is fixed
+  on master (fa07ca0), so a future park here would really bite. Do not re-add one casually.
+  STATE (2026-07-16): PR #107 carries a REAL 425-line fleet/state/BENCH-PROVISIONAL-SCORING-DESIGN.md
+  + review log; its final "launcher auto-commit" commit (bc15076) is CRASH DEBRIS that swept in an
+  unrelated fleet/board/REVIEWER-DOGFOOD-REDS.md (owns violation — split it out). The deep-dive is
+  therefore a CLAUDE ADVERSARIAL REVIEW of that existing design, not a from-scratch design.
+  It gates BENCH-OOB-GRADING (#26), which gates MODEL-PREFLIGHT + GRADER-SECFIX-RECONCILE — the
+  single highest-leverage blocker on the board (3 tickets).
 accept: |
   - DEEP-DIVE DESIGN (operator-led) first, written to fleet/state/BENCH-PROVISIONAL-SCORING-DESIGN.md:
     the provisional→active state machine — who/what may PROMOTE a row to active (must be a trusted
