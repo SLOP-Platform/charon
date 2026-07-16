@@ -90,6 +90,7 @@ _OPENAI_SHAPE_PRESETS = frozenset({
     "deepseek", "chutes", "groq", "together", "mistral", "fireworks", "sambanova",
     "replicate", "xai", "cohere", "openai", "huggingface", "neuralwatt",
     "perplexity", "lmstudio", "jan", "ollama", "vllm", "local",
+    "github_models", "featherless", "ollama_cloud",
 })
 
 # Presets whose declared upstream `wire` is NOT OpenAI-compatible -- their

@@ -18,7 +18,7 @@ _KNOWN_KEYS = frozenset({
     "deepseek", "chutes", "groq", "together", "mistral",
     "fireworks", "sambanova", "replicate", "xai", "cohere", "openai",
     "huggingface", "neuralwatt",
-    "perplexity",
+    "perplexity", "github_models", "featherless", "ollama_cloud",
     "lmstudio", "jan", "ollama", "vllm", "local",
 })
 
