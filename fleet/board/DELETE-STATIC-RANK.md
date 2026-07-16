@@ -59,5 +59,5 @@ ds: |
     collide; un-park ONLY after #3 (PRICE-REFRESHER) and #4 (DRAIN-THEN-PARK) are live-verified, and re-sequence
     it behind whatever still owns config.py at that time (config may be a package post-F29-CONFIG-PKG).
   repo: charon (product).
-note: UN-PARKED 2026-07-15 (operator: ADR-0016 deploy is P0). Prior park gated on PRICE-REFRESHER (FABRICATED phantom) + DRAIN-THEN-PARK (park-at-zero is LIVE via auto-park-on-402, + subsumed by the demand-driven match). Droid builds the CODE change (PR); the live 4-LOM deploy is a separate manager/land step.
+note: Activated 2026-07-15 (operator directive - ADR-0016 deploy is P0). Prior stage-gate referenced a fabricated dep (PRICE-REFRESHER, PR #104 closed) plus a now-live one (auto-park-on-402); both moot. Droid builds the code PR; the live 4-LOM deploy is a separate manager step.
   .60 (static rank must never be removed while anything still reads it). Filed 2026-07-12.
