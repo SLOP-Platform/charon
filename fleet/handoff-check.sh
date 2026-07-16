@@ -93,7 +93,17 @@ HUMAN=$(awk '/^## Auto-generated state/{skip=1} /^## Session summary/{skip=0} !s
 
 # 2) ACCURACY — every referenced SHA must exist; committed-SHA claim must match HEAD
 say "[sha]"
-SHAS=$(printf '%s\n' "$HUMAN" | grep -oE '\b[0-9a-f]{7,40}\b' | sort -u)
+# Extract standalone SHA references only. `\b[0-9a-f]{7,40}\b` also matched the DATE inside
+# hyphenated identifiers — this rig stamps everything YYYYMMDD (session notes are
+# `20260716T0634Z`, backup tags are `backup/recover-20260716-<sha>`), and `20260716` is valid
+# hex, so a correct handoff failed with "SHA NOT FOUND: 20260716". A real SHA reference stands
+# alone in prose; a date embedded in a tag/filename is adjacent to `-` or word chars. Exclude
+# those neighbours. Falls back to the old pattern where grep -P is unavailable.
+if echo x | grep -qP 'x' 2>/dev/null; then   # probe needs real input: empty input always exits 1
+  SHAS=$(printf '%s\n' "$HUMAN" | grep -oP '(?<![-\w])[0-9a-f]{7,40}(?![-\w])' | sort -u)
+else
+  SHAS=$(printf '%s\n' "$HUMAN" | grep -oE '\b[0-9a-f]{7,40}\b' | sort -u)
+fi
 nsha=0
 for s in $SHAS; do
   if git -C "$PRIV" cat-file -e "$s^{commit}" 2>/dev/null || git -C /home/stack/code/charon cat-file -e "$s^{commit}" 2>/dev/null; then
