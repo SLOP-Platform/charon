@@ -6,6 +6,10 @@ repo: charon-private
 priority: HIGH
 depends_on:
 owns: fleet/checks/no-unreachable-paths.sh, fleet/state/REACHABILITY-AUDIT.md
+serial_justified: PART3's gate + allowlist can only be scoped once PART1's audit produces the
+  REACHABILITY-AUDIT.md matrix of actual cross-boundary hits and PART2 fixes the contract — the
+  ticket's own ds note states "gate build follows once the audit matrix + allowlist scope are
+  known," a hard audit-then-gate ordering, not two independent surfaces.
 accept: |
   AUDIT + ROOT-CAUSE + GATE for the RECURRING "hardcoded path that another user/process/deploy cannot
   reach" defect. This is the root cause of the MODEL-PREFLIGHT wall: grader-daemon.py + deploy-preflight-

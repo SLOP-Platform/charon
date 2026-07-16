@@ -4,6 +4,9 @@ work_class: rig-meta
 branch: feat/web-roadmap-generator
 depends_on:
 owns: /home/stack/charon-private/fleet/roadmap-html.sh, /home/stack/charon-private/fleet/end-session.sh
+serial_justified: end-session.sh's wiring must call roadmap-html.sh's actual output/interface — the
+  caller (end-session.sh) can only be written correctly once the callee (roadmap-html.sh) exists;
+  building both concurrently risks end-session.sh being wired against a guessed interface.
 accept: |
   A persistent, self-refreshing WEB roadmap. Build fleet/roadmap-html.sh that renders ROADMAP.tsv into the
   full-page HTML (Projects -> Waves -> tickets + descriptions + status chips; the layout already exists as a

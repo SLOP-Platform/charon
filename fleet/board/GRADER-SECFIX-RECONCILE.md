@@ -11,6 +11,11 @@ real-dep: BENCH-OOB-GRADING build (shared fleet/benchmark/grader-daemon.py, grad
   test_grader_daemon.py evolution. A plain cherry-pick conflicts (add/add on test_grader_daemon.py).
   Shared-file reconciliation, JUSTIFIED.
 owns: fleet/benchmark/grader-daemon.py, fleet/benchmark/graders/reds_replay.py, fleet/benchmark/selftest/test_grader_daemon.py
+serial_justified: reconciling two divergent lineages (feat/bench-oob-grading security-hardened vs
+  feat/fragility-tickets) that both edited the SAME grader-daemon.py/reds_replay.py after shared
+  base b14f084 is one merge-conflict resolution across both files, not two independent builds —
+  splitting by file would let the two lineages' edits to shared functions diverge again instead
+  of being reconciled (already noted inline above: "Shared-file reconciliation, JUSTIFIED").
 accept: cd fleet/benchmark && PYTHONPATH=. python3 -m pytest selftest/test_grader_daemon.py -q
   # ALL green, AND the 3 security tests (F1 traversal-rejected, F2 injection-neutralized, F5
   # already-green-scores-0) still go RED on revert of their guard. The security fixes are NON-NEGOTIABLE

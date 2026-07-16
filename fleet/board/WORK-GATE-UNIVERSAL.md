@@ -5,6 +5,10 @@ work_class: ci-infra
 branch: feat/work-gate-universal
 depends_on:
 owns: fleet/checks/work-gate.sh, fleet/hooks/pretooluse-work-gate.sh, fleet/tests/work-gate.test.sh
+serial_justified: Gate A and Gate B both live in the SAME two files — work-gate.sh dispatches both
+  checks, and pretooluse-work-gate.sh self-checks both at launch AND at done — so decomposing by
+  gate would make two workers concurrent writers of the same work-gate.sh/pretooluse-work-gate.sh,
+  exactly the owns-collision decompose.sh itself refuses to emit.
 accept: |
   MECHANIZE (not doctrine) two work-discipline gates that FIRE regardless of how work is launched — inline, sub-session,
   detached, or tab/droid. Operator directive: "encoding into doctrine is not enough." REUSE existing pieces; do NOT rebuild.

@@ -3,13 +3,15 @@ tier: strong
 difficulty: 4
 work_class: money-path
 branch: feat/ft-wire-quota
-depends_on: FT-QUOTA-ENGINE, FT-CONFIG-SURFACE, FT-CATALOG-SEED, FAIL-LOUD-CONTRACT, FORWARDER-RECONCILE, PROVIDER-PROBE-FIX, PRICING-LIMITS-CHECKER
+depends_on: FT-QUOTA-ENGINE, FT-CONFIG-SURFACE, FT-CATALOG-SEED, FAIL-LOUD-CONTRACT, FORWARDER-RECONCILE, PROVIDER-PROBE-FIX, GATEWAY-NONTOKEN-METERING
 dep-kind: build
 serial_justified: cohesive single wiring — all logic lives in the new free_tier_gate.py; the forwarder.py + gateway.py edits are one minimal injection call each and must land together as one activation.
 real-dep: |
   Shares SAME-FILE surface with in-flight tickets — must rebase onto their merges, NEVER run as a
   concurrent second writer: forwarder.py (FAIL-LOUD-CONTRACT, FORWARDER-RECONCILE) and gateway.py
-  (PROVIDER-PROBE-FIX, PRICING-LIMITS-CHECKER). Also needs FT-QUOTA-ENGINE (the engine), FT-CONFIG-SURFACE
+  (PROVIDER-PROBE-FIX, GATEWAY-NONTOKEN-METERING — PRICING-LIMITS-CHECKER was decomposed
+  2026-07-15; GATEWAY-NONTOKEN-METERING is its gateway.py-owning child, PRICING-LIMITS-CHECK-SH is
+  the rig-only sibling with no gateway.py edit). Also needs FT-QUOTA-ENGINE (the engine), FT-CONFIG-SURFACE
   (the limits shape) and FT-CATALOG-SEED (the seed) merged first. Keep the forwarder/gateway edits MINIMAL
   (one build call + one skip call); all real logic lives in the new free_tier_gate.py to shrink the collision.
 owns: src/charon/forwarder.py, src/charon/gateway.py, src/charon/routing_policy/free_tier_gate.py, tests/test_free_tier_gate.py

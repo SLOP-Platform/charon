@@ -10,6 +10,11 @@ real-dep: PROVIDER-PROBE-FIX shared-file hand-off — this ticket edits the SAME
   probe-validation LOGIC bug first (inline, no new helper needed); this ticket then extracts
   the now-fixed URL construction into the shared helper.
 owns: src/charon/providers.py, src/charon/config.py, src/charon/discover.py, tests/test_providers.py
+serial_justified: the shared URL helper must be authored in providers.py FIRST before config.py and
+  discover.py can be updated to call it — parallel workers touching the 3 call-sites before the
+  helper's signature exists would each invent a different interface; also the real-dep above requires
+  rebasing onto PROVIDER-PROBE-FIX's edit to the same config.py region as one sequenced writer, never
+  a concurrent second one.
 accept: PYTHONPATH=src python3 -c "from charon.providers import models_url, chat_url" && python3 -c "import re,sys; c=open('tests/test_providers.py').read(); sys.exit(0 if re.search(r'def test_(models_url|chat_url)_\w+', c) else 1)" && /home/stack/charon-private/fleet/benchmark/lib/grep-code-only.sh 'rstrip\("/"\)[[:space:]]*\+[[:space:]]*"/(v1/)?(models|chat/completions)"' src/charon/providers.py src/charon/discover.py src/charon/config/keyprobe.py && PYTHONPATH=src python3 -m pytest tests/test_providers.py tests/test_config.py tests/test_discover.py -q
 prompt: /home/stack/charon-private/fleet/board/briefs/PROVIDER-URL-HELPER.md
 scope: Fragility finding #9. Provider endpoint URL/path construction is duplicated across

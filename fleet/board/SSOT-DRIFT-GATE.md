@@ -6,6 +6,10 @@ branch: feat/ssot-drift-gate
 depends_on: EVAL-TAXONOMY-ALIGN
 real-dep: EVAL-TAXONOMY-ALIGN — this gate ENFORCES the taxonomy SSOT that TAXONOMY-ALIGN defines; it cannot drift-check a canonical that does not yet exist.
 owns: fleet/checks/msot-drift.sh, fleet/tests/msot-drift.test.sh, fleet/state/SSOT-REGISTRY.tsv
+serial_justified: msot-drift.sh and SSOT-REGISTRY.tsv are one checker+its-schema unit (same
+  TOOL-FIRST pattern the audit names in pricing_limits_checker.py: canonical-file + reader +
+  drift-diff) — the script's per-fact diff logic is written against the registry's row shape;
+  two concurrent writers risk the script and the registry schema disagreeing on what a fact row is.
 accept: |
   ENFORCE the SSOTs we already declared (see fleet/state/MSOT-BLAST-RADIUS-AUDIT.md: 9 MSOTs, 4 DIVERGED). This is the
   "one framework wrapper for all single-sources-of-truth, NOT a god-file" the operator asked for. TOOL-FIRST reference already

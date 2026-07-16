@@ -4,6 +4,10 @@ work_class: money-path
 branch: feat/graceful-degrade
 depends_on: ROUTER-CORE
 owns: src/charon/router.py, src/charon/failover.py, src/charon/balance.py
+serial_justified: the 3 behaviors share ONE park/degrade state machine spanning all 3 files —
+  ALERT (behavior 2) fires off the same park state THROTTLE (behavior 1) sets, and AUTO-RECOVER
+  (behavior 3) re-arms that same park state; parallel workers editing the shared state contract
+  across router.py/failover.py/balance.py concurrently would race on that contract itself.
 accept: |
   The router's North Star (fleet/state/ROUTER-DESIGN.md §North Star) — three behaviors, each fail-on-revert:
   1. RATE-LIMIT AS BACKPRESSURE: when the only remaining viable provider is rate-limited, the session is

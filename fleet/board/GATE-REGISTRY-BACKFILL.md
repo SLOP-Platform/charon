@@ -5,6 +5,11 @@ work_class: ci-infra
 branch: fix/workflow-policy-backfill
 depends_on:
 owns: .github/workflows/ci.yml, .github/workflows/heavy.yml, .github/workflows/release.yml, .github/workflows/windows-exe.yml
+serial_justified: the accept requires ONE policy decision (bare-tag vs SHA-pin for first-party
+  actions) reconciled and applied IDENTICALLY across all 4 workflow files before check_workflows.py
+  is wired into gate_runner.py — splitting per-file risks two workers reconciling the policy
+  differently; the ticket's own ds note also flags it must run before/alongside any other
+  workflow-touching ticket to avoid clobbering the same 4 files.
 accept: |
   GATES-MUST-ACTUALLY-RUN backfill (src/charon/gate_runner.py, feat/gate-registry-complete): 5 gates were
   registered in tools/gates.json but never invoked by `charon.cli gate`. 4 of 5 (check_no_rig_import.py,
