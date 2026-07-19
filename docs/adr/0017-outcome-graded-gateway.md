@@ -92,3 +92,39 @@ cold-start design; a durable-exec spike before that adopt is a verdict.
 (the gate must be mechanized); 15× token cost + thin real parallelism in coding (don't
 manufacture parallel tickets on coupled work).
 
+
+---
+
+## Amendment (2026-07-19) — the gateway consumes grades; it does not produce them
+
+Scoping the MVP against the code corrected the "bounded connection task" framing. Two facts,
+confirmed against the source:
+
+1. **The product ships no outcome store yet.** `capability/scorecard.py` is a freeze-ring /
+   onboarding store (the wrong one); the "actuals ledger" referenced in
+   `capability/__init__.py` does not exist as a file; `routing_policy/matrix.py` is a
+   `(model × work_class) → grade` *shape* whose populating engine is still unbuilt. So the MVP
+   has a **prerequisite build**, not just a wire.
+2. **Live request traffic is not a grading signal.** A gateway response yields only
+   HTTP-status / latency / cost — the commodity health signal already captured by the existing
+   quality scorer. A real outcome grade (a unit of work judged pass/fail/merge/revert) is
+   produced **out-of-band** — by graded work runs or an imported scorecard — never by serving
+   an API request. **The gateway is a read-only consumer of the grade ledger; it never writes
+   grades from its own traffic.**
+
+**Consequences (these sharpen, not reverse, the decision):**
+
+- **Supply chain of the differentiator:** graded work (or an imported scorecard) → outcome
+  ledger → gateway routing. The routing edge depends on a grade *source*; with none, the
+  gateway falls back to static cheapest-capable ordering — so the cold-start path is
+  load-bearing, not a corner case.
+- **Day-1:** ship a **seed scorecard**, or "outcome-graded" is inert on a fresh install.
+- **Decomposition (revised MVP):** (1) build a product-side outcome ledger + a grades
+  provider + a seed/import path; then (2) the bounded, read-only gateway consumer that orders
+  candidates by grade with a fail-open static fallback. The request → work-type key is handled
+  by the existing *kind* classifier (`taxonomy.py`) — a classifier of work KIND, not a
+  difficulty predictor, so it does not violate the "no predict-time router" line above.
+- **Coupling:** this means the routing differentiator and the work-orchestration capability
+  are more coupled than a strict "A-only" reading implied — the orchestration path is where
+  grades are *born*. The gateway remains the MVP surface; the grade source (graded runs or
+  import) is its required input.
