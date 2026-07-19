@@ -477,6 +477,76 @@ done_merge_gate(){
   return 0
 }
 
+# --- hold_reason_gate: MECHANIZES the DRAFT CONVENTION (2026-07-18).
+# ROOT CAUSE it fixes: draft state was being read as a hold signal, but draft is the LAUNCHER'S
+# UNCONDITIONAL DEFAULT (fleet-droid.sh `gh pr create --draft`, land-needs-push.sh, product
+# src/charon/land.py) — every PR opens draft, zero `convert_to_draft` events exist, so draft carries
+# NO information. Reading it as a hold would block EVERY PR. The real failure was a hold whose
+# REASON was lost between sessions.
+# THE CONVENTION: draft = "not yet human-reviewed" (manager clears it with `gh pr ready <n>` at
+# merge-gate time). A REAL hold = the `hold` LABEL + a `HOLD: <reason>` comment — a label survives
+# sessions and is queryable. THIS GATE: a `hold`-labelled PR with NO `HOLD:` comment is a FAILURE
+# (a hold with no recorded reason is exactly the lost-reason bug), auto-registered as a blocking red
+# that SELF-CLOSES once the comment exists. Draft PRs are never selected (the query keys on the
+# LABEL only), so the anti-regression holds: a normal draft PR is untouched.
+# Offline-tolerant: hold_prs_tsv returns non-zero when gh is absent/rate-limited and no cache
+# exists -> ONE advisory line, NOT blocking (identical degrade to done_merge_gate's `can_verify`).
+_hold_red_id(){ printf 'hold-no-reason-%s-%s' "$(printf '%s' "$1" | tr -c 'a-zA-Z0-9' '-' | tr '[:upper:]' '[:lower:]' | sed 's/-\{1,\}/-/g; s/^-//; s/-$//')" "$2"; }
+hold_reason_gate(){
+  # shellcheck source=/dev/null
+  [ -f "$HERE/gh-cache.sh" ] || { echo "hold_reason_gate: gh-cache.sh not found at $HERE/gh-cache.sh"; return 0; }
+  source "$HERE/gh-cache.sh"
+  local slugs="" key slug tsv pr flag rid bad=0 okc=0 unavail=0
+  if [ -n "${GH_HOLD_FIXTURE:-}" ]; then
+    # fixture mode: one synthetic repo, gh never touched (and no slug resolution, which itself
+    # shells out to gh) — keeps the test fully offline.
+    slugs=" ${HOLD_GATE_SLUG:-fixture/repo}"
+  else
+    for key in charon charon-private; do
+      repo_resolve "$key" >/dev/null 2>&1 || continue
+      slug="$(repo_owner_repo "$RR_PATH" 2>/dev/null)"
+      [ -n "$slug" ] || continue
+      case " $slugs " in *" $slug "*) continue ;; esac
+      slugs="$slugs $slug"
+    done
+  fi
+  [ -n "$slugs" ] || { echo "clean: hold-reason-gate (no resolvable repo slug)"; return 0; }
+  for slug in $slugs; do
+    if ! tsv="$(hold_prs_tsv "$slug")"; then unavail=$((unavail+1)); continue; fi
+    while IFS="$TAB" read -r pr flag; do
+      [ -n "$pr" ] || continue
+      rid="$(_hold_red_id "$slug" "$pr")"
+      if [ "$flag" = 1 ]; then
+        okc=$((okc+1))
+        [ "$(_red_status "$rid")" = open ] && cmd_close "$rid" --override "auto: HOLD: reason comment now present on $slug#$pr" >/dev/null 2>&1 || true
+        continue
+      fi
+      bad=$((bad+1))
+      if [ -z "$(_red_status "$rid")" ]; then
+        cmd_add "$rid" P1 gate \
+          "$slug#$pr carries the 'hold' label with NO 'HOLD: <reason>' comment — a hold with no recorded reason is lost the moment the session ends; comment 'HOLD: <reason>' or drop the label" \
+          "bash '$HERE/preflight.sh' hold-check '$slug' '$pr'" >/dev/null 2>&1 || true
+      fi
+      echo "hold-reason-gate: $slug#$pr is 'hold'-labelled with NO 'HOLD:' comment — AUTO-REGISTERED blocking red '$rid' (record the reason, or remove the label)"
+    done <<< "$tsv"
+  done
+  [ "$unavail" -gt 0 ] && echo "hold-reason-gate: verification-unavailable — gh absent/rate-limited for $unavail repo(s), no cache (ADVISORY, NOT blocking; re-run when online)."
+  [ "$bad" -eq 0 ] && echo "hold-reason-gate: clean ($okc hold(s) with a recorded reason, $unavail unverifiable; draft state is NOT read as a hold)"
+  return 0
+}
+# hold_check <slug> <pr> -> 0 when the hold now has a HOLD: reason (or the label is gone). The
+# registered red's check_cmd: it SELF-CLOSES the red without any manual assertion.
+hold_check(){
+  # shellcheck source=/dev/null
+  source "$HERE/gh-cache.sh"
+  local slug="$1" pr="$2" tsv flag
+  tsv="$(hold_prs_tsv "$slug")" || { echo "hold-check: cannot verify $slug#$pr (gh unavailable)"; return 1; }
+  flag="$(printf '%s\n' "$tsv" | awk -F"$TAB" -v p="$pr" '$1==p{print $2; exit}')"
+  [ -n "$flag" ] || { echo "hold-check: $slug#$pr no longer carries the 'hold' label — resolved"; return 0; }
+  [ "$flag" = 1 ] && { echo "hold-check: $slug#$pr has a 'HOLD:' reason comment — resolved"; return 0; }
+  echo "hold-check: $slug#$pr still 'hold'-labelled with NO 'HOLD:' comment"; return 1
+}
+
 # WCI high-contention-file advisory: a file owned by >= N tickets is a DECOMPOSE
 # CANDIDATE (collision metric -> refactor trigger). Informational; never fails preflight.
 # Delegates to wci-contention.sh (fleet/WCI-METHOD.md). Top line surfaced here; run the
@@ -706,13 +776,14 @@ startup_budget_selftest(){
 # functions above are exposed with NO side effects.
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 case "${1:-scan}" in
-  scan|"") bash "$HERE/reconcile-merged.sh"; board_gate; executor_gate; handoff_gate; done_merge_gate; detect_needs_push; startup_budget_gate; bash "$HERE/retire-done.sh"; cmd_scan; scan_rc=$?; cmd_detect; foreman_advisory; show_operator_actions; exit $scan_rc ;;
+  scan|"") bash "$HERE/reconcile-merged.sh"; board_gate; executor_gate; handoff_gate; done_merge_gate; hold_reason_gate; detect_needs_push; startup_budget_gate; bash "$HERE/retire-done.sh"; cmd_scan; scan_rc=$?; cmd_detect; foreman_advisory; show_operator_actions; exit $scan_rc ;;
   add)     shift; cmd_add "$@" ;;
   close)   shift; cmd_close "$@" ;;
   list)    shift; cmd_list "$@" ;;
   detect)  shift; cmd_detect "$@" ;;
+  hold-check) shift; hold_check "$@" ;;
   startup-budget-check) startup_budget_check ;;
   startup-budget-selftest) startup_budget_selftest ;;
-  *) echo "usage: $0 {scan|add <id> <sev> <area> \"<desc>\" \"<check>\"|close <id> [--override r|--evidence t]|list [open|closed|all]|detect [--full]|startup-budget-check|startup-budget-selftest}" >&2; exit 1 ;;
+  *) echo "usage: $0 {scan|add <id> <sev> <area> \"<desc>\" \"<check>\"|close <id> [--override r|--evidence t]|list [open|closed|all]|detect [--full]|hold-check <slug> <pr>|startup-budget-check|startup-budget-selftest}" >&2; exit 1 ;;
 esac
 fi

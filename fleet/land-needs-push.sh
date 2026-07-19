@@ -31,6 +31,12 @@ pr_title="$(git -C "$wt" log -1 --pretty=%s "$branch" 2>/dev/null)"
 pr_body="$(git -C "$wt" log --reverse --pretty='- %s' "origin/$RR_BASE..$branch" 2>/dev/null)"
 [ -n "$pr_title" ] || pr_title="$id"
 [ -n "$pr_body" ] || pr_body="Recovered branch — see commits."
+# Draft is this script's UNCONDITIONAL default (--draft below), so it carries NO information.
+# Say so in the body: a real hold is the `hold` label + a `HOLD:` comment (fleet/preflight.sh
+# hold_reason_gate enforces that pairing).
+pr_body="$pr_body
+
+Draft is the launcher default — NOT a hold signal. A real hold is the \`hold\` label + a \`HOLD:\` comment."
 gh pr create --repo "$REPO_SLUG" --base "$RR_BASE" --head "$branch" --draft \
   --title "$pr_title" --body "$pr_body" || true
 bash "$FLEET/submit.sh" "$id"

@@ -362,7 +362,9 @@ $spec"
     git -C "$wt" push -u origin "$branch" \
       && gh pr create --repo "$owner_repo" --base "$RR_BASE" --head "$branch" --draft \
            --title "$pr_title" \
-           --body "Automated draft PR for $id. See the commit and docs/review-log/$id.md." \
+           --body "Automated draft PR for $id. See the commit and docs/review-log/$id.md.
+
+Draft is the launcher default — NOT a hold signal. A real hold is the \`hold\` label + a \`HOLD:\` comment." \
       || true
     if bash "$FLEET/submit.sh" "$id"; then
       current=""; echo "[$DROID] $id submitted (PR open). Next…"

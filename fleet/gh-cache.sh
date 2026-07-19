@@ -30,6 +30,38 @@ _gh_merged_tsv(){
   cat "$cf" 2>/dev/null
 }
 
+# hold_prs_tsv <repo-slug> -> "<pr#>\t<0|1 has a HOLD: comment>" lines, one per OPEN PR carrying
+# the `hold` LABEL. Same batching/caching contract as _gh_merged_tsv: ONE gh call per repo per TTL.
+# WHY this lives here and not in a new file: it is the identical problem (an O(PRs) gh sweep that
+# must survive rate-limits and offline runs), so it reuses this file's cache dir, TTL and fixture
+# discipline rather than growing a second gh-shaped module.
+# CONVENTION: draft state is the LAUNCHER DEFAULT and carries NO information — a real hold is the
+# `hold` label PLUS a `HOLD: <reason>` comment. This query therefore keys on the LABEL only; draft
+# PRs are never selected, so a normal draft can never be flagged.
+# Offline/CI/test hook: GH_HOLD_FIXTURE=<file> (TSV "<pr#>\t<0|1>") bypasses gh entirely.
+hold_prs_tsv(){
+  local slug="$1"
+  if [ -n "${GH_HOLD_FIXTURE:-}" ]; then cat "$GH_HOLD_FIXTURE" 2>/dev/null; return 0; fi
+  local dir="${GH_CACHE_DIR:-$(_ghc_fleet)/state/cache}"; mkdir -p "$dir" 2>/dev/null
+  local ttl="${GH_CACHE_TTL:-120}" cf="$dir/hold-${slug//\//_}.tsv" now age=999999
+  now="$(date +%s 2>/dev/null || echo 0)"
+  [ -f "$cf" ] && age=$(( now - $(stat -c %Y "$cf" 2>/dev/null || echo 0) ))
+  if [ ! -f "$cf" ] || [ "$age" -gt "$ttl" ]; then
+    # ONE gh call for every open hold-labelled PR (number + its comment bodies), batched.
+    if gh pr list --repo "$slug" --state open --label hold --limit 200 --json number,comments \
+         -q '.[] | (.number|tostring) + "\t" + (if ([.comments[].body] | map(test("^\\s*HOLD:")) | any) then "1" else "0" end)' \
+         > "$cf.tmp" 2>/dev/null; then mv "$cf.tmp" "$cf"
+    else rm -f "$cf.tmp"; fi
+  fi
+  # THE degrade guard (deliberately the ONLY one, so a revert of it is observable): gh absent or
+  # rate-limited AND no cache to fall back on -> return NON-ZERO = "cannot verify". Returning 0
+  # here would report "no holds" — a silent false green. A STALE cache is still usable (same
+  # contract as _gh_merged_tsv).
+  [ -f "$cf" ] || return 1
+  cat "$cf" 2>/dev/null
+  return 0   # explicit: rc is the VERIFIED/UNVERIFIABLE contract, never an incidental cat exit code
+}
+
 # branch_merged_pr <repo-slug> <branch> -> merged PR number or empty. No per-branch API call.
 branch_merged_pr(){
   local slug="$1" br="$2"; [ -n "$br" ] || return 0
