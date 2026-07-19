@@ -93,6 +93,12 @@ LATENCY_BUDGET_S="${DOGFOOD_LATENCY_BUDGET_S:-900}"   # per-candidate wall-clock
 TEST_CMD="${DOGFOOD_TEST_CMD:-}"                       # ticket-specific accept: check (optional but strongly recommended)
 EXPECT_FILES="${DOGFOOD_EXPECT_FILES:-}"               # space-separated list of files the ticket's `owns:` allows touching (advisory scope-check)
 KEEP_WORKTREE="${DOGFOOD_KEEP_WORKTREE:-1}"            # 1 = leave worktree in place for human audit (default; nothing auto-deletes)
+# TEST SEAM ONLY. The needs-push marker dir the two safe_worktree_remove/leak_worktree_setup calls
+# consult. Overridable so a fixture can plant a REAL marker: the live $FLEET_DIR/state/needs-push
+# is empty, which made every needs-push refusal in this suite VACUOUS (the identical vacuity that
+# orphaned 32254b3 — see leak-guard.sh:34-38). A guard no test can make fire is a guard no test
+# covers. Production never sets this; the default is unchanged.
+NEEDS_PUSH_DIR="${DOGFOOD_NEEDS_PUSH_DIR:-$FLEET_DIR/state/needs-push}"
 
 usage() {
   cat >&2 <<'EOF'
@@ -286,15 +292,58 @@ run_one() {
     append_summary "$model" "BLOCKED" "catastrophic-worktree-target" "-" "$LATENCY_BUDGET_S" "-" "-" "-" "-" "$card"
     return
   fi
+  # DOGFOOD-EVAL-GUARD (2026-07-19 adversarial review): the two lines that used to sit here were
+  # the last known UNGUARDED destruction path on the rig:
+  #     git -C "$PRODUCT_REPO" worktree remove --force "$wt" 2>/dev/null || rm -rf "$wt"
+  #     git -C "$PRODUCT_REPO" branch -D "$branch" 2>/dev/null || true
+  # against the LIVE PRODUCT CHECKOUT. No dirty-tree check, no unpushed-commit check, and a
+  # `|| rm -rf` fallback that turned every refusal of the safe path into the unsafe one. The
+  # `branch -D` is the same shape that orphaned reviewed commit 32254b3 (leak-guard.sh:34-52) —
+  # -D destroys unmerged commits AND erases .git/logs/refs/heads/<branch>, taking attribution
+  # with it. `2>/dev/null || true` then hid both the act and the reason.
+  #
+  # REUSE, not a third variant: leak-guard.sh already owns this exact sequence.
+  #   * safe_worktree_remove — needs-push marker check + _lg_wt_target_ok (catastrophic target,
+  #     uncommitted changes, commits not on any remote), and an `rm -rf` fallback that only runs
+  #     on a path git itself confirms is a non-primary worktree of THIS repo.
+  #   * leak_worktree_setup — the unlanded-commit guard with the salvage-tag-then-REFUSE pattern
+  #     (rc 3), the needs-push refusal (rc 2), reflog archival before deletion, and `branch -d`
+  #     first with `-D` only as a fallback AFTER the guard has POSITIVELY proven 0 unlanded
+  #     commits. It then creates the worktree. A second copy of this logic here would drift from
+  #     that one, and the seam between two guards that must agree is where committed work dies.
+  #
+  # TERMINAL REFUSALS (fleet/retire-done.sh:74-77 shape): every refusal below BLOCKS the
+  # candidate and leaves the target untouched. There is deliberately no `else`/`||` branch that
+  # destroys anything — a guard whose refusal path triggers the destroy is a TRIGGER, not a
+  # guard (the fleet-droid.sh bug reproduced today). Refusal reasons go to stderr UNSWALLOWED.
+  local NPDIR="$NEEDS_PUSH_DIR"
   if [ -e "$wt" ]; then
-    git -C "$PRODUCT_REPO" worktree remove --force "$wt" 2>/dev/null || rm -rf "$wt"
+    # $wt carries a run-unique $TS, so a pre-existing path here is anomalous, not a retry —
+    # judge it on its real state rather than recycling it blind. Refusal is fail-closed: an
+    # unreadable/unregistered/dirty/unpushed target keeps its contents and blocks the candidate.
+    if ! safe_worktree_remove "$PRODUCT_REPO" "$wt" "$label" "$NPDIR"; then
+      echo "[dogfood-eval] REFUSING: pre-existing worktree '$wt' was NOT removed (see leak-guard reason above)." >&2
+      echo "  Candidate '$model' is BLOCKED; nothing was deleted. Resolve that tree by hand." >&2
+      write_card "$card" "$model" "BLOCKED" "stale-worktree-removal-refused" "-" "-" "-" "-" "-" "-"
+      append_summary "$model" "BLOCKED" "stale-worktree-removal-refused" "-" "$LATENCY_BUDGET_S" "-" "-" "-" "-" "$card"
+      return
+    fi
   fi
   git -C "$PRODUCT_REPO" worktree prune 2>/dev/null || true
-  git -C "$PRODUCT_REPO" branch -D "$branch" 2>/dev/null || true
-  if ! git -C "$PRODUCT_REPO" worktree add "$wt" -b "$branch" "$BASE_REF" >/dev/null 2>"$RESULTS_DIR/${label}.worktree-add.err"; then
-    echo "[dogfood-eval] FATAL: could not create worktree for $model — see ${label}.worktree-add.err" >&2
-    write_card "$card" "$model" "BLOCKED" "worktree-create-failed" "-" "-" "-" "-" "-" "-"
-    append_summary "$model" "BLOCKED" "worktree-create-failed" "-" "$LATENCY_BUDGET_S" "-" "-" "-" "-" "$card"
+  # Branch delete + worktree create, both under leak-guard's unlanded-work guard.
+  local lws_rc=0
+  leak_worktree_setup "$PRODUCT_REPO" "$wt" "$branch" "$NPDIR/$label" "$BASE_REF" || lws_rc=$?
+  if [ "$lws_rc" -ne 0 ]; then
+    local lws_why
+    case "$lws_rc" in
+      2) lws_why="branch-setup-refused-needs-push" ;;
+      3) lws_why="branch-setup-refused-unlanded-commits(salvage-tagged)" ;;
+      *) lws_why="worktree-create-failed" ;;
+    esac
+    echo "[dogfood-eval] FATAL: worktree/branch setup for $model did not complete — $lws_why (rc=$lws_rc)." >&2
+    echo "  Branch '$branch' was NOT force-deleted. See the leak-guard lines above for the reason." >&2
+    write_card "$card" "$model" "BLOCKED" "$lws_why" "-" "-" "-" "-" "-" "-"
+    append_summary "$model" "BLOCKED" "$lws_why" "-" "$LATENCY_BUDGET_S" "-" "-" "-" "-" "$card"
     return
   fi
 
@@ -430,8 +479,39 @@ run_one() {
 
   echo "[dogfood-eval] candidate $model -> $overall (attribution=$attribution, wall_s=$elapsed, card=$card)" >&2
 
+  # DOGFOOD-EVAL-GUARD: this was `worktree remove --force "$wt" 2>/dev/null || true`. --force
+  # destroys uncommitted work exactly as thoroughly as `rm -rf`, and NOTHING in this script ever
+  # commits the candidate's work — the model's entire output lives here as uncommitted changes.
+  # $diff_file only captures `git diff` (TRACKED files), so a candidate that created NEW files
+  # had them deleted with no copy anywhere. `2>/dev/null || true` made that silent.
+  #
+  # Routed through the same safe_worktree_remove as above: it removes a genuinely clean,
+  # fully-pushed, provably-ours worktree (the early-ditch/no-diff case — so this is NOT a guard
+  # that keeps everything), and REFUSES a tree still holding uncommitted or unremoted work,
+  # leaving it on disk. No `|| rm -rf` fallback: DOGFOOD_KEEP_WORKTREE=1 (the default) is the
+  # supported way to keep worktrees; there is no supported way to force-destroy live work.
   if [ "$KEEP_WORKTREE" != "1" ]; then
-    git -C "$PRODUCT_REPO" worktree remove --force "$wt" 2>/dev/null || true
+    # Drop the ONE file this script itself planted in the worktree, so its own scaffolding does
+    # not read as candidate work and permanently over-block the clean/early-ditch case. This is
+    # a named single file we created three steps up, NOT a `git clean` and NOT a guard bypass —
+    # anything else in the tree still makes the removal below refuse.
+    #
+    # BY CONTENT, NOT BY NAME (adversarial review F4). `rm -f` on the path alone deleted whatever
+    # was at that name — and a model handed a brief may write its plan, notes or answer INTO that
+    # brief. The file is UNTRACKED, so $diff_file (`git diff`, tracked only) holds no copy and the
+    # deletion is unrecoverable: precisely the failure class this whole commit exists to close.
+    # So: remove it only while it is byte-identical to the pristine copy we planted three steps up
+    # (the `touch` above changes mtime, not bytes, so cmp still matches). If it DIFFERS the
+    # candidate wrote to it — keep it, and let the dirty check in _lg_wt_target_ok refuse the
+    # removal below, exactly as it would for any other candidate output.
+    if cmp -s "$wt/DOGFOOD-TICKET-BRIEF.md" "$BRIEF_FILE"; then
+      rm -f "$wt/DOGFOOD-TICKET-BRIEF.md"
+    fi
+    if safe_worktree_remove "$PRODUCT_REPO" "$wt" "$label" "$NPDIR"; then
+      echo "[dogfood-eval] worktree removed (clean): $wt" >&2
+    else
+      echo "[dogfood-eval] worktree KEPT: $wt — removal refused (reason above); it still holds work." >&2
+    fi
   fi
   # NEVER commit/push/merge this worktree's branch — it is left local, unpushed, for audit only.
 }
