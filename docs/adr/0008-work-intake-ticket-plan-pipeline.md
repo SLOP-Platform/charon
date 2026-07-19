@@ -1,5 +1,7 @@
 # ADR-0008 — Work intake → ticket-plan pipeline (the decomposition front door)
 
+> Post-MVP per ADR-0017 (fleet orchestration deferred; gateway MVP first).
+
 Status: **Accepted** (2026-06-26; Phase 1 shipped). Phase 2 tripwire: ADR-0007
 **D10-C** (auto-decompose). Builds on ADR-0007 (work engine; consumer-supplied units),
 ADR-0006 (decompose role-DAG). This is a queued skeleton — the failure contract + shape

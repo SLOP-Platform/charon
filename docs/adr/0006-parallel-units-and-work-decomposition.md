@@ -1,5 +1,7 @@
 # ADR-0006 — Parallel independent units + work-decomposition (PERF-4)
 
+> Post-MVP per ADR-0017 (fleet orchestration deferred; gateway MVP first).
+
 Status: **Accepted** (2026-06-26; T1/PERF-4 implementation shipped in PR #9).
 Date: 2026-06-26. Supersedes the PERF-4 deferral in PLAN-tier4 §6.
 Builds on: ADR-0001 §5 (PERF-4), ADR-0004 D6 (thin DAG runner) / D8 (role

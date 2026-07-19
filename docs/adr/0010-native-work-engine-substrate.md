@@ -1,6 +1,8 @@
 # ADR-0010 — Native work-engine substrate (promote the engine in-tree)
 
-Status: **Accepted** (2026-06-26; revised after a 4-lens DTC; engine substrate shipped). **Amends ADR-0007 D10** for
+> **SUPERSEDED (posture) by ADR-0017, 2026-07-19.** This ADR's "build the work-engine native NOW" posture is superseded: per ADR-0017 the engine is **deferred** (gateway MVP first), and when fleet-orchestration reaches the critical path the direction is to **adopt a commodity substrate (DBOS/Restate)**, not build native. The decisions below stand as the record of the native-substrate design; only the build-now / build-native posture is overtaken.
+
+Status: **Accepted** (2026-06-26; revised after a 4-lens DTC; engine substrate shipped); **posture superseded by ADR-0017** (engine deferred; adopt substrate when orchestration is on the critical path). **Amends ADR-0007 D10** for
 the coordination substrate. Builds on ADR-0006 (PERF-4: `run_parallel`/ledger/SharedBudget),
 ADR-0007 (safe-landing-first; `land.py`), ADR-0008 (intake→ticket-plan). Honors ADR-0005 R3 /
 ADR-0007 D11 (anti-dilution: never touch the gateway request path or install footprint).

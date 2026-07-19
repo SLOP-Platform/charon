@@ -1,6 +1,7 @@
 # ADR-0004 — Routing/gateway plane: roles, model-pools, cost-first failover, agents & the standalone frontend
 
 - **Status:** Accepted (2026-06-26)
+- **Superseded-by:** ADR-0016, ADR-0011 (the Switchboard), ADR-0017
 - **Deciders:** Nnyan (operator)
 - **Relates to:** ADR-0001 (thin orchestrator), ADR-0002 (boundary), ADR-0003 (planes)
 - **Grounded by:** five research subsessions (cited in `docs/research/`) — execution/ACP,

@@ -1,4 +1,6 @@
-# ADR-0011 — Intake → ticket-plan front door (ADR-0008 Phase 1, human-gated)
+# ADR-0018 — Intake → ticket-plan front door (ADR-0008 Phase 1, human-gated)
+
+> Renumbered from 0011 (collision with the Switchboard ADR), 2026-07-19.
 
 Status: **Proposed** (2026-06-26). Implements **ADR-0008 Phase 1** (the non-coder
 front door) and **ADR-0010 build-seq step 4**. Builds on ADR-0007 (`land.py` units

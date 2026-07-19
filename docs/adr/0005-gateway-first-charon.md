@@ -6,10 +6,12 @@
 > only, not gateway mode). ADR-0001's continuity plane, fence/autonomy ladder, and
 > thin-core invariants remain in force.
 
+> **Relates-to ADR-0017 (2026-07-19).** Charon's gateway **identity** is kept and reinforced by ADR-0017. What changes: the hand-rolled stdlib proxy **core** this ADR builds (`proxy_server.py` / failover) is to be **replaced by adopting LiteLLM** per ADR-0017 — the gateway-first *policy* is unchanged, only the implementation substrate.
+
 - **Status:** Accepted (2026-06-26)
 - **Deciders:** Nnyan (operator)
 - **Relates to:** ADR-0001 (thin orchestrator), ADR-0002 (boundary), ADR-0003 (planes),
-  ADR-0004 (routing/gateway/pools/frontend — this ADR promotes its R1 proxy to the product)
+  ADR-0004 (routing/gateway/pools/frontend — this ADR promotes its R1 proxy to the product), ADR-0017 (outcome-graded gateway; adopt LiteLLM for the proxy core)
 - **Grounded by:** direct read of the existing core (`src/charon/proxy_server.py`,
   `proxy.py`, `pools.py`, `router.py`, `service/app.py`, `cli.py`) + the gateway-first
   vision clarified with the operator 2026-06-26. Adversarially self-reviewed below

@@ -7,9 +7,11 @@
 > backlog item). It supersedes nothing; it promotes `ms-router` from a routing
 > *library* to the *brain* of an orchestrator.
 
+> **Posture superseded by ADR-0017 (2026-07-19).** This ADR's "build the routing brain (and engine) natively" posture is overtaken by ADR-0017's adopt-substrate / build-only-the-brain framing: the outcome-graded **brain stays**, but the routing/gateway **plumbing is adopted (LiteLLM)** rather than hand-built, and the engine is deferred.
+
 - **Status:** Accepted (2026-06-26)
 - **Deciders:** Nnyan (solo operator)
-- **Relates to:** `ms-router` decision; agent-framework evaluation (ZeroClaw Path C); memU schema lift for success-rate tracking
+- **Relates to:** `ms-router` decision; agent-framework evaluation (ZeroClaw Path C); memU schema lift for success-rate tracking; ADR-0017 (outcome-graded gateway)
 - **Methodology:** ADR + tiered implementation; ports-and-adapters; derive-or-verify; structural enforcement over honor-system
 
 ---

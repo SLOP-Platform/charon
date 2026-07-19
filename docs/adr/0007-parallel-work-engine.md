@@ -1,5 +1,7 @@
 # ADR-0007 — Parallel work engine: safe landing first, engine deferred in stages
 
+> Post-MVP per ADR-0017 (fleet orchestration deferred; gateway MVP first).
+
 Status: **Accepted** (2026-06-26). Builds on ADR-0005 (gateway-first), ADR-0006
 (PERF-4). Reconciles the 2026-06-26 DTC (4 lenses) + a 3-lens adversarial review of
 the first plan (feasibility / security / scope) — see REVIEW-LOG.

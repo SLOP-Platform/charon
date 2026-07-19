@@ -1,5 +1,7 @@
 # ADR-0016 — Demand-driven capability match (zero static rank)
 
+> **Relates-to ADR-0017 (2026-07-19).** This ADR's demand-driven selection **policy survives** — but it now rides on the **adopted LiteLLM** plumbing (per ADR-0017), not the hand-rolled proxy it cites; its framing is **consolidated by ADR-0011 (the Switchboard)**; and it **composes under** ADR-0017's outcome-graded layer (model/work-type selection sits above provider selection).
+
 Status: **Proposed** (2026-07-12). Supersedes the hand-assigned `cost_rank`
 integer selection rule in ADR-0004 (D4/R2) and the pool-ordering half of
 ADR-0004's `_build_routes_and_pools`. Builds on and **finishes/unifies/deploys**
