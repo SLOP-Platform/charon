@@ -16,9 +16,29 @@
 #     It NEVER auto-unparks (parked = a human decision) and NEVER clears a still-splittable
 #     quarantine (that needs decompose/serial_justify first). Those are REPORTED for the human.
 #
-# Usage:  foreman.sh [--fix]
+# EXIT-CODE CONTRACT (machine-readable; the human report is unchanged and stays LOUD):
+#   0  OK / ADVISORY  -- foreman ran correctly. Either everything is healthy, OR the only
+#                        finding is a SUPPLY condition (a starving/low tier). Starvation is a
+#                        SCHEDULING state ("no work queued"), NOT a gate failure: a naive
+#                        `if foreman.sh; then` caller must NOT read "feed the board" as "the
+#                        rig is broken". The [STARVE]/[LOW] lines and the VERDICT line still
+#                        print loudly -- only the rc changed. Machine-readable discriminator:
+#                        the verdict line is `[ADVISORY] STARVING TIERS: ...`.
+#   1  ERROR          -- foreman itself could not do its job: bad input (unknown flag), an
+#                        unreadable/absent board directory, or a missing required callee.
+#                        The report is UNTRUSTWORTHY. This is the only "broken" rc.
+#   2  DEFECT         -- the board is provably malformed for concurrent work: a LIVE
+#                        owns-collision (two writers, unsequenced). Not a supply condition --
+#                        feeding this board corrupts work, so it stays blocking-by-default.
+#   10 SUPPLY (opt-in)-- with --strict-supply, a starving tier returns 10 instead of 0, for
+#                        the rare caller that genuinely WANTS to block on an empty board.
+#                        Blocking on starvation must be an explicit opt-in, never a side
+#                        effect of an overloaded rc.
+#
+# Usage:  foreman.sh [--fix] [--strict-supply]
 #         FOREMAN_FLEET=<dir> overrides the fleet root (isolated e2e test seam).
 set -uo pipefail
+EXIT_OK=0; EXIT_ERROR=1; EXIT_DEFECT=2; EXIT_SUPPLY=10
 if [ -n "${FOREMAN_FLEET:-}" ]; then FLEET="$FOREMAN_FLEET"
 else FLEET="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; fi
 BOARD="$FLEET/board"; STATE="$FLEET/state"
@@ -28,9 +48,32 @@ BOARD="$FLEET/board"; STATE="$FLEET/state"
 [ -f "$FLEET/_lib.sh" ] && source "$FLEET/_lib.sh"
 # batched merged-PR lookups (ONE gh call per repo, cached) instead of a gh call per blocked ticket
 [ -f "$FLEET/gh-cache.sh" ] && source "$FLEET/gh-cache.sh"
-FIX=0; [ "${1:-}" = "--fix" ] && FIX=1
 meta(){ awk -F': ' -v k="$1" '$1==k{sub(/^[^:]*: ?/,"");print;exit}' "$2" 2>/dev/null; }
 say(){ printf '%s\n' "$*"; }
+# die -- a GENUINE error (rc=1): foreman could not run, so its report means nothing. Distinct
+# from any board finding, which is reported and carried in the verdict rc instead.
+die(){ say "== FOREMAN VERDICT: [ERROR] $* =="; exit "$EXIT_ERROR"; }
+
+FIX=0; STRICT_SUPPLY=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --fix)           FIX=1 ;;
+    --strict-supply) STRICT_SUPPLY=1 ;;
+    # bad input is an ERROR, not a silently-ignored arg: a typo'd flag used to make foreman
+    # look like it honoured a mode it never parsed.
+    *) die "unknown argument '$1' (usage: foreman.sh [--fix] [--strict-supply])" ;;
+  esac
+  shift
+done
+
+# --- 0. preconditions: an unreadable board / missing callee is an ERROR, not an empty board ---
+# Without this, an unreadable board dir made every tier look starved -- a genuine tool failure
+# was indistinguishable from "nothing queued". That is the exact ambiguity this contract kills.
+[ -d "$BOARD" ] || die "board directory not found: $BOARD"
+[ -r "$BOARD" ] && [ -x "$BOARD" ] || die "board directory not readable: $BOARD"
+for _req in claim.sh validate_board.sh; do
+  [ -r "$FLEET/$_req" ] || die "required callee missing/unreadable: $FLEET/$_req"
+done
 
 # --- 1. tier claimable depth (LOUD on starve) --------------------------------------------------
 say "== FOREMAN: tier claimable depth =="
@@ -118,8 +161,17 @@ done
 [ -n "$keep_lg" ] && say "  HUMAN NEEDED (not auto-fixed): decompose/justify ->$keep_lg"
 
 # --- 5. verdict (loud) -------------------------------------------------------------------------
-rc=0
-[ -n "$coll" ]     && { say "== FOREMAN VERDICT: [FAIL] COLLISIONS present -- sequence/dedupe before feeding =="; rc=1; }
-[ -n "$starving" ] && { say "== FOREMAN VERDICT: [FAIL] STARVING TIERS:$starving =="; rc=1; }
-[ "$rc" = 0 ] && say "== FOREMAN VERDICT: [OK] all tiers fed, no collisions, decomposition clean =="
+# Two DIFFERENT classes, deliberately no longer collapsed into one rc (see EXIT-CODE CONTRACT):
+#   collisions = a board DEFECT   -> rc 2, blocking (feeding it corrupts work).
+#   starvation = a SUPPLY state   -> rc 0 by default (loud report, but "nothing to do" is not
+#                                    "broken"); rc 10 only for a caller that opted in.
+# Both stay equally LOUD to the human -- only the machine-readable signal is now honest.
+rc="$EXIT_OK"
+[ -n "$coll" ]     && { say "== FOREMAN VERDICT: [DEFECT] COLLISIONS present -- sequence/dedupe before feeding =="; rc="$EXIT_DEFECT"; }
+if [ -n "$starving" ]; then
+  say "== FOREMAN VERDICT: [ADVISORY] STARVING TIERS:$starving -- supply state (feed the board), NOT a gate failure =="
+  # a real DEFECT outranks a supply advisory; never downgrade rc 2 to 10.
+  [ "$STRICT_SUPPLY" = 1 ] && [ "$rc" = "$EXIT_OK" ] && rc="$EXIT_SUPPLY"
+fi
+[ "$rc" = "$EXIT_OK" ] && [ -z "$starving" ] && say "== FOREMAN VERDICT: [OK] all tiers fed, no collisions, decomposition clean =="
 exit "$rc"

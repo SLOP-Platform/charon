@@ -37,20 +37,26 @@ _run_foreman(){
   local label="$1"
   [ -x "$FOREMAN_SH" ] || { say "foreman-cadence: foreman.sh not found at $FOREMAN_SH (skip $label)"; return 0; }
   say "== FOREMAN CADENCE: $label =="
-  local out rc
+  local out rc=0
   out="$(FOREMAN_FLEET="$FOREMAN_FLEET" bash "$FOREMAN_SH" 2>&1)" || rc=$?
   printf '%s\n' "$out"
-  if [ -n "${rc:-}" ]; then
-    say "== FOREMAN CADENCE VERDICT ($label): FAIL (rc=$rc) =="
-    return "$rc"
-  fi
-  # Check verdict line in output
-  if printf '%s\n' "$out" | grep -qiE '\[STARVE\]|\[COLLISION\]'; then
-    say "== FOREMAN CADENCE VERDICT ($label): ISSUES DETECTED =="
-    return 1
-  fi
-  say "== FOREMAN CADENCE VERDICT ($label): OK =="
-  return 0
+  # Mirror foreman.sh's EXIT-CODE CONTRACT rather than re-deriving a verdict from the text.
+  # This used to do BOTH: propagate any non-zero rc as "FAIL", and independently return 1 on a
+  # bare [STARVE] match -- two overloads of the same signal, so a merely-unfed board made every
+  # trigger (session-start / post-land / cadence) report FAIL.
+  case "$rc" in
+    0)  # includes the supply ADVISORY: report it loudly, but it is not a failure.
+        if printf '%s\n' "$out" | grep -q '^== FOREMAN VERDICT: \[ADVISORY\]'; then
+          say "== FOREMAN CADENCE VERDICT ($label): ADVISORY -- supply state (feed the board), not a failure =="
+        else
+          say "== FOREMAN CADENCE VERDICT ($label): OK =="
+        fi
+        return 0 ;;
+    2)  say "== FOREMAN CADENCE VERDICT ($label): DEFECT (rc=$rc) -- board collisions, do not feed as-is =="
+        return "$rc" ;;
+    *)  say "== FOREMAN CADENCE VERDICT ($label): FAIL (rc=$rc) -- foreman could not run =="
+        return "$rc" ;;
+  esac
 }
 
 cmd_session_start(){
