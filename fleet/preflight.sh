@@ -26,6 +26,18 @@ VALID_AREA="bridge board ci gate routing billing packaging other"
 die(){ echo "error: $*" >&2; exit 1; }
 in_set(){ local x="$1"; shift; for e in "$@"; do [ "$x" = "$e" ] && return 0; done; return 1; }
 
+# run_sync_checkouts — first command of the `scan` dispatch: refresh the LOCAL main checkouts'
+# master so every downstream gate evaluates against a current tree. Guarded like
+# fleet/hooks/session-start.sh does: a MISSING script gets a clear warning, not a bare
+# `bash: ...: No such file` + rc 127 at the top of every scan. Always returns 0 — `scan` is a
+# `;` chain and this must never abort it. Covered by fleet/tests/sync-checkouts.test.sh (D).
+run_sync_checkouts(){
+  local s="$HERE/sync-checkouts.sh"
+  if [ -f "$s" ]; then bash "$s"
+  else echo "preflight: WARN — sync script not found ($s), skipping checkout sync"; fi
+  return 0
+}
+
 [ -f "$TSV" ] || die "registry not found: $TSV"
 
 # run a check_cmd. returns 0=GREEN(gone) 1=RED(still) 2=MANUAL. captured output -> $CHECK_OUT.
@@ -776,7 +788,7 @@ startup_budget_selftest(){
 # functions above are exposed with NO side effects.
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 case "${1:-scan}" in
-  scan|"") bash "$HERE/reconcile-merged.sh"; board_gate; executor_gate; handoff_gate; done_merge_gate; hold_reason_gate; detect_needs_push; startup_budget_gate; bash "$HERE/retire-done.sh"; cmd_scan; scan_rc=$?; cmd_detect; foreman_advisory; show_operator_actions; exit $scan_rc ;;
+  scan|"") run_sync_checkouts; bash "$HERE/reconcile-merged.sh"; board_gate; executor_gate; handoff_gate; done_merge_gate; hold_reason_gate; detect_needs_push; startup_budget_gate; bash "$HERE/retire-done.sh"; cmd_scan; scan_rc=$?; cmd_detect; foreman_advisory; show_operator_actions; exit $scan_rc ;;
   add)     shift; cmd_add "$@" ;;
   close)   shift; cmd_close "$@" ;;
   list)    shift; cmd_list "$@" ;;

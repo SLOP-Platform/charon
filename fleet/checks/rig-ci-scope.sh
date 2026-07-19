@@ -60,6 +60,13 @@ CI_SUITES=(
                             # the stale-bare-name guard, i.e. the very defect (report success
                             # while publishing NOTHING) this script exists to prevent; it was
                             # unenforced in CI until 2026-07-19.
+  sync-checkouts.test.sh    # hermetic: mktemp git fixtures + a fixture fleet dir. Defends the
+                            # SESSION-START path — no silent branch flip, bounded fetches, and
+                            # the only test that actually EXECUTES preflight.sh's `scan` dispatch
+                            # (every other preflight test sources the file, which the BASH_SOURCE
+                            # guard makes skip the dispatch entirely). Its one network case dials
+                            # RFC 5737 TEST-NET-1, which is unroutable by definition, under a 3s
+                            # timeout — nothing leaves the box. ~20s.
 )
 
 VALID_WORK_CLASSES="bugfix ci-infra design-review docs frontend generalist greenfield-feature money-path refactor rig-meta routing tests"
