@@ -30,7 +30,7 @@ but no CLI command existed) and the dogfood critical path.
 - **No new `TicketSource` port.** Reused the EXISTING text `Adapter` seam
   (`register_adapter`) and the already-wired plan-JSON contract `charon work --units`
   consumes. The enrichment convention (`accept:` + `owns:`/`files:` → runnable;
-  without them → propose-only, ADR-0011) already existed in the field grammar — no
+  without them → propose-only, ADR-0018) already existed in the field grammar — no
   grammar change was needed, only the CLI front door + the `id:` field. Documented in
   the `intake import` help epilog.
 - **Nothing specific to the embedding host project (its ticket DB or repo layout) in

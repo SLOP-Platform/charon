@@ -1,7 +1,9 @@
 # ADR-0015 — Work-Composition Intelligence (reconcile + ordering + advisory layer)
 
+> Post-MVP per ADR-0017 (fleet orchestration deferred; gateway MVP first).
+
 Status: **Proposed** (2026-06-29). Builds on ADR-0010 (native substrate:
-`engine/board`, `claim`, `scheduler`), ADR-0008 / 0011 (intake → ticket-plan;
+`engine/board`, `claim`, `scheduler`), ADR-0008 / 0018 (intake → ticket-plan;
 Phase 2 auto-decompose deferred), ADR-0006 (PERF-4 parallel units), ADR-0007
 (safe-landing-first; D7 warm pool; D8 liveness). Positions WCI as a **composition
 layer** above the existing substrate, not a new engine. Touches the register at
@@ -114,7 +116,7 @@ WCI is an orchestrator opt-in, not a default gate.
 ## References
 
 - ADR-0010 (native engine substrate)
-- ADR-0008 / ADR-0011 (intake → ticket-plan)
+- ADR-0008 / ADR-0018 (intake → ticket-plan)
 - ADR-0006 (PERF-4 parallel units)
 - ADR-0007 (safe-landing-first)
 - `DSGN-WCI-reshape.md` (source of truth for R1–R9, F1–F3, out-of-scope)

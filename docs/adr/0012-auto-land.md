@@ -1,5 +1,7 @@
 # ADR-0012 — Opt-in, batch-atomic auto-land
 
+> Post-MVP per ADR-0017 (fleet orchestration deferred; gateway MVP first).
+
 Status: **Accepted** (2026-06-26). Builds on ADR-0007 D4/D5/D6 (propose-default land gate;
 `land.py`), ADR-0010 D4 (scanner matrix; advisory-until-measured), ADR-0009 (sandbox/isolation),
 ADR-0003 (default-deny / L0-propose). Honors ADR-0005 R3 / ADR-0007 D11 (anti-dilution: the
