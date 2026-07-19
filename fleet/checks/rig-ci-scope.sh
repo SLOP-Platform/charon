@@ -60,6 +60,11 @@ CI_SUITES=(
                             # the stale-bare-name guard, i.e. the very defect (report success
                             # while publishing NOTHING) this script exists to prevent; it was
                             # unenforced in CI until 2026-07-19.
+  stranded-work.test.sh     # hermetic: real git repos + a real local BARE remote under mktemp -d;
+                            # PR state is injected as a TSV fixture (SW_PR_FIXTURE), so `gh` is
+                            # never invoked and nothing leaves the box. ~2s. Guards the recurring
+                            # stranded-work detector, including its never-report-clean-when-
+                            # undetermined contract.
 )
 
 VALID_WORK_CLASSES="bugfix ci-infra design-review docs frontend generalist greenfield-feature money-path refactor rig-meta routing tests"

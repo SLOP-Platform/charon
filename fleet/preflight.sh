@@ -586,6 +586,19 @@ detect_inflight_landscape(){
 # Wake-trigger for the DEFERRED gateway contract-injection (PROPOSAL step-3): if
 # CG-attributed discipline failures cross the threshold, static-doc doctrine is
 # not steering CG and the deferred fix is warranted. cg-drift.sh owns the tally.
+# Stranded-work detector (STRANDED-WORK-AUDIT). The one-shot hand audit ran 2026-07-14; this is
+# the RECURRING half the standing [[dynamic-tools-never-on-demand]] directive requires — a tool
+# that only runs when a human types its name is not a control. It rides the EXISTING detector
+# dispatch (same shape as detect_cg_drift) rather than inventing a scheduler, so it fires on every
+# preflight: session start, and every gate/land cycle that preflights.
+# ADVISORY (`|| true`): it is REPORT-ONLY and must never block a session on pre-existing backlog.
+# The findings surface in the detector block; recovery stays a human/land.sh decision.
+detect_stranded_work(){
+  local script="$HERE/checks/stranded-work.sh"
+  [ -f "$script" ] || { echo "stranded-work: checks/stranded-work.sh not found"; return 0; }
+  bash "$script" --quiet || true
+}
+
 detect_cg_drift(){
   local script="$HERE/cg-drift.sh"
   [ -x "$script" ] || { echo "cg-drift: cg-drift.sh not found/executable"; return 0; }
@@ -649,6 +662,7 @@ cmd_detect(){
   detect_claim_loop
   detect_wci_contention
   detect_inflight_landscape
+  detect_stranded_work
   detect_cg_drift
   detect_gateway_token_drift
   detect_config_drift
