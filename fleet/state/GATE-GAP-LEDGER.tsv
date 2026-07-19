@@ -1,0 +1,24 @@
+# GATE-GAP-LEDGER — append-only ledger of GREEN-gate misses (doctrine: green-is-not-proof).
+# One row per incident where every relevant gate was GREEN (or the class had NO gate at all)
+# yet a real issue shipped. The point is the ROOT CLASS column: extract the CLASS behind the
+# miss, not the instance — each class MUST map to an item in fleet/GATE-CREATION-STANDARD.md
+# (traceability is machine-checked by fleet/checks/gate-creation-standard.sh).
+#
+# APPEND STEP (mandatory, EVERY time a green gate later fails to detect a real issue):
+#   bash fleet/checks/gate-creation-standard.sh append \
+#     "<gates that were green>" "<issue that shipped>" <root-class-slug> \
+#     "<gate improvement that would have caught it>" "<status>"
+# The helper validates the row (6 tab-separated fields, no tabs inside fields, root class
+# traced in the standard) and appends. NEVER edit or delete existing rows (append-only;
+# gate-creation-standard.sh REDs if the row count ever shrinks below its floor).
+#
+# Columns (tab-separated, exactly 6):
+date	gates_green	issue_shipped	root_class	gate_improvement	status
+2026-07-15	product full gate (12 checks) + diff-scoped adversarial review	DELETE-STATIC-RANK (PR #152) landed green, but the DEPLOY (purge cost_rank from 4-LOM /data/models.json) collapses unpriced models to the 1000 fallback -> silent route-to-pricier money leak; override removed; no priced-completeness preflight	deploy-context-blind	a DATA/DEPLOY preflight (priced-completeness) gating the deploy target, not just the code; every gate declares its context-of-validity (code vs deploy vs data)	open: ADR0016-DEPLOY-PRICED-COMPLETENESS boarded
+2026-07-15	all gates (the class had NO detector, so nothing COULD go red)	planner and recommend.py each hard-failed on ONE provider/model (single-provider stiffness); fixed instance-by-instance, class undetected across call-sites	no-gate-exists	class-inventory rule: every incident mints a ledger row; a recurring class must get a gate (or an explicit written waiver) — this ledger mechanizes it	fixed instances (shared failover_loop, DESTIFF-RECOMMEND); class tracked here
+2026-07-14	fleet gate green; review-log/commit message read as acceptance	FOREMAN-WIRE commit CLAIMED preflight wiring the diff did not contain — the self-report was accepted as evidence	self-report-lie	artifact-verified acceptance: verify the claim IN the diff (grep the diff for the claimed wiring) + a red-proof test exercising the wired path; never grade from the report	fixed: test_foreman_wire.sh lands the wiring + proof; doctrine [[document-model-self-report-lies]]
+2026-07-14	product gate green (the detector was registered in NO gate, so no gate ran it)	tools/check_catalog_case_quant.py built and merged but wired into no gate (absent from gates.json/gate_runner) — catalog case/quant mismatches shipped undetected	built-but-inert	registry-wire meta-check: a new enforcer MUST be registered AND invoked from the wired production gate path, or RED	open: CATALOG-GATE-WIRE boarded
+2026-07-13	inert-code gate (verdict varied run-to-run on the same tree)	check_inert_code.py flipped red/green between runs — ephemeral .claude/worktrees/agent-* copies swept into the AST scan; a green run proved nothing	non-deterministic-gate	determinism requirement: 3x identical runs on the same tree produce identical verdicts; hermetic input set (exclude ephemeral/local-cache dirs)	fixed: GATE-INTEGRITY-A (_EXCLUDE_DIRS monkeypatch)
+2026-07-14	all gates (no drift detector; an unreachable source was silently treated as in-sync)	local ~/.charon vs 4-LOM /data/providers.json diverged silently (config-siloing); no SSOT, no drift gate; unreachable source = vacuous pass	multi-source-drift	SSOT manifest + drift gate that REDs on divergence AND on UNREACHABLE source (non-vacuous: absence of data is a failure, not a pass)	fixed: fleet/checks/config-ssot-gate.sh (+ fail-on-revert test)
+2026-06-27	validate_board printed REVIEW findings yet exited 0	a board double-claim launched: the failure flag was set inside a `| while` subshell and never propagated — the gate exited GREEN on the exact defect it was built to catch	fail-quiet-pipe-mask	fail-loud requirement: set -uo pipefail, no verdict-flag inside a piped subshell, the exit code MUST carry the verdict; fail-on-revert test proving the RED path	fixed: validate_board.sh rewrite 2026-06-27
+2026-07-14	land-path gate green	land.sh marked a ticket DONE while the PR was not actually merged (mergeability=UNKNOWN) — false-DONE risked cascade-unblocking dependents of unmerged work	effect-not-verified	verify-effect: assert the POST-STATE (PR actually merged) rather than that a command exited 0; self-heal re-check before done-marking	fixed: land.sh false-DONE fix + auto-done-mark self-heal
