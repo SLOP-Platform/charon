@@ -316,7 +316,8 @@ def _check_failover_safety(cfg: GatewayConfig) -> None:
           "or open http://127.0.0.1:8080/charon/setup", file=sys.stderr)
 
 
-def build_server(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> GatewayProxyServer:
+def build_server(cfg: GatewayConfig, *, setup_dir: str | Path | None = None,
+                 port: int | None = None) -> GatewayProxyServer:
     """Construct the gateway server. Enforces the loopback/token invariant HERE —
     at bind time — so it holds for ANY caller, not just ``run`` (security review
     MED: ``__init__`` binds the socket, so the guard must precede construction).
@@ -330,7 +331,8 @@ def build_server(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> 
             f"--token, or bind 127.0.0.1 for local use (ADR-0005 D5/R8)."
         )
     server = GatewayProxyServer(
-        routes=cfg.routes, pools=cfg.pools, host=cfg.host, port=cfg.port,
+        routes=cfg.routes, pools=cfg.pools, host=cfg.host,
+        port=port if port is not None else cfg.port,
         token=cfg.token, model_ids=cfg.model_ids, model_meta=cfg.model_meta,
         model_pricing=cfg.model_pricing,
         failover_on_downgrade=cfg.failover_on_downgrade,
