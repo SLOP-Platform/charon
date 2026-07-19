@@ -1,3 +1,4 @@
+repo: charon-private
 DONE 2026-06-27 — validated on charon-vm; gaps captured into UX-POLISH/etc.
 tier: n/a
 difficulty: 1  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
