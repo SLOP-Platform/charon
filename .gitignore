@@ -27,6 +27,20 @@ fleet/state/*
 # exemption exists because the blanket `fleet/state/*` is otherwise more
 # restrictive than the original design-doc pattern.)
 !fleet/state/BENCH-PROVISIONAL-SCORING-DESIGN.md
+# ...except the five durable artifacts owned by in-flight rig tickets. Landed AHEAD
+# of those PRs deliberately: `.gitignore` is an anchor file, and four separate PRs
+# (#97 #96 #93 #47) each appended their own negation here. Serialising them meant
+# re-resolving the same conflict three times, and every merge invalidated the other
+# branches' patch context. Landing all five negations up front dissolves the only
+# contention edge in the open-PR set so the rest are file-disjoint.
+!fleet/state/SSOT-REGISTRY.tsv
+!fleet/state/REACHABILITY-AUDIT.md
+!fleet/state/.reachability-allowlist
+!fleet/state/provider-pricing-limits.tsv
+!fleet/state/LAND-SH-POSTMORTEM.md
+# ...and FREE-TIER-LIMITS.tsv (#116), which is currently tracked only because it was
+# force-added; it had no negation line at all. Made explicit for consistency.
+!fleet/state/FREE-TIER-LIMITS.tsv
 
 # --- scratch / logs ---
 *.log
