@@ -160,6 +160,12 @@ fi
 IFS=',' read -r -a MODELS <<<"$models_line" || true
 [ "${#MODELS[@]}" -gt 0 ] || { echo "[fleet-droid] FATAL: empty gateway model chain for tier '$CANON'." >&2; exit 3; }
 DROID="$TIER-$$"; current=""; empties=0
+# COMMIT-ACTOR-STAMP: every commit made anywhere in THIS droid's process tree (launcher
+# auto-commit, the work client, the model itself) is attributed to this droid id instead of the
+# indistinguishable `sim <sim@sim>`. Exported once here so it is inherited, never per-command.
+source "$FLEET/droid-identity.sh"
+droid_git_identity "$DROID" >/dev/null
+echo "[$DROID] git identity: $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> (commits are attributable to this droid)"
 # Release the in-flight claim if the tab is Ctrl-C'd / killed (no stuck tickets).
 cleanup(){ if [ -n "${current:-}" ] && [ ! -e "$FLEET/state/submitted/$current" ]; then
   bash "$FLEET/release.sh" "$current" >/dev/null 2>&1 || true; fi
@@ -238,6 +244,12 @@ while true; do
   fi
   REPO="$RR_PATH"; wt="$RR_WT"; base_ref="origin/$RR_BASE"
   echo "[$DROID] $id -> repo=$RR_KEY ($REPO) base=$RR_BASE worktree=$wt"
+  # MED-3: RE-STAMP the commit identity per ticket, now that the target repo is known. The
+  # launch-time stamp is the droid id, which is right for the rig but would publish internal rig
+  # taxonomy (tier name + pid, @fleet.local) into the PUBLIC product's history. One droid handles
+  # tickets for several repos in a session, so this must be re-picked every iteration.
+  droid_identity_for_repo "$RR_KEY" "$DROID" >/dev/null
+  echo "[$DROID] $id commit stamp: $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> (repo=$RR_KEY)"
   # #1 WORKTREE-LEAK GUARD (a): the LAUNCHER creates the worktree off the repo's base branch
   # BEFORE the model runs, so the create/cd step is out of the model's hands — a model that
   # ignores it can no longer land in the main checkout undetected. On failure we FAIL LOUDLY and
@@ -246,7 +258,11 @@ while true; do
   npmark="$FLEET/state/needs-push/$id"
   mkdir -p "$(dirname "$wt")"
   set +e; leak_worktree_setup "$REPO" "$wt" "$branch" "$npmark" "$base_ref"; lg_rc=$?; set -e
-  if [ "$lg_rc" -eq 2 ]; then
+  if [ "$lg_rc" -eq 3 ]; then
+    echo "[$DROID] $id: branch '$branch' has UNLANDED commits — leak-guard salvage-tagged them and REFUSED to recreate the worktree. Land or delete that branch by hand; NOT re-running. Next…" >&2
+    current=""   # keep the claim marker so it isn't re-offered; a human decides
+    continue
+  elif [ "$lg_rc" -eq 2 ]; then
     echo "[$DROID] $id has committed-but-unlanded work (state/needs-push/$id) — NOT re-running (would risk its worktree). Land it: fleet/land-needs-push.sh $id. Keeping claim; next…" >&2
     current=""   # keep the claim marker so it isn't re-offered; manager lands it
     continue

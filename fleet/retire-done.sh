@@ -61,17 +61,33 @@ else echo "retire-done: clean (no done ticket left on the active board)"; fi
 # destroys-needs-push hazard when left around. safe_worktree_remove (leak-guard.sh) REFUSES to
 # remove any worktree that still has a live state/needs-push/<id> marker, so committed-but-
 # unlanded work is never destroyed. Idempotent: no-op when the worktree is already gone.
-CHARON="/home/stack/code/charon"
+#
+# REPO-AWARE (2026-07-18): this used to hardcode CHARON=/home/stack/code/charon and derive
+# "$CHARON-fleet-$id". The repo-aware verify_merged fix landed in _lib.sh/done.sh but NOT here —
+# and this is the DESTRUCTIVE sweep. A `repo: charon-private` ticket's worktree lives at
+# /home/stack/charon-private-wt/<id>, so the sweep silently skipped every rig ticket while
+# pointing `git -C` at the product repo. Both the repo and the worktree path now come from the
+# SAME canonical per-ticket resolution (_lib.sh ticket_repo_path/ticket_worktree_path ->
+# repo-registry.sh repo_resolve). NO new map here — a second map IS the drift class just fixed.
+# FAIL CLOSED: an unresolvable repo removes NOTHING.
 NPDIR="$FLEET/state/needs-push"
 if [ -f "$FLEET/leak-guard.sh" ]; then
   source "$FLEET/leak-guard.sh"
   wtn=0
   for m in "${DONE_MARKERS[@]}"; do
     [ -f "$m" ] || continue
-    id="$(basename "$m")"; wt="$CHARON-fleet-$id"
+    id="$(basename "$m")"
+    if ! repo="$(ticket_repo_path "$id")" || [ -z "$repo" ]; then
+      echo "  worktree SKIPPED (fail-closed): $id — repo unresolvable (unknown 'repo:' key or no board file); removing nothing" >&2
+      continue
+    fi
+    if ! wt="$(ticket_worktree_path "$id")" || [ -z "$wt" ]; then
+      echo "  worktree SKIPPED (fail-closed): $id — worktree path unresolvable for repo $repo; removing nothing" >&2
+      continue
+    fi
     [ -e "$wt" ] || continue
     retire_safe "$m" "$id" || { echo "  worktree kept: $wt — $id done marker NOT merge-verified"; continue; }
-    if safe_worktree_remove "$CHARON" "$wt" "$id" "$NPDIR"; then
+    if safe_worktree_remove "$repo" "$wt" "$id" "$NPDIR"; then
       wtn=$((wtn+1)); echo "  worktree removed: $wt (ticket done)"
     fi
   done

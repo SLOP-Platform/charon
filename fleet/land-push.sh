@@ -8,9 +8,35 @@
 # Red -> ABORT, no push. --force bypasses the gate (explicit + logged).
 # Usage: land-push.sh <branch> [repo-or-worktree] [--gate <cmd>] [--force]
 #   default repo = /home/stack/code/charon
+#
+# LAND-SAFETY-FIX (2026-07-18): this used to end in a bare `git push origin "$BRANCH"`, which
+# publishes the LOCAL REF MATCHING THAT NAME — not HEAD. With HEAD on a feature branch,
+# `land-push.sh master` printed "pushing 'master'" and exited 0 while publishing NOTHING (the
+# local master ref was stale). It now resolves EXACTLY which sha it intends to publish, refuses
+# when that is not what the caller meant, and PROVES the result with `git ls-remote`.
+# The explicit `HEAD:master` refspec form (how master was reconciled) still works — it is now the
+# REQUIRED form whenever the named branch is not what HEAD points at.
+#
+# EXIT CODES (callers depend on these being distinguishable):
+#   0  pushed AND proven (origin/<dst> == intended sha, ls-remote verified)
+#   3  AUTONOMOUS lever is off — refused, nothing pushed
+#   4  gate RED — refused, nothing pushed
+#   6  refused before pushing (malformed refspec / unresolvable src / stale bare-name ref)
+#   7  the push command FAILED — remote unchanged, nothing published
+#   8  push exited 0 but origin/<dst> is NOT the intended sha — UNPROVEN, possibly wrong content
+#      published. 6 vs 7 vs 8 are deliberately distinct: 6/7 mean NOTHING was published, 8 means
+#      something may have been. Do not collapse them.
+#
+# LOW-6: the stale-bare-name guard below applies only to the BARE form (`master`). An EXPLICIT
+# same-name refspec (`master:master`) sets BRANCH != SRC and skips it, so the stale-ref defect is
+# still reachable that way. That is deliberate — an explicit refspec is an explicit statement of
+# which ref the caller means — but no refspec form is inherently safe, and the refusal message
+# must not imply otherwise.
 set -euo pipefail
 FLEET="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FLAG="$FLEET/state/AUTONOMOUS"
+# shellcheck source=/dev/null
+source "$FLEET/push-verify.sh"   # pv_resolve_sha / pv_push_verified — prove the push, never trust it.
 
 # Parse args: land-push.sh <branch> [repo] [--gate <cmd>] [--force]
 BRANCH="${1:?usage: land-push.sh <branch> [repo] [--gate <cmd>] [--force]}"; shift
@@ -65,5 +91,48 @@ else
   fi
 fi
 
-echo "land-push: AUTONOMOUS on — pushing '$BRANCH' from $REPO"
-git -C "$REPO" push origin "$BRANCH"
+# ── RESOLVE EXACTLY WHAT WE INTEND TO PUBLISH (fail closed) ──────────────────────────────────
+# BRANCH is either a plain branch name (`master`) or an explicit refspec (`HEAD:master`).
+SRC="${BRANCH%%:*}"; DST="${BRANCH#*:}"
+[ "$BRANCH" = "$SRC" ] && DST="$SRC"          # no colon -> src and dst are the same name
+DST="${DST#refs/heads/}"
+if [ -z "$SRC" ] || [ -z "$DST" ]; then
+  echo "land-push: REFUSING — malformed refspec '$BRANCH' (delete-refspecs are not supported here)" >&2
+  exit 6
+fi
+INTENDED="$(pv_resolve_sha "$REPO" "$SRC")" || {
+  echo "land-push: REFUSING — cannot resolve '$SRC' to a commit in $REPO (nothing to push)" >&2; exit 6; }
+
+# THE 2026-07-18 DEFECT, closed: pushing a BARE NAME whose local ref is not where HEAD is
+# publishes a stale ref while reporting success. Allowed only when the local ref IS HEAD;
+# otherwise the caller must say which they mean with an explicit `HEAD:$DST` refspec.
+if [ "$BRANCH" = "$SRC" ]; then
+  HEAD_SHA="$(pv_resolve_sha "$REPO" HEAD)" || { echo "land-push: cannot resolve HEAD in $REPO" >&2; exit 6; }
+  if [ "$HEAD_SHA" != "$INTENDED" ]; then
+    CUR_BR="$(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+    echo "land-push: REFUSING — local ref '$SRC' is $INTENDED but HEAD ($CUR_BR) is $HEAD_SHA." >&2
+    echo "land-push:   pushing the bare name would publish the STALE ref and report success." >&2
+    echo "land-push:   say which you mean, by SHA, not by form:" >&2
+    echo "land-push:     publish what HEAD is at:  bash $FLEET/land-push.sh HEAD:$DST $REPO" >&2
+    echo "land-push:     publish the '$SRC' ref  :  bash $FLEET/land-push.sh $SRC:$DST $REPO" >&2
+    echo "land-push:   NOTE: the refspec form is NOT a safety check — it only records which ref you" >&2
+    echo "land-push:   meant. '$SRC:$DST' publishes $INTENDED and skips this guard by design. Confirm" >&2
+    echo "land-push:   the sha above is the work you intend to publish before rerunning." >&2
+    exit 6
+  fi
+fi
+
+echo "land-push: AUTONOMOUS on — publishing $INTENDED ('$SRC') -> origin/$DST from $REPO"
+PV_RC=0; pv_push_verified "$REPO" origin "$INTENDED" "$DST" || PV_RC=$?
+if [ "$PV_RC" -ne 0 ]; then
+  echo "land-push: FAILED — origin/$DST was NOT proven to be $INTENDED (rc=$PV_RC). NOT reporting success." >&2
+  # LOW-5: this was `exit $((4 + PV_RC))`, which produced 6 for "pushed but UNPROVEN" — colliding
+  # with the 6 used above for "REFUSED, nothing was pushed". A caller could not tell NOTHING WAS
+  # PUBLISHED from THE WRONG THING MAY BE PUBLISHED, and the second is by far the more dangerous
+  # state. They now have distinct codes (see the exit-code table in the header).
+  case "$PV_RC" in
+    1) exit 7 ;;   # the push command itself failed — remote unchanged, nothing published
+    *) exit 8 ;;   # push exited 0 but origin/$DST is NOT $INTENDED — UNPROVEN, possibly wrong
+  esac
+fi
+echo "land-push: DONE — origin/$DST == $INTENDED (ls-remote verified)"

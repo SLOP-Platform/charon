@@ -10,6 +10,8 @@
 #   gate auto-detects: charon.cli gate (product) / validate_board (fleet) / pytest — or pass --gate.
 set -uo pipefail
 FLEET="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+source "$FLEET/push-verify.sh"   # pv_branch_holder / pv_push_verified — prove the push (step 4/5).
 
 # safe_sync_base — step 7, factored out and hardened (LAND-SH-SAFE-SYNC).
 # Sync the local base branch to origin AFTER a landed merge. HARD INVARIANT: this must
@@ -145,13 +147,49 @@ else
 fi
 
 # 4. put the work on the feature branch (if we're currently on base)
+# LAND-SAFETY-FIX (2026-07-18): this used to be `git branch -f "$BRANCH" HEAD && echo …` with the
+# rc IGNORED (the script runs under `set -uo pipefail`, no -e). `git branch -f` FAILS with
+#   fatal: cannot force update the branch '<b>' used by worktree at '<path>'
+# whenever ANY live worktree holds that branch — with 63 worktrees in play that is the COMMON
+# path. land.sh fell through to step 5 and pushed the STALE same-named local ref, which is how the
+# WRONG COMMIT (be41ece) got merged while land.sh reported DONE. Now: detect the holding worktree
+# FIRST with an actionable message, check the rc of the ref update, and fail CLOSED on either.
+HEAD_SHA="$(git rev-parse --verify HEAD)" || { echo "land: cannot resolve HEAD in $REPO" >&2; exit 5; }
 CUR="$(git rev-parse --abbrev-ref HEAD)"
 if [ "$CUR" != "$BRANCH" ]; then
-  git branch -f "$BRANCH" HEAD && echo "land: branch '$BRANCH' -> $(git rev-parse --short HEAD)"
+  if HOLDER="$(pv_branch_holder "$REPO" "$BRANCH")"; then
+    echo "land: REFUSING — branch '$BRANCH' is checked out by another worktree:" >&2
+    echo "land:     $HOLDER" >&2
+    echo "land:   'git branch -f $BRANCH' CANNOT update it, and landing anyway would push that" >&2
+    echo "land:   worktree's stale ref instead of this HEAD ($HEAD_SHA) — the wrong-commit merge." >&2
+    echo "land:   fix by ONE of:" >&2
+    echo "land:     * land from the holding worktree:  bash $FLEET/land.sh $BRANCH $HOLDER" >&2
+    echo "land:     * land this HEAD under its own name: bash $FLEET/land.sh <new-branch-name> $REPO" >&2
+    echo "land:     * release the branch:  git -C $REPO worktree remove $HOLDER" >&2
+    exit 5
+  fi
+  if ! git branch -f "$BRANCH" "$HEAD_SHA"; then
+    echo "land: REFUSING — 'git branch -f $BRANCH $HEAD_SHA' FAILED; the local ref does NOT point at" >&2
+    echo "land:   this HEAD, so pushing '$BRANCH' would publish some other commit. Nothing pushed." >&2
+    exit 5
+  fi
+  echo "land: branch '$BRANCH' -> $(git rev-parse --short "$BRANCH")"
+fi
+# The ref update must have actually taken effect — never trust the command's own success message.
+BR_SHA="$(git rev-parse --verify "$BRANCH" 2>/dev/null || true)"
+if [ "$BR_SHA" != "$HEAD_SHA" ]; then
+  echo "land: REFUSING — '$BRANCH' is ${BR_SHA:-<absent>} but the work to land is $HEAD_SHA. Nothing pushed." >&2
+  exit 5
 fi
 
-# 5. push the branch (sanctioned)
-git push origin "$BRANCH" || { echo "land: push failed" >&2; exit 5; }
+# 5. push the branch (sanctioned) — push the RESOLVED SHA and PROVE with ls-remote that origin
+# now has exactly it. A push that "succeeds" without moving the remote ref is the false-success
+# class that produced today's wrong-commit merge.
+PV_RC=0; pv_push_verified "$REPO" origin "$HEAD_SHA" "$BRANCH" || PV_RC=$?
+if [ "$PV_RC" -ne 0 ]; then
+  echo "land: push NOT PROVEN (rc=$PV_RC) — origin/$BRANCH is not $HEAD_SHA; refusing to open/merge a PR" >&2
+  exit 5
+fi
 
 # 6. PR + merge (official gated merge)
 OWNER_REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)"

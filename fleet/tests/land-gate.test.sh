@@ -28,9 +28,29 @@ check(){ [ "$2" = "$3" ] && ok "$1" || bad "$1 (expected '$3', got '$2')"; }
 make_fake_bin(){
   local d="$1"
   mkdir -p "$d"
+  # LAND-SAFETY-FIX (2026-07-18): land.sh/land-push.sh now RESOLVE the sha they intend to publish
+  # and PROVE with `git ls-remote` that the remote became it (push-verify.sh). A stub that answers
+  # every command with a bare exit 0 therefore models a git that resolves NOTHING, and the push
+  # paths correctly refuse. These G* cases exist to test the GATE, not the push proof (that is
+  # fleet/tests/land-safety.test.sh, on real git objects), so the stub now models a CONSISTENT
+  # git: rev-parse and ls-remote agree on one sha, so the proof passes and the gate stays the
+  # only variable. Do NOT weaken push-verify.sh to accommodate a stub.
   cat > "$d/git" <<'GITSTUB'
 #!/usr/bin/env bash
 echo "fake-git: $*" >&2
+FAKE_SHA=1111111111111111111111111111111111111111
+# drop a leading `-C <dir>` so the subcommand is $1
+[ "${1:-}" = "-C" ] && shift 2
+case "${1:-}" in
+  rev-parse)
+    case " $* " in
+      *" --abbrev-ref "*) echo master ;;   # HEAD is on base, never on the feature branch
+      *)                  echo "$FAKE_SHA" ;;
+    esac ;;
+  ls-remote)     echo "$FAKE_SHA	refs/heads/x" ;;   # remote == what we pushed (proof passes)
+  status)        : ;;                                 # clean tree
+  worktree)      : ;;                                 # nobody else holds the branch
+esac
 exit 0
 GITSTUB
   cat > "$d/gh" <<'GHSTUB'
@@ -44,7 +64,9 @@ GHSTUB
 # ---- isolated fleet fixture ----
 make_fleet(){
   local d; d="$(mktemp -d)"
-  cp "$SRC/land.sh" "$SRC/land-push.sh" "$d/"
+  # push-verify.sh is a hard dependency of BOTH scripts (they `source` it and must fail closed
+  # without it) — the fixture has to carry it.
+  cp "$SRC/land.sh" "$SRC/land-push.sh" "$SRC/push-verify.sh" "$d/"
   mkdir -p "$d/state"
   touch "$d/state/AUTONOMOUS"
   make_fake_bin "$d/bin"

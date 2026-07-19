@@ -165,6 +165,24 @@ _vm_resolve(){
 # ticket_repo_path/ticket_repo_slug: the PUBLIC form of the map. done.sh consumes these instead of
 # keeping its own `case` copy — one home, no drift.
 ticket_repo_path(){ local p; p="$(_vm_resolve "${1:-}")" || return 1; printf '%s' "${p%%$'\t'*}"; }
+# ticket_worktree_path <id> -> that ticket's canonical per-ticket worktree path (RR_WT).
+# RETIRE-DONE-REPO-UNAWARE FIX (2026-07-18): retire-done.sh — the DESTRUCTIVE sweep that removes
+# tickets from the board and force-removes their worktrees — hardcoded
+# CHARON=/home/stack/code/charon and derived "$CHARON-fleet-$id", so for a `repo: charon-private`
+# ticket it looked for the wrong path entirely (rig worktrees live at
+# /home/stack/charon-private-wt/<id>). The repo-aware verify_merged fix landed in _lib.sh/done.sh
+# but never reached the sweep. NO NEW MAP: this delegates to repo-registry.sh's repo_resolve —
+# the same SSOT _vm_resolve uses — in a SUBSHELL so the RR_* globals that fleet-droid.sh/submit.sh
+# set up-front and rely on across long-running work are NOT clobbered.
+# rc 1 = unresolvable (unknown `repo:` key, or a done marker with no board file at all) -> the
+# caller MUST fail closed and touch nothing.
+ticket_worktree_path(){
+  local id="${1:-}" key
+  command -v repo_resolve >/dev/null 2>&1 || return 2   # registry absent (minimal test fixture)
+  key="$(_vm_ticket_repo_field "$id")" || return 1      # rc 1 = no board file (M4 fail-closed)
+  key="$(printf '%s' "$key" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+  ( repo_resolve "$key" "$id" >/dev/null 2>&1 || exit 1; printf '%s' "$RR_WT" )
+}
 ticket_repo_slug(){ local p; p="$(_vm_resolve "${1:-}")" || return 1; printf '%s' "${p#*$'\t'}"; }
 _vm_repo(){ ticket_repo_path "${1:-}"; }
 # M1: never return an empty slug (a missing/renamed local repo would silently disable the gh
