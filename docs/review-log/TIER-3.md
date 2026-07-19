@@ -1,4 +1,4 @@
-# TIER-3 Review Note — `charon tier` CLI
+# Review Note — `charon tier` CLI
 
 ## Design anchors honored
 
@@ -6,11 +6,12 @@
 `order=["low","med","high"]`, `members={"low":["haiku"],"med":["sonnet"],"high":["opus"]}`,
 `aliases={opus→high, sonnet→med, haiku→low, frontier→high, strong→med, economy→low}`.
 Idempotent — safe to re-run. Day-one == today: each tier's single Anthropic member
-matches the legacy fleet model name exactly.
+matches the legacy build-rig model name exactly.
 
 **`tier ranks`** — emits `<name> <rank>` lines for EVERY canonical tier AND every alias.
-Consumed by `claim.sh` (TIER-5) ONCE before `flock` into a bash assoc array; non-Anthropic
-ranks fall out for free. Legacy fallback when absent: `claim.sh` hardcodes
+Consumed by the build rig's work-claim script ONCE before `flock` into a bash assoc array;
+non-Anthropic ranks fall out for free. Legacy fallback when absent: the work-claim script
+hardcodes
 `[opus]=3 [sonnet]=2 [haiku]=1`.
 
 **`tier resolve <tier> --executor anthropic`** — finds the cheapest member in the tier
@@ -19,7 +20,7 @@ whose provider is Anthropic-API-runnable:
 - Models NOT in `models.json` are assumed to be native Anthropic model names (the legacy
   `haiku`/`sonnet`/`opus` day-one case) and also qualify.
 - Sort key: `free→0, cost_rank else 1000` ascending; stable preserves stored order on ties.
-- Non-zero exit when no qualifying member exists → shell `||` fallback fires in TIER-6.
+- Non-zero exit when no qualifying member exists → shell `||` fallback fires in the worker launcher.
 
 **`tier set <tier> --members m1,m2`** — reads current tiers (loading legacy defaults if file
 absent), updates the one tier's member list, writes all three tiers atomically via
@@ -39,7 +40,7 @@ legacy default dict when `tiers.json` is absent. No command fails on a missing f
   the filter tightens naturally.
 - `_cmd_tier` dispatches through named helper functions rather than nesting inside one
   function — easier to unit-test and extend.
-- `tier set` without `--members` is a no-op save (idempotent); not tested because the fleet
+- `tier set` without `--members` is a no-op save (idempotent); not tested because the build rig
   never calls it that way.
 
 ## Files changed

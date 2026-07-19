@@ -137,7 +137,7 @@ def _check_self_mirroring_mock(tree: ast.AST, path: Path) -> list[str]:
     `choices`-shaped upstream mock and only ever asserts INSIDE `choices`,
     never on the top-level `choices`/`usage` contract itself -- the exact
     blind spot that let the cline non-stream envelope defect pass green
-    (fleet/scratch/test-gap-audit.md, Q1/Q4)."""
+    (internal test-gap audit, Q1/Q4)."""
     if not _defines_inline_http_mock_handler(tree):
         return []
     if not _authors_canonical_choices_body(tree):

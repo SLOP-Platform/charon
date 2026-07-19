@@ -7,7 +7,7 @@
 ## What was built
 
 `tests/test_run_task_routing.py` — two tests that exercise the routing glue
-the TIER-7 reviewers identified as unverified:
+the tier-routing reviewers identified as unverified:
 
 ```
 config.resolve_tier(role)

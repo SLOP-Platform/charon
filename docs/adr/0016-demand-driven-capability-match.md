@@ -14,7 +14,7 @@ last hand-typed data from a mechanism that already exists and largely runs.
 The live gateway (self-hosted deployment, image `v0.4.1`) selects the
 provider for a requested model by sorting each pool on hand-assigned `cost_rank`
 integers in `/data/models.json`. Those integers **rot and are literally wrong**.
-Verified this session (`fleet/state/POOL-INVESTIGATION.md`): for `deepseek-v4-pro`
+Verified this session (internal live-pool investigation): for `deepseek-v4-pro`
 the live order is `-go=5` (opencode-go, DEAD 401) → `-ng=10` (nanogpt, DEAD 429)
 → `-or=50` (openrouter) → `-ds=60` (**deepseek-direct, FUNDED + WORKING + actually
 cheapest**) → `-cline=900`. The two cheapest ranks are dead providers and the one
@@ -157,8 +157,8 @@ The heart of "this is finishing, not a rewrite." Every row cites file:line.
 | Capability matrix (reasoning etc.) + max_context/max_concurrency | **BUILT + WIRED** | `forwarder.py:207-242`, `gateway.py:334` |
 | Pricing/limits drift checker (sourced-price TTL verify) | **BUILT** (R17) — detector, not yet a live `/models` puller | `pricing_limits_checker.py check_pricing_limits` (276) |
 | **BalanceTracker construction from config** (un-inert record_spend; enable predictive capacity) | **TICKETED — R46-BALANCE-WIRE** (parked behind F29-REGISTRY-SLICE) | target `gateway.py build_server` (~329); `GatewayConfig.balance_tracker=None` (94) |
-| **Drain-then-park lifecycle** (park drained provider, re-arm per funding class, sole-leg guard) | **TICKETED — R11 DRAIN-THEN-PARK** (parked) + R16 GRACEFUL-DEGRADE | `fleet/board/DRAIN-THEN-PARK.md.parked`; targets `balance.py`, `gateway.py` |
-| **Price source** (sourced table + live feed + no-API change-detect) | **ADOPT, not build** — vendor LiteLLM `model_prices…json` (MIT) + poll OpenRouter `/api/v1/models` + changedetection.io webhooks; thin `price_refresher.py` feeds `model_pricing` (off-hot-path) | new `price_refresher.py` alongside `balance.py`; evidence `fleet/state/PRICING-TOOLS-EVAL.md` |
+| **Drain-then-park lifecycle** (park drained provider, re-arm per funding class, sole-leg guard) | **TICKETED — R11 DRAIN-THEN-PARK** (parked) + R16 GRACEFUL-DEGRADE | tracked as a parked ticket; targets `balance.py`, `gateway.py` |
+| **Price source** (sourced table + live feed + no-API change-detect) | **ADOPT, not build** — vendor LiteLLM `model_prices…json` (MIT) + poll OpenRouter `/api/v1/models` + changedetection.io webhooks; thin `price_refresher.py` feeds `model_pricing` (off-hot-path) | new `price_refresher.py` alongside `balance.py`; evidence from the internal pricing-tools evaluation |
 | **Structured fail-loud `providers_tried` contract** | **NEW** (hardens existing synthesis) | `forwarder.py:372-393` |
 | **DELETE static `cost_rank` integers** from schema + `/data/models.json` | **NEW** | `cost_rank.py`, `pools.py PoolEntry.cost_rank`, config schema, `.60` data |
 
@@ -181,7 +181,7 @@ immediately." **P = product repo (charon); D = .60 deploy (operator-gated).**
 | **0** | **DEPLOY v0.5.0 cost-rank-AUTO to .60** | D | live `/data/*`, image tag | — | The built live-cost reorder goes live; interim POOL-INVESTIGATION config edits (disable dead providers, drop `opencode-go` fallback) applied same push. **Immediate relief.** Operator-gated (docker). |
 | **1** | **F29-REGISTRY-SLICE** (prereq already staged) | P | `gateway.py`, `proxy_server.py` | — | Declarative module registry so R46 registers cleanly. (Pre-existing wave; unblocks the serial chain.) |
 | **2** | **R46-BALANCE-WIRE** | P | `gateway.py`, `balance.py` | #1 | `build_server` constructs `BalanceTracker` from provider config → `record_spend` un-inerts; predictive capacity enabled where a balance API exists. |
-| **3** | **PRICE-REFRESHER** (ADOPT, not build) | P | new `price_refresher.py` (disjoint), writes `model_pricing` | #0 mechanism | **Adopt best-in-class instead of building** (see `fleet/state/PRICING-TOOLS-EVAL.md`): vendor LiteLLM `model_prices_and_context_window.json` (MIT — per-provider granularity, 124 providers, CI-refreshed, `source` URLs) as the sourced table replacing R17's hand-TSV; poll OpenRouter `/api/v1/models` on a TTL as the live layer + drift oracle; changedetection.io webhooks feed the zero-coverage providers (nanogpt/neuralwatt/opencode-zen). All write the local `model_pricing` cache; `order_pool_by_live_cost` reads the cache only — **off-hot-path, bottleneck-SAFE**. Thin adapter only; no bespoke scraper. |
+| **3** | **PRICE-REFRESHER** (ADOPT, not build) | P | new `price_refresher.py` (disjoint), writes `model_pricing` | #0 mechanism | **Adopt best-in-class instead of building** (per the internal pricing-tools evaluation): vendor LiteLLM `model_prices_and_context_window.json` (MIT — per-provider granularity, 124 providers, CI-refreshed, `source` URLs) as the sourced table replacing R17's hand-TSV; poll OpenRouter `/api/v1/models` on a TTL as the live layer + drift oracle; changedetection.io webhooks feed the zero-coverage providers (nanogpt/neuralwatt/opencode-zen). All write the local `model_pricing` cache; `order_pool_by_live_cost` reads the cache only — **off-hot-path, bottleneck-SAFE**. Thin adapter only; no bespoke scraper. |
 | **4** | **R11 DRAIN-THEN-PARK** (+ R16 recover) | P | `balance.py`, `gateway.py` | #2 | Park a provider on its reactive exhaustion signal; re-arm per funding class (top-up / weekly reset / overage); **sole-leg guard** (never park the only remaining leg of a pool). Removes the retry-churn. |
 | **5** | **FAIL-LOUD-CONTRACT** (NEW) | P | `forwarder.py` (terminal synth) | — (parallel-safe w/ #3) | Structured `providers_tried` array (provider, status, reason, funding class, re-arm) on the terminal 503; distinct from relayed 4xx. |
 | **6** | **DELETE-STATIC-RANK** (NEW) | P | `cost_rank.py`, `pools.py`, config schema | #3, #4 landed & live-verified | Remove hand-typed `cost_rank` from schema + validators + `.60` data; ordering now derives from live/sourced/meter price only. `cost_class` (category) retained. Land LAST so ordering never regresses mid-migration. |
@@ -299,10 +299,10 @@ category is drift-checked, not silently decaying.
 - ADR: `docs/adr/0016-demand-driven-capability-match.md` (this file).
 - Built mechanism: `routing_policy/__init__.py:102-262`, `proxy_server.py:616-740`,
   `forwarder.py:167-570`, `proxy.py:206-560`, `balance.py`, `latency.py`.
-- Tickets: `fleet/board/R46-BALANCE-WIRE.md`, `DRAIN-THEN-PARK.md.parked`,
-  `COST-RANK-AUTO.md.parked`, `PRICING-LIMITS-CHECKER.md`,
-  `fleet/state/EXHAUSTION-PARK-TICKETS.md`.
-- Live-config facts + interim edits: `fleet/state/POOL-INVESTIGATION.md`.
+- Tickets: tracked in the external dev harness's work tracker as R46-BALANCE-WIRE,
+  DRAIN-THEN-PARK (parked), COST-RANK-AUTO (parked), PRICING-LIMITS-CHECKER, and the
+  exhaustion-park ticket set.
+- Live-config facts + interim edits: recorded in the internal live-pool investigation.
 - Deploy-drift caution: memory `charon-deploy-drift-lessons` (config/secrets/state
   live on the mounted `/data` volume on .60, not the image).
 

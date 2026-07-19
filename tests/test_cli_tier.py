@@ -1,4 +1,4 @@
-"""Tests for `charon tier` CLI subcommand (TIER-3 / DTC tier-abstraction)."""
+"""Tests for the `charon tier` CLI subcommand (DTC tier-abstraction)."""
 from __future__ import annotations
 
 from charon.cli import main
@@ -204,3 +204,34 @@ def test_tier_set_via_alias(monkeypatch, tmp_path, capsys):
 
     from charon import config
     assert config.load_tiers()["members"]["high"] == ["opus", "opus-alt"]
+
+
+def test_tier_resolve_unknown_model_id_is_not_anthropic(monkeypatch, tmp_path, capsys):
+    """FAIL-ON-REVERT: an UNKNOWN model id must NOT count as Anthropic-runnable.
+
+    `_tier_resolve._is_anthropic` used to `return True` for any id absent from
+    the catalog. That fall-through meant a typo'd, renamed, or simply
+    unregistered id was silently classified as Anthropic and handed to the
+    executor — a bespoke string match drifting from the
+    `providers.is_anthropic_route` SSOT, which is the exact drift class PR #173
+    fixed gateway-wide.
+
+    Here the tier's only member is registered to a NON-Anthropic provider and
+    the second member is not in the catalog at all. Neither is Anthropic, so
+    resolve must exit non-zero rather than emitting the unknown id. Restoring
+    the `return True` fall-through turns this red.
+    """
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    from charon import config
+    config.add_model("known-openai", provider="openai")
+    config.set_tiers(
+        order=["low", "med", "high"],
+        members={"low": ["known-openai", "totally-unregistered-id"], "med": [], "high": []},
+        aliases={},
+    )
+    capsys.readouterr()
+
+    rc = main(["tier", "resolve", "low", "--executor", "anthropic"])
+    out = capsys.readouterr().out.strip()
+    assert rc != 0, "unknown model id must not be treated as Anthropic-runnable"
+    assert "totally-unregistered-id" not in out

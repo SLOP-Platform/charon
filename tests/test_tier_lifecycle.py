@@ -1,4 +1,4 @@
-"""TIER-7 Phase B (ADR-0014 D6) — multi-tier decompose routing + warm lifecycle.
+"""Tier-routing Phase B (ADR-0014 D6) — multi-tier decompose routing + warm lifecycle.
 
 Phase A routed ONE tier per run: a decompose run whose role-DAG stages span tiers
 collapsed to a single model. Phase B builds a warm-agent-per-tier map and a

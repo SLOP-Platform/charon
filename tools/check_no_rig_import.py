@@ -2,7 +2,7 @@
 # @covers: no-rig-import
 """Product-hot-path import guard (GATEWAY-PROGRAM §1.9 red-team fix #2, CRITICAL).
 
-The rig grader (fleet/benchmark + grader_daemon) must NEVER be a live routing
+The rig grader (the ``benchmark`` + ``grader_daemon`` packages) must NEVER be a live routing
 dependency. If a rig regression lands and a product module imports it, the
 gateway's hot path can either (a) silently miscalibrate because the rig output
 is stale, or (b) crash because the rig process is down. Either way is a

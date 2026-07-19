@@ -6,9 +6,9 @@ It does **not** re-implement any of them — each is reached through a clean,
 dependency-injected *seam* so production wires the real component and tests
 inject a mock:
 
-    1. LINK    — provider add / key link  (fleet/add-provider.sh → ``config.add_provider``)
+    1. LINK    — provider add / key link  (the provider-add script → ``config.add_provider``)
     2. DISCOVER— import each provider's models  (``discover``/PROVIDER-CATALOG-REFRESH)
-    3. PREFLIGHT — screen NEW models (OOB-graded)  (fleet/benchmark/preflight.sh)
+    3. PREFLIGHT — screen NEW models (OOB-graded)  (the external preflight runner)
     4. TIER    — rank + persist trusted models  (``recommend`` + ``config.tiers``)
 
 Two entrypoints:
@@ -162,7 +162,7 @@ def _unconfigured_preflight(model_id: str) -> str:
     adapter — see :func:`subprocess_preflight_seam` — or an in-tree screen."""
     raise LifecycleError(
         f"no preflight seam configured — cannot screen {model_id!r}; "
-        "wire the MODEL-PREFLIGHT runner (fleet/benchmark/preflight.sh) via "
+        "wire the MODEL-PREFLIGHT runner (the external preflight script) via "
         "LifecycleSeams.preflight before onboarding models"
     )
 

@@ -1,4 +1,4 @@
-"""Tier config store (DTC tier-abstraction, TIER-1).
+"""Tier config store (DTC tier-abstraction).
 
 Proves the canonical ``low/med/high`` vocabulary with ``opus/sonnet/haiku`` +
 ``frontier/strong/economy`` as aliases: round-trip set/load, absent-file legacy

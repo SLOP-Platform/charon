@@ -2,7 +2,7 @@
 
 Ticket: **DELETE-STATIC-RANK** (ADR-0016 step #6)
 Branch: `feat/delete-static-rank`
-Droid: ahsoka-tano
+Worker: ahsoka-tano
 
 ## What landed
 
@@ -27,7 +27,7 @@ The ticket's `owns:` lists `tests/test_delete_static_rank.py` (new) and core
 code files.  Several pre-existing tests ASSERT the OLD behavior — they are
 literally the contract the ticket says to delete.  Updating them is
 mechanical and the only way to land the deletion without leaving the gate
-red.  These tests are NOT owned by any concurrent droid; they are part of
+red.  These tests are NOT owned by any concurrent worker; they are part of
 this ticket's contract surface.
 
 | File | Tests flipped to new behavior |

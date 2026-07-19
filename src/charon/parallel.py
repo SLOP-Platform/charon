@@ -105,7 +105,7 @@ class Unit:
     Ledger + worktree + lock (the isolation atom is unchanged — D1).
 
     The mock knobs (``backend_mode`` / ``creates`` / ``unit_cost_usd``) drive the
-    deterministic demo + test path; a real consumer (a droid fleet) supplies a
+    deterministic demo + test path; a real consumer (an agent-worker fleet) supplies a
     ``backend_factory`` instead — a fresh backend per unit (CONC-3)."""
 
     goal: str

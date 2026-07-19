@@ -123,7 +123,7 @@ Neither module is imported by production code (only tests). `failover.py` define
 
 | ID | File | Finding |
 |---|---|---|
-| ATC-018 | `service/app.py:5`, `cli.py:665-668` | Project-internal references in docstrings (fleet, SLOP, droid) — cosmetic only |
+| ATC-018 | `service/app.py:5`, `cli.py:665-668` | Build-rig / host-project internal references in docstrings — cosmetic only |
 | ATC-019 | `recommend.py`, `recommend.py` | `importlib` removed — already fixed in this session |
 
 ---

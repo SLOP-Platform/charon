@@ -2,7 +2,7 @@
 
 - **Change under review:** kill the merge-conflict class that fired whenever two
   tickets appended a dated section to the single `docs/REVIEW-LOG.md` at end-of-file
-  (it blocked S1 #27 vs E2 on 2026-06-27). Same fix-shape as per-droid mailbox files:
+  (it blocked S1 #27 vs E2 on 2026-06-27). Same fix-shape as per-worker mailbox files:
   one file per ticket, never a shared append.
 - **Mechanism:** every legacy dated section was migrated **verbatim** into one
   `docs/review-log/<id>.md` fragment. `tools/render_review_log.py` (stdlib-only)
@@ -25,5 +25,5 @@
   `tools/render_review_log.py`, `tests/test_render_review_log.py` — nothing else.
   Wiring `--check` into `.github/workflows/*` is OUT of scope (workflow files are not
   owned); requested in the PR body for the manager to add.
-- **Net:** the shared-append conflict class is structurally gone — droids write only
+- **Net:** the shared-append conflict class is structurally gone — workers write only
   their own fragment; the rollup regenerates. Stdlib-only; gate green.

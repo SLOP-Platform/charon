@@ -17,7 +17,7 @@ accounting, consensus) against MOCKS. The operator's actual product goal:
   next — **no waiting for resets, no work loss**.
 - **Minimize cost:** prefer **free** then **flat-rate** over per-token.
 - **Give users choices:** support several providers AND several agents.
-- **Standalone, VPS-deployable** app reachable from anywhere; SLOP-embeddable but
+- **Standalone, VPS-deployable** app reachable from anywhere; host-project-embeddable but
   stands alone.
 
 This ADR records the decisions that turn the proven contract into a usable tool.

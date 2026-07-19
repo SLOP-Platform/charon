@@ -18,7 +18,7 @@
   today's `app.py` calls `api.run_task` in-process, which literally contradicts
   ADR-0002 §2.3 — the honest answer is "the web process must not run the loop
   in-process"; (3) OOB2-4 already deferred the live endpoint to ship *with* the
-  Tier-3 SLOP consumer, never ahead of it.
+  Tier-3 host-project consumer, never ahead of it.
 
 ### Decision
 

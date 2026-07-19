@@ -1,6 +1,6 @@
 ## FB5 — CI / supply-chain hardening (THEME 8)
 
-**Reviewer:** droid  
+**Reviewer:** agent worker  
 **Ticket:** FB5 | Branch: feat/ci-hardening  
 **Date:** 2026-06-27
 

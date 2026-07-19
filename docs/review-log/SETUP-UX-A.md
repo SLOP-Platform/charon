@@ -38,7 +38,7 @@ non-TTY stdout. Unit-tested directly (forced-TTY vs each fallback).
 - Owned files only: `src/charon/cli.py`, `tests/test_setup_ux.py`. `config.py` /
   `providers.py` untouched (read-only) — `load_models()` already exposes the catalog.
 - Provider/agent-agnostic (no hardcoded provider id); config-step only, never the hot path;
-  no new dependency; product-clean (no fleet/SLOP/runner leak).
+  no new dependency; product-clean (no build-rig, host-project, or CI-runner leak).
 - Gate green every commit: pytest (559) · ruff · mypy · boundary · version.
 
 ## Test note

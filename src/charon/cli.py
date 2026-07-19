@@ -761,13 +761,15 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
 
 
 # ----------------------------------------------------------------- tier config
-# DTC tier-abstraction: `charon tier` subcommands wire the CLI to the TIER-1
-# config API (config.load_tiers / set_tiers / resolve_tier / tier_members /
-# tier_rank). Two commands are fleet-critical machine-parseable entrypoints:
-#   `ranks`   — consumed by claim.sh (TIER-5) ONCE before flock; one line per
-#               canonical+alias name: "<name> <rank>" (canonical AND aliases).
-#   `resolve` — consumed by fleet-droid.sh (TIER-6) to turn a tier arg into the
-#               cheapest Anthropic-API-runnable concrete model id for `claude -p`.
+# `charon tier` subcommands wire the CLI to the tier config API
+# (config.load_tiers / set_tiers / resolve_tier / tier_members / tier_rank).
+# Two of them are machine-parseable entrypoints with a stable output contract,
+# intended to be consumed by an external scheduler or launcher:
+#   `ranks`   — one rank row per canonical AND alias name, "<name> <rank>",
+#               so a caller can order tiers without parsing the config itself.
+#   `resolve` — turn a tier name into a single concrete model id: the cheapest
+#               member runnable by the named executor. Exits non-zero when no
+#               member matches, so a shell `||` fallback can fire.
 # All commands degrade gracefully: absent tiers.json → legacy behavior.
 
 
@@ -780,6 +782,15 @@ def _tier_init() -> int:
             aliases={"opus": "high", "sonnet": "med", "haiku": "low",
                      "frontier": "high", "strong": "med", "economy": "low"},
         )
+        # Register the seeded members as real catalog entries. Without this the
+        # seeds are tier members that no catalog entry describes, so every
+        # provider lookup on them misses and the caller is forced to guess at an
+        # unknown id (the old `_tier_resolve._is_anthropic` fall-through). Seeding
+        # the catalog makes the provider a recorded FACT rather than an inference.
+        models = config.load_models()
+        for _seed in ("haiku", "sonnet", "opus"):
+            if _seed not in models:
+                config.add_model(_seed, provider="anthropic")
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -816,7 +827,7 @@ def _tier_list() -> int:
 
 
 def _tier_resolve(tier_name: str, executor: str | None) -> int:
-    from . import config
+    from . import config, providers
     try:
         tiers = config.load_tiers()
         members = config.tier_members(tier_name, tiers)
@@ -829,12 +840,18 @@ def _tier_resolve(tier_name: str, executor: str | None) -> int:
     models = config.load_models()
 
     def _is_anthropic(mid: str) -> bool:
-        # Vendor-specific executor filter — this is the only executor currently
-        # supported. Replace with a generic executor-registry lookup when more
-        # executor backends are added (ATC-009).
+        # Executor filter for the `anthropic` executor. Two rules, in order:
+        #   1. A catalog entry is AUTHORITATIVE — its recorded provider decides.
+        #   2. An unknown id is classified by the single Anthropic-route SSOT,
+        #      `providers.is_anthropic_route`, so this filter can never drift
+        #      from the gateway's never-Anthropic guard (the drift class fixed
+        #      by PR #173).
+        # An unknown id therefore resolves NON-Anthropic. The old code returned
+        # True here, so any typo'd or unregistered id was silently treated as
+        # Anthropic-runnable and handed to the executor.
         if mid in models:
             return models[mid].get("provider") == "anthropic"
-        return True
+        return providers.is_anthropic_route(model_id=mid)
 
     def _cost_key(mid: str) -> int:
         m = models.get(mid, {})
@@ -1817,15 +1834,15 @@ def build_parser() -> argparse.ArgumentParser:
                          "(merges into the tier); non-catalog ids are rejected")
     tsub.add_parser("list", help="show tier config (human-readable)")
     tsub.add_parser("ranks",
-                    help="print canonical+alias rank rows for fleet parsing, "
-                         'e.g. "low 1\\nmed 2\\nhigh 3\\nopus 3\\n..." (TIER-5 contract)')
+                    help="print machine-parseable rank rows, one per canonical and "
+                         'alias name, e.g. "low 1\\nmed 2\\nhigh 3\\nopus 3\\n..."')
     trv = tsub.add_parser("resolve",
-                          help="resolve a tier to its cheapest runnable model id "
-                               "(for fleet-droid.sh TIER-6; machine-parseable stdout)")
+                          help="resolve a tier to its cheapest runnable model id for a "
+                               "named executor (machine-parseable stdout)")
     trv.add_argument("tier_name", help="canonical tier (low|med|high) or alias")
     trv.add_argument("--executor", default=None,
-                     help="filter by executor (anthropic); exit non-zero if none found "
-                          "so shell || fallbacks fire")
+                     help="only consider members runnable by this executor; exit "
+                          "non-zero if none match so shell || fallbacks fire")
     trec = tsub.add_parser("recommend",
                            help="recommend tier assignments from a provider's live "
                                 "model catalog")

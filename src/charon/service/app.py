@@ -2,7 +2,7 @@
 ADR-0004 D7/R3).
 
 DESIGN OF RECORD (DTC, 2026-06-24 / Tier 2b 2026-06-26 — see docs/REVIEW-LOG.md
-and PLAN-tier2.md §8): the web process that SLOP reaches MUST NOT run the
+and PLAN-tier2.md §8): the web process the host project reaches MUST NOT run the
 privileged coordinator loop in-process. ADR-0002 §2.3 / INV-B4 require the
 agent-spawning loop to live in its OWN process/container; the only real
 blast-radius boundary for a live skip-permissions agent is that container, never

@@ -25,7 +25,7 @@ README pointer and the file's own title both use "getting started" consistently.
 
 ### Constraints verified
 
-- Product-clean: no SLOP / fleet / build-rig references.
+- Product-clean: no host-project or build-rig references.
 - Agent- and provider-agnostic: `opencode acp` appears only as an *example* ACP backend.
 - Commands accurate: all commands match the verified draft exactly (`charon setup`,
   `charon gateway`, `charon intake import`, `charon work --units … --backend acp

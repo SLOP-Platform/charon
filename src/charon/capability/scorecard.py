@@ -4,7 +4,7 @@ last-known-good fallback reader.
 Each freeze cycle writes a versioned, timestamped artifact. The reader returns
 the LATEST FROZEN artifact (only if it is GOOD) and otherwise falls back to the
 last-known-good seq — which is a DIFFERENT seq than a bad latest. This module
-must NOT import the rig grader (fleet/benchmark) — it only reads/writes
+must NOT import the rig grader (the ``benchmark`` package) — it only reads/writes
 artifacts by path.
 
 NOTE (Wave-2, out of scope here): bool-coercion of gate fields (F5) and

@@ -56,5 +56,5 @@ flat-plan `provider(0)` half needs the proxy.py `_gateway_usage`/classify follow
   the message content string only; the served JSON envelope stays intact.
 
 ## Gate
-Full suite 1303 passed; `charon.cli gate` all green (ruff / mypy / SLOP-boundary /
+Full suite 1303 passed; `charon.cli gate` all green (ruff / mypy / host-project boundary /
 version / gate-registry / public-clean).

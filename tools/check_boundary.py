@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # @covers: boundary
-"""SLOP-boundary check (ADR-0002 INV-B1/B5; reconciliation BR-4).
+"""Host-project boundary check (ADR-0002 INV-B1/B5; reconciliation BR-4).
 
 GROUND: parses every .py file under src/ with the ast module and fails if any
 import (``import x``, ``from x import``, or a literal ``__import__("x")``) names
@@ -107,11 +107,11 @@ def main(root: str = "src") -> int:
     # Engine stdlib-only guard (ADR-0010 D2 / ADR-0005 R3).
     all_violations.extend(scan_engine(base))
     if all_violations:
-        print("SLOP-boundary VIOLATION (ADR-0002 INV-B1/B5):", file=sys.stderr)
+        print("host-boundary VIOLATION (ADR-0002 INV-B1/B5):", file=sys.stderr)
         for v in all_violations:
             print(f"  {v}", file=sys.stderr)
         return 1
-    print(f"boundary OK: no SLOP references under {root}/")
+    print(f"boundary OK: no host-project references under {root}/")
     return 0
 
 

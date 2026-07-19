@@ -50,10 +50,10 @@ entry is still verbatim-present, catching stale/drifted exemptions early.
 
 7 files with `charon-private` → `<private-rig-repo>`: <!-- public-clean: allow — documentation of pattern -->
 `README.md`, `docs/DECISIONS.md`, `docs/adr/0010-native-work-engine-substrate.md`,
-`docs/review-log/{DS-PLAN-REVIEW,E7,TIER-5,TIER-6}.md`
+`docs/review-log/` (`DS-PLAN-REVIEW`, `E7`, and the two build-rig tier-claim / launcher fragments)
 
 3 files with `/home/stack` → `<workspace>`: <!-- public-clean: allow — documentation of pattern -->
-`docs/review-log/{DS-PLAN-REVIEW,TIER-5,TIER-6}.md`
+`docs/review-log/` (`DS-PLAN-REVIEW` and the two build-rig tier-claim / launcher fragments)
 
 ## Cross-repo recommendation
 

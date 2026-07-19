@@ -24,6 +24,23 @@ _PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r'\b[0-9a-fA-F]{40,}\b'), 'hex token shape (>=40 chars)'),
     # public-clean: allow — the name-detection pattern must name the token it catches
     (re.compile(r'\bRafael\b', re.IGNORECASE), 'personal given name'),  # public-clean: allow
+    # public-clean: allow — the following patterns must spell the rig taxonomy they catch
+    #
+    # BARE RIG TAXONOMY. The path-prefixed forms are caught above,  # public-clean: allow
+    # but the same private build-rig vocabulary also appears
+    # WITHOUT any path prefix, which those patterns miss entirely. The build rig is
+    # not part of the product (see the product-vs-rig boundary): a public reader
+    # cannot act on any of it, and it advertises internal process detail.
+    #
+    # The project-name pattern uses a negative lookahead for the public GitHub  # public-clean: allow
+    # organisation, which legitimately appears in install URLs in README.md and
+    # in the release workflow. The bare private project name is still caught.
+    # Anchoring on the hyphen keeps the carve-out narrow.
+    (re.compile(r'\bSLOP\b(?!-Platform)'), 'private project name "SLOP"'),  # public-clean: allow
+    (re.compile(r'\bfleet/'), 'rig path "fleet/"'),  # public-clean: allow
+    (re.compile(r'\bdroids?\b', re.IGNORECASE), 'rig worker term "droid"'),  # public-clean: allow
+    (re.compile(r'\bclaim\.sh\b'), 'rig script "claim.sh"'),  # public-clean: allow
+    (re.compile(r'\bTIER-\d+\b'), 'rig ticket id "TIER-N"'),  # public-clean: allow
 ]
 _WAIVER_RE = re.compile(r'public-clean:\s*allow\b')
 _EXCEPTIONS_PATH = Path("tools/.public-clean-exceptions.json")

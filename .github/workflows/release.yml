@@ -45,7 +45,7 @@ jobs:
           python-version: "3.12"
       - name: install (dev + service)
         run: pip install -e '.[dev,service]'
-      - name: SLOP-boundary check (INV-B1/B5)
+      - name: host-project boundary check (INV-B1/B5)
         run: python3 tools/check_boundary.py src
       - name: version consistency
         run: python3 tools/check_version.py

@@ -1,10 +1,10 @@
 [
   {
     "id": "boundary-check",
-    "name": "SLOP-boundary check",
+    "name": "host-project boundary check",
     "domain": "boundary",
     "enforcer": "tools/check_boundary.py",
-    "covers": "no SLOP/build-rig references in src/",
+    "covers": "no host-project/build-rig references in src/",
     "ci_step": true,
     "invariant": "All src/ paths are product-clean",
     "red_proof": "tests/test_boundary.py"
@@ -51,6 +51,7 @@
   },
   {
     "id": "validate-board",
+    "optional": true,
     "name": "Fleet board validation",
     "domain": "fleet",
     "enforcer": "../charon-private/fleet/validate_board.sh",
@@ -181,6 +182,7 @@
   },
   {
     "id": "reachability-gate",
+    "optional": true,
     "name": "Hardcoded cross-boundary path gate",
     "domain": "reachability",
     "enforcer": "../charon-private/fleet/checks/no-unreachable-paths.sh",

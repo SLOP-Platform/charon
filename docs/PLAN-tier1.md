@@ -25,7 +25,7 @@ Tier 2).
 - Package `charon`; CLI command `charon`; version SoT = `pyproject.toml`,
   re-derived at runtime via `importlib.metadata.version("charon")` (no second
   copy of the version string).
-- **Zero SLOP knowledge** (INV-B1/B5). CI boundary check greps the tree for
+- **Zero host-project knowledge** (INV-B1/B5). CI boundary check greps the tree for
   `slop`/`mediastack` imports/references → fails the build if present.
 - Three public surfaces (ADR-0002 §2.4): **CLI** (Tier 1), **Python API**
   (`charon.api`, Tier 1), **HTTP service** (`charon.service`, scaffolded Tier 1 /
@@ -98,8 +98,8 @@ delete/deploy) · L2 apply-with-consensus (Tier 3) · L3 full-auto-within-fence
 
 ## 8. CI from first commit (ADR-0002 §4)
 
-GitHub Actions: ruff · mypy · pytest · version-consistency · **SLOP-import
-boundary check** · Mode-A-in-isolation smoke (clean venv → `charon --help` +
+GitHub Actions: ruff · mypy · pytest · version-consistency · **host-project
+import boundary check** · Mode-A-in-isolation smoke (clean venv → `charon --help` +
 `charon run --backend mock` demo). CI lands with the first commit, not later.
 
 ## 9. Tests (the proof, not the claim)
