@@ -35,6 +35,20 @@
 # claimed worktree SURVIVES; GREEN-IS-NOT-PROOF: survival asserted, not just exit 0).
 set -uo pipefail
 FLEET="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# W0b FIX 2: the worktree reap ends in `rm -rf "$wt_dir"` and had only two EQUALITY checks
+# (== $REAPER_REPO, == $(pwd)) guarding it — no ancestry test, so a REAPER_WT_GLOB that failed to
+# expand or resolved to an ancestor ($HOME, /home/stack/code, /) would have been rm -rf'd.
+# Reuse the SHARED refusal from W0 (_lg_wt_catastrophic); do NOT write a second guard.
+# Both libraries are pure (no top-level side effects, and neither sources the other), so there
+# is no circular-source risk and the cost is a couple of function definitions.
+# shellcheck source=/dev/null
+# SOURCE ORDER IS NOT SIGNIFICANT. (Corrected 2026-07-19: the previous comment claimed the
+# registry had to be sourced BEFORE leak-guard to widen _lg_protected_paths. FALSE —
+# _lg_protected_paths tests `declare -F repo_resolve` at CALL time (leak-guard.sh:156), so
+# either order gives the same protected set. Do NOT introduce a real ordering dependency.)
+source "$FLEET/repo-registry.sh"
+# shellcheck source=/dev/null
+source "$FLEET/leak-guard.sh"
 REAPER_REPO="${REAPER_REPO:-/home/stack/code/charon}"
 REAPER_BASE="${REAPER_BASE:-master}"
 REAPER_FLEET_DIR="${REAPER_FLEET_DIR:-$FLEET}"
@@ -75,6 +89,18 @@ echo "== stale fleet worktrees =="
 reaped_wt=0; kept_wt=0
 for wt_dir in $REAPER_WT_GLOB; do
   [ -d "$wt_dir" ] || continue
+  # W0b FIX 2: CATASTROPHIC-TARGET GUARD — FIRST, ahead of every equality/label check.
+  # It must not sit behind `[ -n "$id" ]`: that is LABEL bookkeeping, not a destruction guard,
+  # and it only happened to short-circuit a bare-directory glob. A guard that a naming accident
+  # can jump over is not a guard. _lg_wt_catastrophic is the SHARED refusal W0 added; an
+  # unresolvable path collapses to "" here, which it also refuses (fail CLOSED).
+  _rp_real="$(cd "$wt_dir" 2>/dev/null && pwd -P)" || _rp_real=""
+  _rp_repo="$(cd "$REAPER_REPO" 2>/dev/null && pwd -P)" || _rp_repo=""
+  if _rp_why="$(_lg_wt_catastrophic "$_rp_real" "$_rp_repo")"; then
+    echo "  REFUSE worktree $wt_dir — $_rp_why"
+    kept_wt=$((kept_wt+1))
+    continue
+  fi
   [ "$wt_dir" = "$REAPER_REPO" ] && continue          # never the repo itself
   [ "$wt_dir" = "$(pwd)" ] && continue                 # never the current dir
   id="${wt_dir#$wt_prefix}"

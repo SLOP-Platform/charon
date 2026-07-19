@@ -63,12 +63,30 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FLEET_DIR="$(cd "$HERE/.." && pwd)"
 # shellcheck source=lib/dogfood-attribution.sh
 source "$HERE/lib/dogfood-attribution.sh"
+# W0b FIX 3: run_one ends in `rm -rf "$wt"` on a path built from $WORKTREE_PARENT + a model-derived
+# label with NO guard at all. Reuse the SHARED refusal from W0 (_lg_wt_catastrophic) rather than
+# writing a second one. Both libraries are pure (no top-level side effects, neither sources the
+# other, neither sources this file) so there is no circular-source risk.
+# shellcheck source=/dev/null
+# SOURCE ORDER IS NOT SIGNIFICANT. (Corrected 2026-07-19: the previous comment here claimed the
+# registry had to be sourced BEFORE leak-guard to "widen _lg_protected_paths". That was FALSE —
+# _lg_protected_paths tests `declare -F repo_resolve` at CALL time (leak-guard.sh:156), so both
+# orders behave identically. The registry is sourced because repo_valid_id + repo_resolve are
+# used below, not because of any ordering dependency. Do NOT introduce one.)
+source "$FLEET_DIR/repo-registry.sh"
+# shellcheck source=/dev/null
+source "$FLEET_DIR/leak-guard.sh"
 
 # ---- configuration (env-overridable; defaults match repo-registry.sh's `charon` repo) ----
 CHARON_RUN="${DOGFOOD_CHARON_RUN:-$FLEET_DIR/charon-run.sh}"
 PRODUCT_REPO="${DOGFOOD_PRODUCT_REPO:-/home/stack/code/charon}"
 BASE_REF="${DOGFOOD_BASE_REF:-origin/master}"
 WORKTREE_PARENT="${DOGFOOD_WORKTREE_PARENT:-/home/stack/code}"   # sibling worktrees: <parent>/charon-fleet-<label>
+# MED-1: normalised once, up front — every removal target in run_one must resolve UNDER this.
+# Same fail-closed ladder as run_one's own resolution (LOW-4): "" rather than an un-normalised path.
+WORKTREE_PARENT_REAL="$(cd "$WORKTREE_PARENT" 2>/dev/null && pwd -P)" \
+  || WORKTREE_PARENT_REAL="$(realpath -m "$WORKTREE_PARENT" 2>/dev/null)" \
+  || WORKTREE_PARENT_REAL=""
 RESULTS_DIR="${DOGFOOD_RESULTS_DIR:-$FLEET_DIR/state/dogfood-eval/results}"
 GATE_CMD="${DOGFOOD_GATE_CMD:-PYTHONPATH=src python3 -m charon.cli gate}"
 LATENCY_BUDGET_S="${DOGFOOD_LATENCY_BUDGET_S:-900}"   # per-candidate wall-clock ceiling (15 min default for a D1 ticket)
@@ -107,12 +125,40 @@ EOF
 TICKET_LABEL="$1"; BRIEF_FILE="$2"; shift 2
 MODELS=("$@")
 
+# MED-1 (2026-07-19 adversarial review): $TICKET_LABEL is bare-interpolated into $wt below
+# ("${WORKTREE_PARENT}/charon-fleet-dogfood-${TICKET_LABEL}-..."), and run_one ends in
+# `rm -rf "$wt"`. A label carrying a separator + traversal (e.g. 'x/../../NEIGHBOUR') walked the
+# removal target clean OUT of $WORKTREE_PARENT; _lg_wt_catastrophic only refuses PROTECTED trees,
+# so an unprotected sibling was silently destroyed with no REFUSING line. Reuse the SSOT charset
+# check (repo-registry.sh repo_valid_id) rather than writing a second validator — it is the same
+# contract every worktree path in the rig is already held to. Verified against every label the
+# sweep actually uses (SECRET-HOTROTATE, PROVIDER-URL-HELPER, RFL-3, ...): none is rejected.
+if ! repo_valid_id "$TICKET_LABEL"; then
+  echo "dogfood-eval: REFUSING: unsafe ticket label '$TICKET_LABEL' — it is interpolated into a" >&2
+  echo "  worktree path that is later rm -rf'd. Allowed: A-Za-z0-9._- , no '/', no '..'." >&2
+  exit 2
+fi
+
 [ -f "$BRIEF_FILE" ] || { echo "dogfood-eval: brief file not found: $BRIEF_FILE" >&2; exit 2; }
 [ -x "$CHARON_RUN" ] || { echo "dogfood-eval: charon-run.sh not found/executable at $CHARON_RUN" >&2; exit 2; }
 command -v git >/dev/null || { echo "dogfood-eval: git not found" >&2; exit 2; }
 
 mkdir -p "$RESULTS_DIR"
-TS="$(date -u +%Y%m%dT%H%M%SZ)"
+# TEST HOOK (W0b): DOGFOOD_TS pins the run stamp so a test can know the exact worktree path
+# ahead of time and drive the catastrophic-target guard in run_one against a REAL layout.
+#
+# LOW-5 (2026-07-19 adversarial review): DOGFOOD_TS used to be honoured unconditionally, so a
+# stray EXPORTED value in the operator's environment silently pinned the stamp for REAL runs —
+# every run would then collide on the same worktree path and overwrite the same SUMMARY file.
+# The hook now requires an EXPLICIT test marker, so production cannot be affected by an
+# inherited env var: a lone DOGFOOD_TS is ignored (and reported) unless DOGFOOD_TEST_MODE=1.
+TS=""
+if [ "${DOGFOOD_TEST_MODE:-}" = "1" ] && [ -n "${DOGFOOD_TS:-}" ]; then
+  TS="$DOGFOOD_TS"
+elif [ -n "${DOGFOOD_TS:-}" ]; then
+  echo "[dogfood-eval] IGNORING DOGFOOD_TS='$DOGFOOD_TS' (test hook; needs DOGFOOD_TEST_MODE=1)" >&2
+fi
+[ -n "$TS" ] || TS="$(date -u +%Y%m%dT%H%M%SZ)"
 SUMMARY_FILE="$RESULTS_DIR/${TICKET_LABEL}-${TS}-SUMMARY.md"
 : > "$SUMMARY_FILE"
 printf '# Path C dogfood-eval — %s (%s)\n\n' "$TICKET_LABEL" "$TS" >> "$SUMMARY_FILE"
@@ -207,6 +253,39 @@ run_one() {
   echo "[dogfood-eval] === candidate: $model (ticket=$TICKET_LABEL) ===" >&2
   echo "[dogfood-eval] worktree: $wt  branch: $branch" >&2
 
+  # W0b FIX 3: CATASTROPHIC-TARGET GUARD, ahead of BOTH the removal below and the worktree add.
+  # Fails CLOSED: an unresolvable/empty path is refused by _lg_wt_catastrophic, and a refusal
+  # BLOCKS the candidate rather than falling through to `rm -rf`.
+  local dg_real dg_repo dg_why
+  # $wt normally does NOT exist yet (the worktree is created below), so `cd`+pwd -P fails and
+  # `realpath -m` is the branch that actually runs: it normalises `..` and resolves symlinked
+  # parents WITHOUT requiring the path to exist. That normalisation is what makes the CONTAINMENT
+  # test below meaningful — an un-normalised path defeats a lexical ancestry comparison.
+  #
+  # LOW-4 (2026-07-19 adversarial review): the final fallback used to be `dg_real="$wt"`, which
+  # FAILED OPEN — without GNU realpath an un-normalised path was handed to the guard and the
+  # lexical tests missed it. It now fails CLOSED to "", which _lg_wt_catastrophic (leak-guard.sh:
+  # "if [ -z "$real" ]; then echo 'empty path'; return 0") already refuses.
+  dg_real="$(cd "$wt" 2>/dev/null && pwd -P)" || dg_real="$(realpath -m "$wt" 2>/dev/null)" || dg_real=""
+  dg_repo="$(cd "$PRODUCT_REPO" 2>/dev/null && pwd -P)" || dg_repo=""
+  # MED-1 CONTAINMENT (belt and braces alongside the repo_valid_id check on $TICKET_LABEL above):
+  # repo_valid_id guards the INPUT; this guards the RESOLVED OUTPUT. Whatever the label, the
+  # removal target must land UNDER $WORKTREE_PARENT. _lg_wt_catastrophic alone was not enough —
+  # it refuses only PROTECTED trees, so an escape onto an unprotected sibling passed silently.
+  # _lg_path_contains returns non-zero when either side is empty, so an unresolvable path refuses.
+  if ! _lg_path_contains "$WORKTREE_PARENT_REAL" "$dg_real"; then
+    echo "[dogfood-eval] REFUSING: worktree target '$wt' resolves to '${dg_real:-<unresolvable>}'," >&2
+    echo "  which escapes the worktree parent '$WORKTREE_PARENT_REAL'" >&2
+    write_card "$card" "$model" "BLOCKED" "worktree-target-escapes-parent" "-" "-" "-" "-" "-" "-"
+    append_summary "$model" "BLOCKED" "worktree-target-escapes-parent" "-" "$LATENCY_BUDGET_S" "-" "-" "-" "-" "$card"
+    return
+  fi
+  if dg_why="$(_lg_wt_catastrophic "$dg_real" "$dg_repo")"; then
+    echo "[dogfood-eval] REFUSING: worktree target '$wt' is catastrophic — $dg_why" >&2
+    write_card "$card" "$model" "BLOCKED" "catastrophic-worktree-target" "-" "-" "-" "-" "-" "-"
+    append_summary "$model" "BLOCKED" "catastrophic-worktree-target" "-" "$LATENCY_BUDGET_S" "-" "-" "-" "-" "$card"
+    return
+  fi
   if [ -e "$wt" ]; then
     git -C "$PRODUCT_REPO" worktree remove --force "$wt" 2>/dev/null || rm -rf "$wt"
   fi

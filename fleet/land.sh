@@ -30,6 +30,38 @@ safe_sync_base() {
   local cur; cur="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
   local dirty=""; [ -n "$(git status --porcelain)" ] && dirty=1
 
+  # W0b FIX 1 (WORKTREE-HOLDER GAP). LAND-SAFETY-FIX taught step 4 to detect a worktree holding
+  # the target branch, but this function never got the same treatment. When any worktree holds
+  # <base>, EVERY `git checkout "$base"` below dies with
+  #   fatal: '<base>' is already used by worktree at '<path>'
+  # and the old code fell into "checkout $base failed — skipping sync" and returned 0. Observed
+  # firing three times during the W1 lands: it warned, touched nothing, and SILENTLY did not do
+  # its job — exactly the class fixed one level up. Reuse the SAME primitive (pv_branch_holder),
+  # do NOT add a second holder detector. Correct alternate path: the holder IS the checkout that
+  # can fast-forward <base>, so perform the FF THERE. If the holder cannot take it, REFUSE
+  # LOUDLY with rc 3 — never a silent 0. Checked BEFORE the dirty split because both arms below
+  # check out <base>.
+  local holder
+  if holder="$(pv_branch_holder "$repo" "$base")"; then
+    echo "land: sync: '$base' is held by worktree $holder — this checkout CANNOT check it out; syncing THERE."
+    if [ -n "$(git -C "$holder" status --porcelain 2>/dev/null)" ]; then
+      echo "land: REFUSING sync: worktree $holder holds '$base' and is DIRTY — not touching it." >&2
+      echo "land:   sync by hand: (cd $holder && git stash -u && git merge --ff-only origin/$base && git stash pop)" >&2
+      return 3
+    fi
+    if [ "$(git -C "$holder" rev-parse --abbrev-ref HEAD 2>/dev/null)" != "$base" ]; then
+      echo "land: REFUSING sync: $holder holds '$base' but is not ON it — cannot fast-forward safely." >&2
+      return 3
+    fi
+    if git -C "$holder" merge --ff-only -q "origin/$base"; then
+      echo "land: '$base' synced to origin in $holder -> $(git -C "$holder" rev-parse --short HEAD)"
+      return 0
+    fi
+    echo "land: REFUSING sync: '$base' in $holder DIVERGED from origin/$base (not a fast-forward) — NOT resetting." >&2
+    echo "land:   resolve by hand: (cd $holder && git log --oneline $base..origin/$base)" >&2
+    return 3
+  fi
+
   if [ -z "$dirty" ]; then
     git checkout -q "$base" || { echo "land: WARN sync: checkout $base failed — skipping sync" >&2; return 0; }
     if git merge --ff-only -q "origin/$base"; then
@@ -220,7 +252,17 @@ fi
 
 # 7. sync local base to origin — DIRTY-SAFE (LAND-SH-SAFE-SYNC). FF-only; never reset --hard /
 # clean over uncommitted or untracked work. See safe_sync_base() above for the full contract.
-safe_sync_base "$REPO" "$BASE" "$BRANCH"
+# W0b FIX 1: the rc was previously DISCARDED (this script runs -uo pipefail, no -e), so a refusal
+# was swallowed and land.sh still printed a clean DONE. The merge itself already succeeded here,
+# so a refusal must NOT abort steps 8+ — but it MUST be visible and it MUST change the exit code.
+_land_sync_rc=0
+safe_sync_base "$REPO" "$BASE" "$BRANCH" || _land_sync_rc=$?
+if [ "$_land_sync_rc" -ne 0 ]; then
+  echo "land: ####################################################################" >&2
+  echo "land: # BASE SYNC REFUSED (rc=$_land_sync_rc) — '$BRANCH' IS merged, but local" >&2
+  echo "land: # '$BASE' was NOT synced. See the REFUSING line above and sync by hand." >&2
+  echo "land: ####################################################################" >&2
+fi
 
 # 8. AUTO-DONE-MARK (self-heals board starvation): a merged PR whose ticket is never
 # done-marked leaves its dependents BLOCKED (they gate on state/done/<dep>). Now that done.sh
@@ -235,4 +277,9 @@ if [ -n "$_land_tid" ]; then
     || echo "land: (auto-done-mark for $_land_tid was non-fatal — run 'done.sh $_land_tid' if a dependent stays blocked)" >&2
 fi
 
+if [ "$_land_sync_rc" -ne 0 ]; then
+  echo "land: DONE-WITH-WARNING — '$BRANCH' merged into '$BASE' on $OWNER_REPO (verified state=MERGED)," >&2
+  echo "land:   but the local '$BASE' sync was REFUSED (rc=$_land_sync_rc). Exiting non-zero so this is not swallowed." >&2
+  exit 8
+fi
 echo "land: DONE — '$BRANCH' merged into '$BASE' on $OWNER_REPO (verified state=MERGED)"
