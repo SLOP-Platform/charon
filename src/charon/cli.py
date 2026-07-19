@@ -839,18 +839,30 @@ def _tier_resolve(tier_name: str, executor: str | None) -> int:
         return 1
     models = config.load_models()
 
+    seed_members = config.legacy_seed_members()
+
     def _is_anthropic(mid: str) -> bool:
-        # Executor filter for the `anthropic` executor. Two rules, in order:
+        # Executor filter for the `anthropic` executor. Three rules, in order:
         #   1. A catalog entry is AUTHORITATIVE — its recorded provider decides.
-        #   2. An unknown id is classified by the single Anthropic-route SSOT,
-        #      `providers.is_anthropic_route`, so this filter can never drift
-        #      from the gateway's never-Anthropic guard (the drift class fixed
-        #      by PR #173).
-        # An unknown id therefore resolves NON-Anthropic. The old code returned
-        # True here, so any typo'd or unregistered id was silently treated as
-        # Anthropic-runnable and handed to the executor.
+        #   2. Otherwise, if this is one of the ids the config layer seeds when
+        #      `tiers.json` is absent, use the provider that layer declares for
+        #      them. Those ids ("opus"/"sonnet"/"haiku") name an Anthropic model
+        #      without spelling the vendor, and on a fresh install there is no
+        #      catalog to look them up in. Sourcing the fact from the config
+        #      layer that OWNS it keeps the route matcher in rule 3 untouched —
+        #      teaching that matcher these names would make it misclassify an
+        #      unrelated third-party model that merely shares one.
+        #   3. Any other unknown id is classified by the single Anthropic-route
+        #      SSOT, `providers.is_anthropic_route`, so this filter cannot drift
+        #      from the gateway's never-Anthropic guard (the drift class fixed by
+        #      PR #173).
+        # An unregistered id therefore resolves NON-Anthropic. The old code
+        # returned True here, so any typo'd or unregistered id was silently
+        # treated as Anthropic-runnable and handed to the executor.
         if mid in models:
             return models[mid].get("provider") == "anthropic"
+        if mid in seed_members:
+            return config.LEGACY_SEED_PROVIDER == "anthropic"
         return providers.is_anthropic_route(model_id=mid)
 
     def _cost_key(mid: str) -> int:

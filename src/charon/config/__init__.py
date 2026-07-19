@@ -53,6 +53,8 @@ from .summary import (
 )
 from .tiers import (
     CANONICAL_TIERS,
+    LEGACY_SEED_PROVIDER,
+    legacy_seed_members,
     load_tiers,
     resolve_tier,
     set_tiers,
@@ -83,6 +85,8 @@ __all__ = [
     "load_pools",
     "set_pool",
     "CANONICAL_TIERS",
+    "LEGACY_SEED_PROVIDER",
+    "legacy_seed_members",
     "load_tiers",
     "set_tiers",
     "resolve_tier",

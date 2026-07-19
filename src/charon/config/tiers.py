@@ -16,6 +16,24 @@ _LEGACY_ALIASES: dict[str, str] = {
 }
 # Day-one == today: each tier seeds the single matching Anthropic model.
 _LEGACY_MEMBERS: dict[str, list[str]] = {"low": ["haiku"], "med": ["sonnet"], "high": ["opus"]}
+# The provider those seeds belong to. The line above has always ASSERTED that the
+# seeds are Anthropic models; this makes that assertion machine-readable so a
+# caller can look it up instead of guessing at a bare id like "opus".
+LEGACY_SEED_PROVIDER = "anthropic"
+
+
+def legacy_seed_members() -> frozenset[str]:
+    """The bare model ids seeded when ``tiers.json`` is absent (``haiku``/``sonnet``/
+    ``opus``), whose provider is :data:`LEGACY_SEED_PROVIDER`.
+
+    These ids name an Anthropic model by convention but never spell the vendor, so
+    a generic route matcher cannot classify them — that is a fact this config layer
+    OWNS, not something a matcher should be taught to infer. Exposing it here lets
+    an executor filter resolve the absent-config path without widening any
+    provider-matching rule (which would then misclassify an unrelated third-party
+    model that merely shares one of these names).
+    """
+    return frozenset(m for ms in _LEGACY_MEMBERS.values() for m in ms)
 
 
 def _legacy_tiers() -> dict:
