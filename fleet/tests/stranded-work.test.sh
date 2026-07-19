@@ -136,7 +136,12 @@ NOISE="$TMP/noise"; git clone -q "$BARE" "$NOISE"; git -C "$NOISE" fetch -q orig
 for i in 1 2 3 4 5 6 7; do
   git -C "$NOISE" branch -q "feat/noise-$i" "origin/master"
   git -C "$NOISE" commit -q --allow-empty -m "n$i" 2>/dev/null
-  ( cd "$NOISE" && git checkout -q "feat/noise-$i" && git commit -q --allow-empty -m "ahead-$i" && git checkout -q master )
+  # REAL content per branch, not an empty commit: a branch that adds NO content has nothing to
+  # strand and is legitimately suppressed by the squash-awareness check, which would make this
+  # cap fixture vacuous. Distinct content keeps all 7 genuine, unlanded findings.
+  ( cd "$NOISE" && git checkout -q "feat/noise-$i" \
+      && echo "noise-$i" > "noise-$i.txt" && git add -A && git commit -q -m "ahead-$i" \
+      && git checkout -q master )
 done
 OUT="$(SW_REPO="$NOISE" SW_BASE=master SW_FLEET_DIR="$EMPTY" SW_PR_FIXTURE=/dev/null bash "$SCRIPT" 2>&1)"; RC=$?
 CNT="$(printf '%s\n' "$OUT" | grep -c '^STRANDED\[unpushed-branch\] /')"
@@ -180,6 +185,78 @@ else
 fi
 grep -q 'stranded-work.test.sh' "$HERE/../checks/rig-ci-scope.sh" \
   && ok "K2 this suite is in the CI allowlist" || no "K2 suite absent from CI_SUITES allowlist"
+
+echo "== L. SQUASH-merge awareness: landed content is not stranded, unlanded content still is =="
+# WHY: this repo merges via SQUASH, which creates a NEW sha, so the original branch commits are
+# permanently unreachable from every remote ref even though the content is fully landed. On the
+# live rig the naive reachability test reported FIVE already-merged branches (PRs #121/#123/#124/
+# #125/#126) — findings that could never clear, on the detector's first real run.
+# The fixture SQUASH-MERGES FOR REAL (`git merge --squash`) into a real repo rather than
+# simulating the shape, and master is advanced BEFORE the squash so the merge-base is genuinely
+# behind base tip — the actual production shape, not the easy aligned case.
+SB="$TMP/sq-remote.git"; SQ="$TMP/sq"
+git init -q --bare -b master "$SB"; git init -q -b master "$SQ"
+echo base > "$SQ/base.txt"; git -C "$SQ" add -A; git -C "$SQ" commit -qm base
+git -C "$SQ" remote add origin "$SB"; git -C "$SQ" push -q origin master; git -C "$SQ" fetch -q origin
+sqrun(){ env SW_REPO="$SQ" SW_BASE=master SW_FLEET_DIR="$EMPTY" SW_LIMIT=0 "$@" bash "$SCRIPT" 2>&1; }
+
+# a MULTI-commit branch — `git cherry`/per-commit patch-id cannot see this squash, which is why
+# the detector compares the branch's NET diff instead. Three of the five real cases had 2-4 commits.
+git -C "$SQ" checkout -q -b feat/squashed
+echo l1 > "$SQ/sq.txt"; git -C "$SQ" add -A; git -C "$SQ" commit -qm s1
+echo l2 >> "$SQ/sq.txt"; git -C "$SQ" add -A; git -C "$SQ" commit -qm s2
+git -C "$SQ" checkout -q master
+echo moved > "$SQ/unrelated.txt"; git -C "$SQ" add -A; git -C "$SQ" commit -qm "base moves on"
+git -C "$SQ" merge -q --squash feat/squashed && git -C "$SQ" commit -qm "squashed work (#1)"
+git -C "$SQ" push -q origin master; git -C "$SQ" fetch -q origin
+# precondition: the branch really IS unreachable from every remote ref (i.e. the naive test fires)
+UNREACH="$(git -C "$SQ" rev-list --count feat/squashed --not --remotes)"
+[ "$UNREACH" -gt 0 ] && ok "L0 fixture is genuinely squash-merged (branch unreachable from remotes)" \
+  || no "L0 fixture is not the squash shape (unreachable=$UNREACH)"
+OUT="$(sqrun SW_PR_FIXTURE=/dev/null)"; RC=$?
+nchk "L1 SQUASH-merged branch is NOT reported" "feat/squashed" "$OUT"
+chk "L2 and the run is clean, not merely quiet" "clean: stranded-work" "$OUT"
+[ "$RC" = 0 ] && ok "L3 rc=0 when the only branch is squash-merged" || no "L3 rc=0 (got $RC)"
+
+# ANTI-OVER-BLOCK. A squash-awareness fix that suppresses everything is WORSE than the false
+# positives it removes, so the unlanded direction is asserted in the same fixture.
+git -C "$SQ" checkout -q -b feat/really-stranded master
+echo genuinely-unlanded > "$SQ/stranded.txt"; git -C "$SQ" add -A; git -C "$SQ" commit -qm real
+git -C "$SQ" checkout -q master
+OUT="$(sqrun SW_PR_FIXTURE=/dev/null)"; RC=$?
+chk "L4 genuinely unlanded branch IS still reported" "STRANDED[unpushed-branch]" "$OUT"
+chk "L5 names the unlanded branch" "feat/really-stranded" "$OUT"
+chk "L6 says explicitly that the content is not on base" "is NOT on master" "$OUT"
+nchk "L7 the squash-merged branch is still suppressed alongside it" "feat/squashed" "$OUT"
+[ "$RC" = 1 ] && ok "L8 rc=1 with a genuine finding" || no "L8 rc=1 (got $RC)"
+
+# CONTENT-IDENTICAL BUT UNMERGED. Matching some OTHER branch's patch proves nothing — only a
+# patch already on BASE clears a branch. A twin of an unlanded branch must still be reported.
+git -C "$SQ" checkout -q -b feat/twin master
+echo genuinely-unlanded > "$SQ/stranded.txt"; git -C "$SQ" add -A; git -C "$SQ" commit -qm twin
+git -C "$SQ" checkout -q master
+OUT="$(sqrun SW_PR_FIXTURE=/dev/null)"
+chk "L9 content-identical-but-unmerged branch is reported" "feat/twin" "$OUT"
+chk "L10 its unlanded twin is reported too" "feat/really-stranded" "$OUT"
+
+# NEVER-FALSE-GREEN for the new path. When the scan window cannot reach the merge point and PR
+# state is unreadable, the branch is reported as UNVERIFIED — never silently cleared. "Could not
+# determine" rendering as clean is the false-receipt class this whole detector exists to refuse.
+# base must advance PAST the squash commit so a 1-commit window genuinely cannot see it —
+# otherwise the squash is still the tip and the case is decidable, not undecidable.
+echo later > "$SQ/later.txt"; git -C "$SQ" add -A; git -C "$SQ" commit -qm "later base work"
+git -C "$SQ" push -q origin master; git -C "$SQ" fetch -q origin
+OUT="$(sqrun SW_PR_FIXTURE=/dev/null SW_SQUASH_SCAN=1 SW_NO_GH=1)"; RC=$?
+chk "L11 undecidable merge status is reported as UNVERIFIED" "UNVERIFIED" "$OUT"
+chk "L12 the undecidable branch is still named" "feat/squashed" "$OUT"
+nchk "L13 undecidable NEVER renders as clean" "clean: stranded-work" "$OUT"
+[ "$RC" = 1 ] && ok "L14 rc is non-clean when merge status is undecidable" || no "L14 rc=1 (got $RC)"
+# and a MERGED PR in the PR data rescues the out-of-window case (the same rows shapes 3/4/5 read,
+# so squash-awareness costs zero extra gh calls and needs no second fixture hook)
+MPRF="$TMP/merged-prs.tsv"; printf '1\tMERGED\tfeat/squashed\t2\n' > "$MPRF"
+OUT="$(sqrun SW_PR_FIXTURE="$MPRF" SW_SQUASH_SCAN=1)"
+nchk "L15 a MERGED PR clears an out-of-window branch" "feat/squashed" "$OUT"
+chk "L16 but the genuinely unlanded branch survives that fallback" "feat/really-stranded" "$OUT"
 
 echo
 echo "stranded-work.test.sh: $PASS passed, $FAIL failed"

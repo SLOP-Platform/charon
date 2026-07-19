@@ -16,8 +16,32 @@
 #   which carries its own data-loss guards) acts. Read-only is the whole safety argument — do not
 #   add an --apply mode to this file.
 #
+# SQUASH-MERGE AWARENESS (the day-one false-positive class)
+#   This repo merges via SQUASH. A squash merge creates a NEW commit sha, so the original branch
+#   commits are permanently unreachable from every remote ref even though the CONTENT is fully
+#   landed on base. "Unreachable" therefore does NOT mean "stranded". Measured on the live rig
+#   2026-07-19, the naive reachability test reported FIVE branches (PRs #121/#123/#124/#125/#126)
+#   that were all already merged — findings that could never clear, on the detector's first real
+#   run.
+#   A detector that cries wolf on day one gets switched off, which is the exact
+#   [[gates-must-actually-run]] failure this file exists to end.
+#
+#   THE TEST USED: net-diff PATCH-ID. A branch's content is landed when the patch-id of its net
+#   diff (merge-base..branch) equals the patch-id of some commit already on base — which is
+#   precisely what a squash commit is. `git cherry` was REJECTED: it compares per-commit
+#   patch-ids, so it only ever recognises a squash of a SINGLE-commit branch; three of the five
+#   real false positives carry 2-4 commits. Base patch-ids are collected in ONE
+#   `git log -p | git patch-id` pass per repo, computed LAZILY (only if some branch is unreachable)
+#   and cached, so the common clean case costs nothing. Nothing is written to the object store —
+#   the `git commit-tree` variant of this recipe was rejected for that reason alone (report-only).
+#
+#   DIRECTION THAT MUST NOT WEAKEN: a branch whose content is genuinely NOT on base is STILL
+#   reported. The patch-id test can only ever SUPPRESS on positive proof of landing; every
+#   inconclusive path reports, annotated UNVERIFIED. See SW_SQUASH_SCAN below.
+#
 # THE FIVE SHAPES (each one was REAL on this rig; each has a fail-on-revert test)
-#   1 unpushed-branch    local branch with commits reachable from no remote ref.
+#   1 unpushed-branch    local branch with commits reachable from no remote ref AND whose content
+#                        is not provably landed on base (see SQUASH-MERGE AWARENESS).
 #   2 dirty-worktree     worktree with uncommitted/untracked changes and NO live claim marker.
 #                        (A live claim means someone is working in it — that is not stranded.)
 #   3 pushed-no-pr       branch on the remote, not merged into base, with no PR at all.
@@ -63,6 +87,9 @@
 #                  exit status are never capped — only the printed detail.
 #   SW_NO_GH=1     do not call gh at all (forces UNDETERMINED unless SW_PR_FIXTURE is set)
 #   SW_CACHE_TTL   seconds to reuse a cached gh PR list (default 300)
+#   SW_SQUASH_SCAN how many commits back along base to collect patch-ids for squash detection
+#                  (default 300). A branch whose merge-base is OLDER than this window cannot be
+#                  decided locally: it is reported as UNVERIFIED, never silently cleared.
 set -uo pipefail
 
 [ -n "${STRANDED_WORK_ACTIVE:-}" ] && { echo "stranded-work: already running (reentrancy guard) — skipping"; exit 0; }
@@ -123,6 +150,68 @@ _pr_tsv(){
   cat "$cf" 2>/dev/null
 }
 
+# ── squash-merge awareness ────────────────────────────────────────────────────────────────────
+# PER-REPO PR TSV, fetched ONCE by the main loop and shared by every scan below. Two globals
+# rather than a second _pr_tsv call: the "is this branch's PR merged?" question is answered from
+# the SAME rows shapes 3/4/5 already read, so squash-awareness costs ZERO extra gh calls and adds
+# ZERO new fixture surface (SW_PR_FIXTURE covers it, exactly as before).
+# WHY NOT fleet/gh-cache.sh's branch_merged_pr: it is a genuinely separate seam — its own cache
+# file, its own TTL, its own GH_MERGED_FIXTURE hook. Sourcing it here would put TWO GitHub seams
+# in one script that must agree about merge state, and two seams that must agree will drift. The
+# reuse that actually applies is of this file's existing, already-paid-for query.
+REPO_TSV=""; REPO_TSV_OK=0
+
+# Base-side patch-ids, ONE `git log -p | git patch-id` pass per repo, built lazily on first need.
+declare -A _BASE_PIDS=()      # "<repo>|<baseref>" -> newline-joined patch-ids
+_base_pids(){
+  local repo="$1" baseref="$2" key="$1|$2"
+  if [ -z "${_BASE_PIDS[$key]+set}" ]; then
+    _BASE_PIDS[$key]="$(git -C "$repo" log -p --no-merges --max-count="${SW_SQUASH_SCAN:-300}" \
+                          "$baseref" 2>/dev/null | git -C "$repo" patch-id --stable 2>/dev/null \
+                          | cut -d' ' -f1)"
+  fi
+  printf '%s' "${_BASE_PIDS[$key]}"
+}
+
+# _merge_verdict <repo> <branch> <base> -> prints "landed" | "unlanded" | "unverified: <why>"
+# ONLY "landed" suppresses a finding, and only on positive proof. Every other path reports.
+_merge_verdict(){
+  local repo="$1" b="$2" base="$3" baseref="" mb bpid gap
+  if git -C "$repo" rev-parse --verify -q "origin/$base" >/dev/null 2>&1; then baseref="origin/$base"
+  elif git -C "$repo" rev-parse --verify -q "$base" >/dev/null 2>&1; then baseref="$base"
+  else printf 'unverified: no %s ref to compare against' "$base"; return 0; fi
+
+  # Plain (non-squash) merge or already contained: reachable from base. Cheapest test, first.
+  git -C "$repo" merge-base --is-ancestor "$b" "$baseref" 2>/dev/null && { printf landed; return 0; }
+
+  mb="$(git -C "$repo" merge-base "$b" "$baseref" 2>/dev/null)"
+  [ -n "$mb" ] || { printf 'unverified: no merge-base with %s' "$baseref"; return 0; }
+
+  # Net diff of the branch since it forked. Empty => the branch adds no content at all.
+  bpid="$(git -C "$repo" diff "$mb" "$b" 2>/dev/null | git -C "$repo" patch-id --stable 2>/dev/null | cut -d' ' -f1)"
+  [ -n "$bpid" ] || { printf landed; return 0; }
+
+  # THE squash test: does some commit already on base carry this exact net diff?
+  if printf '%s\n' "$(_base_pids "$repo" "$baseref")" | grep -qxF "$bpid"; then printf landed; return 0; fi
+
+  # No match. Was the window even wide enough to contain the merge point? If the branch forked
+  # further back than SW_SQUASH_SCAN, "no match" proves nothing — fall back to PR state (from the
+  # TSV already fetched), and if that is unreadable too, say UNVERIFIED rather than guessing.
+  gap="$(git -C "$repo" rev-list --count "$mb..$baseref" 2>/dev/null || echo 0)"
+  if [ "${gap:-0}" -gt "${SW_SQUASH_SCAN:-300}" ] 2>/dev/null; then
+    if [ "$REPO_TSV_OK" -eq 1 ]; then
+      if printf '%s\n' "$REPO_TSV" | awk -F'\t' -v b="$b" '$2=="MERGED" && $3==b{f=1} END{exit !f}'; then
+        printf landed; return 0
+      fi
+      printf 'unverified: forked %s commits before base tip (beyond SW_SQUASH_SCAN) and no MERGED PR found' "$gap"
+      return 0
+    fi
+    printf 'unverified: forked %s commits before base tip (beyond SW_SQUASH_SCAN) and PR state unreadable' "$gap"
+    return 0
+  fi
+  printf unlanded
+}
+
 # ── claim awareness ───────────────────────────────────────────────────────────────────────────
 # A worktree whose ticket is CLAIMED (or holds a needs-push marker) is in-flight, not stranded.
 # Missing state dirs (fresh checkout) simply mean "no claims" — never a reason to flag more.
@@ -148,7 +237,14 @@ scan_unpushed_branches(){
     [ "$b" = "$base" ] && continue
     n="$(git -C "$repo" rev-list --count "$b" --not --remotes 2>/dev/null || echo 0)"
     [ "${n:-0}" -gt 0 ] 2>/dev/null || continue
-    finding unpushed-branch "$repo: branch '$b' has $n commit(s) on NO remote ref"
+    # Unreachable != stranded under SQUASH merge. Suppress ONLY on positive proof that the
+    # content is already on base; report everything else, annotating what could not be decided.
+    local v; v="$(_merge_verdict "$repo" "$b" "$base")"
+    case "$v" in
+      landed) continue ;;
+      unlanded) finding unpushed-branch "$repo: branch '$b' has $n commit(s) on NO remote ref and its content is NOT on $base" ;;
+      *)        finding unpushed-branch "$repo: branch '$b' has $n commit(s) on NO remote ref — merge status UNVERIFIED (${v#unverified: })" ;;
+    esac
   done < <(git -C "$repo" for-each-ref --format='%(refname:short)' refs/heads/ 2>/dev/null)
 }
 
@@ -170,7 +266,8 @@ scan_dirty_worktrees(){
 # SHAPES 3/4/5: everything that needs PR state. One TSV read, three passes.
 scan_pr_shapes(){
   local repo="$1" base="$2" tsv pr state head checks
-  if ! tsv="$(_pr_tsv "$repo")"; then
+  tsv="$REPO_TSV"
+  if [ "$REPO_TSV_OK" -ne 1 ]; then
     undetermined "$repo: PR state unreadable (gh missing/offline/rate-limited or no github remote)"
     echo "          shapes pushed-no-pr / closed-pr-unlanded / pr-no-checks NOT checked here."
     return 0
@@ -236,6 +333,9 @@ while IFS=$'\t' read -r repo base; do
     continue
   fi
   say "scan: $repo (base $base)"
+  # ONE PR query per repo, hoisted so shape 1's squash fallback and shapes 3/4/5 share it.
+  REPO_TSV=""; REPO_TSV_OK=0
+  if REPO_TSV="$(_pr_tsv "$repo")"; then REPO_TSV_OK=1; else REPO_TSV=""; fi
   scan_unpushed_branches "$repo" "$base"
   scan_dirty_worktrees "$repo"
   scan_pr_shapes "$repo" "$base"
