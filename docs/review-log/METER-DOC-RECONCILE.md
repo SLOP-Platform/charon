@@ -40,16 +40,10 @@ The full suite was green while the docstrings were false — docstrings are
 never executed. The evidence for this ticket is the two revert experiments
 above going RED, not the green run.
 
-## Manager follow-up (NOT droid work — no file touched)
-`fleet/board/METER-MODEL-PROVIDER.md.parked` is a Wave-2 BUILD ticket for
-work that has ALREADY SHIPPED (the 8 write sites + live readers above). Its
-premise is dead. Recommendation: **retire or rescope** — disposition owned by
-the manager; this ticket did not edit/rename/park/unpark that file.
-
 ## Known intentional non-changes
 - `tests/test_meter_model_provider.py:3` carries the same stale
-  "wiring deferred" note — outside this ticket's `owns:`, left for a
-  follow-up (the doc-drift guard covers only src/charon/proxy.py per the
-  ticket's accept criteria).
+  "wiring deferred" note — out of scope here, left for a follow-up (the
+  doc-drift guard covers only src/charon/proxy.py per this change's accept
+  criteria).
 - The KNOWN GAPS (negative-cost passthrough, unpriced divergence) are real
   and retained — only the "Wave-2" framing was removed.
