@@ -160,7 +160,33 @@ for d in $(printf '%s' "$safe_dep" | tr ' ' '\n' | sort -u); do
 done
 [ -n "$keep_lg" ] && say "  HUMAN NEEDED (not auto-fixed): decompose/justify ->$keep_lg"
 
-# --- 5. verdict (loud) -------------------------------------------------------------------------
+# --- 5. orphan-claim reaper (DROID-LIFECYCLE-REAP) ---------------------------------------------
+# A dead-PID claim (droid SIGKILL'd / terminal-closed) blocks the ticket forever — the
+# in-process cleanup() trap doesn't fire. Wire reap-orphans.sh into foreman's cadence
+# (per dynamic-tools-never-on-demand: this is NOT a manual on-demand step). DRY-RUN in
+# report mode (manager sees the count), --apply with --fix (provably-safe: only touches
+# dead-PID claims, preserves any branch with unique commits).
+say "== FOREMAN: orphan-claim reaper (dead-PID claims) =="
+if [ -x "$FLEET/reap-orphans.sh" ]; then
+  reap_args=()
+  [ "$FIX" = 1 ] && reap_args+=(--apply)
+  reap_out="$(REAPER_FLEET_DIR="$FLEET" bash "$FLEET/reap-orphans.sh" "${reap_args[@]}" 2>&1)"
+  reap_rc=$?
+  printf '%s\n' "$reap_out" | sed 's/^/  /'
+  # Surface a LOUD verdict line so the manager sees orphan count at a glance
+  orphan_pres="$(printf '%s\n' "$reap_out" | awk -F': *' '/^  dead\+preserve:/{print $2; exit}')"
+  orphan_clean="$(printf '%s\n' "$reap_out" | awk -F': *' '/^  dead\+clean:/{print $2; exit}')"
+  orphan_live="$(printf '%s\n' "$reap_out" | awk -F': *' '/^  live \(untouched\):/{print $2; exit}')"
+  say "  (reaper: live=${orphan_live:-0} dead-preserve=${orphan_pres:-0} dead-clean=${orphan_clean:-0})"
+  # Dead-preserve orphans need manager action (land-needs-push.sh <id>) — flag loudly.
+  if [ "${orphan_pres:-0}" -gt 0 ] 2>/dev/null; then
+    say "  [ORPHAN] $orphan_pres dead-droid branch(es) with unmerged commits — manager: 'fleet/land-needs-push.sh <id>' per id (or re-run 'foreman.sh --fix' with reap-orphans confirmation)."
+  fi
+else
+  say "  [WARN] reap-orphans.sh not found — dead-PID claims will accumulate. Check the build."
+fi
+
+# --- 6. verdict (loud) -------------------------------------------------------------------------
 # Two DIFFERENT classes, deliberately no longer collapsed into one rc (see EXIT-CODE CONTRACT):
 #   collisions = a board DEFECT   -> rc 2, blocking (feeding it corrupts work).
 #   starvation = a SUPPLY state   -> rc 0 by default (loud report, but "nothing to do" is not

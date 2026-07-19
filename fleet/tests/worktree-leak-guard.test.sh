@@ -82,6 +82,23 @@ mb="$(git -C "$charon" status --porcelain)"
 check "d3 CLEAN when main not newly dirty" \
   "$(leak_detect "$charon" "$wt" "$branch" "$mb")" "CLEAN"
 rm -rf "$(dirname "$charon")"
+# F3 — UNRESOLVABLE base must NOT be read as "no commits". `git log 2>/dev/null` returns an empty
+# string on FAILURE just as it does for a genuinely empty range, and "no commits" is one of the
+# three conjuncts of the LEAK verdict — so an unresolvable base could manufacture a FALSE LEAK,
+# which quarantines the work and holds the ticket's claim. Not knowing must answer CLEAN.
+charon="$(mk_charon)"; wt="$charon-fleet-F3"; branch="feat/f3"
+leak_worktree_setup "$charon" "$wt" "$branch" "" >/dev/null 2>&1
+mb="$(git -C "$charon" status --porcelain)"
+echo leaked > "$charon/stray.py"     # main IS newly dirty; worktree clean + no commits
+git -C "$charon" remote remove origin >/dev/null 2>&1 || true
+git -C "$charon" update-ref -d refs/remotes/origin/master >/dev/null 2>&1 || true
+git -C "$wt" update-ref -d refs/remotes/origin/master >/dev/null 2>&1 || true
+git -C "$charon" rev-parse --verify --quiet "origin/master^{commit}" >/dev/null 2>&1 \
+  && bad "d4 fixture: origin/master still resolves — test would not exercise the failure" \
+  || ok "d4 fixture: 'origin/master' is genuinely UNRESOLVABLE"
+check "d5 CLEAN (not a FALSE LEAK) when the base ref cannot be resolved" \
+  "$(leak_detect "$charon" "$wt" "$branch" "$mb" "origin/master")" "CLEAN"
+rm -rf "$(dirname "$charon")"
 
 echo "== (e) safe_worktree_remove refuses on needs-push, removes otherwise =="
 charon="$(mk_charon)"; wt="$charon-fleet-R"; branch="feat/r"; npdir="$(mktemp -d)"

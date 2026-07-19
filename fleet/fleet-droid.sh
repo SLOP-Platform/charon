@@ -27,6 +27,68 @@ CHARON="/home/stack/code/charon"   # DEFAULT product repo (a ticket's `repo:` fi
 CHARON_AGENT_CMD="${CHARON_AGENT_CMD:-$FLEET/charon-run.sh}"
 # WORKTREE-LEAK GUARD (#1): launcher pre-creates the worktree + post-session leak detector.
 source "$FLEET/leak-guard.sh"
+# P0 #4 (DROID-LIFECYCLE-REAP): the upstream `leak_worktree_setup` (in leak-guard.sh) does
+# `git worktree add -B <branch> <base_ref>` which SILENTLY DISCARDS a pre-existing branch
+# with unmerged commits (reflog: "Created from <base>" = a full reset). Observed twice
+# on FLEET-DEMAND-DRIVEN-ROUTING, recovered by SHA both times. The P0 guard wraps the
+# upstream with a "REUSE-IF-UNIQUE-COMMITS" decision: if the ticket branch already exists
+# and has commits not in <base_ref>, REUSE it (check the surviving branch out into a fresh
+# worktree dir) rather than `-B`-resetting it. Recreate-from-base is only allowed when
+# the branch has NO unique commits — i.e. a re-claim of a never-touched branch is
+# identical to a fresh create. Same return contract as leak_worktree_setup: 0=ok, 1=fatal,
+# 2=refused (needs-push marker present).
+p0_worktree_setup(){
+  local charon="$1" wt="$2" branch="$3" npmarker="${4:-}" base_ref="${5:-origin/master}"
+  if [ -n "$npmarker" ] && [ -e "$npmarker" ]; then
+    echo "p0-worktree-setup: REFUSING to (re)create $wt — $npmarker exists (committed-but-unlanded work); land it first." >&2
+    return 2
+  fi
+  git -C "$charon" fetch origin --quiet 2>/dev/null || true
+  # Always prune stale worktree admin metadata BEFORE the branch-state check. A leftover
+  # `rm -rf`'d worktree dir from a dead droid would otherwise make `git worktree add`
+  # fail with "missing but already registered worktree" — exactly the data-loss escape
+  # hatch (we'd then `-f` or fall back to the `branch -D` recreate).
+  git -C "$charon" worktree prune 2>/dev/null || true
+  # FAIL CLOSED (fix #1). This previously read
+  #   [ -n "$(git -C "$charon" log --oneline "$base_ref..$branch" 2>/dev/null)" ]
+  # where an EMPTY string meant "no unique commits" — but `git log` also prints nothing when it
+  # FAILS, e.g. when $base_ref does not resolve. That collapsed "this branch is empty" and "I
+  # could not tell" into the same answer, and the answer routed to the RECREATE-FROM-BASE path
+  # below (`leak_worktree_setup`), which deletes the branch and resets it to base. Reuse
+  # `_lg_unlanded_count` from leak-guard.sh (fix #5) — it verifies the base resolves FIRST and
+  # signals UNRESOLVABLE + rc 1 rather than 0. Unknown is treated as HAS WORK: preserve.
+  local has_unique=0 branch_exists=0 uniq_n uniq_rc=0
+  if git -C "$charon" show-ref --verify --quiet "refs/heads/$branch"; then branch_exists=1; fi
+  if [ "$branch_exists" -eq 1 ]; then
+    uniq_n="$(_lg_unlanded_count "$charon" "$branch" "$base_ref")" || uniq_rc=$?
+    case "$uniq_n" in ''|*[!0-9]*) uniq_rc=1 ;; esac
+    if [ "$uniq_rc" -ne 0 ]; then
+      # UNKNOWN — must never read as "safe to reset". Preserve the branch as if it had work.
+      echo "p0-worktree-setup: base ref '$base_ref' is UNRESOLVABLE in $charon — FAILING CLOSED, treating $branch as if it holds unmerged work (will REUSE, never recreate)." >&2
+      has_unique=1
+    elif [ "$uniq_n" -gt 0 ]; then
+      has_unique=1
+    fi
+  fi
+  if [ "$has_unique" -eq 1 ]; then
+    # PRESERVE: branch has unmerged commits. Reuse the worktree if it's still attached;
+    # otherwise check the surviving branch out into the worktree dir. Never `-B`, never
+    # `branch -D`, never `--force` — that is the data-loss path.
+    if [ -d "$wt" ] && [ -n "$(git -C "$charon" worktree list --porcelain 2>/dev/null | grep -F "branch refs/heads/$branch")" ]; then
+      echo "p0-worktree-setup: REUSING $wt (branch $branch has unmerged commits; P0 #4 guard)." >&2
+      return 0
+    fi
+    mkdir -p "$(dirname "$wt")"
+    if git -C "$charon" worktree add "$wt" "$branch" >/dev/null; then
+      echo "p0-worktree-setup: REUSED surviving branch $branch into $wt (had unmerged commits; P0 #4 guard)." >&2
+      return 0
+    fi
+    echo "p0-worktree-setup: FATAL — could not reuse surviving branch $branch in $wt; refusing to fall back to a -B reset." >&2
+    return 1
+  fi
+  # NO unique commits: safe to recreate from base. Hand off to the upstream's proven path.
+  leak_worktree_setup "$charon" "$wt" "$branch" "" "$base_ref"
+}
 # MULTI-REPO: maps a ticket's `repo:` field -> repo path / worktree / base branch / gate.
 # Absent field -> key `charon` (product) => IDENTICAL behavior to the old hardwired path.
 source "$FLEET/repo-registry.sh"
@@ -166,12 +228,73 @@ DROID="$TIER-$$"; current=""; empties=0
 source "$FLEET/droid-identity.sh"
 droid_git_identity "$DROID" >/dev/null
 echo "[$DROID] git identity: $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> (commits are attributable to this droid)"
-# Release the in-flight claim if the tab is Ctrl-C'd / killed (no stuck tickets).
-cleanup(){ if [ -n "${current:-}" ] && [ ! -e "$FLEET/state/submitted/$current" ]; then
-  bash "$FLEET/release.sh" "$current" >/dev/null 2>&1 || true; fi
+# Release the in-flight claim + stand-down the worktree on Ctrl-C / exit (DROID-LIFECYCLE-REAP).
+# GUARANTEES (no data loss — accepted criteria):
+#   1. Uncommitted changes in the worktree are AUTO-COMMITTED (with a flagging message) BEFORE
+#      the worktree is removed. The commit lives on the branch, so worktree removal cannot
+#      destroy it. A `git stash` was considered and rejected: stashes are easy to forget,
+#      and a forgotten stash is silent data loss. An auto-commit at stand-down is loud + on
+#      the branch (the manager can always see and undo it).
+#   2. The worktree dir is removed with `git worktree remove` (NO --force needed; the
+#      auto-commit above guarantees a clean tree). If even that fails, fall back to
+#      `safe_worktree_remove` which honors the needs-push guard (committed-but-unlanded work).
+#   3. The branch itself is NEVER `git branch -D`'d by this cleanup — the only data-loss path
+#      the manager hit this session. Worktree removal keeps the branch. A subsequent
+#      `leak_worktree_setup` re-claim will REUSE the branch via the P0 #4 guard.
+#   4. The claim marker is released so a fresh droid can re-claim — but ONLY when no worktree
+#      work was preserved. If we auto-committed, the claim stays open AND we mark
+#      state/needs-push/<id> so the manager (or the reaper) lands it.
+# SIGKILL / terminal-close bypass: the bash trap does NOT fire for those — the OUT-OF-BAND
+# reaper (fleet/reap-orphans.sh, wired into foreman) handles those cases. cleanup() only
+# runs when the shell actually exits.
+cleanup(){
+  if [ -n "${current:-}" ] && [ ! -e "$FLEET/state/submitted/$current" ]; then
+    bash "$FLEET/release.sh" "$current" >/dev/null 2>&1 || true; fi
   # Drop this run's loop-guard counters (per-run scratch); durable quarantine markers under
   # state/loop-guard/<id> PERSIST for the manager to inspect + clear.
-  rm -rf "$FLEET/state/loop-guard/runs/$DROID" 2>/dev/null || true; }
+  rm -rf "$FLEET/state/loop-guard/runs/$DROID" 2>/dev/null || true
+  # If we have an active claim AND the worktree exists, stand-down safely. The branch is
+  # never deleted by this path (worktree removal preserves it; leak-guard's P0 #4 reuses it
+  # on re-claim).
+  if [ -n "${current:-}" ] && [ -n "${wt:-}" ] && [ -d "$wt" ] && [ -d "$REPO" ]; then
+    # (1) AUTO-COMMIT any uncommitted changes BEFORE removal. A `git stash` was an option
+    #     but a forgotten stash = silent data loss; an auto-commit is on the branch, loud,
+    #     and trivially undoable (`git reset HEAD~1`). Flag the message so the manager
+    #     can audit for half-done work.
+    if [ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]; then
+      echo "[$DROID] cleanup: $current has uncommitted changes — auto-committing (droid stood down without committing)." >&2
+      git -C "$wt" add -A
+      git -C "$wt" commit -q -m "chore($current): cleanup auto-commit — droid stood down without committing (review for completeness)" || true
+      # Flag for the manager / reaper: the auto-commit is on the branch, but the droid
+      # went away — a re-claim could clobber it (the P0 #4 guard prevents clobber, but
+      # this marker keeps needs-push-style visibility until the manager lands the branch).
+      mkdir -p "$FLEET/state/needs-push"
+      printf 'branch=%s\nworktree=%s\nrepo=%s\nreason=cleanup auto-commit (droid stood down with uncommitted work)\nflagged=%s\n' \
+        "$branch" "$wt" "$REPO" "$(date -u +%FT%TZ)" > "$FLEET/state/needs-push/$current" || true
+    fi
+    # (2) SAFELY remove the worktree — branch STAYS. A leak-guard REFUSAL IS TERMINAL.
+    #
+    #     THE BUG THIS REPLACES (CRITICAL, reproduced): this read
+    #       `if ! safe_worktree_remove … 2>/dev/null; then worktree remove --force || rm -rf; fi`
+    #     The `if !` INVERTED the guard into a trigger. safe_worktree_remove returns non-zero
+    #     EXACTLY and ONLY when the target must not be destroyed — live needs-push marker,
+    #     uncommitted changes, commits not on any remote, a catastrophic target ($HOME, `/`,
+    #     the live checkout, a worktree-family root), or a path it cannot prove is ours — and
+    #     the `||` chain then destroyed it anyway with the bluntest tool available. `2>/dev/null`
+    #     silenced the refusal so it was invisible. Worse, step (1) above WRITES the
+    #     state/needs-push marker that is the first thing the guard refuses on, so the most
+    #     common stand-down path armed its own override.
+    #
+    #     Same shape as fleet/retire-done.sh:74-77 — call it, act only on success, and let a
+    #     refusal simply leave the worktree alone. stderr is NOT suppressed: the refusal message
+    #     names the reason and the manager needs to see it.
+    if safe_worktree_remove "$REPO" "$wt" "$current" "$FLEET/state/needs-push"; then
+      git -C "$REPO" worktree prune 2>/dev/null || true
+    else
+      echo "[$DROID] cleanup: worktree KEPT: $wt — leak-guard REFUSED removal (reason above). Branch '$branch' and its work are preserved; resolve by hand." >&2
+    fi
+  fi
+}
 trap 'cleanup; echo "[$DROID] stood down."; exit 130' INT TERM
 trap cleanup EXIT
 wmsg=""; [ "$WAIT_MIN" -gt 0 ] && wmsg=", wait=${WAIT_MIN}m retries=${RETRIES} patience=${PATIENCE}"
@@ -257,7 +380,14 @@ while true; do
   # work is sitting in that worktree — REFUSE to re-run (would risk destroying it); manager lands.
   npmark="$FLEET/state/needs-push/$id"
   mkdir -p "$(dirname "$wt")"
-  set +e; leak_worktree_setup "$REPO" "$wt" "$branch" "$npmark" "$base_ref"; lg_rc=$?; set -e
+  # P0 #4 (DROID-LIFECYCLE-REAP): use the P0-guarded worktree setup so a pre-existing branch
+  # with unmerged commits is REUSED, not `-B`-reset from origin/master. The upstream
+  # `leak_worktree_setup` (in leak-guard.sh) is kept untouched (out of this ticket's owns);
+  # this wrapper adds the fail-closed unique-commits check + REUSE path on top, and DELEGATES
+  # to the upstream only when the branch provably has no unique commits (== safe to recreate).
+  # The upstream's own refusal codes therefore still propagate through this wrapper and are
+  # handled below — rc 3 (salvage-tagged unlanded commits) included.
+  set +e; p0_worktree_setup "$REPO" "$wt" "$branch" "$npmark" "$base_ref"; lg_rc=$?; set -e
   if [ "$lg_rc" -eq 3 ]; then
     echo "[$DROID] $id: branch '$branch' has UNLANDED commits — leak-guard salvage-tagged them and REFUSED to recreate the worktree. Land or delete that branch by hand; NOT re-running. Next…" >&2
     current=""   # keep the claim marker so it isn't re-offered; a human decides
@@ -337,7 +467,17 @@ $spec"
     fi
     # If there are STILL no commits beyond base, the droid produced nothing — a genuine no-op.
     # Release for retry rather than pushing an empty branch.
-    if [ -z "$(git -C "$wt" log --oneline "$base_ref..$branch" 2>/dev/null)" ]; then
+    # FAIL CLOSED (fix #1, third call site of the same shape). An empty `git log` here also
+    # meant "no commits", including when it was empty because $base_ref did not resolve — which
+    # released the claim and declared the droid a no-op while its commits sat on the branch.
+    # Fetch first (fix #2) so $base_ref is actually resolvable, then demand a NUMERIC zero.
+    git -C "$wt" fetch origin --quiet 2>/dev/null || true
+    nc="$(_lg_unlanded_count "$wt" "$branch" "$base_ref")" || nc=""
+    case "$nc" in ''|*[!0-9]*) nc="" ;; esac
+    if [ -z "$nc" ]; then
+      echo "[$DROID] WARNING: cannot resolve '$base_ref' in $wt — refusing to declare $id a no-op; treating it as having work and continuing to the push/submit path." >&2
+    fi
+    if [ -n "$nc" ] && [ "$nc" -eq 0 ]; then
       echo "[$DROID] $id produced NO commits and NO changes — releasing for retry (nothing to publish)."
       bash "$FLEET/release.sh" "$id" || true; current=""
       # LOOP-GUARD: count this zero-commit release. After N (default 2) of the SAME id in this

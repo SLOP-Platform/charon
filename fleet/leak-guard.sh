@@ -279,8 +279,20 @@ leak_worktree_setup(){
 #   base_ref defaults to origin/master (charon back-compat); pass origin/main for keystone etc.
 leak_detect(){
   local charon="$1" wt="$2" branch="$3" main_before="$4" base_ref="${5:-origin/master}"
-  local commits wtdirty main_after newmain
-  commits="$(git -C "$wt" log --oneline "$base_ref..$branch" 2>/dev/null)"
+  local commits commits_rc=0 wtdirty main_after newmain
+  # F3 — SAME FAIL-OPEN SHAPE as the counts fixed elsewhere in this file. `git log … 2>/dev/null`
+  # yields an EMPTY string both when the branch genuinely has no commits AND when the command
+  # FAILED (unresolvable $base_ref — no origin/master locally, a main-based repo hitting the
+  # origin/master DEFAULT, no `origin` remote at all). Empty is one of the three conjuncts of the
+  # LEAK verdict, so "we could not tell" silently read as "no commits" and could manufacture a
+  # FALSE LEAK. That fails CLOSED at the caller (fleet-droid.sh quarantines, holds the claim and
+  # refuses to publish) — availability loss, not data loss — but it is the exact shape this change
+  # set out to eliminate rig-wide. Not knowing must never be reported as a leak: on failure we
+  # answer CLEAN, which leaves the work in place for a human rather than quarantining on a guess.
+  commits="$(git -C "$wt" log --oneline "$base_ref..$branch" 2>/dev/null)" || commits_rc=$?
+  if [ "$commits_rc" -ne 0 ]; then
+    echo "CLEAN"; return 1
+  fi
   wtdirty="$(git -C "$wt" status --porcelain 2>/dev/null)"
   main_after="$(git -C "$charon" status --porcelain 2>/dev/null)"
   # lines present in main_after but NOT in the pre-session snapshot = new stray work in main.
