@@ -17,6 +17,9 @@
 set -euo pipefail
 FLEET="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; S="$FLEET/state"; BOARD="$FLEET/board"
 [ -f "$FLEET/gh-cache.sh" ] && source "$FLEET/gh-cache.sh"   # batched merged-PR lookups (O(repos) not O(tickets))
+# shellcheck source=/dev/null
+source "$FLEET/_lib.sh"   # ticket_repo_slug: the SINGLE `repo:` -> GitHub-slug map (no local copy here)
+# NOTE: done.sh redefines canon()/meta() BELOW on purpose — its canon also searches board/archive/.
 CHARON_REPO="${DONE_CHARON_REPO:-/home/stack/code/charon}"
 REPO_SLUG="$(git -C "$CHARON_REPO" remote get-url origin 2>/dev/null | sed -E 's#(git@[^:]*:|https?://[^/]*/)##; s/\.git$//' || true)"
 [ -n "$REPO_SLUG" ] || REPO_SLUG="SLOP-Platform/charon"
@@ -56,7 +59,18 @@ merged_pr_touching_owns(){
   return 0
 }
 
-sha_in_master(){ git -C "$CHARON_REPO" merge-base --is-ancestor "$1" origin/master 2>/dev/null; }
+# H2 FIX (2026-07-18 adversarial review): this was `git -C "$CHARON_REPO"` — HARDCODED to the
+# PRODUCT repo — while REPO_SLUG below it was already ticket-aware. So for a RIG ticket:
+#   done.sh RIG-TICKET --merged-sha <genuine rig sha>   -> exit 3, "NOT an ancestor of
+#     Nnyan/charon-private origin/master", having actually checked SLOP-Platform/charon.
+#   done.sh RIG-TICKET --merged-sha <product sha>       -> ACCEPTED, printing "verified ...
+#     ancestor of Nnyan/charon-private origin/master" and writing merged:<product-sha>.
+# The second is how REPO-DECL-CENTRAL's phantom c44e7bda marker was WRITTEN: this is the marker
+# WRITER, so a wrong repo here manufactures the lie that every downstream gate then trusts.
+# The message named one repo while the check read another — that mismatch WAS the trap.
+# VERIFY_REPO is resolved per-ticket below (ticket_repo_path) and printed alongside the slug, so
+# the message can only ever name the repo that was actually read.
+sha_in_master(){ git -C "$VERIFY_REPO" merge-base --is-ancestor "$1" origin/master 2>/dev/null; }
 
 id_arg="${1:?usage: done.sh <id> [--merged-sha <sha>] [--override \"<reason>\"]}"; shift
 merged_sha=""; override=""
@@ -74,12 +88,24 @@ owns="$(meta owns "$BOARD/$id.md")";     [ -n "$owns" ]   || owns="$(meta owns "
 # repo-aware: read repo field from board, map to GitHub slug, override REPO_SLUG for gh calls
 ticket_repo="$(meta repo "$BOARD/$id.md")"
 [ -n "$ticket_repo" ] || ticket_repo="$(meta repo "$BOARD/archive/$id.md")"
-if [ -n "$ticket_repo" ]; then
-  case "$ticket_repo" in
-    charon) REPO_SLUG="SLOP-Platform/charon" ;;
-    charon-private) REPO_SLUG="Nnyan/charon-private" ;;
-    *) echo "done.sh: WARNING — unknown repo '$ticket_repo' for ticket $id; using default slug." >&2 ;;
-  esac
+# The repo PATH used by the ancestry proof and the SLUG used by the gh proofs must come from the
+# SAME resolution of the SAME ticket — resolving them separately is what let the printed message
+# name one repo while sha_in_master read another (H2).
+# DONE_CHARON_REPO (the documented offline/CI hook) still overrides the PRODUCT path: _lib.sh's
+# product arm honours VERIFY_MERGED_REPO, so feed it through there rather than re-implementing it.
+[ -n "${DONE_CHARON_REPO:-}" ] && export VERIFY_MERGED_REPO="$DONE_CHARON_REPO"
+VERIFY_REPO="$CHARON_REPO"
+# the map lives ONCE in _lib.sh -> repo-registry.sh (ticket_repo_path/ticket_repo_slug). A copy
+# here is exactly the "board-field predicate re-parsed per consumer" drift that broke `parked:`.
+if _path="$(ticket_repo_path "$id")" && _slug="$(ticket_repo_slug "$id")"; then
+  VERIFY_REPO="$_path"; [ -n "$_slug" ] && REPO_SLUG="$_slug"
+else
+  # FAIL CLOSED. An unresolvable `repo:` means we cannot say WHICH origin/master a sha would be
+  # proven against, and this script WRITES the marker every destructive gate later trusts. Never
+  # fall back to the product repo — that is precisely the phantom-marker path.
+  echo "done.sh: REFUSED — cannot resolve the target repo for $id (repo: '${ticket_repo:-<none>}')." >&2
+  echo "         Add a known repo: key (see fleet/repo-registry.sh) or use --override \"<reason>\"." >&2
+  [ -n "$override" ] || exit 3
 fi
 
 if [ -n "$override" ]; then
@@ -88,10 +114,11 @@ if [ -n "$override" ]; then
 else
   proof=""
   if [ -n "$merged_sha" ]; then
+    # H2: name the repo that was ACTUALLY read (path + slug), not a slug resolved separately.
     if sha_in_master "$merged_sha"; then proof="merged:$merged_sha"
-      echo "done.sh: verified $merged_sha is an ancestor of $REPO_SLUG origin/master."
+      echo "done.sh: verified $merged_sha is an ancestor of $REPO_SLUG origin/master ($VERIFY_REPO)."
     else
-      echo "done.sh: REFUSED — $merged_sha is NOT an ancestor of $REPO_SLUG origin/master (ticket $id)." >&2
+      echo "done.sh: REFUSED — $merged_sha is NOT an ancestor of $REPO_SLUG origin/master ($VERIFY_REPO) (ticket $id)." >&2
       exit 3
     fi
   else
