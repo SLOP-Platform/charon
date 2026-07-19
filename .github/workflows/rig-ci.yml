@@ -1,0 +1,76 @@
+# rig-ci.yml — the RIG's first-ever CI gate (Nnyan/charon-private).
+#
+# BEFORE THIS EXISTED: `.github/` did not exist in this repo. Every rig PR ever opened or merged
+# had `checks=0` — rendered as mergeable, verified by nothing. A PR page with no checks is a FALSE
+# RECEIPT of the same class as a proofless done-marker. This workflow ends that.
+#
+# ---------------------------------------------------------------------------------------------
+# DELIBERATELY OUT OF SCOPE — DO NOT "FIX" CI BY RE-ENABLING THESE.
+# `fleet/state/` is GITIGNORED. A CI checkout therefore has NO done-markers, so every already-done
+# ticket reads as LIVE. Running `fleet/validate_board.sh` here would emit FALSE REDs on a perfectly
+# clean PR, and a gate that reds on a clean tree gets disabled or bypassed — i.e. it stops actually
+# running, which is the exact failure this gate exists to prevent.
+# So the board step runs ONLY the MARKER-INDEPENDENT checks, scoped to the ticket files CHANGED IN
+# THE PR, via fleet/checks/rig-ci-scope.sh. These checks are OUT OF CI SCOPE ON PURPOSE:
+#     * live-vs-done status          * retirement / archive state
+#     * dependency satisfaction      * done-marker orphan detection
+#     * owns-collision between live tickets
+# They are answerable only in the LIVE tree and belong to preflight, never to CI. If you are here
+# because "CI doesn't catch X" and X is on that list: the answer is preflight, not this file.
+#
+# TEST SCOPE: fleet/tests/ contains BENCHMARK GRADER suites that invoke real models over the
+# network and can block for HOURS. CI runs an explicit ALLOWLIST (not an exclude-list) declared in
+# fleet/checks/rig-ci-scope.sh:CI_SUITES — a grader suite added later is excluded BY DEFAULT.
+# NEVER change this to a full `fleet/tests/` sweep.
+#
+# REENTRANCY: no step here may invoke preflight.sh / land.sh / gh or anything that pushes or
+# re-triggers CI. A gate that re-invokes CI is a fork bomb.
+#
+# RUNNER: GitHub-HOSTED on purpose. `gh variable list` is EMPTY for this repo (CI_RUNNER unset) and
+# `actions/runners` is total_count 0. Pinning `runs-on: self-hosted` would queue forever against
+# zero registered runners — a check that never completes, a third flavour of false green. If a
+# self-hosted runner is ever registered, honour it via a repo variable WITH a hosted fallback:
+#     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+# and only after confirming the runner is online.
+#
+# TIME BUDGET: the whole run must finish in <= 10 minutes wall-clock. Every job carries
+# timeout-minutes. If it exceeds budget, CUT SUITE SCOPE — do not silently raise the budget.
+name: rig-ci
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rig-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rig-ci:
+    # Hosted by default; vars.CI_RUNNER is UNSET for this repo so this resolves to ubuntu-latest.
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    env:
+      # Diff scope for fleet/checks/rig-ci-scope.sh.
+      RIG_CI_BASE: ${{ github.event.pull_request.base.sha || 'origin/master' }}
+      RIG_CI_HEAD: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need base..head history for the diff scoping
+
+      - name: Shell syntax (bash -n on CHANGED *.sh only)
+        run: bash fleet/checks/rig-ci-scope.sh syntax
+
+      - name: Board validation (marker-independent, PR-diff-scoped — see header)
+        run: bash fleet/checks/rig-ci-scope.sh board
+
+      - name: Show test allowlist
+        run: bash fleet/checks/rig-ci-scope.sh suites
+
+      - name: Rig test suites (ALLOWLIST only — never the full fleet/tests sweep)
+        timeout-minutes: 8
+        run: bash fleet/checks/rig-ci-scope.sh tests
