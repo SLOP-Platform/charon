@@ -23,7 +23,8 @@ Tier 2 lights up the two things Tier 1 deferred but built the seams for:
 2. **HTTP service surface live (Mode B becomes possible).** Tier 1 shipped the
    route *shapes*; Tier 2 makes them real: create a run, fetch a run/ledger, list
    runs — backed by the same public API the CLI uses. The service is the fenced
-   boundary SLOP talks to in Mode B; its security posture is part of this tier.
+   boundary the host project talks to in Mode B; its security posture is part of
+   this tier.
 
 3. **Container image buildable + CI publish path.** The Tier-1 `Dockerfile` runs
    the service; Tier 2 makes CI build it and (on a version tag) publish to
@@ -31,7 +32,8 @@ Tier 2 lights up the two things Tier 1 deferred but built the seams for:
 
 Out of Tier 2 (still ports/stubs): live network gateway routing (gated on
 `SUPPLY-CHAIN.md`, see §5), consensus plane (Tier 3), autonomy L2/L3 +
-parallelism (Tier 4), the SLOP-side integration adapter (lives in the SLOP repo,
+parallelism (Tier 4), the host-project-side integration adapter (lives in the host
+project's repo,
 ADR-0002 §2.5).
 
 ## 1. Cross-vendor handoff (ADR-0001 §4 — the only hard build left)
@@ -98,7 +100,7 @@ Tier-4 concern (parallelism, PERF-4). Stated honestly, not faked.
 The service fronts the privileged agent-spawning loop. Tier 2 default posture:
 
 - **Bind `127.0.0.1` by default**; binding `0.0.0.0` requires an explicit env/flag
-  and prints a warning. In Mode B the container + SLOP's fence are the real
+  and prints a warning. In Mode B the container + the host project's fence are the real
   boundary (ADR-0002 §2.3, INV-B4).
 - **Default autonomy L0** on the service path too (nothing applied unless the
   caller explicitly raises it).
@@ -150,7 +152,7 @@ each; the author reconciles in REVIEW-LOG.
   Reviewer: is a two-mock proof real, or theater that hides a vendor-specific
   assumption?
 - **D3 — Service security default.** Bind loopback + optional token + L0 default,
-  leaning on the container/SLOP fence for true isolation. Reviewer: does the HTTP
+  leaning on the container/host-project fence for true isolation. Reviewer: does the HTTP
   surface open a privileged-loop hole that the in-process fence can't close, and
   is "container is the boundary" honest for Mode A users who run the bare service?
 - **D4 — Sync-bounded runs.** Runs block the request up to `max_checkpoints`.
@@ -166,7 +168,7 @@ each; the author reconciles in REVIEW-LOG.
   (§1.3); exclude-accumulation with 3 backends (§1.2).
 - `test_service.py`: healthz, run round-trip, 404, token enforcement (§2.3).
 - `test_boundary.py`: unchanged (still proves planted `import slop` fails) — plus
-  assert the new service/gateway-port modules carry no SLOP path.
+  assert the new service/gateway-port modules carry no host-project path.
 - Existing 36 stay green.
 
 ## 7. Non-goals / honesty register (Tier 2 additions)
@@ -179,13 +181,13 @@ each; the author reconciles in REVIEW-LOG.
 - Service runs are synchronous-bounded; no background execution / cancellation /
   multi-tenant isolation (Tier 4).
 - The bare Mode-A service is **not** a hardened multi-user endpoint; true
-  isolation is the Mode-B container under SLOP's fence (INV-B4).
+  isolation is the Mode-B container under the host project's fence (INV-B4).
 
 ## 8. Reconciled scope (post-review, 2026-06-24 — supersedes §0–§6 deltas)
 
 Adversarial review (REVIEW-LOG 2026-06-24) **split this tier**. The HTTP run
 endpoint + GHCR publish front the privileged loop, have no consumer until the
-Tier-3 SLOP adapter, and carry CRIT holes — deferred to **Tier 2b**, to ship only
+Tier-3 host-project adapter, and carry CRIT holes — deferred to **Tier 2b**, to ship only
 with the Lens-A hardening. This build is **Tier 2a**:
 
 **Tier 2a (this build):**
@@ -225,7 +227,7 @@ with the Lens-A hardening. This build is **Tier 2a**:
   module references no privileged-exec symbol (`run_task`/`coordinator`/
   `dispatch`) — the literal ADR-0002 §2.3 / INV-B4 topology.
 
-*Design of record — built WHEN the Tier-3 SLOP consumer lands (not ahead of it):*
+*Design of record — built WHEN the Tier-3 host-project consumer lands (not ahead of it):*
 the **web/worker split**. The exposed web process validates + enqueues one inert
 job record (atomic write) and **never imports the privileged loop**; a separate
 worker container (`network_mode: none`, shared `.charon` volume only) drains it

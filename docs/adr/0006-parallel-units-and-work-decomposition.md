@@ -14,7 +14,7 @@ sequentially, with role→cost-ranked-model routing + cross-vendor failover. PER
 backends/worktrees, bounded by budget and the fence. PLAN-tier4 deferred this as
 *unsafe-as-drafted with no consumer*; two things changed: (a) the v0.2.0 gateway
 now spreads load across providers, making N concurrent agents sustainable, and (b)
-the operator will route droid fleets through Charon — a real consumer.
+the operator will route agent-worker fleets through Charon — a real consumer.
 
 The deferral left **four binding concurrency directives (CONC-1..4)** that any
 implementation MUST carry. This ADR also folds in **work-decomposition** (ADR-0004
@@ -80,7 +80,7 @@ R4/D6:
 Ship in this order, each independently valuable and gate-green:
 1. **`run_parallel` of N independent units at L0/L1** (propose-only / single-apply)
    with D2–D4 isolation + the shared race-free budget. No decomposition yet — the
-   consumer (a droid fleet) supplies the unit list. This is the high-value, lowest-
+   consumer (an agent-worker fleet) supplies the unit list. This is the high-value, lowest-
    blast-radius slice.
 2. **`decompose.py` role-DAG** producing units for (1), sequential first.
 3. **Parallel + L2 consensus** (decomposed Review stage gates Implement) — only once

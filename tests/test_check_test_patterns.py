@@ -185,7 +185,7 @@ class TestSyntaxError:
 
 class TestSelfMirroringMock:
     """FAIL-ON-REVERT: the class-killer for the cline-envelope blind spot
-    (fleet/scratch/test-gap-audit.md Q1/Q4) -- a test that authors its own
+    (internal test-gap audit Q1/Q4) -- a test that authors its own
     canonical `choices`-shaped mock and only ever reads INSIDE `choices` can
     never present a foreign envelope, so a shape bug sails through green.
     RED without the rule (this class didn't exist), GREEN with it, RED again

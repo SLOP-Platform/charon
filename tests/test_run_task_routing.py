@@ -1,4 +1,4 @@
-"""Close the TIER-7 reviewer gap: no test verified that api.run_task(role=…)
+"""Close the tier-routing reviewer gap: no test verified that api.run_task(role=…)
 routes through the full glue chain at the wire.
 
 The gap: the suite can stay green while the tier vid is absent from the
@@ -219,7 +219,7 @@ def test_run_task_role_mismatch_surfaces_exhausted(tmp_path: Path, monkeypatch) 
     'ghost-model' is not a key in the compiled routes, so _build_routes_and_pools
     produces an empty chain for the 'high' vid.  The dry-pool early-return in
     api.run_task must surface {status:'exhausted'} and must NOT hit the upstream —
-    pinning the exact failure mode TIER-7 reviewers flagged ('suite stays green
+    pinning the exact failure mode tier-routing reviewers flagged ('suite stays green
     while nothing routes').
     """
     charon_home = tmp_path / "charon_home"

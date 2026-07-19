@@ -9,7 +9,7 @@ fragments by `tools/render_review_log.py` — and is never hand-edited.
 
 The old workflow had every ticket append a dated section to the single
 `docs/REVIEW-LOG.md`. Two tickets landing in parallel both appended at end-of-file →
-a textual merge conflict, a conflicting PR, and no CI. Same fix-shape as per-droid
+a textual merge conflict, a conflicting PR, and no CI. Same fix-shape as per-worker
 mailbox files: give each ticket its own file so concurrent notes can never collide.
 
 ## Rules

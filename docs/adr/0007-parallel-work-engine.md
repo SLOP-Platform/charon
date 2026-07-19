@@ -150,7 +150,7 @@ platform hasn't shipped them first.
   hand-partitioning across tabs + collisions.
 - **New `WorkerBackend` port + headless-CLI + external-lease backends** — *tripwire:* a
   worker a blocking `AgentBackend.dispatch()` **can't drive** (out-of-process/poll-based:
-  headless `claude -p`, a droid, remote). Arrives **with** the board (same consumer).
+  a headless CLI agent, an external worker, remote). Arrives **with** the board (same consumer).
   *Meantime:* ACP backend + mock. *Absorbable.*
 - **Auto-decomposition** (its own ADR + failure contract) — *tripwire, BOTH:* (1)
   hand-authoring unit lists is real recurring friction, **and** (2) the **PR-per-unit

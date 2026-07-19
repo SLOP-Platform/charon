@@ -11,7 +11,7 @@ content *inside* ``choices``.
 A preset with no declared raw-shape fixture below fails the parametrization
 LOUDLY (an ``AssertionError`` from the test body), not a silent skip — see
 ``_shape_fixture_for``. This is the Q4 mechanization from the test-gap audit
-(``fleet/scratch/test-gap-audit.md``): "does the proxy speak OpenAI to the
+(an internal test-gap audit): "does the proxy speak OpenAI to the
 client?" becomes a per-provider invariant a revert can't pass.
 """
 from __future__ import annotations
@@ -50,7 +50,7 @@ def _canonical_shape(model: str) -> dict:
 def _cline_wrapped_shape(model: str) -> dict:
     """cline-pass's real non-stream envelope: the OpenAI-shaped body is
     nested under ``data`` alongside a ``success`` flag -- NOT itself
-    OpenAI-shaped at the top level (fleet/ADR-UNIVERSAL-RESPONSE-ADAPTER.md).
+    OpenAI-shaped at the top level (the universal response-adapter ADR).
     """
     return {"success": True, "data": _canonical_shape(model)}
 

@@ -5,7 +5,7 @@ name: ci
 # org runners aren't online yet the run just QUEUES until they are. Heavy/slow
 # suites (wheel-isolation smoke, image build-smoke, supply-chain audit) live in
 # heavy.yml on a schedule/dispatch; the GHCR publish lives in release.yml.
-# ADR-0002 §4: the gate carries the SLOP-import boundary check, version
+# ADR-0002 §4: the gate carries the host-import boundary check, version
 # consistency, lint, type, and the full test suite ([service] extra so the
 # web/dashboard tests run too).
 on:

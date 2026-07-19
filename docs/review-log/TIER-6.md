@@ -1,8 +1,8 @@
-# TIER-6 — De-hardwire the fleet launcher (tier → concrete Anthropic model)
+# De-hardwire the build-rig worker launcher (tier → concrete Anthropic model)
 
-**Owns:** `/home/stack/charon-private/fleet/fleet-droid.sh` (fleet build-rig; ships nowhere
-near the Charon product). **Depends on:** TIER-3 (`charon tier resolve … --executor anthropic`,
-merged).
+**Owns:** the private build rig's worker launcher script (ships nowhere near the Charon
+product). **Depends on:** the `charon tier` CLI work (`charon tier resolve … --executor
+anthropic`, merged).
 
 ## Change
 
@@ -12,15 +12,15 @@ merged).
   `MODEL="$(charon tier resolve "$TIER" --executor anthropic 2>/dev/null)" || MODEL="$TIER"`.
   The `claude -p --model "$MODEL"` launch and the entire claim/PR flow are untouched.
 
-## Design anchors (DTC-tier-abstraction.md §"Fleet consumption")
+## Design anchors (DTC-tier-abstraction.md §"Build-rig consumption")
 
-- **No gateway on the fleet path.** `claude -p` speaks the Anthropic Messages API; the gateway
+- **No gateway on the build-rig path.** `claude -p` speaks the Anthropic Messages API; the gateway
   is OpenAI-only (`proxy_server.py` forwards `chat/completions`, no `/v1/messages`). So the
-  fleet does **not** route through the gateway — it resolves tier → *concrete Anthropic model
-  name* via a config lookup. No Anthropic↔OpenAI shim. (DTC decision: "the fleet keeps its
+  build rig does **not** route through the gateway — it resolves tier → *concrete Anthropic model
+  name* via a config lookup. No Anthropic↔OpenAI shim. (DTC decision: "the build rig keeps its
   Anthropic executor; only the engine consumes multi-provider pools.")
 - **`--executor anthropic`** returns the cheapest live tier member whose provider is
-  Anthropic-API-runnable, so `claude -p` can actually execute it (TIER-3 `_tier_resolve`:
+  Anthropic-API-runnable, so `claude -p` can actually execute it (the `charon tier` CLI's `_tier_resolve`:
   free-first → `cost_rank`, anthropic-only filter, non-zero exit when none/no-config).
 - **`|| MODEL="$TIER"` keeps half-migrated setups working.** When `tiers.json` is absent (or
   `charon` is missing entirely), `resolve` exits non-zero → fallback fires → legacy
@@ -29,7 +29,7 @@ merged).
 
 ## Verification (dry)
 
-- `bash -n fleet-droid.sh` → syntax OK.
+- `bash -n` on the launcher script → syntax OK.
 - Config present (seeded `tiers.json`): `tier resolve high --executor anthropic` → `opus`
   (exit 0); alias `tier resolve opus …` → `opus` (exit 0).
 - Config absent / `charon` missing: substitution exits non-zero → `MODEL="$TIER"` (legacy
@@ -37,5 +37,6 @@ merged).
 
 ## Scope
 
-Single owned file edited; no Charon source touched; no `claim.sh` (TIER-5). POSIX-bash, no new
+Single owned file edited; no Charon source touched; the work-claim script is untouched
+(separate ticket). POSIX-bash, no new
 deps, no secrets. Review note is this per-ticket fragment (never the shared `REVIEW-LOG.md`).

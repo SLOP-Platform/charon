@@ -1,7 +1,7 @@
 # check-test-patterns: allow-self-mirroring-mock
 """TOOLCALL-ROOTCAUSE retry-once fix — money-path failover classification.
 
-Root cause (fleet/state/TOOLCALL-ROOTCAUSE.md, 2026-07-13): the "all providers
+Root cause (internal tool-call root-cause analysis, 2026-07-13): the "all providers
 exhausted" symptom traced to raw curls was NOT a tool-call/schema bug — it was
 provider funds exhaustion, but the gateway treated every 402/503 identically:
 

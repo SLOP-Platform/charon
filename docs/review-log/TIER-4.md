@@ -1,6 +1,7 @@
-# TIER-4 — Tiers web-UI surface (DTC HARD REQ #3)
+# Tiers web-UI surface (DTC HARD REQ #3)
 
-Canonical tier for this ticket: **high** (fleet `opus`). Depends on TIER-2 (merged):
+Canonical tier for this ticket: **high** (build-rig `opus`). Depends on the gateway
+tier-pools work (merged):
 the `"tiers"` branch in `gateway.make_setup_handler` + `config.set_tiers` already exist;
 this ticket only adds the operator-facing surface that POSTs to that backend.
 
@@ -27,8 +28,8 @@ this ticket only adds the operator-facing surface that POSTs to that backend.
 ## Scope / boundary
 
 - Owned files only: `src/charon/proxy_server.py`, `tests/test_setup_tiers.py`. No edit to
-  `gateway.py` (TIER-2 handler) or `config.py` (TIER-1 `set_tiers`) — the surface only POSTs.
-- No backend persist/reload added here (that is TIER-2's `"tiers"` handler + `_reload`).
+  `gateway.py` (the gateway tier-pools handler) or `config.py` (the tier config store's `set_tiers`) — the surface only POSTs.
+- No backend persist/reload added here (that is the gateway tier-pools `"tiers"` handler + `_reload`).
 - Privileged core stays stdlib-only; no new imports in `proxy_server.py`. Client-side
   canonical-name detection avoided a `config.load_tiers()` read on the 2s status hot path.
 
@@ -37,7 +38,7 @@ this ticket only adds the operator-facing surface that POSTs to that backend.
 - `…renders_tiers_fieldset_with_member_inputs` — fieldset + a member input per canonical tier.
 - `…console_renders_tier_tag_column` — `<th>tier` header + `class=tier` badge present.
 - `…tiers_in_post_allowlist_does_not_fall_through` — POST `/charon/tiers` returns 200 (handled
-  by TIER-2), not a 502 fall-through; persists `aliases` via the backend. Proven-red: without
+  by the gateway tier-pools branch), not a 502 fall-through; persists `aliases` via the backend. Proven-red: without
   the allowlist entry this POST falls through and does not 200.
 - `…tiers_post_keeps_csrf_origin_guard` — cross-origin POST refused (403).
 

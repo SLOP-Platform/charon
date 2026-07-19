@@ -1,6 +1,6 @@
-"""TIER-2 — tiers compile INTO the gateway's existing pool machinery (DTC HARD REQ #2).
+"""Tiers compile INTO the gateway's existing pool machinery (DTC HARD REQ #2).
 
-`tiers.json.members` is read via TIER-1's `config.load_tiers` (a separate store from the
+`tiers.json.members` is read via `config.load_tiers` (a separate store from the
 strict `pools.json` loader) and fed through the UNCHANGED `_build_routes_and_pools`, so each
 tier is published in `/v1/models` and fails over via the normal request loop. `pools.json`
 wins on name collision; absent tiers → no tier vids (behavior unchanged); the `"tiers"` setup

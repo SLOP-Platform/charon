@@ -67,9 +67,16 @@ def _resolve_enforcer(enforcer: str) -> tuple[bool, str]:
 
     first = parts[0]
 
-    # External path (e.g. '../charon-private/...') — resolve without verifying
+    # External path (e.g. a sibling checkout outside this repo). Previously this
+    # returned True WITHOUT touching the filesystem, so every external enforcer
+    # passed unconditionally — including a path that had been renamed, deleted,
+    # or simply typo'd. That is a silent pass for a gate that never runs. Now the
+    # path is stat'd like any other; the caller decides whether an absent
+    # external enforcer is a SKIP (optional gate) or a FAIL (required gate).
     if first.startswith("../"):
-        return True, f"<external:{first}>"
+        if (REPO_ROOT / first).is_file():
+            return True, f"<external:{first}>"
+        return False, f"<external-missing:{first}>"
 
     # Direct file path inside repo
     candidate = REPO_ROOT / first
@@ -124,7 +131,17 @@ def validate() -> int:
 
         exists, resolved = _resolve_enforcer(enforcer)
         if not exists:
-            issues.append(f"{gid}: enforcer {enforcer!r} does not resolve to a file or command")
+            # An OPTIONAL gate whose enforcer is absent is a SKIP, not a failure:
+            # it points at tooling that is not guaranteed to be present in every
+            # checkout. It is still PRINTED, so an absent optional enforcer is
+            # visible rather than silently ignored. A REQUIRED gate that does not
+            # resolve is always a failure.
+            if gate.get("optional") is True:
+                print(f"SKIP: {gid}: optional enforcer {enforcer!r} not present in this checkout")
+            else:
+                issues.append(
+                    f"{gid}: enforcer {enforcer!r} does not resolve to a file or command"
+                )
 
     # 2. Domain uniqueness
     domains_seen: dict[str, str] = {}

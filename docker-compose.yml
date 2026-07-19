@@ -10,7 +10,7 @@
 #   docker compose --profile service up charon-service
 services:
   # --- Mode B — run Charon as a fenced service (ADR-0002 §2.3). -------------------
-  # SLOP (or any operator) talks to it over the HTTP surface; the privileged loop
+  # A host project (or any operator) talks to it over the HTTP surface; the privileged loop
   # stays inside this container.
   charon-service:
     # SINGLE PRODUCER (SR-10 / D024): image-only — no `build:`. The deploy box only
@@ -23,7 +23,7 @@ services:
     ports:
       # Bind the host side to LOOPBACK by default (reconciliation BR2-1/D3): the
       # service fronts the privileged loop, so it must not be reachable off-host
-      # without a deliberate change. In Mode B, SLOP reaches it over the docker
+      # without a deliberate change. In Mode B, the host reaches it over the docker
       # network or an explicit, authenticated mapping — never a bare 0.0.0.0.
       - "127.0.0.1:8473:8473"
     volumes:

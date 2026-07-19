@@ -1,4 +1,4 @@
-# TIER-1 — tier config store (review note)
+# Tier config store (review note)
 
 Foundation of the model-tier abstraction (DTC: "tier = a first-class, gateway-served
 pool in its own namespace"). Extends `src/charon/config.py` in place; adds
@@ -19,13 +19,13 @@ pool in its own namespace"). Extends `src/charon/config.py` in place; adds
 
 ## Two decisions worth flagging
 1. **`tier_rank` is 1-based, not the literal `order` index.** The work-spec said
-   "index into order," but the DTC's own fleet contract (`claim.sh` example:
+   "index into order," but the DTC's own build-rig contract (the work-claim script's example:
    `"low 1\nmed 2\nhigh 3\nopus 3"`) and the legacy fallback ranks
    (`opus=3 sonnet=2 haiku=1`) are both 1-based. Using `order.index(canon)+1` makes the
    canonical and legacy ranks coincide for free (`high=3=opus`), so there is no separate
-   legacy-rank table to drift. Unknown names → `0`, matching the fleet's `${RANK[$1]:-0}`.
+   legacy-rank table to drift. Unknown names → `0`, matching the work-claim script's `${RANK[$1]:-0}`.
 2. **`set_tiers` does NOT verify member ids exist in `models.json`.** It validates id
-   format (`_ID_RE`) only. Registry existence is the gateway's concern (TIER-2 reuses the
+   format (`_ID_RE`) only. Registry existence is the gateway's concern (the gateway tier-pool work reuses the
    registry at pool-compile time); enforcing it here would couple the store to load order
    and make the round-trip test require seeding models first. Kept decoupled by design.
 

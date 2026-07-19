@@ -5,9 +5,10 @@
 
 ## Summary
 
-Added `PRODUCT_REPO` and `FLEET_REPO` declarations to `fleet/_lib.sh` as the ONE
-canonical source of truth for repo paths. Every rig tool that previously hardcoded
-the product or fleet repo path now sources `_lib.sh` and uses these variables.
+Added `PRODUCT_REPO` and `FLEET_REPO` declarations to the build rig's shared shell
+library (`_lib.sh`) as the ONE canonical source of truth for repo paths. Every rig tool
+that previously hardcoded the product or rig repo path now sources `_lib.sh` and uses
+these variables.
 
 ## Changes
 

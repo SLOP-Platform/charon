@@ -1,4 +1,4 @@
-# TIER7B — TIER-7 Phase B: multi-tier decompose routing (ADR-0014 D6)
+# TIER7B — tier-routing Phase B: multi-tier decompose routing (ADR-0014 D6)
 
 Phase A routed ONE tier per run; a decompose run whose role-DAG stages span tiers
 collapsed to a single model. Phase B makes each stage reach ITS tier's model, and

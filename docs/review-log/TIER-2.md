@@ -1,11 +1,11 @@
-# TIER-2 — gateway tier pools (DTC tier-abstraction, HARD REQ #2)
+# Gateway tier pools (DTC tier-abstraction, HARD REQ #2)
 
 Compile `tiers.json.members` INTO the gateway's existing pool machinery so each tier is
 published in `/v1/models` and fails over via the unchanged request loop. No new routing path.
 
 ## Design anchors (DTC §"Gateway alignment (HARD REQ #2)")
 
-- **Tiers read from `tiers.json`, never `pools.json`.** Tier members are read via TIER-1's
+- **Tiers read from `tiers.json`, never `pools.json`.** Tier members are read via the tier config store's
   `config.load_tiers()` (separate store), so the strict `pools.load_pools` /
   `router.from_charon_dir` path never sees web-authored tier data (which has no `agent`
   field and would crash the ACP router, `pools.py:47-59`).
@@ -24,7 +24,7 @@ published in `/v1/models` and fails over via the unchanged request loop. No new 
 
 A new `"tiers"` branch in `make_setup_handler` calls `config.set_tiers(order, members, aliases)`
 then `_reload()`, which recompiles tier pools into the live server via `apply_routes` — same
-hot-reload path as `pools`/`models`. The POST allowlist + web fieldset belong to TIER-4
+hot-reload path as `pools`/`models`. The POST allowlist + web fieldset belong to the tiers web-UI work
 (`proxy_server.py`), untouched here.
 
 ## Scope

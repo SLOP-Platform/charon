@@ -33,9 +33,9 @@ but no CLI command existed) and the dogfood critical path.
   without them → propose-only, ADR-0011) already existed in the field grammar — no
   grammar change was needed, only the CLI front door + the `id:` field. Documented in
   the `intake import` help epilog.
-- **Nothing SLOP/tracking.db/mediastack-specific in `src/`.** The MVP source is
-  generic markdown; `tools/check_boundary.py src` stays green. The SLOP exporter is
-  out of tree and out of scope.
+- **Nothing specific to the embedding host project (its ticket DB or repo layout) in
+  `src/`.** The MVP source is generic markdown; `tools/check_boundary.py src` stays
+  green. The host project's exporter is out of tree and out of scope.
 - **Security (`--run`)**: `--run` is OFF by default and EXECUTES each unit's `accept`
   string in a worktree. The trust boundary (importing-then-running EXTERNAL tickets
   runs commands the ticket author wrote) is documented in the command help/epilog and

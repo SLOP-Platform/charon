@@ -1,15 +1,16 @@
-# TIER-5 — Fleet claim path: data-backed tier ranks (preserve `flock` atomicity)
+# Build-rig claim path: data-backed tier ranks (preserve `flock` atomicity)
 
-_Wave C · branch `feat/fleet-tier-claim` · depends_on TIER-3 (merged, `charon tier ranks`)._
-_owns: `/home/stack/charon-private/fleet/claim.sh` (single file)._
+_Wave C · branch `feat/fleet-tier-claim` · depends on the `charon tier` CLI work
+(merged, `charon tier ranks`)._
+_owns: the build rig's work-claim script (single file)._
 
 ## Goal
 
-De-hardwire `claim.sh`'s tier ranking: source ranks from `charon tier ranks`
+De-hardwire the work-claim script's tier ranking: source ranks from `charon tier ranks`
 (canonical `low/med/high` + legacy aliases, alias-folded), with the legacy
 `opus/sonnet/haiku` table as fallback. The `flock`/claim-create path is untouched.
 
-## Design anchors (DTC §"Fleet consumption — preserve `flock` atomicity, HARD REQ #5")
+## Design anchors (DTC §"Build-rig consumption — preserve `flock` atomicity, HARD REQ #5")
 
 - **Parse ranks ONCE, BEFORE `flock 9`, into a bash assoc array.** `rank()` becomes a
   pure-bash array lookup (microseconds) inside the locked loop. NEVER spawn Python under
@@ -29,7 +30,7 @@ De-hardwire `claim.sh`'s tier ranking: source ranks from `charon tier ranks`
   ```
 
 - **`flock 9` test-and-set and per-ticket `claims/$id` create are byte-for-byte unchanged**
-  (`claim.sh:~17` and the `printf ... > "$STATE/claims/$id"` line). `tiers.json` (via
+  (the script's `flock` line ~17 and the `printf ... > "$STATE/claims/$id"` line). `tiers.json` (via
   `charon tier ranks`) is read-only/idempotent → no new lock, no race.
 - **`meta tier` still reads the ticket's raw label**; tickets may say `high` or still
   `opus` — the rank map alias-folds both to rank 3, so gating works either way. The
@@ -51,24 +52,25 @@ De-hardwire `claim.sh`'s tier ranking: source ranks from `charon tier ranks`
 
 ## Verification (manual claim/release; lock + ranking intact)
 
-- `bash -n claim.sh` clean; `git diff` shows the **only** change is the `rank()` block — the
+- `bash -n` on the work-claim script is clean; `git diff` shows the **only** change is the `rank()` block — the
   `flock`/claims-create lines are unmodified.
 - **Legacy path** (the currently-installed on-PATH `charon` predates the `tier` subcommand →
-  `charon tier ranks` exits 2 → fallback): opus droid drains own (`A-opus`) then lower
-  (`B-haiku`); a haiku droid never claims the opus ticket; `own-only` mode does not drop to
+  `charon tier ranks` exits 2 → fallback): an opus worker drains own (`A-opus`) then lower
+  (`B-haiku`); a haiku worker never claims the opus ticket; `own-only` mode does not drop to
   lower; `claims/$id` records + `lock` file written as before.
 - **Data-backed path** (shimmed `charon` emitting the real
-  `low 1 / med 2 / high 3 / opus 3 / …` rows): a `high` droid drains rank-3 tickets then
-  spills to a `low` ticket; a `low` droid (rank 1) never claims a rank-3 (`high`/`opus`)
-  ticket; an alias-named `opus` droid folds to rank 3 and claims a rank-3 ticket. Ranking
+  `low 1 / med 2 / high 3 / opus 3 / …` rows): a `high` worker drains rank-3 tickets then
+  spills to a `low` ticket; a `low` worker (rank 1) never claims a rank-3 (`high`/`opus`)
+  ticket; an alias-named `opus` worker folds to rank 3 and claims a rank-3 ticket. Ranking
   drains own→lower correctly; the lock path is intact.
 
 ## Commit / ownership note
 
-`claim.sh` lives in the **`charon-private` build-rig repo** (a single shared working tree,
-not per-droid worktrees; same wave, TIER-6 edits `fleet-droid.sh` in that same tree). To
-avoid an index-lock race with wave-mates I did **not** commit into that shared tree — the
+The work-claim script lives in the **private build-rig repo** (a single shared working tree,
+not per-worker worktrees; in the same wave, the worker-launcher ticket edits the launcher
+script in that same tree). To avoid an index-lock race with wave-mates I did **not** commit
+into that shared tree — the
 verified edit is left as a working-tree change for the launcher/manager to snapshot, per the
-existing "fleet: …" snapshot pattern. This per-ticket review fragment is the only file
+existing build-rig snapshot pattern. This per-ticket review fragment is the only file
 committed on the `feat/fleet-tier-claim` charon branch. The build-rig does not ship with the
 Charon product, so nothing here touches Charon source or its gate.

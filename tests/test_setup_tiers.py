@@ -1,8 +1,9 @@
-"""Tiers web-UI surface (DTC HARD REQ #3, TIER-4): the setup page's Tiers fieldset,
+"""Tiers web-UI surface (DTC HARD REQ #3): the setup page's Tiers fieldset,
 the ``/charon/tiers`` POST allowlist entry, and the console's read-only tier tag column.
 
 The backend persist/reload (``config.set_tiers`` + the gateway ``"tiers"`` handler branch)
-belongs to TIER-1/TIER-2; this surface only renders the fieldset and POSTs to it.
+belongs to the tier config store and gateway compile layers; this surface only
+renders the fieldset and POSTs to it.
 """
 from __future__ import annotations
 
@@ -37,7 +38,7 @@ def test_setup_page_renders_tiers_fieldset_with_member_inputs():
     for tier in config.CANONICAL_TIERS:  # low / med / high — the canonical order
         assert f"id=t{tier}" in _SETUP_HTML
     assert "setTiers()" in _SETUP_HTML
-    assert "/charon/tiers" in _SETUP_HTML  # the fieldset POSTs to the TIER-2 backend
+    assert "/charon/tiers" in _SETUP_HTML  # the fieldset POSTs to the tiers backend
 
 
 def test_console_renders_tier_tag_column():
@@ -59,7 +60,7 @@ def test_tiers_in_post_allowlist_does_not_fall_through(monkeypatch, tmp_path):
                               "members": {"low": [], "med": [], "high": []},
                               "aliases": {"opus": "high"}})
         assert st == 200  # handled, not a 502 fall-through to the forward path
-        # the POST actually persisted via the TIER-2 backend branch
+        # the POST actually persisted via the tiers backend branch
         assert config.load_tiers()["aliases"]["opus"] == "high"
     finally:
         server.shutdown()

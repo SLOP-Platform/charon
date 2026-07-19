@@ -6,7 +6,7 @@ CI step rather than through the unified gate runner: the full pytest suite,
 the review-log renderer, the decision-register linter, and the unified gate
 command itself).
 
-This closes the exact bug class ``fleet/state/REACHABILITY-AUDIT.md`` found:
+This closes the exact bug class an internal reachability audit found:
 five gates (``check_no_rig_import.py``, ``check_arch.py``,
 ``check_security.py``, ``check_test_patterns.py``, ``check_workflows.py``)
 were registered in ``gates.json`` but silently never executed by CI. Four
@@ -83,7 +83,7 @@ def test_every_ci_step_gate_actually_executes() -> None:
     assert not unexecuted, (
         "gate(s) registered with ci_step=true in tools/gates.json but never "
         f"actually executed by gate_runner.CHECKS or ci.yml: {unexecuted} — "
-        "see fleet/state/REACHABILITY-AUDIT.md [[gates-must-actually-run]]"
+        "see the internal reachability audit [[gates-must-actually-run]]"
     )
 
 

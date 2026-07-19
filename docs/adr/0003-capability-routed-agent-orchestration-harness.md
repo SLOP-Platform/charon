@@ -49,7 +49,7 @@ Two standing constraints from prior decisions carry in:
 - **Supply-chain bar.** LiteLLM was rejected (supply-chain compromise);
   NanoBOT, trustclaw, one-api rejected as thin/over-large/untrusted. Any
   third-party dependency in a privileged loop must clear that bar.
-- **Control-plane discipline.** SLOP keeps a hard control-plane fence (admin
+- **Control-plane discipline.** The embedding host project keeps a hard control-plane fence (admin
   surfaces LAN/Tailscale-only). An orchestrator that spawns CLI agents with
   `--dangerously-skip-permissions` and applies diffs unattended is a control
   plane; it inherits the fence requirement.
@@ -110,7 +110,7 @@ The architectural commitments, in order of how load-bearing they are:
 ## 3. The execution port (stable indirection)
 
 Adapters are swappable behind one interface; this is the same pattern as the
-SLOP auth `slop-auth@file` indirection with Tinyauth/Authelia as adapters.
+host project's auth-provider indirection with Tinyauth/Authelia as adapters.
 
 ```
 Port: AgentBackend
@@ -228,7 +228,7 @@ the executable `acceptance`. Review is itself a task-class and is routed.
 
 ## 7. Control-plane fence & autonomy ladder
 
-Direct analog of the SLOP hard control-plane fence. The orchestrator's
+Direct analog of the host project's hard control-plane fence. The orchestrator's
 privileged actions — spawning agents with skip-permissions, applying diffs,
 running destructive shell — are the control plane and are default-deny.
 
@@ -310,7 +310,7 @@ will face (so they are watched for, not discovered):
 
 ## 11. Tiered implementation plan
 
-Mirrors the SLOP auth adapter tier structure: prove the boundary contract before
+Mirrors the host project's auth adapter tier structure: prove the boundary contract before
 adding the second backend.
 
 - **Tier 1 — Single provider + Ledger.** One adapter (ClaudeCodeAdapter). Build

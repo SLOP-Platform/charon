@@ -6,7 +6,7 @@
 - **Status:** Accepted (2026-06-26; product framing & §7 routing posture amended by ADR-0005)
 - **Deciders:** Nnyan (solo operator)
 - **Repo:** `github.com/SLOP-Platform/charon` *(name TBD)*
-- **Relates to:** ADR-0002 (project boundary & SLOP integration)
+- **Relates to:** ADR-0002 (project boundary & host-project integration)
 - **Methodology:** ADR + tiered; ports-and-adapters; derive-or-verify
 - **Priorities, in order:** (1) it works, (2) it's performant, (3) it's broadly
   compatible. Compatibility never outranks the first two.

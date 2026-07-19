@@ -93,8 +93,8 @@ do not silently expand `owns:` to cover them.
   routing (the tier vote is offline-only, called by the CLI setup flow), so
   the switchboard integration is less obviously an invariant — worth a
   follow-on review but not auto-required.
-- `fleet/capability/assign.py` — rig-side dispatch picker, separate repo /
-  boundary. Noted only; no product owns the overlap.
+- The build rig's own capability-assignment dispatch picker — rig-side, separate
+  repo / boundary. Noted only; no product owns the overlap.
 
 ## Notes
 

@@ -8,7 +8,7 @@
   charon.service` with a non-loopback bind guard. The privileged loop stays out
   of the web process (ADR-0002 §2.3 / INV-B4) — `POST /v1/runs` still refuses
   (501); the enqueue→worker run path remains deferred to Tier 2b with its
-  Tier-3 SLOP consumer (R3). Deferred-and-NOT-built (per R3): web config/pool
+  Tier-3 host-project consumer (R3). Deferred-and-NOT-built (per R3): web config/pool
   CRUD, live streaming, stage-graph viz, multi-workspace.
 - **Process:** one focused read-only adversarial subagent (the methodology's
   low-impact tier — the architecture was already settled by ADR-0004 D7/R3 +

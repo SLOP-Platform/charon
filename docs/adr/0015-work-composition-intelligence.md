@@ -55,7 +55,7 @@ stays parked.
 | **R1** | WCI is a composition layer, not a new engine. Workers remain warm-pool ACP agents driven by `AgentBackend` + `parallel.py` ThreadPool. No `WorkerBackend` port. |
 | **R2** | One deterministic `reconcile_static` function; LLM strictly advisory. Semantic pass emits annotations/flags on units, never a mutation of `claimable`. Board stays diffable/replayable. |
 | **R3** | Agnostic by construction. Semantic judgment is performed by an agent the engine launches, pointed at Charon's own gateway requesting a tier id. Swap agent/provider freely. |
-| **R4** | Product-clean. WCI ships in `src/charon/engine/` only, behind the anti-dilution boundary test. No `tracking.db`, no fleet/, no SLOP. |
+| **R4** | Product-clean. WCI ships in `src/charon/engine/` only, behind the anti-dilution boundary test. No external tracker database, no dev-harness paths, no host-project references. |
 | **R5** | Concurrency order is a pre-sort; `claimable` rule untouched. Depth sort key is a **pure deterministic function of board graph state** — no clock/RNG/arrival-order. `id` remains the final tiebreak. Depth is load-bearing on per-drain launch under the sync capacity cap. |
 | **R6** | On-merge reconcile hooks `scheduler._advance` (main thread, all board mutations serialized), not `land.py` (layer violation). Incremental — only intersecting units. |
 | **R7** | Path-disjointness is necessary, not sufficient. Conservative-serialize default. Any future concurrent split must pass the §5.1 proof. Label flip (`depends_on`→`merge_after`) is never a downgrade — the split is invented by the proof, never by the label. |

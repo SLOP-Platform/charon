@@ -171,7 +171,7 @@ def tier_pools(registry: dict, providers_cfg: dict) -> dict[str, list[_UpstreamR
     """Compile ``tiers.json`` members into failover chains via the SAME
     ``build_routes_and_pools`` the gateway uses for ``pools.json`` (DTC HARD REQ #2).
 
-    Tiers are read from the separate ``tiers.json`` store (TIER-1 ``config.load_tiers``),
+    Tiers are read from the separate ``tiers.json`` store (``config.load_tiers``),
     NOT ``pools.json`` — the strict ``pools.load_pools`` / ACP-router loader must never see
     web-authored tier data (no ``agent`` field → it would crash that path). Members are model
     ids already in ``registry``; each tier vid is ordered free-first→``cost_rank`` by the shared

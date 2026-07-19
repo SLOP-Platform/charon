@@ -8,7 +8,7 @@ from pathlib import Path
 CHECKS: list[tuple[list[str], str]] = [
     (["ruff", "check", "src", "tests"], "ruff"),
     (["mypy", "src", "tests"], "mypy"),
-    (["python3", "tools/check_boundary.py", "src"], "SLOP-boundary"),
+    (["python3", "tools/check_boundary.py", "src"], "host-boundary"),
     (["python3", "tools/check_version.py"], "version"),
     (["python3", "tools/check_gate_registry.py"], "gate-registry"),
     (["python3", "tools/check_public_clean.py"], "public-clean"),

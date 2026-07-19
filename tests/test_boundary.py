@@ -69,7 +69,7 @@ def test_from_mediastack_import_is_flagged(tmp_path: Path) -> None:
 
 
 def test_dynamic_import_obfuscation_is_flagged(tmp_path: Path) -> None:
-    # BR-4: the AST scan catches a literal __import__ argument naming SLOP.
+    # BR-4: the AST scan catches a literal __import__ argument naming a host project.
     f = tmp_path / "sneaky.py"
     f.write_text("m = __import__('slop')\n")
     assert any("slop" in v for v in scan_file(f))

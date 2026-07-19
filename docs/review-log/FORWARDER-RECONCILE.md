@@ -2,8 +2,8 @@
 
 Ticket: FORWARDER-RECONCILE (money-path, tier strong, depends_on FAIL-LOUD-CONTRACT)
 Branch: `feat/forwarder-reconcile`. Supersedes the untracked branch
-`feat/wire-tool-repair` (commit `af8d795`) per fleet/state/TOOL-AUDIT-COLLISION.md
-RANK 1.
+`feat/wire-tool-repair` (commit `af8d795`) per the build rig's tool-audit collision
+record, RANK 1.
 
 ## Precondition confirmed
 
@@ -99,5 +99,5 @@ git -C "$CHARON_MAIN" worktree remove --force \
 git -C "$CHARON_MAIN" branch -D feat/wire-tool-repair
 ```
 
-This droid session did not run these (they mutate the main checkout, which is
+This worker session did not run these (they mutate the main checkout, which is
 off-limits to worker sessions).

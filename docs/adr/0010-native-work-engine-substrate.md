@@ -35,10 +35,10 @@ The split this ADR draws:
 ## Decisions
 
 ### D1 — Promote the substrate from the fleet rig to `src/charon`
-The `charon-private/fleet/` bash rig (board/claim/done/fleet-droid) is the **proven
+The external bash dev harness (board / claim / done / worker-launch) is the **proven
 reference implementation**, not the product. Port its design native over PERF-4's
-existing ledger/PID-lock/SharedBudget primitives. The rig stays as a sibling/operator tool
-([[droid-robot-mode-harness]]); it is not the engine of record.
+existing ledger/PID-lock/SharedBudget primitives. That harness stays as a sibling
+operator tool; it is not the engine of record.
 
 ### D2 — Components (all new modules under `engine/`, gateway path untouched — D11)
 **Worker execution is NOT new.** Charon's product workers are **ACP agents**, which are
