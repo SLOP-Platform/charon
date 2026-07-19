@@ -12,6 +12,11 @@ set -uo pipefail
 FLEET="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 source "$FLEET/push-verify.sh"   # pv_branch_holder / pv_push_verified — prove the push (step 4/5).
+# _lib.sh supplies the CANONICAL board-field readers (ticket_owns / ticket_for_branch) used by the
+# step-1 dirty scoping. Guarded: a minimal test fixture may not carry it, and step 1 then fails
+# CLOSED (no `owns:` resolvable -> refuse unless --commit-dirty), never open.
+# shellcheck source=/dev/null
+[ -f "$FLEET/_lib.sh" ] && source "$FLEET/_lib.sh"
 
 # safe_sync_base — step 7, factored out and hardened (LAND-SH-SAFE-SYNC).
 # Sync the local base branch to origin AFTER a landed merge. HARD INVARIANT: this must
@@ -118,12 +123,13 @@ if [ ! -e "$FLEET/state/AUTONOMOUS" ]; then
 fi
 
 BRANCH="${1:?usage: land.sh <feature-branch> [repo] [--base b] [--gate cmd] [--msg m] [--force]}"; shift
-REPO="/home/stack/code/charon"; BASE=""; GATE=""; MSG=""; FORCE=""
+REPO="/home/stack/code/charon"; BASE=""; GATE=""; MSG=""; FORCE=""; COMMIT_DIRTY=""
 while [ $# -gt 0 ]; do case "$1" in
   --base)  BASE="$2"; shift 2;;
   --gate)  GATE="$2"; shift 2;;
   --msg)   MSG="$2";  shift 2;;
   --force) FORCE=1;   shift;;
+  --commit-dirty) COMMIT_DIRTY=1; shift;;
   *)       REPO="$1"; shift;;
 esac; done
 
@@ -136,10 +142,129 @@ if [ -z "$BASE" ]; then
 fi
 echo "land: repo=$REPO base=$BASE branch=$BRANCH"
 
-# 1. commit any pending work
-if [ -n "$(git status --porcelain)" ]; then
-  git add -A && git commit -q -m "${MSG:-land: $BRANCH}" && echo "land: committed pending changes -> $(git rev-parse --short HEAD)"
-fi
+# 1. commit pending work — SCOPED TO THE TICKET'S `owns:` (LAND-DIRTY-SCOPE, 2026-07-19)
+#
+# THE DEFECT this replaces (present since 368053b, the file's creation): step 1 was a bare
+#   [ -n "$(git status --porcelain)" ] && git add -A && git commit -m "${MSG:-land: $BRANCH}"
+# It ran in $REPO on whatever branch HEAD is — so when HEAD was on `master` it committed
+# EVERYTHING in the tree straight onto master, BEFORE the gate (step 3) and BEFORE the
+# branch/holder refusal (step 4/5). Step 4/5 then refused and nothing was pushed, leaving local
+# master diverged from origin with a junk commit on it. Real contamination it produced:
+#   4ea0a34  1462 files, incl. graphify-out/graph.json (164k lines)
+#   075ac58  12 files, incl. a stash-backup patch      94a6783  7 session-notes
+#   58234f6 / 2f630dc  stray submit-auto notes
+# submit.sh/checkin.sh write fleet/session-notes/ continuously, so the tree is dirty on nearly
+# every land and this fired nearly every time. Compounding it, neither land.sh nor push-verify.sh
+# ever calls leak-guard.sh (still true — see the note at step 3.5), so `git add -A` swept
+# unreviewed content into a commit with NO secret scan in front of it.
+#
+# THE INTENT IS LEGITIMATE and is preserved: the manager edits in the live tree and then lands.
+# What changes is the SCOPE — we commit the ticket's OWN files, not the whole tree:
+#   * ticket declares `owns:`  -> stage ONLY those paths; any other dirty file -> REFUSE, listing it
+#   * no `owns:` resolvable    -> REFUSE unless --commit-dirty is passed
+#   * --commit-dirty           -> the ONLY way to sweep unowned files (explicit, logged)
+# REJECTED ALTERNATIVE: a blanket `git stash -u` / restore around step 1. This tree is read by
+# ~61 live worktrees and running droids; whole-tree stashing races every one of them. (Contrast
+# safe_sync_base() above, whose stash is scoped to a moment when it is about to leave the branch
+# anyway and which carries an explicit never-destroy invariant — that care is matched here by
+# refusing outright rather than by mutating a tree other processes are reading.)
+#
+# `owns:` is read through _lib.sh's ticket_owns()/ticket_for_branch() — the CANONICAL board-field
+# readers. Do NOT add an awk/grep over `owns:` here: per-consumer re-parsing is the drift class
+# that already produced four disagreeing copies of `parked:`.
+LAND_STAGE=()
+land_scope_plan(){
+  LAND_STAGE=()
+  [ -n "$(git status --porcelain)" ] || return 0          # clean tree — nothing to do
+
+  if [ -n "$COMMIT_DIRTY" ]; then
+    echo "land: --commit-dirty — sweeping the WHOLE dirty tree into one commit (explicit opt-in):" >&2
+    git status --porcelain >&2
+    LAND_STAGE=(-A)
+    return 0
+  fi
+
+  # Resolve this land's ticket and its declared `owns:` paths.
+  local tid="" owns=""
+  if command -v ticket_for_branch >/dev/null 2>&1; then
+    tid="$(ticket_for_branch "$BRANCH" 2>/dev/null || true)"
+    [ -n "$tid" ] && owns="$(ticket_owns "$tid" 2>/dev/null || true)"
+  fi
+  # `owns:` paths are relative to the TICKET'S repo. If this land is running against a DIFFERENT
+  # checkout than the ticket declares, those paths mean nothing here — treat it as no owns.
+  if [ -n "$owns" ] && command -v ticket_repo_path >/dev/null 2>&1; then
+    local trepo; trepo="$(ticket_repo_path "$tid" 2>/dev/null || true)"
+    if [ -n "$trepo" ] && [ "$(cd "$trepo" 2>/dev/null && pwd -P)" != "$(pwd -P)" ]; then
+      echo "land: note: ticket $tid declares repo '$trepo' but this land runs in '$(pwd -P)'" >&2
+      owns=""
+    fi
+  fi
+
+  if [ -z "$owns" ]; then
+    echo "land: ####################################################################" >&2
+    echo "land: # REFUSING to commit a DIRTY tree with no 'owns:' scope." >&2
+    echo "land: # branch '$BRANCH' -> ticket '${tid:-<none found>}' declares no usable owns: paths," >&2
+    echo "land: # so land.sh cannot tell your work from unrelated dirt (session-notes, build" >&2
+    echo "land: # output, other droids' scratch). A blind 'git add -A' here is what put 1462" >&2
+    echo "land: # unrelated files on master in 4ea0a34. Nothing was staged or committed." >&2
+    echo "land: # DIRTY FILES in $(pwd -P):" >&2
+    git status --porcelain >&2
+    echo "land: # fix by ONE of:" >&2
+    echo "land: #   * add an 'owns:' line to $FLEET/board/${tid:-<ticket>}.md, then re-run" >&2
+    echo "land: #   * commit your work yourself, then re-run land.sh on a clean tree" >&2
+    echo "land: #   * sweep it ALL deliberately: bash $FLEET/land.sh $BRANCH $REPO --commit-dirty" >&2
+    echo "land: ####################################################################" >&2
+    return 9
+  fi
+
+  # Split the dirty set into owned / unowned. -z is REQUIRED: porcelain's default form quotes and
+  # backslash-escapes non-ASCII paths, so a plain `cut -c4-` mis-reads exactly the filenames most
+  # likely to be surprising. With -z a rename emits "XY new\0old\0"; the bare old-path record has
+  # no XY prefix and is checked as a path too (conservative — it can only cause a REFUSAL).
+  # Split `owns:` on commas ONCE, into an array — no IFS juggling inside the match loop (a
+  # `local IFS`/`unset IFS` pair inside a loop is a classic way to leak a broken IFS).
+  local -a owns_paths=(); local e
+  # `|| [ -n "$e" ]` is REQUIRED: the stream has no trailing newline, so plain `read` returns
+  # non-zero on the LAST field and drops it — for the common single-path `owns:` that silently
+  # yielded ZERO paths and refused every land (caught by D2 in land-dirty-scope.test.sh).
+  while IFS= read -r e || [ -n "$e" ]; do
+    e="${e#"${e%%[![:space:]]*}"}"; e="${e%"${e##*[![:space:]]}"}"; e="${e%/}"
+    [ -n "$e" ] && owns_paths+=("$e")
+  done < <(printf '%s' "$owns" | tr ',' '\n')
+  [ ${#owns_paths[@]} -gt 0 ] || { echo "land: REFUSING — ticket $tid's owns: parsed to no usable paths" >&2; return 9; }
+
+  local -a owned=() unowned=(); local rec p hit
+  while IFS= read -r -d '' rec; do
+    if [[ "$rec" =~ ^..\  ]]; then p="${rec:3}"; else p="$rec"; fi
+    [ -n "$p" ] || continue
+    hit=""
+    for e in "${owns_paths[@]}"; do
+      # exact file match, or anything beneath a declared directory
+      if [ "$p" = "$e" ] || [ "${p#"$e"/}" != "$p" ]; then hit=1; break; fi
+    done
+    if [ -n "$hit" ]; then owned+=("$p"); else unowned+=("$p"); fi
+  done < <(git status --porcelain -z)
+
+  if [ ${#unowned[@]} -gt 0 ]; then
+    echo "land: ####################################################################" >&2
+    echo "land: # REFUSING to commit — ${#unowned[@]} dirty file(s) are OUTSIDE ticket $tid's owns:." >&2
+    echo "land: # owns: $owns" >&2
+    echo "land: # UNOWNED and therefore NOT committable by this land:" >&2
+    for p in "${unowned[@]}"; do echo "land: #     $p" >&2; done
+    echo "land: # Nothing was staged or committed. Fix by ONE of:" >&2
+    echo "land: #   * clean/commit those files yourself, then re-run land.sh" >&2
+    echo "land: #   * widen 'owns:' in $FLEET/board/$tid.md if they really belong to this ticket" >&2
+    echo "land: #   * sweep them ALL deliberately: bash $FLEET/land.sh $BRANCH $REPO --commit-dirty" >&2
+    echo "land: ####################################################################" >&2
+    return 9
+  fi
+
+  [ ${#owned[@]} -gt 0 ] && LAND_STAGE=(-- "${owned[@]}")
+  return 0
+}
+# Run the PLAN (read-only: it stages and commits nothing) BEFORE the gate, so a refusal costs no
+# gate run. The COMMIT itself happens at step 3.5, after the gate.
+land_scope_plan || exit $?
 
 # 2. build the gate command parts (ruff + mypy + repo gate)
 GATE_PARTS=()
@@ -176,6 +301,28 @@ elif [ ${#GATE_PARTS[@]} -gt 0 ]; then
   echo "land: gate GREEN"
 else
   echo "land: WARN — no gate detected for $REPO; landing UNGATED"
+fi
+
+# 3.5 COMMIT the scoped set — deliberately AFTER the gate.
+# ORDERING RATIONALE (LAND-DIRTY-SCOPE): nothing between here and the old position depends on the
+# commit existing. Step 2 only stat()s files to auto-detect a gate command; step 3 `eval`s that
+# command against the WORKING TREE (ruff/mypy/pytest/validate_board all read files on disk, none
+# reads HEAD or a git index), so the gate sees byte-identical input either way. The first consumer
+# of the commit is step 4's `git rev-parse --verify HEAD`, which is still downstream. Moving it
+# therefore changes no gate outcome, and it removes the second half of the original harm: on a RED
+# gate the old order had ALREADY written a commit onto whatever branch HEAD was on, then exited 4
+# — leaving local master diverged with nothing pushed. Now a red gate leaves the tree untouched.
+# Re-planned rather than reusing the step-1 array because a gate can legitimately modify the tree
+# (formatters), and any dirt it introduces must face the same owns: scoping, not ride in unchecked.
+land_scope_plan || exit $?
+if [ ${#LAND_STAGE[@]} -gt 0 ]; then
+  # NOT SECRET-SCANNED: leak-guard.sh is called by fleet-droid.sh / retire-done.sh / branch-reaper.sh
+  # but has never been wired into land.sh or push-verify.sh (0 grep hits, verified 2026-07-19).
+  # Scoping the add shrinks the exposure to files a ticket explicitly claims; wiring the scan in is
+  # a separate change with its own blast radius and is NOT done here.
+  git add "${LAND_STAGE[@]}" \
+    && git commit -q -m "${MSG:-land: $BRANCH}" \
+    && echo "land: committed scoped changes -> $(git rev-parse --short HEAD)"
 fi
 
 # 4. put the work on the feature branch (if we're currently on base)
@@ -269,9 +416,15 @@ fi
 # is O(1) (single-ticket retire), mark the ticket here so every land instantly unblocks its
 # dependents and the fleet tabs stay fed. Skip silently when the branch has no board ticket
 # (e.g. a manager fix branch). done.sh re-verifies the merge itself, so this is safe.
-_land_tid="$(grep -lE "^branch: *$BRANCH *$" "$FLEET"/board/*.md 2>/dev/null | head -1)"
+# Uses the SAME resolver as step 1's dirty scoping (ticket_for_branch, _lib.sh) so the two steps
+# cannot disagree about which ticket this land belongs to. The old inline
+# `grep -lE "^branch: *$BRANCH *$"` was a third parse of `branch:` and, unlike _vm_meta, it
+# interpolated $BRANCH into a REGEX (a branch with a `.` or `+` matched the wrong ticket).
+_land_tid=""
+if command -v ticket_for_branch >/dev/null 2>&1; then
+  _land_tid="$(ticket_for_branch "$BRANCH" 2>/dev/null || true)"
+fi
 if [ -n "$_land_tid" ]; then
-  _land_tid="$(basename "$_land_tid" .md)"
   echo "land: auto-done-marking $_land_tid (unblocks its dependents)"
   AUTONOMOUS=1 bash "$FLEET/done.sh" "$_land_tid" >/dev/null 2>&1 \
     || echo "land: (auto-done-mark for $_land_tid was non-fatal — run 'done.sh $_land_tid' if a dependent stays blocked)" >&2

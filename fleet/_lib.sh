@@ -275,9 +275,39 @@ verify_merged(){
 # a destructive action. In deterministic fixture mode it returns 1 (verify_merged fully controls).
 verify_merged_owns_advisory(){
   [ -n "${VERIFY_MERGED_FIXTURE:-}" ] && return 1
-  local id="$1"; local bfile="$FLEET_LIB_BOARD/$id.md"
-  [ -f "$bfile" ] || bfile="$FLEET_LIB_BOARD/archive/$id.md"
-  [ -f "$bfile" ] || return 1
+  local id="$1"; local bfile; bfile="$(ticket_board_file "$id")" || return 1
   local owns; owns="$(_vm_meta owns "$bfile")"
   [ -n "$owns" ] && _vm_owns_present "$owns" "$id"
+}
+
+# ── PUBLIC BOARD-FIELD ACCESSORS ────────────────────────────────────────────────────────
+# ticket_board_file <id> -> board/<id>.md, else board/archive/<id>.md. rc 1 = no board file.
+# The board-then-archive lookup was open-coded in verify_merged, verify_merged_owns_advisory and
+# _vm_ticket_repo_field; land.sh needed a fourth copy, which is the per-consumer re-parsing drift
+# class this repo has already been bitten by (`parked:` was wrong in 4/4 copies). One home.
+ticket_board_file(){
+  local id="${1:-}" b; [ -n "$id" ] || return 1
+  b="$FLEET_LIB_BOARD/$id.md"; [ -f "$b" ] || b="$FLEET_LIB_BOARD/archive/$id.md"
+  [ -f "$b" ] || return 1
+  printf '%s' "$b"
+}
+# ticket_owns <id> -> the ticket's raw `owns:` value ("" when absent). rc 1 = no board file.
+# THE ONLY sanctioned reader of `owns:` outside _vm_owns_present. It delegates the field parse to
+# _vm_meta (kept in lockstep with validate_board.sh:field()) — callers must NEVER hand-roll an
+# `awk`/`grep` over `owns:`.
+ticket_owns(){
+  local bfile; bfile="$(ticket_board_file "${1:-}")" || return 1
+  _vm_meta owns "$bfile"
+}
+# ticket_for_branch <branch> -> the board id whose `branch:` field is exactly <branch> ("" if none).
+# Shared by land.sh step 1 (dirty scoping) and step 8 (auto-done-mark) so the two cannot disagree
+# about which ticket a land belongs to.
+ticket_for_branch(){
+  local br="${1:-}" f id; [ -n "$br" ] || return 1
+  for f in "$FLEET_LIB_BOARD"/*.md; do
+    [ -f "$f" ] || continue
+    id="$(basename "$f" .md)"
+    [ "$(_vm_meta branch "$f")" = "$br" ] && { printf '%s' "$id"; return 0; }
+  done
+  return 1
 }
