@@ -1,0 +1,2 @@
+0000000000000000000000000000000000000000 ee3624e3411a2f4b3e6f81ce734cb007c4d55572 charon-droid <droid@charon-private.local> 1784181722 -0700	branch: Created from origin/master
+ee3624e3411a2f4b3e6f81ce734cb007c4d55572 73d9783f5e10849b63844d22950dd8a4f1e1c802 assign-dispatch-pick-fix droid <droid@charon-private.local> 1784182057 -0700	commit: fix(assign): bypass F13 control-panel gate on dispatcher's real-outcome lane

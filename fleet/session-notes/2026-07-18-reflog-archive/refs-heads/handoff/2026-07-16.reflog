@@ -1,0 +1,2 @@
+0000000000000000000000000000000000000000 ca86bd50d802e69be04f6f43faf6c55429104166 sim <sim@sim> 1784228674 -0700	branch: Created from origin/master
+ca86bd50d802e69be04f6f43faf6c55429104166 8baa808be7f464dc61359944f0a3e0c1e51baf8c sim <sim@sim> 1784228683 -0700	commit: handoff(2026-07-16): crash recovery + persisted evidence (6 reports, 1473 lines)

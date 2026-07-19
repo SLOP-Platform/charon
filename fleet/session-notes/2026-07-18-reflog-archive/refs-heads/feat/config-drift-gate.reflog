@@ -1,0 +1,2 @@
+0000000000000000000000000000000000000000 8434fd047edea1d13489f000a5094e3d120e64ed Nnyan <nnyan.tengwar@gmail.com> 1784096450 -0700	branch: Created from master
+8434fd047edea1d13489f000a5094e3d120e64ed c324dbfc1f233709855107c99f219daddabb7715 Nnyan <nnyan.tengwar@gmail.com> 1784096793 -0700	commit: feat(fleet): config-drift detection + visibility gate (siloed provider/model config)

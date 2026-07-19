@@ -1,0 +1,10 @@
+0000000000000000000000000000000000000000 c6f6e42fe83a292a7ae85ef6c61f7f7ab04f0e15 Nnyan <nnyan.tengwar@gmail.com> 1784023340 -0700	branch: Created from HEAD
+c6f6e42fe83a292a7ae85ef6c61f7f7ab04f0e15 ec938eeae09858f3db6daca9187de7bb3e32ab22 charon-droid <droid@charon.local> 1784023449 -0700	commit: feat(PROJECT-MEMBERSHIP-GATE): gate that every live ticket is folded into a ROADMAP row
+ec938eeae09858f3db6daca9187de7bb3e32ab22 c6f6e42fe83a292a7ae85ef6c61f7f7ab04f0e15 Nnyan <nnyan.tengwar@gmail.com> 1784023523 -0700	reset: moving to HEAD~1
+c6f6e42fe83a292a7ae85ef6c61f7f7ab04f0e15 c209b1dda6e4342f940990bd7f68cd620485e24a charon-droid <droid@charon.local> 1784023542 -0700	commit: feat(PROJECT-MEMBERSHIP-GATE): gate that every live ticket is folded into a ROADMAP row
+c209b1dda6e4342f940990bd7f68cd620485e24a c6f6e42fe83a292a7ae85ef6c61f7f7ab04f0e15 Nnyan <nnyan.tengwar@gmail.com> 1784023654 -0700	reset: moving to HEAD~1
+c6f6e42fe83a292a7ae85ef6c61f7f7ab04f0e15 5d635bbc6e76521cf4ad706f5d3d76a22b543caa charon-droid <droid@charon.local> 1784023665 -0700	commit: feat(PROJECT-MEMBERSHIP-GATE): gate that every live ticket is folded into a ROADMAP row
+5d635bbc6e76521cf4ad706f5d3d76a22b543caa b32a9e9f5a50888763969fb92d4ea444ed9553f2 Nnyan <nnyan.tengwar@gmail.com> 1784031809 -0700	commit: fleet: honest-battery eval + live outcome-logging + strong-tier trusted models
+b32a9e9f5a50888763969fb92d4ea444ed9553f2 6266f6d440e3228f543c7ca947f59d19f1d8bc80 Nnyan <nnyan.tengwar@gmail.com> 1784032123 -0700	commit: handoff: session aayla-secura — strong tier stood up, honest battery + live logging
+6266f6d440e3228f543c7ca947f59d19f1d8bc80 935a3a97130e85a70e0ddb5020c9beeac97469cf Nnyan <nnyan.tengwar@gmail.com> 1784033321 -0700	commit: guard: no-anthropic-in-sg — fail if a Claude id lands in an SG tier chain (sg-never-anthropic)
+935a3a97130e85a70e0ddb5020c9beeac97469cf 5d635bbc6e76521cf4ad706f5d3d76a22b543caa Nnyan <nnyan.tengwar@gmail.com> 1784034959 -0700	branch: Reset to 5d635bb

@@ -1,0 +1,2 @@
+0000000000000000000000000000000000000000 c8dcab90fa3668db6936c42d28eab1140e7ff936 charon-droid <droid@charon-private.local> 1784162979 -0700	branch: Created from origin/master
+c8dcab90fa3668db6936c42d28eab1140e7ff936 09ce648ae899a432a444e43c75c67687e34290db charon-droid <droid@charon-private.local> 1784164247 -0700	commit: feat(LEG-SANDBOX-HARDEN): hardened leg-preflight entry point closes FS-read cred-exfil vector

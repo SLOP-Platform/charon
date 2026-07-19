@@ -1,0 +1,3 @@
+0000000000000000000000000000000000000000 98177e82363b794df539857c17cb287fc047890a sim <sim@sim> 1784229705 -0700	branch: Created from origin/master
+98177e82363b794df539857c17cb287fc047890a 8cd6d0a9fd9eb9e31c1ac60648c9dcf445496434 sim <sim@sim> 1784231042 -0700	rebase (finish): refs/heads/feat/selfcheck-cycle-gate onto 8cd6d0a9fd9eb9e31c1ac60648c9dcf445496434
+8cd6d0a9fd9eb9e31c1ac60648c9dcf445496434 c1456d0762ffee4b7824ad7183c099a65b9f97ed SELFCHECK-CYCLE-GATE <droid@charon> 1784231490 -0700	commit: feat(checks): selfcheck-cycle gate — forkbomb-class detector + fail-on-revert

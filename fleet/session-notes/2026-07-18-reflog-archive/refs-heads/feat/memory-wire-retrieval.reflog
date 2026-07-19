@@ -1,0 +1,2 @@
+0000000000000000000000000000000000000000 1991e6a487c6f4931f6a4c60fc0624889491d088 Nnyan <nnyan.tengwar@gmail.com> 1784160159 -0700	branch: Created from origin/master
+1991e6a487c6f4931f6a4c60fc0624889491d088 d0a87b40688535b05df31e0f64117485cfa2c8d6 droid-MEMORY-WIRE-RETRIEVAL <droid@charon.local> 1784160357 -0700	commit: feat(memory): wire live store to point-of-need (session-preamble + load --query)

@@ -1,0 +1,2 @@
+0000000000000000000000000000000000000000 9ff14f221e4194ca52759b0cea56771e57e53e1d charon-droid <droid@charon-private.local> 1784163642 -0700	branch: Created from origin/master
+9ff14f221e4194ca52759b0cea56771e57e53e1d 3b27d980ee3b262395428804a6c75f2cc6c0bd26 charon-droid <droid@charon-private.local> 1784163942 -0700	commit: feat(preflight): wire foreman.sh advisory into scan (report-only, verdict loud in operator-actions)

@@ -5,7 +5,11 @@ work_class: rig-meta
 branch: feat/github-limits-hardening
 owns: fleet/gh-cache.sh, fleet/done.sh, fleet/checks/large-file-guard.sh, fleet/tests/test_github_limits.sh
 serial_justified: One cohesive proactive-hardening pass against GitHub's limits (search-API + large-file + land pacing) sharing the gh-cache seam; splitting fragments the batching contract.
-depends_on:
+depends_on: VERIFY-MERGED-REPO-AWARE
+real-dep: VERIFY-MERGED-REPO-AWARE — shared single-owner of fleet/done.sh. That branch is ALREADY
+  BUILT and pending landing (it rewrites done.sh's merge-verification path to be repo-aware); this
+  ticket also edits done.sh. Single-writer sequencing — rebase onto it, never co-write.
+  Added 2026-07-18 (board correction).
 note: |
   PROACTIVE (operator: optimize before we hit a limit, not reactive). GitHub-limits audit (this
   session) found exposures beyond the 5000/hr REST limit already batched by fleet/gh-cache.sh:

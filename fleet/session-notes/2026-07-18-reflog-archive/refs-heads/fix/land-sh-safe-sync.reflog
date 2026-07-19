@@ -1,0 +1,2 @@
+0000000000000000000000000000000000000000 c6f6e42fe83a292a7ae85ef6c61f7f7ab04f0e15 Nnyan <nnyan.tengwar@gmail.com> 1784011016 -0700	branch: Created from origin/master
+c6f6e42fe83a292a7ae85ef6c61f7f7ab04f0e15 ed1aa0d4b835672eb4b0c5c76fd7101f75032f22 Nnyan <nnyan.tengwar@gmail.com> 1784011062 -0700	commit: docs(review-log): LAND-SH-SAFE-SYNC per-ticket fragment — safety fix landed on master; sibling ticket needed for gate==CI

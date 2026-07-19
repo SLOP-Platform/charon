@@ -1,0 +1,2 @@
+0000000000000000000000000000000000000000 ba2ea03fc0b24d325fef47d80d03c358e4f9919f Nnyan <nnyan.tengwar@gmail.com> 1784093600 -0700	branch: Created from origin/master
+ba2ea03fc0b24d325fef47d80d03c358e4f9919f 5bbc5254e1fb3ee02d76211f72dbb71dd00de57f Nnyan <nnyan.tengwar@gmail.com> 1784094067 -0700	commit: feat(eval): derive per-(work_class×difficulty) budgets (p95+margin, token/tok_s-normalized)

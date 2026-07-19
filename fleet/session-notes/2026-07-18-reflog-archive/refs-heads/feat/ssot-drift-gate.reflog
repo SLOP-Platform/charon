@@ -1,0 +1,2 @@
+0000000000000000000000000000000000000000 eb27f2d8260a90cfcb54d4c247be20cfc3181cf3 charon-droid <droid@charon-private.local> 1784172721 -0700	branch: Created from origin/master
+eb27f2d8260a90cfcb54d4c247be20cfc3181cf3 8b57983416cdebb14a2f3f088ddd1b8639504ef5 charon-droid <droid@charon-private.local> 1784175097 -0700	commit: feat(ssot): add drift gate — SSOT-REGISTRY.tsv + msot-drift.sh + hermetic tests

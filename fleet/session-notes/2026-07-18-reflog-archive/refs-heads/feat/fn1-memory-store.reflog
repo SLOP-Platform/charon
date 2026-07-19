@@ -1,0 +1,5 @@
+0000000000000000000000000000000000000000 c6f6e42fe83a292a7ae85ef6c61f7f7ab04f0e15 Nnyan <nnyan.tengwar@gmail.com> 1784012970 -0700	branch: Created from origin/master
+c6f6e42fe83a292a7ae85ef6c61f7f7ab04f0e15 0bd3fd1a26ce14197d6a27b8b81fbf12910fc3d1 Nnyan <nnyan.tengwar@gmail.com> 1784013058 -0700	cherry-pick: docs(review): FN1-MEMORY-STORE-ADOPT review-log fragment
+0bd3fd1a26ce14197d6a27b8b81fbf12910fc3d1 32c69c5d30c598a6ba701962621f0fae74643bad Nnyan <nnyan.tengwar@gmail.com> 1784013058 -0700	cherry-pick: feat(fn1): adopt basic-memory MCP store for manager session memory
+32c69c5d30c598a6ba701962621f0fae74643bad 5f495fce3f150d8b7d8433e3ae01a5cb999ea3cd Nnyan <nnyan.tengwar@gmail.com> 1784013058 -0700	cherry-pick: docs(review-log): FN1-MEMORY-STORE-ADOPT — sanitization note + pre-existing red recorded
+5f495fce3f150d8b7d8433e3ae01a5cb999ea3cd 676cb13f78b2d23f283b1e6f8571c90a73835b86 Nnyan <nnyan.tengwar@gmail.com> 1784013118 -0700	commit: fix(fn1): type memory frontmatter values

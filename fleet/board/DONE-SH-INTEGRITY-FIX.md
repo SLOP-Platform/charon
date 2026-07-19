@@ -4,7 +4,11 @@ difficulty: 2
 work_class: rig-meta
 branch: feat/done-sh-integrity-fix
 owns: fleet/done.sh
-depends_on: GITHUB-LIMITS-HARDENING
+depends_on: GITHUB-LIMITS-HARDENING, VERIFY-MERGED-REPO-AWARE
+real-dep: VERIFY-MERGED-REPO-AWARE — shared single-owner of fleet/done.sh. That branch is ALREADY
+  BUILT and pending landing (it rewrites done.sh's merge-verification path to be repo-aware); this
+  ticket also edits done.sh. Single-writer sequencing — rebase onto it, never co-write.
+  Added 2026-07-18 (board correction).
 real-dep: GITHUB-LIMITS-HARDENING owns fleet/done.sh (batches its gh calls via gh-cache.sh).
   Rebase onto its merge; don't run as a concurrent second writer of the same file.
 dep-kind: build

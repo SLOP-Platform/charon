@@ -1,0 +1,2 @@
+0000000000000000000000000000000000000000 ee3624e3411a2f4b3e6f81ce734cb007c4d55572 charon-droid <droid@charon-private.local> 1784180147 -0700	branch: Created from origin/master
+ee3624e3411a2f4b3e6f81ce734cb007c4d55572 d0ff7dfa81f802172c91e77cbf0eefbe84294ef8 charon-droid <droid@charon-private.local> 1784182423 -0700	commit: feat(fleet): FOREMAN-MULTI-TRIGGER — cadence dispatcher + 4 trigger entry points

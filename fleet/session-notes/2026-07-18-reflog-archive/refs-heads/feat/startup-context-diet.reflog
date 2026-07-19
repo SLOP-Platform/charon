@@ -1,0 +1,8 @@
+0000000000000000000000000000000000000000 0f56bd3ee0165cf89a8f840d4ba05a9236f9aa7b charon-droid <droid@charon-private.local> 1784184186 -0700	branch: Created from origin/master
+0f56bd3ee0165cf89a8f840d4ba05a9236f9aa7b d950470691a6583ac35bf3cbb65eaabfeaa5473f charon-droid <droid@charon-private.local> 1784184931 -0700	commit: feat(startup-context-diet): cut startup context bloat, add budget gate
+d950470691a6583ac35bf3cbb65eaabfeaa5473f 0f56bd3ee0165cf89a8f840d4ba05a9236f9aa7b charon-droid <droid@charon-private.local> 1784184974 -0700	reset: moving to HEAD~1
+0f56bd3ee0165cf89a8f840d4ba05a9236f9aa7b 6ad7118ecd80500e8c9150dd889833f5abd8f20b charon-droid <droid@charon-private.local> 1784184983 -0700	commit: feat(startup-context-diet): cut startup context bloat, add budget gate
+6ad7118ecd80500e8c9150dd889833f5abd8f20b 0f56bd3ee0165cf89a8f840d4ba05a9236f9aa7b charon-droid <droid@charon-private.local> 1784185060 -0700	reset: moving to master
+0f56bd3ee0165cf89a8f840d4ba05a9236f9aa7b fee3eb84252b8cd93ab16563f8d5d7a287a47591 charon-droid <droid@charon-private.local> 1784185067 -0700	commit: feat(startup-context-diet): cut startup context bloat, add budget gate
+fee3eb84252b8cd93ab16563f8d5d7a287a47591 d7c2f17c6acaed71dd42642c7d5c83db4786fd69 charon-droid <droid@charon-private.local> 1784207522 -0700	commit: chore(rig): commit crash-trail session notes (06:34-08:19Z wave)
+d7c2f17c6acaed71dd42642c7d5c83db4786fd69 fee3eb84252b8cd93ab16563f8d5d7a287a47591 charon-droid <droid@charon-private.local> 1784207641 -0700	branch: Reset to fee3eb8

@@ -1,0 +1,2 @@
+0000000000000000000000000000000000000000 96efd4d38da9c1a4f34a6a157d45b30e55358364 Nnyan <nnyan.tengwar@gmail.com> 1784089968 -0700	branch: Created from master
+96efd4d38da9c1a4f34a6a157d45b30e55358364 38af19367a575be4239e45a2293d67b52f8585fe Nnyan <nnyan.tengwar@gmail.com> 1784090648 -0700	commit: fix(preflight): tolerate cross-user unreadable cache files in daemon snapshot + prove it (EVAL-GRADER-PROVISION)

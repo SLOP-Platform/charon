@@ -1,0 +1,2 @@
+0000000000000000000000000000000000000000 30cfea02fbf72ede2047d516e26ac2b8aa375b91 Nnyan <nnyan.tengwar@gmail.com> 1784162167 -0700	branch: Created from origin/master
+30cfea02fbf72ede2047d516e26ac2b8aa375b91 9f644a1c028f9cb42ffb912f55a2e9272e7c192d eval-promotion-gate droid <droid@charon.local> 1784163290 -0700	commit: feat(eval-promotion-gate): control-panel discrimination gate on both write paths

@@ -1,0 +1,2 @@
+0000000000000000000000000000000000000000 c8dcab90fa3668db6936c42d28eab1140e7ff936 charon-droid <droid@charon-private.local> 1784162983 -0700	branch: Created from origin/master
+c8dcab90fa3668db6936c42d28eab1140e7ff936 a6549dad8657bfd88344c1cdc26059ff9827fd37 charon-droid <droid@charon-private.local> 1784163050 -0700	commit: chore(rig): add fleet/reds.tsv to gitignore, create CONFIG-SOURCES.tsv registry

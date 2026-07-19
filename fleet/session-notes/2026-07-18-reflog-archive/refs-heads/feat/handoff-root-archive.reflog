@@ -1,0 +1,2 @@
+0000000000000000000000000000000000000000 98177e82363b794df539857c17cb287fc047890a sim <sim@sim> 1784229708 -0700	branch: Created from origin/master
+98177e82363b794df539857c17cb287fc047890a 53e4fd44004478324a5a9ab2e9d4c737f40d25c9 sim <sim@sim> 1784231809 -0700	commit: feat: archive stale rig-root HANDOFF.md with dated pointer + staleness checker

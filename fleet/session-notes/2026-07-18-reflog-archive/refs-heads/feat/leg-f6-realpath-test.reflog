@@ -1,0 +1,2 @@
+0000000000000000000000000000000000000000 cdfcf0984d463ef989ed223a64a6ec1c5a513e6d Nnyan <nnyan.tengwar@gmail.com> 1784091913 -0700	branch: Created from origin/master
+cdfcf0984d463ef989ed223a64a6ec1c5a513e6d cfe45a53d4cad42f38b4af9cfaab2994cd7c1bf0 Nnyan <nnyan.tengwar@gmail.com> 1784092204 -0700	commit: test(leg-preflight): close vacuous F6 fail-on-revert — exercise the real urllib pin path

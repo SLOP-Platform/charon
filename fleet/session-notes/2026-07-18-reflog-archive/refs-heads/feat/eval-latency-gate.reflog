@@ -1,0 +1,3 @@
+0000000000000000000000000000000000000000 31137c512d77ea64932cbc30e68da7a50d00d1b7 Nnyan <nnyan.tengwar@gmail.com> 1784087495 -0700	branch: Created from feat/live-lane-finalizer
+31137c512d77ea64932cbc30e68da7a50d00d1b7 93cd015ca7b182161f51008e8aecb6cafaf86d48 Nnyan <nnyan.tengwar@gmail.com> 1784088081 -0700	commit: fix(eval): restore latency-is-a-failure-class gate (EVAL-LATENCY-GATE)
+93cd015ca7b182161f51008e8aecb6cafaf86d48 bd0ec76c0cf6b428a027c97bd4a4c5561ffc1a95 Nnyan <nnyan.tengwar@gmail.com> 1784088969 -0700	commit: test(eval): add isolated F4 wall-clock guard (EVAL-LATENCY-GATE review fix)

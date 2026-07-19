@@ -1,0 +1,3 @@
+0000000000000000000000000000000000000000 d402999d3ff7b3cd7b260d5299196cebcb6dd4d9 Nnyan <nnyan.tengwar@gmail.com> 1784161254 -0700	branch: Created from origin/master
+d402999d3ff7b3cd7b260d5299196cebcb6dd4d9 e6d343536f971793507a3f51520691831a8c5791 Nnyan <nnyan.tengwar@gmail.com> 1784161640 -0700	commit: feat(fleet): BROADEN-TIER-CHAINS — 3+ primary drains per tier, no single-provider outage kills a tier
+e6d343536f971793507a3f51520691831a8c5791 c34b9585e5fc07964d29ef7c446a2e0d4013a9b8 Nnyan <nnyan.tengwar@gmail.com> 1784161695 -0700	rebase (finish): refs/heads/feat/broaden-tier-chains onto 3b277864dadadbe72dd5a1108007b7b485796212

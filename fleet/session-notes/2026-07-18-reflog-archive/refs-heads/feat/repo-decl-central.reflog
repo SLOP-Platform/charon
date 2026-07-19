@@ -1,0 +1,6 @@
+0000000000000000000000000000000000000000 ee3624e3411a2f4b3e6f81ce734cb007c4d55572 charon-droid <droid@charon-private.local> 1784180964 -0700	branch: Created from origin/master
+ee3624e3411a2f4b3e6f81ce734cb007c4d55572 b3543d6beac3553ac2c165b3d28cc42c1dc4c9e6 REPO-DECL-CENTRAL droid <robot@charon> 1784181264 -0700	commit: feat(fleet): centralize PRODUCT_REPO/FLEET_REPO declarations in _lib.sh
+b3543d6beac3553ac2c165b3d28cc42c1dc4c9e6 00113706da240559031f6d0cd936f1871db9cf9a REPO-DECL-CENTRAL droid <robot@charon> 1784181329 -0700	commit: docs(fleet): add REPO-DECL-CENTRAL review log fragment
+00113706da240559031f6d0cd936f1871db9cf9a ee3624e3411a2f4b3e6f81ce734cb007c4d55572 charon-droid <droid@charon-private.local> 1784181546 -0700	reset: moving to origin/master
+ee3624e3411a2f4b3e6f81ce734cb007c4d55572 1993b42f8fdca30be9d1310b40b067e7896770d3 REPO-DECL-CENTRAL droid <robot@charon> 1784181872 -0700	commit: feat(fleet): centralize PRODUCT_REPO/FLEET_REPO declarations in _lib.sh
+1993b42f8fdca30be9d1310b40b067e7896770d3 ef9e27a32af2368fdf65127eaa8268b18ae7b330 charon-droid <droid@charon-private.local> 1784182616 -0700	rebase (finish): refs/heads/feat/repo-decl-central onto aafc52f54878c1bb7b867a99883297d76e184eed

@@ -1,0 +1,3 @@
+0000000000000000000000000000000000000000 ee3624e3411a2f4b3e6f81ce734cb007c4d55572 charon-droid <droid@charon-private.local> 1784179858 -0700	branch: Created from origin/master
+ee3624e3411a2f4b3e6f81ce734cb007c4d55572 f3776cee22576a40c56717b272d28ad93bbd34c8 charon-droid <droid@charon> 1784180234 -0700	commit: feat(fleet/hooks): add memory-compact.sh — mechanize MEMORY.md index compaction
+f3776cee22576a40c56717b272d28ad93bbd34c8 a349b0d5e1ab181735a9961e46b58d718736f51b charon-droid <droid@charon-private.local> 1784180251 -0700	commit: chore(MEMORY-INDEX-COMPACTION): launcher auto-commit — droid exited without committing (review for completeness)

@@ -1,0 +1,2 @@
+0000000000000000000000000000000000000000 3639038768736db8ce6109b20e5386e7247e3c85 charon-droid <droid@charon-private.local> 1784167940 -0700	branch: Created from origin/master
+3639038768736db8ce6109b20e5386e7247e3c85 4c18f2a66c142c8b3dd0b2831aa72838cca5af81 charon-droid <droid@charon-private.local> 1784169093 -0700	commit: feat(gate-standard): GATE-GAP-LEDGER + gate-creation standard + meta-gate (green-is-not-proof mechanized)

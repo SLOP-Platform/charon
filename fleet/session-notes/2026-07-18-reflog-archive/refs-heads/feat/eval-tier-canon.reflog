@@ -1,0 +1,3 @@
+0000000000000000000000000000000000000000 ba2ea03fc0b24d325fef47d80d03c358e4f9919f Nnyan <nnyan.tengwar@gmail.com> 1784093661 -0700	branch: Created from origin/master
+ba2ea03fc0b24d325fef47d80d03c358e4f9919f a9007ca7f281f67548ec99a12fe7478bf1ce6d80 Nnyan <nnyan.tengwar@gmail.com> 1784095119 -0700	commit: fix(eval): canonical cost-band tier axis (review F-tier)
+a9007ca7f281f67548ec99a12fe7478bf1ce6d80 457e295f378e86605fe4a5a2aafb34a657016864 Nnyan <nnyan.tengwar@gmail.com> 1784095179 -0700	rebase (finish): refs/heads/feat/eval-tier-canon onto 7d1a12ebae8f5cd68ac5ba6e83cc3d23229160a5

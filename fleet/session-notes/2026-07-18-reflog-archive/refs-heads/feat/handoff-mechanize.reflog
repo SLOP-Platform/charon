@@ -1,0 +1,5 @@
+0000000000000000000000000000000000000000 c6f6e42fe83a292a7ae85ef6c61f7f7ab04f0e15 Nnyan <nnyan.tengwar@gmail.com> 1784019687 -0700	branch: Created from origin/master
+c6f6e42fe83a292a7ae85ef6c61f7f7ab04f0e15 3410cecc04fadedaf5bd1939ea847cb88829f18a handoff-mechanize droid <handoff-mechanize@charon> 1784021366 -0700	commit: feat(fleet): handoff.sh auto-emits all required sections + live machine state; preflight wires handoff-check as active detector
+3410cecc04fadedaf5bd1939ea847cb88829f18a d0baa3279a44fa1d1b613f84e1ffa93a3b42de70 Nnyan <nnyan.tengwar@gmail.com> 1784097092 -0700	commit: _perm_test_delete_me
+d0baa3279a44fa1d1b613f84e1ffa93a3b42de70 3410cecc04fadedaf5bd1939ea847cb88829f18a Nnyan <nnyan.tengwar@gmail.com> 1784097099 -0700	reset: moving to HEAD~1
+3410cecc04fadedaf5bd1939ea847cb88829f18a 67b250e2f35f3fc7c966e2f85020d1e5e5a63ec0 Nnyan <nnyan.tengwar@gmail.com> 1784097122 -0700	pull --no-ff --no-edit origin master: Merge made by the 'ort' strategy.

@@ -1,0 +1,2 @@
+0000000000000000000000000000000000000000 6ae2569e670480a1f7fd1b2caddf830436ce24af Nnyan <nnyan.tengwar@gmail.com> 1784157972 -0700	branch: Created from origin/master
+6ae2569e670480a1f7fd1b2caddf830436ce24af b1e2c777d43189ec6f657243bde2837f1675873f droid <droid@charon.local> 1784158613 -0700	commit: feat(rule-sync-gate): F47 two-way rule-port enforcement (gate + tests + review log)

@@ -1,0 +1,3 @@
+0000000000000000000000000000000000000000 c8dcab90fa3668db6936c42d28eab1140e7ff936 charon-droid <droid@charon-private.local> 1784163134 -0700	branch: Created from origin/master
+c8dcab90fa3668db6936c42d28eab1140e7ff936 0d276426ca0d856233df049837070758427c07b3 charon-droid <droid@charon-private.local> 1784165353 -0700	commit: perf(claim): index-once fix (O(n^2) -> O(files)) + --dry-run for both claim/decompose
+0d276426ca0d856233df049837070758427c07b3 406086411ac574d9fc8c10c1b39673547e1db7f9 charon-droid <droid@charon-private.local> 1784165381 -0700	commit (amend): perf(claim): index-once fix (O(n^2) -> O(files)) + --dry-run for both claim/decompose

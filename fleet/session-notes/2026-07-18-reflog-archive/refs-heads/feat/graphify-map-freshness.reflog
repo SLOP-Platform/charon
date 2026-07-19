@@ -1,0 +1,3 @@
+0000000000000000000000000000000000000000 ee3624e3411a2f4b3e6f81ce734cb007c4d55572 charon-droid <droid@charon-private.local> 1784179067 -0700	branch: Created from origin/master
+ee3624e3411a2f4b3e6f81ce734cb007c4d55572 c0eb547e080d427c0aa24bc157d893e359ffbe20 charon-droid <droid@charon-private.local> 1784179922 -0700	commit: feat(fleet): graphify-freshness check + manager reuse-check entry point
+c0eb547e080d427c0aa24bc157d893e359ffbe20 23bdc81d03e4e32275acd3ccf6850997d7df2a06 charon-droid <droid@charon-private.local> 1784179944 -0700	commit: chore(GRAPHIFY-MAP-FRESHNESS): launcher auto-commit — droid exited without committing (review for completeness)

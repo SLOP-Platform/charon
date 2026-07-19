@@ -1,0 +1,2 @@
+0000000000000000000000000000000000000000 eb27f2d8260a90cfcb54d4c247be20cfc3181cf3 charon-droid <droid@charon-private.local> 1784172226 -0700	branch: Created from origin/master
+eb27f2d8260a90cfcb54d4c247be20cfc3181cf3 ea7e1c590227328e5a1dfe72c313b2984dfefe89 charon-droid <droid@charon-private.local> 1784174652 -0700	commit: feat(reachability-gate): audit + gate for hardcoded cross-boundary paths

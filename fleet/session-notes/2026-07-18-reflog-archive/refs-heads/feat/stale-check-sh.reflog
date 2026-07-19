@@ -1,0 +1,2 @@
+0000000000000000000000000000000000000000 eb27f2d8260a90cfcb54d4c247be20cfc3181cf3 charon-droid <droid@charon-private.local> 1784173052 -0700	branch: Created from origin/master
+eb27f2d8260a90cfcb54d4c247be20cfc3181cf3 16f33ec8f7cb8afccbe4294e7cd845bae2dfbf7d charon-droid <droid@charon-private.local> 1784174267 -0700	commit: test(stale-check): add FAIL-ON-REVERT hermetic test file + review log

@@ -1,0 +1,2 @@
+0000000000000000000000000000000000000000 31137c512d77ea64932cbc30e68da7a50d00d1b7 Nnyan <nnyan.tengwar@gmail.com> 1784087509 -0700	branch: Created from feat/live-lane-finalizer
+31137c512d77ea64932cbc30e68da7a50d00d1b7 4f798d241ffab03c8dece0782f4e974bf8e408c9 Nnyan <nnyan.tengwar@gmail.com> 1784088700 -0700	commit: feat(LEG-PREFLIGHT-CANARY): stage-1 leg due-diligence gate + rank + sandboxed exec-check

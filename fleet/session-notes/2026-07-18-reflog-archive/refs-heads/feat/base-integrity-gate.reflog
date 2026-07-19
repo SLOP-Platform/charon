@@ -1,0 +1,3 @@
+0000000000000000000000000000000000000000 356b3c730906fe54a9d6e821b6b22b932c19ee61 Nnyan <nnyan.tengwar@gmail.com> 1784094137 -0700	branch: Created from master
+356b3c730906fe54a9d6e821b6b22b932c19ee61 4ce985ef586ab76ba563382450ded661daf6667a Nnyan <nnyan.tengwar@gmail.com> 1784094500 -0700	commit: feat(gate): base-integrity — refuse launch on a base missing a ticket's prereqs
+4ce985ef586ab76ba563382450ded661daf6667a 023890aca5c31891c47e6a12114c4e9d121cf884 Nnyan <nnyan.tengwar@gmail.com> 1784095115 -0700	commit: fix(base-integrity): unverifiable dep must NOT count as satisfied (false-GREEN)

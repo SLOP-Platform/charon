@@ -1,0 +1,2 @@
+0000000000000000000000000000000000000000 eee232a1fe05c79a2efd3abcea394d8d92e76768 charon-droid <droid@charon-private.local> 1784174870 -0700	branch: Created from origin/master
+eee232a1fe05c79a2efd3abcea394d8d92e76768 cf9d09276c6608c8e5f14d564a5fb8deec62e437 charon-droid <droid@charon-private.local> 1784175722 -0700	commit: refactor(fleet): unify dual TSV-scorecard appenders — auto_append.py delegates to model-scorecard.sh

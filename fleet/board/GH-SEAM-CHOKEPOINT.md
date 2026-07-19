@@ -3,7 +3,11 @@ tier: strong
 difficulty: 4
 work_class: ci-infra
 branch: feat/gh-seam-chokepoint
-depends_on: GITHUB-LIMITS-HARDENING, STARTUP-CONTEXT-DIET, FOREMAN-MULTI-TRIGGER
+depends_on: GITHUB-LIMITS-HARDENING, STARTUP-CONTEXT-DIET, FOREMAN-MULTI-TRIGGER, VERIFY-MERGED-REPO-AWARE
+real-dep: VERIFY-MERGED-REPO-AWARE — shared single-owner of fleet/_lib.sh. That branch is ALREADY
+  BUILT and pending landing (+92 lines in _lib.sh establishing the canonical PRODUCT_REPO/
+  FLEET_REPO declarations); this ticket also edits _lib.sh. Single-writer sequencing: land that one
+  first, then route the gh call sites. Added 2026-07-18 (board correction).
 owns: fleet/status.sh, fleet/_lib.sh, fleet/handoff.sh, fleet/land.sh, fleet/submit.sh, fleet/reconcile-merged.sh, fleet/reconcile-held-markers.sh, fleet/checks/base-integrity.sh, fleet/checks/gh-direct-call-guard.sh, fleet/tests/gh-seam.test.sh
 serial_justified: The 9 owned surfaces are not 9 independent builds — they are the CALL SITES of ONE
   seam (fleet/gh-cache.sh), and consolidating them is the entire ticket. Splitting per-file recreates

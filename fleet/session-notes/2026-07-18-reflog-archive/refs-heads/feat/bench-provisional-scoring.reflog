@@ -1,0 +1,3 @@
+0000000000000000000000000000000000000000 aafc52f54878c1bb7b867a99883297d76e184eed charon-droid <droid@charon-private.local> 1784182730 -0700	branch: Created from origin/master
+aafc52f54878c1bb7b867a99883297d76e184eed 40435662f5d640cb9e11282882e3a200dadabdfb ahsoka-tano <ahsoka-tano@charon-private.local> 1784183171 -0700	commit: docs(#20): BENCH-PROVISIONAL-SCORING design of record + review fragment
+40435662f5d640cb9e11282882e3a200dadabdfb bc1507630813a5c8fe6d539ca54549b3ef8a2c3f charon-droid <droid@charon-private.local> 1784183203 -0700	commit: chore(BENCH-PROVISIONAL-SCORING): launcher auto-commit — droid exited without committing (review for completeness)

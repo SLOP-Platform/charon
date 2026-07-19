@@ -1,0 +1,3 @@
+0000000000000000000000000000000000000000 c6f6e42fe83a292a7ae85ef6c61f7f7ab04f0e15 Nnyan <nnyan.tengwar@gmail.com> 1784015861 -0700	branch: Created from origin/master
+c6f6e42fe83a292a7ae85ef6c61f7f7ab04f0e15 fd71f86eb94611deea1be81b435a00d761c861f6 Nnyan <nnyan.tengwar@gmail.com> 1784017754 -0700	commit: feat(fleet): FN4-RESEARCH-GATE mechanized research protocol with pre-launch dedup/staleness gate, enforced methodology injection, and post-output completeness verifier
+fd71f86eb94611deea1be81b435a00d761c861f6 8c659a3d589509af9a057aa4b32c17062e378b69 Nnyan <nnyan.tengwar@gmail.com> 1784017769 -0700	commit: chore(FN4-RESEARCH-GATE): launcher auto-commit — droid exited without committing (review for completeness)

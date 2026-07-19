@@ -1,0 +1,2 @@
+0000000000000000000000000000000000000000 eb27f2d8260a90cfcb54d4c247be20cfc3181cf3 charon-droid <droid@charon-private.local> 1784174228 -0700	branch: Created from origin/master
+eb27f2d8260a90cfcb54d4c247be20cfc3181cf3 d217c80f76ccabffcd665548bff2ba7a4fc96ccb charon-droid <droid@charon-private.local> 1784175056 -0700	commit: audit: ON-DEMAND-TOOL-LEDGER — classify every tool by invocation reality (dynamic-tools-never-on-demand)

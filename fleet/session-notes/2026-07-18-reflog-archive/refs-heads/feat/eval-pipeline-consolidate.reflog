@@ -1,0 +1,2 @@
+0000000000000000000000000000000000000000 8434fd047edea1d13489f000a5094e3d120e64ed Nnyan <nnyan.tengwar@gmail.com> 1784096788 -0700	branch: Created from origin/master
+8434fd047edea1d13489f000a5094e3d120e64ed 3148c982a0ebf08479f365dbbd5c8a109f053fb1 EVAL-PIPELINE-CONSOLIDATE droid <droid@charon.local> 1784098613 -0700	commit: feat(eval): consolidate 4-5 harnesses into one item-bank + adaptive runner (F9+F12)
