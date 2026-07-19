@@ -42,18 +42,61 @@ def _ci_step_tools_from_checks() -> set[str]:
     return tools
 
 
+def _gates_json_path() -> Path:
+    return Path(__file__).resolve().parent.parent.parent / "tools" / "gates.json"
+
+
+class GatesManifestError(Exception):
+    """The gates.json manifest could not be read or understood.
+
+    This is deliberately NOT swallowed. "Could not determine whether the gates
+    are wired" must never be reported as "all gates passed" — a false receipt on
+    the merge path is worse than no receipt at all.
+    """
+
+
 def _load_gates_json() -> list[dict]:
-    gates_path = Path(__file__).resolve().parent.parent.parent / "tools" / "gates.json"
-    with open(gates_path) as f:
-        return json.load(f)
+    """Load and validate tools/gates.json, or raise GatesManifestError.
+
+    Fails CLOSED: a missing, unreadable, empty or unparseable manifest raises
+    rather than yielding an empty gate list (which would vacuously "pass").
+    """
+    gates_path = _gates_json_path()
+    try:
+        raw = gates_path.read_text()
+    except FileNotFoundError as e:
+        raise GatesManifestError(f"{gates_path} not found (gate manifest is missing)") from e
+    except OSError as e:
+        raise GatesManifestError(f"{gates_path} is unreadable: {e}") from e
+
+    if not raw.strip():
+        raise GatesManifestError(f"{gates_path} is empty (zero bytes of manifest)")
+
+    try:
+        gates = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise GatesManifestError(f"{gates_path} is not valid JSON: {e}") from e
+
+    if not isinstance(gates, list):
+        raise GatesManifestError(
+            f"{gates_path} must contain a JSON array, got {type(gates).__name__}"
+        )
+    if not gates:
+        raise GatesManifestError(f"{gates_path} registers no gates (empty array)")
+    return gates
 
 
 def _verify_gate_registry_wired() -> int:
     """Every ci_step:true enforcer in gates.json must be wired into CHECKS."""
     try:
         gates = _load_gates_json()
-    except (FileNotFoundError, json.JSONDecodeError):
-        return 0
+    except GatesManifestError as e:
+        print(
+            f"  GATE-MANIFEST-UNREADABLE: {e}\n"
+            "  Refusing to report a pass: the gate registry could not be verified.",
+            file=sys.stderr,
+        )
+        return 1
     wired_tools = _ci_step_tools_from_checks()
     issues: list[str] = []
     for gate in gates:
