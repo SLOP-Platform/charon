@@ -71,9 +71,20 @@ rm -rf "$d"
 
 echo "== t5 end-session Phase 2 closes even when deploy fails =="
 d="$(fixture)"
+# Recording git stub. It must also answer the branch-guard and push-gate lookups: $END_SESSION_PRIV
+# is a bare mktemp dir, NOT a git repo, so a stub that only records would return an empty branch
+# and end-session would (correctly) refuse to close — t5 would red on fixture setup rather than on
+# the deploy behaviour it exists to test. Model "on master, clean tree, HEAD == origin/master".
 cat > "$d/git-stub.sh" <<'GIT'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$GITLOG"
+case "$*" in
+  *"branch --show-current"*)      echo "master"; exit 0 ;;
+  *"status --porcelain"*)         exit 0 ;;
+  *"rev-parse --verify origin/"*) echo "0000000000000000000000000000000000000000"; exit 0 ;;
+  *"rev-parse HEAD"*)             echo "0000000000000000000000000000000000000000"; exit 0 ;;
+  *"rev-list --count "*)          echo 0; exit 0 ;;
+esac
 exit 0
 GIT
 chmod +x "$d/git-stub.sh"
@@ -92,6 +103,7 @@ out="$( SESSION=selftest \
         GITLOG="$d/git.log" \
         END_SESSION_CHECK_SH="$d/check-pass.sh" \
         END_SESSION_PRIV="$d" \
+        END_SESSION_SECOND_REPO_CHECK=0 \
         END_SESSION_FILE="$d/HO.md" \
         END_SESSION_DEPLOY_HOOK="$d/deploy-session-end.sh" \
         FLEET="$d" \
