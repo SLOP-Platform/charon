@@ -23,6 +23,13 @@
 #                             constraint was solved, not hand-waved.
 #   (4) ALLOWLIST GUARD     — CI_SUITES is a literal allowlist, not a fleet/tests/*.sh sweep
 #                             (a benchmark grader suite added later must be excluded BY DEFAULT).
+#   (5) VACUOUS-GREEN GUARD — an UNRESOLVABLE diff scope must REFUSE. The pre-fix `_merge_base`
+#                             fell back to the LITERAL "$BASE", git diff failed silently, and the
+#                             board step reported "0 changed ticket(s) checked" rc=0 OVER A
+#                             MALFORMED TICKET. 5a control / 5b unresolvable HEAD / 5c unresolvable
+#                             BASE / 5d anti-over-block (a genuine zero is still green).
+#       (5r) REVERT PROOF   — restoring the fail-OPEN merge-base reproduces the vacuous green,
+#                             which is what makes 5b/5c load-bearing rather than decorative.
 #
 # Run:  bash fleet/tests/rig-ci.test.sh   (exit 0 = all pass)
 set -uo pipefail
@@ -147,6 +154,105 @@ else
 fi
 
 # ---------------------------------------------------------------------------------------------
+# (5) VACUOUS-GREEN GUARD — an UNRESOLVABLE DIFF SCOPE must REFUSE, never report a green receipt
+#     for having checked nothing.
+#
+#     THE LIVE DEFECT THIS REPRODUCES (passed locally, failed on the GitHub runner):
+#     rig-ci.yml set RIG_CI_BASE/RIG_CI_HEAD as JOB-LEVEL env, so the `tests` step inherited them.
+#     The suites under fleet/tests/ build throwaway fixture repos in $TMPDIR, and github.sha does
+#     not exist in those fixtures. `_merge_base` then fell back to the LITERAL "$BASE" string,
+#     `git diff` failed to /dev/null, the changed list came back empty, and cmd_board printed
+#     "board: 0 changed ticket(s) checked" with rc=0 — a MALFORMED TICKET PASSING A GREEN GATE.
+#     Locally the vars are unset, refs resolve, and the defect is invisible. That asymmetry is
+#     exactly why this test drives an unresolvable scope EXPLICITLY rather than trusting a clean
+#     local run.
+# ---------------------------------------------------------------------------------------------
+d5="$(mk_repo)"
+# shellcheck disable=SC2059
+printf "$GOOD_TICKET" wellformed wellformed > "$d5/fleet/board/WELLFORMED.md"
+printf 'repo: charon-private\nwork_class: NOT-A-REAL-CLASS\nbranch: feat/x\nowns: /absolute/path\n\n## Dependencies & Sequence\nw1\n' \
+  > "$d5/fleet/board/MALFORMED.md"
+git -C "$d5" add -A >/dev/null; git -C "$d5" commit -q -m tickets
+FOREIGN_SHA="$(printf 'deadbeef%s' "$(git -C "$d5" rev-parse HEAD | cut -c9-)")"
+
+# (5a) CONTROL — with a RESOLVABLE scope the check really does examine the changed tickets and
+#      reds the malformed one. Without this, 5b/5c could pass for the wrong reason.
+out5a="$(run_scope "$d5" board)"; rc5a=$?
+if [ "$rc5a" -ne 0 ] && grep -qE 'board: [1-9][0-9]* changed ticket\(s\) checked' <<<"$out5a"; then
+  ok "(5a) resolvable scope -> tickets actually examined, malformed one REDs (rc=$rc5a)"
+else
+  bad "(5a) control failed (rc=$rc5a) — 5b/5c would prove nothing: $out5a"
+fi
+
+# (5b) THE CI CONDITION: a HEAD sha that does not exist in this repo (the leaked github.sha).
+out5b="$(RIG_CI_ROOT="$d5" RIG_CI_BASE=master RIG_CI_HEAD="$FOREIGN_SHA" \
+         bash "$d5/fleet/checks/rig-ci-scope.sh" board 2>&1)"; rc5b=$?
+if [ "$rc5b" -ne 0 ] && grep -q 'does not resolve to a commit' <<<"$out5b" \
+   && ! grep -q '0 changed ticket(s) checked' <<<"$out5b"; then
+  ok "(5b) unresolvable HEAD (leaked foreign sha) -> REFUSES, no vacuous green (rc=$rc5b)"
+else
+  bad "(5b) unresolvable HEAD did not refuse (rc=$rc5b): $out5b"
+fi
+
+# (5c) unresolvable BASE — the shallow-clone / missing-base-ref shape.
+out5c="$(RIG_CI_ROOT="$d5" RIG_CI_BASE=origin/nope RIG_CI_HEAD=HEAD \
+         bash "$d5/fleet/checks/rig-ci-scope.sh" board 2>&1)"; rc5c=$?
+if [ "$rc5c" -ne 0 ] && grep -q 'no resolvable diff base' <<<"$out5c" \
+   && ! grep -q '0 changed ticket(s) checked' <<<"$out5c"; then
+  ok "(5c) unresolvable BASE -> REFUSES, no vacuous green (rc=$rc5c)"
+else
+  bad "(5c) unresolvable BASE did not refuse (rc=$rc5c): $out5c"
+fi
+
+# (5d) ANTI-OVER-BLOCK — a resolvable scope whose diff genuinely carries no ticket files is still
+#      a legitimate GREEN at n=0. The fix must distinguish "nothing to check" from "could not
+#      compute the diff", not simply red on every zero.
+d5b="$(mk_repo)"
+printf '#!/usr/bin/env bash\necho hi\n' > "$d5b/fleet/nonticket.sh"
+git -C "$d5b" add -A >/dev/null; git -C "$d5b" commit -q -m nonticket
+out5d="$(run_scope "$d5b" board)"; rc5d=$?
+if [ "$rc5d" -eq 0 ] && grep -q 'board: 0 changed ticket(s) checked' <<<"$out5d"; then
+  ok "(5d) resolvable scope with genuinely zero ticket files -> still GREEN (no over-block)"
+else
+  bad "(5d) over-blocked a legitimate zero-ticket diff (rc=$rc5d): $out5d"
+fi
+
+# (5r) REVERT PROOF: restore the fail-OPEN `_merge_base` (literal-\$BASE fallback) and neuter the
+#      _require_scope guard — i.e. the exact pre-fix code. The unresolvable-HEAD run must then go
+#      back to rc=0 with "0 changed ticket(s) checked": a GREEN receipt over the malformed ticket.
+#      If this ever stops reproducing, 5b/5c are no longer proving anything.
+rev5="$d5/fleet/checks/rig-ci-scope.FAILOPEN.sh"
+python3 - "$SCOPE" "$rev5" <<'PY'
+import sys, re
+src, dst = sys.argv[1], sys.argv[2]
+s = open(src).read()
+# 1) put back the fail-open merge-base + unguarded _changed_files
+s2 = re.sub(r"_resolve_scope\(\)\{.*?\n\}\n",
+            '_resolve_scope(){ git -C "$ROOT" merge-base "$BASE" "$HEAD_REF" 2>/dev/null || echo "$BASE"; }\n',
+            s, count=1, flags=re.S)
+assert s2 != s, "could not neuter _resolve_scope — the revert test would prove nothing"
+s3 = re.sub(r"_changed_files\(\)\{.*?\n\}\n",
+            '_changed_files(){ git -C "$ROOT" diff --name-only --diff-filter=ACMR "$(_resolve_scope)" "$HEAD_REF" 2>/dev/null; }\n',
+            s2, count=1, flags=re.S)
+assert s3 != s2, "could not neuter _changed_files — the revert test would prove nothing"
+# 2) neuter the pre-loop refusal guard
+s4 = re.sub(r"_require_scope\(\)\{.*?\n\}\n", '_require_scope(){ return 0; }\n', s3, count=1, flags=re.S)
+assert s4 != s3, "could not neuter _require_scope — the revert test would prove nothing"
+open(dst, "w").write(s4)
+PY
+if bash -n "$rev5" 2>/dev/null; then
+  out5r="$(RIG_CI_ROOT="$d5" RIG_CI_BASE=master RIG_CI_HEAD="$FOREIGN_SHA" \
+           bash "$rev5" board 2>&1)"; rc5r=$?
+  if [ "$rc5r" -eq 0 ] && grep -q 'board: 0 changed ticket(s) checked' <<<"$out5r"; then
+    ok "(5r) fail-OPEN variant reproduces the vacuous green (rc=0 over a malformed ticket) — 5b/5c are load-bearing"
+  else
+    bad "(5r) could not reproduce the pre-fix vacuous green (rc=$rc5r) — 5b/5c may prove nothing: $out5r"
+  fi
+else
+  bad "(5r) reverted variant is not valid bash — revert proof inconclusive"
+fi
+
+# ---------------------------------------------------------------------------------------------
 # (4) ALLOWLIST GUARD — CI must never glob fleet/tests/.
 # ---------------------------------------------------------------------------------------------
 code_only(){ grep -v '^[[:space:]]*#' "$SCOPE"; }
@@ -156,7 +262,7 @@ else
   bad "(4) rig-ci-scope.sh appears to sweep fleet/tests/* — grader suites would run in CI"
 fi
 
-rm -rf "$d1" "$d2" "$d3"
+rm -rf "$d1" "$d2" "$d3" "$d5" "$d5b"
 echo "----"
 echo "rig-ci.test.sh: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

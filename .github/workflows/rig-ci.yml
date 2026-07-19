@@ -53,19 +53,32 @@ jobs:
     # Hosted by default; vars.CI_RUNNER is UNSET for this repo so this resolves to ubuntu-latest.
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
-    env:
-      # Diff scope for fleet/checks/rig-ci-scope.sh.
-      RIG_CI_BASE: ${{ github.event.pull_request.base.sha || 'origin/master' }}
-      RIG_CI_HEAD: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
+          # fetch-depth 0 is LOAD-BEARING, not a default. A shallow checkout does not contain
+          # pull_request.base.sha, so `merge-base` cannot resolve and the diff scoping refuses
+          # (it now fails CLOSED — see rig-ci-scope.sh:_resolve_scope). Do not lower this.
           fetch-depth: 0   # need base..head history for the diff scoping
 
+      # RIG_CI_BASE / RIG_CI_HEAD are set PER-STEP, never as job-level `env:`.
+      # They were job-level until 2026-07-19, which meant the `tests` step inherited them too --
+      # and the suites below build THROWAWAY FIXTURE REPOS in $TMPDIR that do not contain
+      # github.sha. rig-ci-scope.sh, run against a fixture with a foreign RIG_CI_HEAD, could not
+      # resolve the ref, fell back to a literal string, diffed nothing and reported
+      # "board: 0 changed ticket(s) checked" -> GREEN over a deliberately malformed ticket.
+      # That is why land-push-ci-gate B5b/B5c failed ONLY on the runner and passed locally.
+      # Keep this scoping: no step that runs tests may see these variables.
       - name: Shell syntax (bash -n on CHANGED *.sh only)
+        env:
+          RIG_CI_BASE: ${{ github.event.pull_request.base.sha || 'origin/master' }}
+          RIG_CI_HEAD: ${{ github.sha }}
         run: bash fleet/checks/rig-ci-scope.sh syntax
 
       - name: Board validation (marker-independent, PR-diff-scoped — see header)
+        env:
+          RIG_CI_BASE: ${{ github.event.pull_request.base.sha || 'origin/master' }}
+          RIG_CI_HEAD: ${{ github.sha }}
         run: bash fleet/checks/rig-ci-scope.sh board
 
       - name: Show test allowlist
@@ -73,4 +86,9 @@ jobs:
 
       - name: Rig test suites (ALLOWLIST only — never the full fleet/tests sweep)
         timeout-minutes: 8
-        run: bash fleet/checks/rig-ci-scope.sh tests
+        # Deliberately NO RIG_CI_* env here: the suites build their own fixture repos and must not
+        # inherit this run's diff scope. Also unset defensively in case a future job-level env
+        # reappears -- this is the exact leak that produced the vacuous green.
+        run: |
+          unset RIG_CI_BASE RIG_CI_HEAD RIG_CI_ROOT
+          bash fleet/checks/rig-ci-scope.sh tests

@@ -52,6 +52,14 @@ CI_SUITES=(
   board-correctness.test.sh # hermetic: throwaway board fixture
   parked-semantics.test.sh  # hermetic
   log-prune.test.sh         # hermetic
+  land-push-ci-gate.test.sh # hermetic: throwaway bare remote + gh STUB, no network, ~2s
+  land-safety.test.sh       # hermetic: throwaway bare remotes under mktemp -d; origin is a
+                            # FILESYSTEM path, so land-push's CI gate short-circuits at the
+                            # "origin is not a github.com remote" branch — gh is never invoked
+                            # and nothing leaves the box. ~1s. This is the ONLY suite defending
+                            # the stale-bare-name guard, i.e. the very defect (report success
+                            # while publishing NOTHING) this script exists to prevent; it was
+                            # unenforced in CI until 2026-07-19.
 )
 
 VALID_WORK_CLASSES="bugfix ci-infra design-review docs frontend generalist greenfield-feature money-path refactor rig-meta routing tests"
@@ -65,12 +73,58 @@ info(){ echo "     $*"; }
 # THE load-bearing line of this gate: CI inspects ONLY what the PR touched. Widening this to the
 # whole tree re-introduces the false-RED class the fresh-checkout constraint exists to prevent
 # (see fleet/tests/rig-ci.test.sh test 3, which reverts exactly this).
-_changed_files(){
-  git -C "$ROOT" diff --name-only --diff-filter=ACMR "$(_merge_base)" "$HEAD_REF" 2>/dev/null
+# FAIL CLOSED. `_merge_base` used to `|| echo "$BASE"` — falling back to the LITERAL ref string
+# when the ref would not resolve. `git diff <literal> <head>` then failed to /dev/null, the changed
+# list came back EMPTY, and cmd_board printed "board: 0 changed ticket(s) checked" with rc=0: a
+# GREEN RECEIPT FOR HAVING CHECKED NOTHING. That is the vacuous-green class, the worst gate defect
+# on this rig — uncertainty must never resolve to green.
+#
+# It reproduced ONLY in CI because rig-ci.yml exported RIG_CI_BASE/RIG_CI_HEAD as JOB-LEVEL env, so
+# the `tests` step inherited them and the github.sha in RIG_CI_HEAD leaked into the throwaway
+# fixture repos the suites build — where that sha does not exist. Locally those vars are unset, the
+# refs resolve, and the defect stays invisible. Both ends are now fixed: the workflow scopes the
+# vars to the steps that need them, AND this function refuses rather than guessing.
+#
+# _resolve_scope prints "<merge-base-sha> <head-sha>" and returns 0, or prints a reason to stderr
+# and returns 1. EVERY caller must propagate that non-zero as a RED.
+_resolve_scope(){
+  local b h mb
+  if ! h="$(git -C "$ROOT" rev-parse --verify -q "${HEAD_REF}^{commit}" 2>/dev/null)"; then
+    echo "RED: diff HEAD '$HEAD_REF' does not resolve to a commit in $ROOT (RIG_CI_HEAD)." >&2
+    echo "     Refusing: without a resolvable head the diff is empty and this gate would report" >&2
+    echo "     a GREEN receipt for having checked nothing." >&2
+    return 1
+  fi
+  if ! b="$(git -C "$ROOT" rev-parse --verify -q "${BASE}^{commit}" 2>/dev/null)"; then
+    echo "RED: no resolvable diff base — '$BASE' is not a commit in $ROOT (RIG_CI_BASE)." >&2
+    echo "     Refusing: without a resolvable base the diff is empty and this gate would report" >&2
+    echo "     a GREEN receipt for having checked nothing. Fetch the base ref and rerun." >&2
+    return 1
+  fi
+  if ! mb="$(git -C "$ROOT" merge-base "$b" "$h" 2>/dev/null)" || [ -z "$mb" ]; then
+    echo "RED: '$BASE' and '$HEAD_REF' have no merge base in $ROOT (unrelated histories, or a" >&2
+    echo "     shallow clone missing the common ancestor — check actions/checkout fetch-depth)." >&2
+    echo "     Refusing rather than diffing against nothing and reporting a vacuous GREEN." >&2
+    return 1
+  fi
+  printf '%s %s\n' "$mb" "$h"
 }
 
-_merge_base(){
-  git -C "$ROOT" merge-base "$BASE" "$HEAD_REF" 2>/dev/null || echo "$BASE"
+# Prints the changed-file list. Returns non-zero if the scope could not be computed AT ALL —
+# which is NOT the same as "the diff legitimately contains no matching files".
+_changed_files(){
+  local scope
+  scope="$(_resolve_scope)" || return 1
+  # shellcheck disable=SC2086  # $scope is deliberately word-split: "<base-sha> <head-sha>".
+  git -C "$ROOT" diff --name-only --diff-filter=ACMR ${scope} --
+}
+
+# Process substitution (`< <(...)`) DISCARDS exit status, so a scope failure inside the loop feed
+# would be silently read as "no files" — the vacuous green all over again. Every command that
+# consumes the diff must therefore call this FIRST, before the loop, and return non-zero on refusal.
+_require_scope(){
+  _resolve_scope >/dev/null || { RED=1; return 1; }
+  return 0
 }
 
 # Board files this run is responsible for. DIFF-SCOPED (see above).
@@ -83,10 +137,13 @@ _scoped_sh_files(){
 }
 
 # ---- checks ----------------------------------------------------------------------------------
-cmd_changed(){ _changed_files; }
+# Informational, but it must not print an empty list and exit 0 when the scope is unresolvable —
+# that is the same false receipt in miniature.
+cmd_changed(){ _changed_files || RED=1; return $RED; }
 
 cmd_syntax(){
   local n=0 f
+  _require_scope || return $RED
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     [ -f "$ROOT/$f" ] || continue          # deleted/renamed-away: nothing to parse
@@ -103,13 +160,17 @@ cmd_syntax(){
 
 cmd_board(){
   local n=0 f
+  # Refuse BEFORE the loop. n=0 must mean "the diff genuinely carried no ticket files", never
+  # "I could not compute the diff at all" — those two are indistinguishable in the output line.
+  _require_scope || return $RED
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     [ -f "$ROOT/$f" ] || continue
     n=$((n+1))
     _check_ticket "$ROOT/$f" "$(basename "$f" .md)"
   done < <(_scoped_board_files)
-  echo "board: $n changed ticket(s) checked (marker-independent checks only)"
+  # The diff WAS computed (guarded above), so n=0 here is a real, trustworthy "nothing to check".
+  echo "board: $n changed ticket(s) checked (marker-independent checks only; diff scope resolved)"
   return $RED
 }
 
