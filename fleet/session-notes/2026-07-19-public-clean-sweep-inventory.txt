@@ -1,0 +1,237 @@
+.github/workflows/ci.yml:8:# ADR-0002 §4: the gate carries the SLOP-import boundary check, version
+.github/workflows/heavy.yml:6:# the SLOP embed, (b) the Mode-B image still builds and the fenced service
+.github/workflows/heavy.yml:18:    # behind the SLOP embed).
+.github/workflows/release.yml:48:      - name: SLOP-boundary check (INV-B1/B5)
+README.md:61:curl -fsSL https://github.com/SLOP-Platform/charon/releases/latest/download/install.sh | bash
+README.md:63:wget -qO- https://github.com/SLOP-Platform/charon/releases/latest/download/install.sh | bash
+README.md:74:curl -fsSL https://github.com/SLOP-Platform/charon/releases/latest/download/install.sh -o install.sh
+README.md:82:pipx install git+https://github.com/SLOP-Platform/charon      # or: uvx, or pip install
+README.md:92:curl -fsSL https://github.com/SLOP-Platform/charon/releases/latest/download/install.sh | bash
+README.md:265:This native engine **supersedes the external `charon-private/fleet/` dev harness** for real
+docker-compose.yml:13:  # SLOP (or any operator) talks to it over the HTTP surface; the privileged loop
+docker-compose.yml:26:      # without a deliberate change. In Mode B, SLOP reaches it over the docker
+docs/DECISIONS.md:24:| D003 | Engine workers are **ACP agents** (warm-poolable), **never `claude -p`**. The `charon-private/fleet/` rig is dev-box *build* tooling only; we port its coordination design, not its worker model. | OP | Settled | ADR-0010 (DTC 2026-06-26) |
+docs/PLAN-tier1.md:28:- **Zero SLOP knowledge** (INV-B1/B5). CI boundary check greps the tree for
+docs/PLAN-tier1.md:29:  `slop`/`mediastack` imports/references → fails the build if present.
+docs/PLAN-tier1.md:92:- **Mode A primary:** `pipx install git+https://github.com/SLOP-Platform/charon`
+docs/PLAN-tier1.md:101:GitHub Actions: ruff · mypy · pytest · version-consistency · **SLOP-import
+docs/PLAN-tier2.md:26:   boundary SLOP talks to in Mode B; its security posture is part of this tier.
+docs/PLAN-tier2.md:34:parallelism (Tier 4), the SLOP-side integration adapter (lives in the SLOP repo,
+docs/PLAN-tier2.md:101:  and prints a warning. In Mode B the container + SLOP's fence are the real
+docs/PLAN-tier2.md:153:  leaning on the container/SLOP fence for true isolation. Reviewer: does the HTTP
+docs/PLAN-tier2.md:169:  assert the new service/gateway-port modules carry no SLOP path.
+docs/PLAN-tier2.md:182:  isolation is the Mode-B container under SLOP's fence (INV-B4).
+docs/PLAN-tier2.md:188:Tier-3 SLOP adapter, and carry CRIT holes — deferred to **Tier 2b**, to ship only
+docs/PLAN-tier2.md:228:*Design of record — built WHEN the Tier-3 SLOP consumer lands (not ahead of it):*
+docs/SUPPLY-CHAIN.md:31:   `slop`/`mediastack` import path, directly or transitively (INV-B1/B5).
+docs/SUPPLY-CHAIN.md:68:same day (HANDOFF §9 — GitLab abandoned for the public GitHub `SLOP-Platform`
+docs/SUPPLY-CHAIN.md:106:  names; the public web repo is `github.com/SLOP-Platform/charon`).
+docs/adr/0001-thin-orchestrator-over-established-agents.md:8:- **Repo:** `github.com/SLOP-Platform/charon` *(name TBD)*
+docs/adr/0001-thin-orchestrator-over-established-agents.md:9:- **Relates to:** ADR-0002 (project boundary & SLOP integration)
+docs/adr/0002-project-boundary-and-slop-integration.md:1:# ADR-0002 — Project Boundary & SLOP Integration
+docs/adr/0002-project-boundary-and-slop-integration.md:5:- **Repo:** `github.com/SLOP-Platform/charon` *(name TBD; `charon` is a placeholder)*
+docs/adr/0002-project-boundary-and-slop-integration.md:18:1. **Standalone** — an operator runs it against any project, with no SLOP
+docs/adr/0002-project-boundary-and-slop-integration.md:20:2. **Inside SLOP** — SLOP can include it as a first-class capability.
+docs/adr/0002-project-boundary-and-slop-integration.md:22:The risk is that "embeddable in SLOP" quietly degrades into one of the failure
+docs/adr/0002-project-boundary-and-slop-integration.md:25:dependency where the harness grows SLOP-specific code and stops being
+docs/adr/0002-project-boundary-and-slop-integration.md:35:SLOP  ───depends on──▶  charon          ✅
+docs/adr/0002-project-boundary-and-slop-integration.md:36:charon  ───depends on──▶  SLOP          ❌ never
+docs/adr/0002-project-boundary-and-slop-integration.md:39:The harness has **zero knowledge of SLOP.** No SLOP imports, no SLOP config
+docs/adr/0002-project-boundary-and-slop-integration.md:40:keys, no SLOP-shaped assumptions. This is the single property that makes
+docs/adr/0002-project-boundary-and-slop-integration.md:46:SLOP consumes the harness as a **pinned, versioned dependency**, in two forms:
+docs/adr/0002-project-boundary-and-slop-integration.md:48:- **Python package** — semver-tagged; SLOP pins
+docs/adr/0002-project-boundary-and-slop-integration.md:49:  `charon @ git+https://github.com/SLOP-Platform/charon@vX.Y.Z` (or a registry pin
+docs/adr/0002-project-boundary-and-slop-integration.md:55:and reintroduce the version-drift class (the SLOP governance audit already found
+docs/adr/0002-project-boundary-and-slop-integration.md:57:that across repos). One true home for the harness is the harness repo; SLOP
+docs/adr/0002-project-boundary-and-slop-integration.md:63:  is the harness's primary identity; it is developed and tested as if SLOP did
+docs/adr/0002-project-boundary-and-slop-integration.md:65:- **Mode B — SLOP-managed service (recommended embed).** SLOP runs the harness
+docs/adr/0002-project-boundary-and-slop-integration.md:66:  as one of its orchestrated apps via SLOP's existing manifest/executor system,
+docs/adr/0002-project-boundary-and-slop-integration.md:67:  behind SLOP's control-plane fence. The harness runs as its **own container /
+docs/adr/0002-project-boundary-and-slop-integration.md:68:  process**; SLOP talks to it over the harness's service API. The privileged
+docs/adr/0002-project-boundary-and-slop-integration.md:70:  isolated from SLOP's FastAPI process, and SLOP's fence governs access to it.
+docs/adr/0002-project-boundary-and-slop-integration.md:71:  This is idiomatic: SLOP orchestrates self-hosted apps; the harness is simply
+docs/adr/0002-project-boundary-and-slop-integration.md:73:- **Mode C — SLOP-native workflows (optional, tighter).** A thin SLOP-side
+docs/adr/0002-project-boundary-and-slop-integration.md:74:  client wraps the harness's public API for in-product workflows (e.g., the SLOP
+docs/adr/0002-project-boundary-and-slop-integration.md:75:  UI triggering a run). Lives in the SLOP repo; depends only on the harness's
+docs/adr/0002-project-boundary-and-slop-integration.md:80:> service keeps its blast radius out of SLOP's main process and lets SLOP's
+docs/adr/0002-project-boundary-and-slop-integration.md:82:> would pull the privileged loop inside SLOP's trust boundary for no benefit.
+docs/adr/0002-project-boundary-and-slop-integration.md:86:The harness exposes exactly **three** stable, semver-versioned surfaces. SLOP
+docs/adr/0002-project-boundary-and-slop-integration.md:95:three surfaces are the *port*; SLOP's integration is an *adapter* on SLOP's
+docs/adr/0002-project-boundary-and-slop-integration.md:98:### 2.5 Integration glue lives in SLOP, not in the harness
+docs/adr/0002-project-boundary-and-slop-integration.md:100:No SLOP-specific code ships in the harness repo. The SLOP app manifest, the
+docs/adr/0002-project-boundary-and-slop-integration.md:101:fence wiring, and any Mode-C client are owned by the **SLOP** repo. The harness
+docs/adr/0002-project-boundary-and-slop-integration.md:102:documents its API contract; it does not ship a sample SLOP manifest (that would
+docs/adr/0002-project-boundary-and-slop-integration.md:103:be a second copy of a fact SLOP owns — a derive-or-verify violation across the
+docs/adr/0002-project-boundary-and-slop-integration.md:110:- **INV-B1.** The dependency graph is acyclic; `SLOP → charon` only.
+docs/adr/0002-project-boundary-and-slop-integration.md:111:- **INV-B2.** SLOP depends only on the harness's three public surfaces (§2.4),
+docs/adr/0002-project-boundary-and-slop-integration.md:115:- **INV-B4.** In Mode B, the harness runs as a fenced service; SLOP's
+docs/adr/0002-project-boundary-and-slop-integration.md:116:  control-plane fence governs access. SLOP gets no back door around the autonomy
+docs/adr/0002-project-boundary-and-slop-integration.md:118:- **INV-B5.** No SLOP-specific code exists in the harness repo; SLOP integration
+docs/adr/0002-project-boundary-and-slop-integration.md:119:  lives in the SLOP repo.
+docs/adr/0002-project-boundary-and-slop-integration.md:120:- **INV-B6.** The harness's CI proves Mode A in isolation (no SLOP on the build
+docs/adr/0002-project-boundary-and-slop-integration.md:125:## 4. New-repo hygiene (decisions carried from the SLOP audit)
+docs/adr/0002-project-boundary-and-slop-integration.md:127:The SLOP governance audit surfaced specific failure classes; the new repo starts
+docs/adr/0002-project-boundary-and-slop-integration.md:132:  (SLOP's audit found a substantial agent subsystem hidden from the README, MAP,
+docs/adr/0002-project-boundary-and-slop-integration.md:134:- **CI/CD from day one.** SLOP shipped without CI enforcement. The new repo lands
+docs/adr/0002-project-boundary-and-slop-integration.md:136:  check that fails the build if any `import`/reference to SLOP appears (enforces
+docs/adr/0002-project-boundary-and-slop-integration.md:147:- **Tier 1 — Repo + standalone.** Stand up `SLOP-Platform/charon`, src-layout
+docs/adr/0002-project-boundary-and-slop-integration.md:148:  package, CLI, CI (incl. the SLOP-import boundary check). **Mode A works.**
+docs/adr/0002-project-boundary-and-slop-integration.md:152:- **Tier 3 — SLOP integration adapter (in SLOP repo).** SLOP installs the
+docs/adr/0002-project-boundary-and-slop-integration.md:155:- **Tier 4 — Optional Mode C.** SLOP-native UI workflows over the public API.
+docs/adr/0002-project-boundary-and-slop-integration.md:163:- **Vendored copy inside SLOP.** Rejected: duplicates the source of truth;
+docs/adr/0002-project-boundary-and-slop-integration.md:166:  privileged loop into SLOP's trust boundary with no upside. Retained only as a
+docs/adr/0002-project-boundary-and-slop-integration.md:169:- **Build it inside SLOP, extract later.** Rejected: extraction-after-the-fact is
+docs/adr/0002-project-boundary-and-slop-integration.md:170:  where SLOP-shaped assumptions leak in and cyclic dependencies are born.
+docs/adr/0002-project-boundary-and-slop-integration.md:178:else) and gains nothing it must later shed to stay standalone. SLOP acquires the
+docs/adr/0002-project-boundary-and-slop-integration.md:183:discipline to keep SLOP-specific needs out of the harness (the boundary check
+docs/adr/0002-project-boundary-and-slop-integration.md:184:makes that automatic for code, but design pressure to "just add one SLOP hook"
+docs/adr/0002-project-boundary-and-slop-integration.md:188:SLOP code to remove. If SLOP is retired, the harness is unaffected.
+docs/adr/0003-capability-routed-agent-orchestration-harness.md:52:- **Control-plane discipline.** SLOP keeps a hard control-plane fence (admin
+docs/adr/0003-capability-routed-agent-orchestration-harness.md:113:SLOP auth `slop-auth@file` indirection with Tinyauth/Authelia as adapters.
+docs/adr/0003-capability-routed-agent-orchestration-harness.md:231:Direct analog of the SLOP hard control-plane fence. The orchestrator's
+docs/adr/0003-capability-routed-agent-orchestration-harness.md:313:Mirrors the SLOP auth adapter tier structure: prove the boundary contract before
+docs/adr/0004-routing-gateway-roles-pools-frontend.md:20:- **Standalone, VPS-deployable** app reachable from anywhere; SLOP-embeddable but
+docs/adr/0006-parallel-units-and-work-decomposition.md:17:the operator will route droid fleets through Charon — a real consumer.
+docs/adr/0006-parallel-units-and-work-decomposition.md:83:   consumer (a droid fleet) supplies the unit list. This is the high-value, lowest-
+docs/adr/0007-parallel-work-engine.md:153:  headless `claude -p`, a droid, remote). Arrives **with** the board (same consumer).
+docs/adr/0010-native-work-engine-substrate.md:9:> (the `charon-private/fleet/` rig running `claude -p` droids — how we BUILD Charon here)
+docs/adr/0010-native-work-engine-substrate.md:38:The `charon-private/fleet/` bash rig (board/claim/done/fleet-droid) is the **proven
+docs/adr/0010-native-work-engine-substrate.md:41:([[droid-robot-mode-harness]]); it is not the engine of record.
+docs/adr/0010-native-work-engine-substrate.md:136:## Build sequence (fleet-built, file-disjoint, depends_on-gated)
+docs/adr/0015-work-composition-intelligence.md:33:  `validate_board.sh` + `board.claimable` + `intake.analyze` into one reusable
+docs/adr/0015-work-composition-intelligence.md:58:| **R4** | Product-clean. WCI ships in `src/charon/engine/` only, behind the anti-dilution boundary test. No `tracking.db`, no fleet/, no SLOP. |
+docs/adr/0015-work-composition-intelligence.md:92:  `validate_board.sh` + `board.claimable` + `intake.analyze` into one deterministic
+docs/adr/0016-demand-driven-capability-match.md:17:Verified this session (`fleet/state/POOL-INVESTIGATION.md`): for `deepseek-v4-pro`
+docs/adr/0016-demand-driven-capability-match.md:160:| **Drain-then-park lifecycle** (park drained provider, re-arm per funding class, sole-leg guard) | **TICKETED — R11 DRAIN-THEN-PARK** (parked) + R16 GRACEFUL-DEGRADE | `fleet/board/DRAIN-THEN-PARK.md.parked`; targets `balance.py`, `gateway.py` |
+docs/adr/0016-demand-driven-capability-match.md:161:| **Price source** (sourced table + live feed + no-API change-detect) | **ADOPT, not build** — vendor LiteLLM `model_prices…json` (MIT) + poll OpenRouter `/api/v1/models` + changedetection.io webhooks; thin `price_refresher.py` feeds `model_pricing` (off-hot-path) | new `price_refresher.py` alongside `balance.py`; evidence `fleet/state/PRICING-TOOLS-EVAL.md` |
+docs/adr/0016-demand-driven-capability-match.md:184:| **3** | **PRICE-REFRESHER** (ADOPT, not build) | P | new `price_refresher.py` (disjoint), writes `model_pricing` | #0 mechanism | **Adopt best-in-class instead of building** (see `fleet/state/PRICING-TOOLS-EVAL.md`): vendor LiteLLM `model_prices_and_context_window.json` (MIT — per-provider granularity, 124 providers, CI-refreshed, `source` URLs) as the sourced table replacing R17's hand-TSV; poll OpenRouter `/api/v1/models` on a TTL as the live layer + drift oracle; changedetection.io webhooks feed the zero-coverage providers (nanogpt/neuralwatt/opencode-zen). All write the local `model_pricing` cache; `order_pool_by_live_cost` reads the cache only — **off-hot-path, bottleneck-SAFE**. Thin adapter only; no bespoke scraper. |
+docs/adr/0016-demand-driven-capability-match.md:302:- Tickets: `fleet/board/R46-BALANCE-WIRE.md`, `DRAIN-THEN-PARK.md.parked`,
+docs/adr/0016-demand-driven-capability-match.md:304:  `fleet/state/EXHAUSTION-PARK-TICKETS.md`.
+docs/adr/0016-demand-driven-capability-match.md:305:- Live-config facts + interim edits: `fleet/state/POOL-INVESTIGATION.md`.
+docs/getting-started.md:32:curl -fsSL https://github.com/SLOP-Platform/charon/releases/latest/download/install.sh | bash
+docs/getting-started.md:35:pipx install git+https://github.com/SLOP-Platform/charon
+docs/review-log/ATC-AUDIT.md:126:| ATC-018 | `service/app.py:5`, `cli.py:665-668` | Project-internal references in docstrings (fleet, SLOP, droid) — cosmetic only |
+docs/review-log/BILLING-EST-COST-FIX.md:59:Full suite 1303 passed; `charon.cli gate` all green (ruff / mypy / SLOP-boundary /
+docs/review-log/CI1.md:27:variables on the upstream `SLOP-Platform/charon` repo.**
+docs/review-log/CONSOLE-PROVIDER-MGMT.md:4:**PR:** #77 ([feat/console-provider-mgmt](https://github.com/SLOP-Platform/charon/pull/77))
+docs/review-log/DECOMPOSER-ROUTE-THROUGH-SWITCHBOARD.md:96:- `fleet/capability/assign.py` — rig-side dispatch picker, separate repo /
+docs/review-log/DELETE-STATIC-RANK.md:30:red.  These tests are NOT owned by any concurrent droid; they are part of
+docs/review-log/DOCS-TWO-MODE.md:5:**Owns:** README.md, docs/getting-started.md
+docs/review-log/DOCS-TWO-MODE.md:28:- Product-clean: no SLOP / fleet / build-rig references.
+docs/review-log/DS-PLAN-REVIEW.md:15:Evidence checked: the parked boards under `/home/stack/charon-private/fleet/board/*.md.parked` match the collision matrix in `/home/stack/charon-private/fleet/OPTIMIZATION-PASS.md`.
+docs/review-log/E7.md:20:- Noted the native engine supersedes the `charon-private/fleet/` dev harness (D003) and
+docs/review-log/FB3.md:5:  (it blocked S1 #27 vs E2 on 2026-06-27). Same fix-shape as per-droid mailbox files:
+docs/review-log/FB3.md:28:- **Net:** the shared-append conflict class is structurally gone — droids write only
+docs/review-log/FB5.md:3:**Reviewer:** droid  
+docs/review-log/FORWARDER-RECONCILE.md:5:`feat/wire-tool-repair` (commit `af8d795`) per fleet/state/TOOL-AUDIT-COLLISION.md
+docs/review-log/FORWARDER-RECONCILE.md:102:This droid session did not run these (they mutate the main checkout, which is
+docs/review-log/GATE-INTEGRITY-B.md:37:Per the spec: `validate-board` is fleet-external (an enforcer living outside
+docs/review-log/GATE-INTEGRITY-B.md:48:  so D002/D011 resolve. Excluded: `validate-board` (fleet-external),
+docs/review-log/GATE-PERF.md:18:Independent of every fleet-rig ticket (disjoint repo, disjoint owns).
+docs/review-log/INTAKE1.md:36:- **Nothing SLOP/tracking.db/mediastack-specific in `src/`.** The MVP source is
+docs/review-log/INTAKE1.md:37:  generic markdown; `tools/check_boundary.py src` stays green. The SLOP exporter is
+docs/review-log/README.md:12:a textual merge conflict, a conflicting PR, and no CI. Same fix-shape as per-droid
+docs/review-log/REPO-DECL-CENTRAL.md:8:Added `PRODUCT_REPO` and `FLEET_REPO` declarations to `fleet/_lib.sh` as the ONE
+docs/review-log/RESPONSE-ADAPTER-UNIVERSAL.md:4:**ADR:** `fleet/ADR-UNIVERSAL-RESPONSE-ADAPTER.md` (T1–T5; T6 streaming DEFERRED)
+docs/review-log/RESPONSE-ADAPTER-UNIVERSAL.md:45:- Product-standalone: no home-path/fleet/SLOP/runner refs in `src/` or config.
+docs/review-log/SETUP-UX-A.md:41:  no new dependency; product-clean (no fleet/SLOP/runner leak).
+docs/review-log/TEST-PORT-FLAKE.md:5:**Owns:** tests/test_gateway.py, tests/test_gateway_tiers.py
+docs/review-log/TIER-1.md:22:   "index into order," but the DTC's own fleet contract (`claim.sh` example:
+docs/review-log/TIER-3.md:12:Consumed by `claim.sh` (TIER-5) ONCE before `flock` into a bash assoc array; non-Anthropic
+docs/review-log/TIER-3.md:13:ranks fall out for free. Legacy fallback when absent: `claim.sh` hardcodes
+docs/review-log/TIER-5.md:3:_Wave C · branch `feat/fleet-tier-claim` · depends_on TIER-3 (merged, `charon tier ranks`)._
+docs/review-log/TIER-5.md:4:_owns: `/home/stack/charon-private/fleet/claim.sh` (single file)._
+docs/review-log/TIER-5.md:8:De-hardwire `claim.sh`'s tier ranking: source ranks from `charon tier ranks`
+docs/review-log/TIER-5.md:32:  (`claim.sh:~17` and the `printf ... > "$STATE/claims/$id"` line). `tiers.json` (via
+docs/review-log/TIER-5.md:54:- `bash -n claim.sh` clean; `git diff` shows the **only** change is the `rank()` block — the
+docs/review-log/TIER-5.md:57:  `charon tier ranks` exits 2 → fallback): opus droid drains own (`A-opus`) then lower
+docs/review-log/TIER-5.md:58:  (`B-haiku`); a haiku droid never claims the opus ticket; `own-only` mode does not drop to
+docs/review-log/TIER-5.md:61:  `low 1 / med 2 / high 3 / opus 3 / …` rows): a `high` droid drains rank-3 tickets then
+docs/review-log/TIER-5.md:62:  spills to a `low` ticket; a `low` droid (rank 1) never claims a rank-3 (`high`/`opus`)
+docs/review-log/TIER-5.md:63:  ticket; an alias-named `opus` droid folds to rank 3 and claims a rank-3 ticket. Ranking
+docs/review-log/TIER-5.md:68:`claim.sh` lives in the **`charon-private` build-rig repo** (a single shared working tree,
+docs/review-log/TIER-5.md:69:not per-droid worktrees; same wave, TIER-6 edits `fleet-droid.sh` in that same tree). To
+docs/review-log/TIER-5.md:73:committed on the `feat/fleet-tier-claim` charon branch. The build-rig does not ship with the
+docs/review-log/TIER-6.md:3:**Owns:** `/home/stack/charon-private/fleet/fleet-droid.sh` (fleet build-rig; ships nowhere
+docs/review-log/TIER-6.md:32:- `bash -n fleet-droid.sh` → syntax OK.
+docs/review-log/TIER-6.md:40:Single owned file edited; no Charon source touched; no `claim.sh` (TIER-5). POSIX-bash, no new
+docs/review-log/WORK-CONVERGE-REVIEW.md:10:This ticket produced a REVIEW + DESIGN-OF-RECORD (no build) converging the SLOP (mediastack) and Charon (fleet rig) work processes into ONE modular, portable "get-work-done" tool. The design is the operator-requested authority document that feeds B5 (obol-adr-0008) and B6 (work-engine-d10).
+docs/review-log/WORK-CONVERGE-REVIEW.md:14:SIDE-BY-SIDE comparison of both processes, BEST-OF-BOTH extraction, MODULAR TOOL design (6 first-class modules with portable ENGINE + thin project-specific ADAPTERS), and MIGRATION PLAN for SLOP onto the converged engine.
+docs/review-log/WORK-CONVERGE-REVIEW.md:18:1. **Charon's engine is the destination.** Its stdlib-only, ports-and-adapters architecture, epoch-fenced claims, fenced execution, and diff-scope guard make it the right substrate. SLOP's strengths (DToC, per-finding review reconciliation, gated session lifecycle, self-policing team, file-size ratchets) are ADOPTED as adapters or separate modules, not as competing engines.
+docs/review-log/WORK-CONVERGE-REVIEW.md:22:3. **Six-phase migration for SLOP.** Phase 1 (obol ships, parallel run) → Phase 2 (tracking.db mirrors to obol) → Phase 3 (SLOP droids claim via obol) → Phase 4 (SLOP adopts fenced execution) → Phase 5 (model unification via capability engine) → Phase 6 (consolidation: retire tracking.db, unified session bridge). Each phase is SLA-bounded.
+docs/review-log/WORK-CONVERGE-REVIEW.md:31:- SLOP mediastack process: verified by code-reading `.claude/mailbox/droid_loop.sh`, `.claude/mailbox/JOIN-PROMPT.md`, `.claude/mailbox/TEAM-PROTOCOL.md`, `.claude/mailbox/claim_work.sh`, `.claude/mailbox/end_session.sh`, `.claude/mailbox/heartbeat.sh`, `.claude/mailbox/warden.sh`, `.claude/mailbox/warden_tick.sh`, `.claude/mailbox/tier_route.py`, `.claude/mailbox/note_work.sh`, `.claude/mailbox/subtask.sh`, `tracking/query.py`, `docs/REVIEW-LOG.md`, `docs/CORE_RULES.md`, `docs/droid-ticket-work-onboarding.md`
+docs/review-log/WORK-CONVERGE-REVIEW.md:32:- Coordinator doctrine v2: sourced from `(rig) fleet/COORDINATOR-DOCTRINE-v2.md` (APPROVED 2026-07-08, 4-lens adversarial review, 21 decision narrowing, 13 rules, 6 open decisions)
+docs/review-log/WORK-CONVERGE-REVIEW.md:33:- obol v2 design: sourced from `(rig) fleet/PLAN-PORTABLE-ORCHESTRATION-STORE.md` (7 consensus blocker-fixes, 3 operator rulings, full schema + architecture)
+docs/review-log/WORK-CONVERGE-REVIEW.md:40:- 6 open decisions deferred to operator (Section 7): engine package name, engine home repo, obol daemon lifecycle, SLOP droid loop future, coordinator model floor, KSF adoption scope
+docs/review-log/github-unwind.md:1:## 2026-06-25 — UNWIND GitLab → public GitHub `SLOP-Platform` org (HANDOFF §9)
+docs/review-log/github-unwind.md:8:  `github.com/SLOP-Platform/charon`, CI on the shared self-hosted **4-LOM** runner
+docs/review-log/github-unwind.md:11:- **Remote:** `origin` set to `git@github.com:SLOP-Platform/charon.git` (SSH,
+docs/review-log/github-unwind.md:43:  `github.com/SLOP-Platform/charon` and `registry.gitlab.com/...` →
+docs/review-log/hygiene-adr0005.md:19:  functional tokens (`slop`/`mediastack` import-guard, `4-lom` label, `Nnyan` LICENSE
+docs/review-log/tier1-plan.md:21:| BR-4 | CI grep for `slop` trivially bypassed; transitive `ms-router` could import SLOP (HIGH) | **ACCEPT** | Boundary check is an **AST import scan** (`ast.walk`, catches `import`, `from`, `__import__("...")` literals), not a grep. Runtime guard: `assert 'slop' not in sys.modules` at startup. No `ms-router` dependency — routing is native/static, so no transitive SLOP path exists. |
+docs/review-log/tier1-plan.md:29:| OOB-C4 | A ~500-LOC bash script gets 80% of the value (MED) | **REJECT as deliverable, accept as discipline** | The requirement is an installable, versioned, SLOP-embeddable package with three public surfaces — bash is none of those. But the lesson lands: Tier 1 stays genuinely thin, git is the source of truth for `lkg_ref`, no formalism beyond what a public API needs. |
+docs/review-log/tier1-plan.md:30:| OOB-C5 | "Charon" collides with Plan 9 / NASA tooling (LOW) | **ACKNOWLEDGE** | Operator-chosen; `SLOP-Platform/charon` namespace is clear; non-blocking. |
+docs/review-log/tier1-plan.md:38:4. AST boundary check + runtime SLOP guard; no `ms-router` dep.
+docs/review-log/tier2-plan.md:22:| OOB2-4 / BR2-1,2,3,6,9 | Service fronts the privileged loop with no consumer until Tier 3 (SLOP-side), and carries CRIT holes: `accept[]` are shell commands (`acceptance.py:54` `shell=True`) run from an untrusted caller; `repo` param = arbitrary FS path/SSRF; `task_id` path-traversal in `Ledger.load`; DoS via unbounded `budget`/concurrency; no auth by default. | **ACCEPT — SPLIT to Tier 2b** | The in-process fence explicitly does **not** bound a determined local agent (README already says only the Mode-B container does), so a bare Mode-A HTTP run-endpoint is genuinely dangerous, and it has **no consumer** until the Tier-3 SLOP adapter. Shipping it rushed = net liability. This build (**Tier 2a**) ships the handoff core + a Docker **build-smoke** (image doesn't bit-rot) only. The live `POST /v1/runs` endpoint + GHCR **publish-on-tag** become **Tier 2b**, gated on the full Lens-A hardening: reject untrusted `repo` on the service path; cap `budget`/concurrency + request size; require `CHARON_SERVICE_TOKEN` for any non-loopback bind; sandbox or operator-trust-document the acceptance exec; real subprocess HTTP test. Enumerated in PLAN-tier2 §"Reconciled scope" as 2b prerequisites. |
+docs/review-log/tier2-plan.md:31:| OOB2-6 / D1 | Gateway deferral (BR-3) has no defined "green" criteria → Tier 2.5 is blocked-by-undefined, not blocked-by-process. | **ACCEPT** | Ship `SUPPLY-CHAIN.md` now: audit criteria (no SLOP path via AST scan, OpenAI-compat only, pinned version, `pip-audit` clean), verification SOP, and sign-off gate. The gateway **client port** itself stays unbuilt until needed (YAGNI — no unused port clutter); the doc is the gate. |
+docs/review-log/tier2-plan.md:34:| D5 | Is folding both Tier-2s one tier too big? | **RESOLVED: yes — split.** | Tier 2a = handoff + multi-backend (serves Mode A now, low blast radius). Tier 2b = service + publish (gated on hardening + a consumer). The coupling "Mode B needs both" is real but Mode B's consumer is Tier-3 SLOP-side — no reason to ship the endpoint ahead of it. |
+docs/review-log/tier2b-dtc.md:21:  Tier-3 SLOP consumer, never ahead of it.
+docs/review-log/web-dashboard.md:11:  Tier-3 SLOP consumer (R3). Deferred-and-NOT-built (per R3): web config/pool
+install.sh:11:#   curl -fsSL https://github.com/SLOP-Platform/charon/releases/latest/download/install.sh | bash
+install.sh:12:#   wget -qO- https://github.com/SLOP-Platform/charon/releases/latest/download/install.sh | bash
+install.sh:27:REPO="${CHARON_REPO:-git+https://github.com/SLOP-Platform/charon}"  # source spec for pip/pipx
+install.sh:358:  info "Help & docs:  https://github.com/SLOP-Platform/charon#readme"
+pyproject.toml:30:Homepage = "https://github.com/SLOP-Platform/charon"
+pyproject.toml:31:Repository = "https://github.com/SLOP-Platform/charon"
+src/charon/__init__.py:5:This package has ZERO knowledge of SLOP (ADR-0002 INV-B1/B5). The runtime guard
+src/charon/__init__.py:6:below fails loudly if SLOP was somehow pulled into the process.
+src/charon/__init__.py:19:# ADR-0002 INV-B5 runtime guard: Charon must never share a process with SLOP.
+src/charon/capability/scorecard.py:7:must NOT import the rig grader (fleet/benchmark) — it only reads/writes
+src/charon/cli.py:766:# tier_rank). Two commands are fleet-critical machine-parseable entrypoints:
+src/charon/cli.py:767:#   `ranks`   — consumed by claim.sh (TIER-5) ONCE before flock; one line per
+src/charon/cli.py:769:#   `resolve` — consumed by fleet-droid.sh (TIER-6) to turn a tier arg into the
+src/charon/cli.py:1824:                               "(for fleet-droid.sh TIER-6; machine-parseable stdout)")
+src/charon/engine/reconcile.py:4:``validate_board.sh``, :meth:`board.Board.claimable`, and :func:`intake.analyze`
+src/charon/gate_runner.py:11:    (["python3", "tools/check_boundary.py", "src"], "SLOP-boundary"),
+src/charon/lifecycle.py:9:    1. LINK    — provider add / key link  (fleet/add-provider.sh → ``config.add_provider``)
+src/charon/lifecycle.py:11:    3. PREFLIGHT — screen NEW models (OOB-graded)  (fleet/benchmark/preflight.sh)
+src/charon/lifecycle.py:165:        "wire the MODEL-PREFLIGHT runner (fleet/benchmark/preflight.sh) via "
+src/charon/parallel.py:108:    deterministic demo + test path; a real consumer (a droid fleet) supplies a
+src/charon/service/app.py:5:and PLAN-tier2.md §8): the web process that SLOP reaches MUST NOT run the
+tests/test_boundary.py:65:def test_from_mediastack_import_is_flagged(tmp_path: Path) -> None:
+tests/test_boundary.py:67:    f.write_text("from mediastack.core import thing\n")
+tests/test_boundary.py:68:    assert any("mediastack" in v for v in scan_file(f))
+tests/test_boundary.py:72:    # BR-4: the AST scan catches a literal __import__ argument naming SLOP.
+tests/test_check_test_patterns.py:188:    (fleet/scratch/test-gap-audit.md Q1/Q4) -- a test that authors its own
+tests/test_forwarder_retry_transient.py:4:Root cause (fleet/state/TOOLCALL-ROOTCAUSE.md, 2026-07-13): the "all providers
+tests/test_gate_registry_execution.py:9:This closes the exact bug class ``fleet/state/REACHABILITY-AUDIT.md`` found:
+tests/test_gate_registry_execution.py:86:        "see fleet/state/REACHABILITY-AUDIT.md [[gates-must-actually-run]]"
+tests/test_land.py:225:                       repo_slug="SLOP-Platform/charon", runner=fake_runner)
+tests/test_provider_response_contract.py:14:(``fleet/scratch/test-gap-audit.md``): "does the proxy speak OpenAI to the
+tests/test_provider_response_contract.py:53:    OpenAI-shaped at the top level (fleet/ADR-UNIVERSAL-RESPONSE-ADAPTER.md).
+tests/test_public_clean.py:104:    f.write_text("See charon-private/fleet/\n")
+tools/.public-clean-exceptions.json:42:    "This native engine **supersedes the external `charon-private/fleet/` dev harness** for real"
+tools/.public-clean-exceptions.json:45:    "| D003 | Engine workers are **ACP agents** (warm-poolable), **never `claude -p`**. The `charon-private/fleet/` rig is dev-box *build* tooling only; we port its coordination design, not its worker model. | OP | Settled | ADR-0010 (DTC 2026-06-26) |",
+tools/.public-clean-exceptions.json:52:    "> (the `charon-private/fleet/` rig running `claude -p` droids — how we BUILD Charon here)",
+tools/.public-clean-exceptions.json:53:    "The `charon-private/fleet/` bash rig (board/claim/done/fleet-droid) is the **proven"
+tools/.public-clean-exceptions.json:61:    "Evidence checked: the parked boards under `/home/stack/charon-private/fleet/board/*.md.parked` match the collision matrix in `/home/stack/charon-private/fleet/OPTIMIZATION-PASS.md`."
+tools/.public-clean-exceptions.json:64:    "- Noted the native engine supersedes the `charon-private/fleet/` dev harness (D003) and"
+tools/.public-clean-exceptions.json:78:    "_owns: `/home/stack/charon-private/fleet/claim.sh` (single file)._",
+tools/.public-clean-exceptions.json:79:    "`claim.sh` lives in the **`charon-private` build-rig repo** (a single shared working tree,"
+tools/.public-clean-exceptions.json:82:    "**Owns:** `/home/stack/charon-private/fleet/fleet-droid.sh` (fleet build-rig; ships nowhere"
+tools/.public-clean-exceptions.json:85:    "  `github.com/SLOP-Platform/charon`, CI on the shared self-hosted **4-LOM** runner",
+tools/.public-clean-exceptions.json:91:    "  functional tokens (`slop`/`mediastack` import-guard, `4-lom` label, `Nnyan` LICENSE"
+tools/.public-clean-exceptions.json:114:    "    f.write_text(\"See charon-private/fleet/\\n\")",
+tools/.public-clean-exceptions.json:143:    "    \"enforcer\": \"../charon-private/fleet/validate_board.sh\",",
+tools/.public-clean-exceptions.json:144:    "    \"enforcer\": \"../charon-private/fleet/checks/no-unreachable-paths.sh\","
+tools/_vendor/ksf_gate_result.py:4:Vendored rather than pip-installed per fleet/state/WORK-FRAMEWORK-WIRING-PLAN.md
+tools/check_boundary.py:3:"""SLOP-boundary check (ADR-0002 INV-B1/B5; reconciliation BR-4).
+tools/check_boundary.py:23:FORBIDDEN = ("slop", "mediastack")
+tools/check_boundary.py:110:        print("SLOP-boundary VIOLATION (ADR-0002 INV-B1/B5):", file=sys.stderr)
+tools/check_boundary.py:114:    print(f"boundary OK: no SLOP references under {root}/")
+tools/check_no_rig_import.py:5:The rig grader (fleet/benchmark + grader_daemon) must NEVER be a live routing
+tools/check_test_patterns.py:140:    (fleet/scratch/test-gap-audit.md, Q1/Q4)."""
+tools/gates.json:4:    "name": "SLOP-boundary check",
+tools/gates.json:7:    "covers": "no SLOP/build-rig references in src/",
+tools/gates.json:56:    "enforcer": "../charon-private/fleet/validate_board.sh",
+tools/gates.json:186:    "enforcer": "../charon-private/fleet/checks/no-unreachable-paths.sh",
