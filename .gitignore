@@ -19,6 +19,14 @@ fleet/state/*
 # ...except the config-drift source registry (CONFIG-SOURCES ticket) — local + gateway,
 # durable; config-drift.sh reads this to detect provider siloing.
 !fleet/state/CONFIG-SOURCES.tsv
+# ...except the BENCH-PROVISIONAL-SCORING design of record (#20 — operator-led
+# deep-dive 2026-07-16). Durable design artifact, sibling to PATH-C-DOGFOOD-EVAL
+# / EVAL-TAXONOMY / EVAL-PIPELINE-DESIGN / S8-GRACEFUL-DEGRADE-DESIGN above;
+# tracked so a build session / #26 rebase can read it without checking out a
+# branch. (Other long-lived design docs in fleet/state/ are tracked; this
+# exemption exists because the blanket `fleet/state/*` is otherwise more
+# restrictive than the original design-doc pattern.)
+!fleet/state/BENCH-PROVISIONAL-SCORING-DESIGN.md
 
 # --- scratch / logs ---
 *.log
