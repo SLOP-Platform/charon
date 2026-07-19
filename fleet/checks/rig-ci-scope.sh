@@ -67,6 +67,11 @@ CI_SUITES=(
                             # guard makes skip the dispatch entirely). Its one network case dials
                             # RFC 5737 TEST-NET-1, which is unroutable by definition, under a 3s
                             # timeout — nothing leaves the box. ~20s.
+  stranded-work.test.sh     # hermetic: real git repos + a real local BARE remote under mktemp -d;
+                            # PR state is injected as a TSV fixture (SW_PR_FIXTURE), so `gh` is
+                            # never invoked and nothing leaves the box. ~2s. Guards the recurring
+                            # stranded-work detector, including its never-report-clean-when-
+                            # undetermined contract.
 )
 
 VALID_WORK_CLASSES="bugfix ci-infra design-review docs frontend generalist greenfield-feature money-path refactor rig-meta routing tests"
