@@ -13,6 +13,57 @@ serial_justified: check_inert_code.py and inert-code-disposition.json are one de
   meaningless until the detector can SEE the instance-inert pattern, so the two cannot be built in
   parallel — they are strictly sequential halves of one change.
 accept: |
+  ### EXTENDED 2026-07-19 — SR-8 IS THE SAME SIX MODULES, AND ITS "DONE" IS A FALSE RECEIPT.
+  This ticket ABSORBS the SR-8 wiring work; no separate SR-8 ticket is to be created. Two
+  independent passes reached these same six modules from opposite directions (this ticket from the
+  detector's blindspot, SR-8 from an operator-approved "WIRE all 6 modules" scope), which is
+  corroboration, not duplication.
+  SR-8 WAS MARKED DONE AND NEVER BUILT — a second REPO-DECL-CENTRAL [[gates-must-actually-run]]
+  [[document-model-self-report-lies]]. Rig commit 50af47c ("SR-8 found ABSENT") still names SR-8 as
+  the open wire-or-remove decision. SR-8's done-marker is therefore a FALSE RECEIPT and the ticket
+  must RETURN TO LIVE STATUS. Do NOT delete the marker by hand: marker integrity is owned by
+  MARKER-PROOF-MECHANIZE (write-time proof refusal + fleet/checks/marker-proof.sh), which is the
+  MECHANISM that must retire it. SR-8's marker is a concrete fixture case for that ticket.
+
+  RE-VERIFIED ON PRODUCT MASTER ebaec2e, 2026-07-19 (supersedes the 2026-07-16 line numbers below,
+  which have DRIFTED — the construction site moved into a module-spec table):
+    - constructor kwargs: src/charon/proxy_server.py:490-500 (observability:493,
+      request_inspector:496, session_affinity:497, speculative_executor:498, consensus_router:499,
+      virtual_key_manager:500).
+    - construction: src/charon/gateway.py:81-102, via the `_MODULE_SPECS` lambda table
+      (Observability:81, RequestInspector:89, SessionAffinity:91, SpeculativeExecutor:93,
+      ConsensusRouter:97, VirtualKeyManager:102) — NOT gateway.py:258-296 as first recorded.
+    - storage: src/charon/proxy_server.py:~575-586 via `self.modules.get("<name>")`.
+    - INVOCATION SITES: still ZERO for all six. Total refs across src/charon/ are 5 each
+      (7 for Observability: +types.py:200 ObsTarget docstring) and EVERY ref is
+      define / import / kwarg / factory-register — none is a call. The only `self.<attr>`-shaped
+      hit outside those lines is gateway.py:675 `if cfg.request_inspector is not None:` — a CONFIG
+      presence test, not an invocation of the instance.
+    - DETECTOR STILL BLIND: `python3 tools/check_inert_code.py` -> `check_inert_code: OK`, rc=0,
+      65 dead symbols all dispositioned, and NOT ONE of the six appears among them.
+
+  SCOPE SPLIT — (a) IS NOT OPTIONAL, (b) IS AN OPERATOR DECISION:
+    (a) THE DETECTOR FIX IS THE CLASS FIX AND IS MANDATORY. It ships in this ticket regardless of
+        what happens to the six modules. Fixing six modules by hand leaves the detector blind to
+        the seventh.
+    (b) WIRE-OR-REMOVE IS PER-MODULE AND IS THE OPERATOR'S CALL. The ticket must SURFACE the
+        choice for each of the six with its rationale (what wiring would cost, what removing would
+        lose, what the module was for) and RECORD the operator's answer. It must NOT silently
+        pick, and it must not treat the pre-existing WIRING-AUDIT-MATRIX map as the decision
+        already made — that map is INPUT to the decision, not the decision
+        [[adversarial-review-must-not-silently-override-operator]]. A disposition written without
+        a recorded operator answer fails this ticket.
+
+  ANTI-OVER-BLOCK IS AS BINDING AS THE DETECTION (see FAIL-ON-REVERT (2)). The fix must flag a
+  constructed-but-never-invoked instance AND must NOT flag a genuinely-used one. A detector that
+  reds on live code gets suppressed into uselessness — which is how it went blind originally.
+
+  WARNING — `check_inert_code` RUNNING GREEN TODAY IS EXACTLY THE FALSE-GREEN CLASS. Its OK is the
+  DEFECT under repair, not evidence of health. A test that still passes with the detector fix
+  REMOVED is WORTHLESS here: it is measuring the blindness, not the sight. Reviewer: physically
+  revert the detector diff and confirm test (1) goes RED before accepting.
+
+  --- original 2026-07-16 body follows ---
   PROBLEM (the detector is GREEN and BLIND — 6 live examples already in the tree). Six gateway modules
   are constructed and stored but NEVER INVOKED. VERIFIED on product master 2026-07-16 — do NOT
   re-research:
@@ -57,6 +108,10 @@ accept: |
     (3) DISPOSITION IS HONEST: assert every one of the 6 named modules is present in
         inert-code-disposition.json with an explicit wire|retire disposition. Silently dropping one ->
         RED. Prevents "fixing" the detector by suppressing its findings.
+        EXTENDED 2026-07-19: each of the 6 entries must ALSO carry a non-empty recorded rationale
+        for its wire|retire choice (the operator's answer per scope-split (b)). An entry with an
+        empty/absent rationale -> RED. This is what stops the disposition pass from silently
+        deciding what is an operator call.
 
   GREEN-IS-NOT-PROOF (explicit, and it is the literal subject of this ticket): `check_inert_code: OK`
   is GREEN TODAY with 6 provably-inert modules in the tree. The detector's own green output is the
@@ -98,7 +153,14 @@ ds: |
     the interventions are downstream tickets the manager boards from the disposition file.
   wave: strong refill 2026-07-16. Frontier may claim down.
   repo: charon (product).
-note: Created 2026-07-16 from fleet/session-notes/2026-07-16-evidence/audit-harvest.md item 2
+note: EXTENDED 2026-07-19 — absorbed the SR-8 wiring scope (same six modules, reached
+  independently) rather than boarding a duplicate ticket. SR-8's done-marker is a false receipt;
+  SR-8 returns to live status and MARKER-PROOF-MECHANIZE is the mechanism that retires the marker
+  (do not hand-delete). Evidence re-verified on product master ebaec2e; construct-site line numbers
+  corrected (gateway.py:81-102 `_MODULE_SPECS`, not :258-296). Detector still GREEN with all six
+  inert. Scope is now explicitly (a) MANDATORY detector class-fix + (b) per-module wire-or-remove
+  surfaced as an OPERATOR decision with recorded rationale.
+  Created 2026-07-16 from fleet/session-notes/2026-07-16-evidence/audit-harvest.md item 2
   (WIRING-AUDIT-MATRIX rows 9-14). Dep-gated behind CAPABILITY-ACTUALS-DEADREF-CLEANUP (hard collision
   on both owned tools/ files). Detector fix is the leverage — it repairs WORK-GATE-UNIVERSAL Gate B.
 </content>
