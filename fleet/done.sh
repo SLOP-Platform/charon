@@ -44,17 +44,25 @@ merged_pr_for_branch(){
   else gh pr list --repo "$REPO_SLUG" --head "$br" --state merged --json number -q '.[0].number' 2>/dev/null || true; fi
 }
 
-# merged PR touching ANY of the ticket's `owns:` files (gh only; skipped under the offline fixture).
+# merged PR touching ANY of the ticket's `owns:` files. ZERO `gh --search` calls — the gh-cache
+# extracts a "<pr#>\t<path>" index from a SINGLE batched `gh pr list --json number,files` per
+# repo (TTL 120s), and this function is a local grep. GitHub's SEARCH API is 30 req/MIN (10x
+# tighter than core); a per-owns `gh pr list --search "$path"` was the next-to-burn limit
+# (audit: done.sh called it per owns entry in done.gate and retire-done sweeps).
+# Offline fixture: GH_MERGED_FILES_FIXTURE=<file> (TSV "<pr#>\t<path>") — used by the
+# fail-on-revert test (test_github_limits.sh) to prove ZERO gh calls per owns match.
 merged_pr_touching_owns(){
   local owns="$1"; [ -n "$owns" ] || return 0
-  [ -z "${DONE_MERGED_SRC:-}" ] || return 0
+  # GH_MERGED_FILES_FIXTURE is the test seam; an empty files fixture (or none) returns empty,
+  # and we never fall back to the live SEARCH API (the whole point of this rewrite).
+  if [ -n "${DONE_MERGED_SRC:-}" ]; then return 0; fi   # legacy branch-only fixture: no files
   command -v gh >/dev/null 2>&1 || return 0
+  command -v merged_prs_touching_file >/dev/null 2>&1 || return 0
   local p pr; local IFS=','
   for p in $owns; do
     p="$(printf '%s' "$p" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"; [ -n "$p" ] || continue
-    pr="$(gh pr list --repo "$REPO_SLUG" --state merged --search "$p" --json number,files \
-            -q "map(select(any(.files[]; .path==\"$p\")))|.[0].number" 2>/dev/null || true)"
-    [ -n "$pr" ] && [ "$pr" != "null" ] && { echo "$pr"; return 0; }
+    pr="$(merged_prs_touching_file "$REPO_SLUG" "$p" 2>/dev/null || true)"
+    [ -n "$pr" ] && { echo "$pr"; return 0; }
   done
   return 0
 }
