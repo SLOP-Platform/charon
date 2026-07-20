@@ -36,6 +36,7 @@ import json
 import os
 import threading
 import time
+import urllib.request
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -63,6 +64,16 @@ _AUTO_REARM_MIN_USD = 0.0
 # ---------------------------------------------------------------------------
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse to follow redirects — these requests carry the provider key as a
+    Bearer, and urllib does NOT strip Authorization cross-host, so a 302 from a
+    balance endpoint would hand the key to whatever host it points at. Same
+    stance as ``providers.list_models`` and the key probe."""
+
+    def redirect_request(self, *a, **k):  # noqa: ANN002, ANN003
+        return None
+
+
 def _poll_deepseek(base_url: str, api_key: str, timeout: float) -> float | None:
     """DeepSeek ``GET /user/balance`` → return remaining USD."""
     import urllib.request
@@ -72,9 +83,7 @@ def _poll_deepseek(base_url: str, api_key: str, timeout: float) -> float | None:
     req.add_header("User-Agent", BROWSER_UA)
     req.add_header("Authorization", "Bearer " + api_key)
     try:
-        resp = urllib.request.build_opener(
-            urllib.request.HTTPRedirectHandler
-        ).open(req, timeout=timeout)
+        resp = urllib.request.build_opener(_NoRedirect()).open(req, timeout=timeout)
         data = json.loads(resp.read(100_000).decode("utf-8", "replace"))
     except Exception:  # noqa: BLE001
         return None
@@ -101,9 +110,7 @@ def _poll_openrouter(base_url: str, api_key: str, timeout: float) -> float | Non
     req.add_header("User-Agent", BROWSER_UA)
     req.add_header("Authorization", "Bearer " + api_key)
     try:
-        resp = urllib.request.build_opener(
-            urllib.request.HTTPRedirectHandler
-        ).open(req, timeout=timeout)
+        resp = urllib.request.build_opener(_NoRedirect()).open(req, timeout=timeout)
         data = json.loads(resp.read(100_000).decode("utf-8", "replace"))
     except Exception:  # noqa: BLE001
         return None
@@ -132,9 +139,7 @@ def _poll_nanogpt(base_url: str, api_key: str, timeout: float) -> float | None:
     req.add_header("Content-Type", "application/json")
     req.add_header("Authorization", "Bearer " + api_key)
     try:
-        resp = urllib.request.build_opener(
-            urllib.request.HTTPRedirectHandler
-        ).open(req, timeout=timeout)
+        resp = urllib.request.build_opener(_NoRedirect()).open(req, timeout=timeout)
         data = json.loads(resp.read(100_000).decode("utf-8", "replace"))
     except Exception:  # noqa: BLE001
         return None
@@ -243,16 +248,28 @@ class BalanceTracker:
                 self._fixed_balances[provider] = 0.0
             raw["starting_usd"] = float(start)
         elif mode == "poll":
-            # Resolve balance_key_env → api_key
-            base_url = raw.get("balance_base_url") or raw.get("base_url")
+            # Resolve the balance key. A balance API is a companion endpoint of
+            # the provider's own API, so it must live on the SAME host as the
+            # provider base — otherwise a balance_base_url (which used to be
+            # persisted with no validation at all) would be a second way to
+            # steer a real key at an arbitrary host.
+            from . import providers as _prov
+            from . import secrets as _sec
+            provider_base: str | None
+            try:  # the provider's own API base (a preset one lives in the preset)
+                provider_base = _prov.resolve(provider, raw).base_url
+            except ValueError:
+                provider_base = raw.get("base_url")
+            base_url = raw.get("balance_base_url") or provider_base
             if base_url:
                 raw["base_url"] = str(base_url)
             be = raw.get("balance_key_env") or raw.get("key_env")
-            if be and isinstance(be, str):
-                raw["api_key"] = os.environ.get(be) or raw.get("api_key", "")
-                if not raw["api_key"]:
-                    from . import secrets as _sec
-                    raw["api_key"] = _sec.load_secrets().get(be, "")
+            if provider_base and not _sec.same_host(base_url, provider_base):
+                raw["api_key"] = ""  # off-host balance endpoint: send no key
+            elif be and isinstance(be, str):
+                raw["api_key"] = _sec.get_provider_key(
+                    provider, key_env=be, base_url=provider_base or base_url
+                ) or raw.get("api_key", "")
             ttl_raw = raw.get("balance_ttl")
             if ttl_raw is not None:
                 try:

@@ -178,7 +178,7 @@ def test_provider_add_key_not_echoed(home, monkeypatch):
             # Config summary must not leak the key
             st2, body2, _ = _req(base + "/charon/config", token="t")
             # Key IS stored in secrets
-            assert secrets.load_secrets().get("MOCKTEST_KEY") == "sk-secret-12345"
+            assert secrets.load_secrets().get("provider:mocktest") == "sk-secret-12345"
         finally:
             server.shutdown()
     finally:

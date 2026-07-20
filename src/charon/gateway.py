@@ -520,23 +520,44 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
             name = str(payload.get("name") or "").strip()
             base_url = payload.get("base_url") or None
             preset = P.resolve(name, {"base_url": base_url} if base_url else None)  # validates
-            key_env = (payload.get("key_env") or preset.key_env) or None
             key = (payload.get("key") or None)
             skip_probe = bool(payload.get("skip_probe"))
+            # KEY-EXFIL FIX: a caller-supplied ``key_env`` is IGNORED here. key_env
+            # is a shared env-var NAME, so honouring it over the network let a
+            # caller alias another provider's key onto a base of their choosing.
+            # Keys written through this handler are stored per PROVIDER ID; the
+            # env indirection stays a local-operator (CLI/config) concern only.
+            existing = config.load_providers().get(name) or {}
+            try:  # the base this provider resolves to TODAY (None → brand new)
+                current = P.resolve(name, existing)
+                current_base, key_env = current.base_url, current.key_env
+            except ValueError:
+                current_base, key_env = None, None
+            effective_base = base_url or preset.base_url
             # Validate the key BEFORE persisting (probe a real completion),
             # unless the operator explicitly opted out (token-gated / limited-
             # access keys where even /models isn't reachable pre-activation).
             probe = None
-            if key_env and key:
-                effective_base = base_url or preset.base_url
+            if key:
                 probe = config.validate_provider_key(
                     name, effective_base, str(key), skip_probe=skip_probe)
                 if not probe.get("valid"):
                     return 400, {"error": {"message": probe["message"]}, "probe": probe}
-            config.add_provider(name, base_url=base_url, key_env=key_env,
+            elif base_url and not secrets.same_base(effective_base, current_base):
+                # Moving a provider to a base it was not vetted for, with no fresh
+                # key: whatever key already resolves for it would ride along. Only
+                # an operator re-supplying a key that validates against the NEW
+                # base re-establishes that binding.
+                if secrets.get_provider_key(name, key_env=key_env,
+                                            base_url=current_base) is not None:
+                    return 400, {"error": {"message": (
+                        "changing base_url for a provider that has a stored key "
+                        "requires re-supplying the key so it can be validated "
+                        "against the new base")}}
+            config.add_provider(name, base_url=base_url,
                                 strip_v1=(preset.strip_v1 if base_url else None))
-            if key_env and key:
-                secrets.set_secret(str(key_env), str(key))
+            if key:
+                secrets.set_provider_key(name, str(key))
             _reload()
             return 200, {"ok": True, "provider": name, "probe": probe}
         if action == "models":
@@ -562,9 +583,9 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
             name = str(payload.get("provider") or "").strip()
             overrides = config.load_providers().get(name)
             preset = P.resolve(name, overrides)  # validates the provider/base
-            key_env = (overrides or {}).get("key_env") or preset.key_env
             secrets.apply_to_env()
-            api_key = os.environ.get(key_env) if key_env else None
+            api_key = secrets.get_provider_key(
+                name, key_env=preset.key_env, base_url=preset.base_url)
             try:
                 found = P.list_models(name, overrides, api_key=api_key)
             except ValueError:

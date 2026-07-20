@@ -149,6 +149,10 @@ def _cmd_ledger(args: argparse.Namespace) -> int:
 def _cmd_gateway(args: argparse.Namespace) -> int:
     from . import gateway, secrets
     secrets.apply_to_env()  # load stored provider keys (0600 user-local file) into env
+    # Promote any legacy {key_env: value} secrets to per-provider entries. Idempotent
+    # and non-destructive, so an existing deploy on a mounted config volume converges
+    # across restarts instead of needing a flag day.
+    secrets.migrate_provider_secrets()
     # default config source = the user-local config dir (where `providers add` /
     # `charon setup` write), so the gateway "just works" after setup with no flags.
     state_dir = args.state_dir or (None if args.config else str(secrets.config_dir()))
@@ -178,7 +182,9 @@ def _cmd_providers(args: argparse.Namespace) -> int:
             if p.key_env is None:
                 state = "no key needed"
             else:
-                state = "key SET" if os.environ.get(p.key_env) else "key MISSING"
+                have = secrets.get_provider_key(
+                    name, key_env=p.key_env, base_url=p.base_url)
+                state = "key SET" if have else "key MISSING"
             note = f" — {p.note}" if p.note else ""
             print(f"{name:12} {p.base_url:34} key_env={p.key_env or '-':20} [{state}]{note}")
         return 0
@@ -211,9 +217,12 @@ def _cmd_providers(args: argparse.Namespace) -> int:
             print(f'provider "{args.name}" saved, but no key entered — add it later '
                   f"with `{_invocation_name()} providers add {args.name}`", file=sys.stderr)
             return 2
-        path = secrets.set_secret(key_env, value)
-        print(f'stored {key_env} in {path} (0600) {_mask_key(value)}'
-              f' + provider "{args.name}" in config.')
+        # Stored against the PROVIDER, not the env-var name — see secrets.py.
+        # ``--key-env`` stays accepted and persisted so an existing `.env`
+        # deployment keeps resolving, but it is no longer a write target.
+        path = secrets.set_provider_key(args.name, value)
+        print(f'stored the key for "{args.name}" in {path} (0600) {_mask_key(value)}'
+              f" + provider in config (key_env {key_env} still honoured).")
         return 0
     if args.action == "test":
         return _provider_test(args.name, args.base_url)
@@ -241,8 +250,9 @@ def _import_models(name: str, *, free_only: bool = False, into_pool: str | None 
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return None
-    key_env = (overrides or {}).get("key_env") or preset.key_env
-    api_key = os.environ.get(key_env) if key_env else None
+    from . import secrets
+    api_key = secrets.get_provider_key(
+        name, key_env=preset.key_env, base_url=preset.base_url)
     try:
         found = providers.list_models(name, overrides, api_key=api_key)
     except Exception as exc:  # network/HTTP/parse — report, don't crash
@@ -510,9 +520,9 @@ def _cmd_setup(args: argparse.Namespace) -> int:
             if key_env:
                 key = getpass.getpass(f"  paste the API key for {name} [blank to skip]: ")
                 if key:
-                    secrets.set_secret(key_env, key)
+                    secrets.set_provider_key(name, key)
                     stored = True
-                    print(f"  key stored (0600, as {key_env}) {_mask_key(key)}")
+                    print(f"  key stored (0600, for provider '{name}') {_mask_key(key)}")
                     err = _probe_key(preset, key)
                     if err:
                         print(f"  WARNING: key check failed — {err}", file=sys.stderr)

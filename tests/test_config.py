@@ -79,7 +79,8 @@ def test_setup_wizard_end_to_end(monkeypatch, tmp_path):
     assert "gpt-4o" in models and models["deepseek-chat"]["free"] is True
     assert pools["auto"] == ["gpt-4o", "deepseek-chat"]
     secs = secrets.load_secrets()
-    assert secs["OPENROUTER_API_KEY"] == "sk-or" and secs["DEEPSEEK_API_KEY"] == "sk-deep"
+    # Keys are stored per PROVIDER, never under the shared env-var name (KEY-EXFIL FIX).
+    assert secs["provider:openrouter"] == "sk-or" and secs["provider:deepseek"] == "sk-deep"
 
 
 def test_setup_no_tty_exits_gracefully(monkeypatch, tmp_path):
@@ -122,7 +123,8 @@ def test_providers_add_custom_persists_provider(monkeypatch, tmp_path):
                    "--key-env", "DEEPSEEK_KEY", "--key", "sk-deep"])
     assert rc == 0
     assert config.load_providers()["deepseek"]["base_url"] == "https://api.deepseek.com/v1"
-    assert secrets.load_secrets()["DEEPSEEK_KEY"] == "sk-deep"
+    assert config.load_providers()["deepseek"]["key_env"] == "DEEPSEEK_KEY"
+    assert secrets.load_secrets()["provider:deepseek"] == "sk-deep"
     os.environ.pop("DEEPSEEK_KEY", None)
 
 

@@ -90,10 +90,9 @@ def _find_trusted_models(config_dir: str | Path) -> list[tuple[str, str, str]]:
             model_id=mid, provider=prov_name, base_url=base_url
         ):
             continue
-        key_env = prov.get("key_env") or resolved.key_env
-        if not key_env:
-            continue
-        api_key = os.environ.get(key_env) or secs.get(key_env)
+        api_key = secrets.get_provider_key(
+            prov_name, key_env=prov.get("key_env") or resolved.key_env,
+            base_url=base_url, secs=secs)
         if not api_key:
             continue
         trusted.append((mid, base_url, api_key))

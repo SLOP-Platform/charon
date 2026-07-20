@@ -8,7 +8,7 @@ import os
 import urllib.error
 import urllib.request
 
-from charon import config, gateway, secrets
+from charon import config, gateway, providers, secrets
 from charon.gateway import GatewayConfig
 
 
@@ -44,11 +44,14 @@ def test_web_setup_writes_config_and_hot_reloads(monkeypatch, tmp_path):
         st, _, _ = _req(base + "/charon/providers", "POST", token="t",
                         body={"name": "openrouter"})
         assert st == 200
-        assert config.load_providers()["openrouter"]["key_env"] == "OPENROUTER_API_KEY"
+        # key_env is resolved from the built-in preset — the web handler no longer
+        # persists (or accepts) one, so it can never bind a key to a chosen name.
+        assert "openrouter" in config.load_providers()
+        assert providers.resolve("openrouter", None).key_env == "OPENROUTER_API_KEY"
 
         # store the key manually (CONSOLE-PROVIDER-MGMT: when a real key is sent
         # through the web, the endpoint probes it first — tested separately)
-        secrets.set_secret("OPENROUTER_API_KEY", "sk-or")
+        secrets.set_provider_key("openrouter", "sk-or")
 
         # write a model referencing it
         st, _, _ = _req(base + "/charon/models", "POST", token="t",

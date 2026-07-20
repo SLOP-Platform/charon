@@ -102,6 +102,15 @@ echo "OPENROUTER_API_KEY=sk-..." >> .env
 `.env` is gitignored; values flow into the container env and Charon's
 `apply_to_env()` makes them available to the matching `key_env`.
 
+A key supplied this way is read-only and **bound to the base URL its built-in
+preset declares** — it is never sent anywhere else. Keys stored by Charon itself
+(`providers add --key`, the setup wizard, the web console) are saved against the
+PROVIDER rather than the env-var name, since an env-var name can be shared by
+several providers. On first start the gateway copies any legacy
+`{key_env: value}` entries in `secrets.json` across; the copy is idempotent and
+non-destructive, so restarts and rollbacks on a mounted volume both stay safe,
+and no action is needed on an existing deployment.
+
 ### (c) Bring your own config
 
 If you already have a populated `~/.charon` on the host, mount it instead of the

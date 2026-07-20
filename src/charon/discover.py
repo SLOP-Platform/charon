@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
-import os
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -17,6 +16,14 @@ from . import config, providers, secrets
 from .netutil import BROWSER_UA  # shared browser-like UA (P5 — Cloudflare 1010)
 
 _COST_MAP_FILE = "cost_map.json"
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse to follow redirects — a redirect could otherwise carry the provider
+    key to another host (urllib does NOT strip Authorization cross-host)."""
+
+    def redirect_request(self, *a, **k):  # noqa: ANN002, ANN003
+        return None
 
 
 def discover_provider(base_url: str, api_key: str | None,
@@ -44,7 +51,9 @@ def discover_provider(base_url: str, api_key: str | None,
         req.add_header("Authorization", "Bearer " + api_key)
 
     try:
-        resp = urllib.request.urlopen(req, timeout=timeout)
+        # Redirects disabled: the key rides as a Bearer and urllib does NOT strip
+        # Authorization cross-host, so a 302 here would hand it to another host.
+        resp = urllib.request.build_opener(_NoRedirect()).open(req, timeout=timeout)
         raw = resp.read()
         data = json.loads(raw.decode("utf-8", "replace"))
     except Exception:  # noqa: BLE001
@@ -152,9 +161,7 @@ def discover_models(refresh: bool = False, timeout: int = 10,
         key_env = override.get("key_env", preset.key_env)
         strip = override.get("strip_v1", preset.strip_v1)
 
-        api_key: str | None = None
-        if key_env:
-            api_key = os.environ.get(key_env) or secs.get(key_env)
+        api_key = secrets.get_provider_key(name, key_env=key_env, base_url=base, secs=secs)
 
         targets.append((name, base, api_key, strip))
         seen.add(name)
@@ -166,9 +173,9 @@ def discover_models(refresh: bool = False, timeout: int = 10,
         if not isinstance(base, str):
             continue
         key_env = prov.get("key_env")
-        api_key = None
-        if isinstance(key_env, str):
-            api_key = os.environ.get(key_env) or secs.get(key_env)
+        api_key = secrets.get_provider_key(
+            name, key_env=key_env if isinstance(key_env, str) else None,
+            base_url=base, secs=secs)
         strip = prov.get("strip_v1", True)
         targets.append((name, base, api_key, strip))
 

@@ -1,10 +1,11 @@
 """Model config store — load/save models, bulk import, enabled toggle."""
 from __future__ import annotations
 
+import re
 import warnings
 from pathlib import Path
 
-from ._store import _check_id, _load, _save
+from ._store import _check_id, _load, _save, _validate_base_url
 
 _COST_CLASSES: tuple[str, ...] = (
     "free-daily", "expiring", "prepaid", "metered", "premium",
@@ -62,6 +63,13 @@ def add_model(model_id: str, *, provider: str | None = None, upstream_base: str 
     _check_id("model", model_id)
     if provider is None and upstream_base is None:
         raise ValueError("a model needs either provider= or upstream_base=")
+    if upstream_base is not None:
+        # A direct entry binds upstream_base + key_env straight onto the forward
+        # path (routing_policy._route_from_spec), so it gets the same SSRF/base
+        # guard a provider's base_url does — it used to get none.
+        _validate_base_url(str(upstream_base))
+    if key_env is not None and not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", str(key_env)):
+        raise ValueError(f"invalid key-env name {key_env!r}")
     if cost_rank is not None:
         _warn_static_cost_rank_dropped(model_id, cost_rank)
     models = load_models()
