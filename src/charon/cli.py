@@ -178,6 +178,29 @@ def _warn_unsendable_keys() -> None:
                 f"`{_invocation_name()} providers add {name} --key ...` so it is "
                 f"stored against the provider.",
                 file=sys.stderr)
+
+        # Direct model entries carrying their own upstream_base + key_env. These
+        # live in models.json and are NOT reachable by iterating providers, so
+        # round 5 documented a WARNING for them (docs/docker.md) that the code
+        # never emitted — the operator read the doc, saw no warning, concluded
+        # they were fine, and the model 401'd silently in production.
+        for model_id, spec in sorted(config.load_models().items()):
+            if not isinstance(spec, dict):
+                continue
+            key_env = spec.get("key_env")
+            base = spec.get("upstream_base")
+            if not key_env or not base or not os.environ.get(key_env):
+                continue
+            if secrets.get_provider_key(
+                    model_id, key_env=key_env, base_url=base) is not None:
+                continue
+            print(
+                f"WARNING: model {model_id!r} has a key under ${key_env} but it will "
+                f"NOT be sent: that key is not bound to this model's upstream base "
+                f"({base}). Re-supply it with "
+                f"`{_invocation_name()} providers add <provider> --base-url {base} "
+                f"--key ...` so it is stored against the provider.",
+                file=sys.stderr)
     except Exception:  # noqa: BLE001 — diagnostics must never block startup
         pass
 

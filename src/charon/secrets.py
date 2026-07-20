@@ -1,5 +1,14 @@
 """User-local secret storage for the gateway setup flow (ADR-0005 P3.5).
 
+**Read docs/adr/0019-provider-key-egress-choke-point.md before changing the
+resolver or the storage shape.** It records why the shared ``key_env`` env-var-NAME
+indirection was fatal (validate-here / send-there), why the base binding is
+enforced on READ rather than on write, and the five-round failure history in which
+every fix that looked obviously correct was bypassed. The per-provider secret
+model and the base-binding invariant below are the parts that must survive any
+future transport swap — unlike ``netutil``'s hand-rolled hardening, which that ADR
+marks as a stopgap to be deleted rather than ported.
+
 Provider API keys must NEVER live in the repo (operator hard rule). They go in a
 **0600 user-local file** (`~/.charon/secrets.json`, or `%APPDATA%\\charon` on
 Windows). Nothing here ever prints a key.

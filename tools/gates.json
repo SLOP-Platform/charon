@@ -111,6 +111,16 @@
     "red_proof": "tests/test_check_security.py"
   },
   {
+    "id": "key-egress",
+    "name": "Key-egress choke-point gate",
+    "domain": "key-egress",
+    "enforcer": "tools/check_key_egress.py",
+    "covers": "Authorization headers and outbound sends outside src/charon/netutil.py, across src/, tools/ and tests/",
+    "ci_step": true,
+    "invariant": "Only src/charon/netutil.py may construct or send an outbound request, so a key-bearing redirect-following sender is unrepresentable elsewhere",
+    "red_proof": "tests/test_key_egress_gate.py"
+  },
+  {
     "id": "test-patterns",
     "name": "Test-pattern enforcement gate",
     "domain": "test-patterns",

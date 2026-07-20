@@ -27,6 +27,15 @@ ALL_DOMAINS: frozenset[str] = frozenset({
     "boundary", "security", "arch", "test", "test-patterns",
     "lint", "type", "version", "registry", "gate", "fleet", "docs", "decisions",
     "public-clean", "inert", "ci-infra", "no-rig-import", "reachability",
+    # "catalog" was reported as an unknown domain for as long as the
+    # catalog-case-quant gate has existed — registered here rather than left as
+    # standing noise, because a permanently-noisy registry is one nobody reads.
+    "catalog",
+    # Key egress is its own domain, not a sub-case of "security": the security
+    # scanner is a stdlib AST walk over src/, while this one drives Semgrep over
+    # src/, tools/ AND tests/. Folding them would recreate the coupling that let
+    # check (e) inherit `root="src"` and silently never scan tools/.
+    "key-egress",
 })
 
 

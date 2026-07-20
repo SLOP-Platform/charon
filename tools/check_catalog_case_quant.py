@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# @covers: catalog
 """Catalog case/quant-mismatch detector (mechanizes directive #30).
 
 The pseudo-success compare (`proxy._normalize_model_id`) is case- and

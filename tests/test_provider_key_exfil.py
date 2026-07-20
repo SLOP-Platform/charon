@@ -790,3 +790,33 @@ def test_balance_and_model_bases_are_validated(monkeypatch, tmp_path):
             config.add_model("m", upstream_base=bad)
     with pytest.raises(ValueError):
         config.add_provider("p", mode="poll", balance_key_env="BAD=NAME")
+
+
+def test_warn_unsendable_keys_covers_model_entries_not_just_providers(
+        monkeypatch, tmp_path, capsys):
+    """docs/docker.md promises a startup WARNING for a model entry carrying its own
+    ``upstream_base`` + ``key_env`` pointing at a host no preset claims.
+
+    ``_warn_unsendable_keys`` iterated providers ONLY, so models.json was never
+    visited and that documented case produced no warning at all — the operator
+    follows the doc, sees nothing, and the model 401s silently in production.
+    """
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    # A key_env a PRESET claims, on a base that preset does not bind. An
+    # UNCLAIMED key_env is deliberately sendable to any base (see
+    # secrets._env_fallback_allowed), so it is specifically the claimed-env /
+    # foreign-base combination that resolves to no key and hard-401s.
+    preset = providers.PRESETS["openrouter"]
+    monkeypatch.setenv(preset.key_env, "sk-present-but-unbound")
+    config.add_model("direct-model", upstream_base="https://unclaimed.example.com/v1",
+                     key_env=preset.key_env)
+
+    from charon import cli
+    cli._warn_unsendable_keys()
+
+    err = capsys.readouterr().err
+    assert "direct-model" in err, (
+        "no WARNING for a model entry whose key cannot be sent — docs/docker.md "
+        f"documents this case. stderr was: {err!r}")
+    assert preset.key_env in err
+    assert "sk-present-but-unbound" not in err, "the warning leaked the key value"

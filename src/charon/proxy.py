@@ -101,6 +101,7 @@ class ProxyObservation:
     pseudo_success: bool  # 200 but the gateway silently served a different model
     dropped: bool = False  # 404: model is gone — drop from the pool, not retry
     transient: bool = False  # exhausted AND self-heals in ms — retry-once-same-provider
+    refused_redirect: bool = False  # 3xx: netutil declined to follow — fail over
     retry_after: int | None = None
     usage: Usage | None = None
     note: str = ""
@@ -109,7 +110,7 @@ class ProxyObservation:
     @property
     def failover(self) -> bool:
         """True iff the coordinator should route this model's role elsewhere."""
-        return self.exhausted or self.pseudo_success or self.dropped
+        return self.exhausted or self.pseudo_success or self.dropped or self.refused_redirect
 
 
 def _retry_after(headers: dict | None) -> int | None:
@@ -399,6 +400,14 @@ class GatewayProxy:
         transient = exhausted and _is_transient_billing_error(body, status)
         auth_error = _is_auth_error(body, status)
         dropped = status in _DROP_STATUSES or _is_unsupported_model(body, status)
+        # netutil.open_keyed refuses redirects (urllib does NOT strip Authorization
+        # cross-host), so a provider that starts 30x-ing surfaces here as a bare
+        # 3xx with an empty body. Round 5 left this at failover=False, which meant
+        # the operator's agent got an inexplicable empty 301 relayed verbatim with
+        # NO failover to a healthy sibling and nothing in the log — for causes as
+        # ordinary as trailing-slash canonicalisation or a regional endpoint move.
+        # The refusal itself is logged at WARNING by netutil.open_keyed.
+        refused_redirect = 300 <= status < 400
         # pseudo-success: a 200 that silently served a different model than asked.
         # Use normalized comparison to avoid false-positives when an upstream returns
         # the model id with a provider prefix (e.g. "openai/gpt-4" vs "gpt-4").
@@ -438,6 +447,9 @@ class GatewayProxy:
             note = f"exhausted: status={status} {hint}".strip()
         elif auth_error:
             note = f"auth: status={status} {_error_type(body)}".strip()
+        elif refused_redirect:
+            note = (f"refused redirect: status={status} — provider redirected and the "
+                    f"Authorization header is not stripped cross-host; failing over")
         elif dropped:
             reason = "model gone" if status in _DROP_STATUSES else "unsupported here"
             note = f"dropped: status={status} {_error_type(body)} ({reason})".strip()
@@ -452,6 +464,7 @@ class GatewayProxy:
             pseudo_success=pseudo,
             dropped=dropped,
             transient=transient,
+            refused_redirect=refused_redirect,
             retry_after=_retry_after(headers),
             usage=usage,
             note=note,

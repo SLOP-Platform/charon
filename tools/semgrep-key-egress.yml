@@ -1,0 +1,126 @@
+# Key-egress choke point — Semgrep rules.
+#
+# WHY SEMGREP AND NOT A HAND-ROLLED AST LINTER
+# --------------------------------------------
+# The predecessor (`tools/check_security.py` check (e), removed in round 6) was
+# written by hand against the two call spellings that happened to exist in the
+# tree. A round-5 adversarial reviewer EXECUTED a complete key-bearing,
+# redirect-following exfil sender that the linter passed with exit 0: both of its
+# arms were nested inside `isinstance(node.func, ast.Attribute)`, so every
+# bare-name call (`from urllib.request import urlopen; urlopen(r)`) was invisible,
+# and the header-name arm required an `ast.Constant`, so `"Auth" + "orization"`,
+# an f-string, or a variable walked straight past it. It also exempted any path
+# ENDING in `charon/netutil.py`, making any nested `charon/netutil.py` a gate-free
+# zone, and the gate invoked it with no argument so `tools/` and `tests/` were
+# never scanned at all.
+#
+# Semgrep is a CI/lint tool, not a runtime import, so adopting it does NOT breach
+# the stdlib-only core invariant (`pyproject.toml` `dependencies = []`). It is in
+# the `dev` extra alongside ruff/mypy. It resolves import aliases natively, which
+# is the specific property the hand-rolled linter could not cheaply reproduce.
+#
+# STOPGAP NOTICE: this rule set exists because the core is stdlib-only TODAY and
+# must therefore hand-roll its no-redirect opener. See docs/adr/0019 — if the
+# LiteLLM adopt (ADR-0017) lands, `requests` strips Authorization cross-host
+# natively via `Session.rebuild_auth` and `httpx` does not follow redirects by
+# default, at which point most of the guarded code should be DELETED, not ported,
+# and these rules retargeted at the adopted client rather than at urllib.
+
+rules:
+  # ── Rule A: src/ and tools/ ────────────────────────────────────────────────
+  # Shipped code. The invariant is structural, not spelling-based: outside the
+  # ONE choke-point module, you may not construct an outbound request and you may
+  # not put one on the wire. Because you cannot build the request, you cannot
+  # attach a credential to it, so the unsafe request is unrepresentable rather
+  # than merely un-spelled. Verified to have ZERO exceptions in src/ and tools/
+  # at the time of writing, which is what makes a hard ban landable here.
+  - id: charon-key-egress-choke-point
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Outbound request construction or sending outside the key-egress choke point
+      (src/charon/netutil.py). Build with netutil.keyed_request(api_key=...) and
+      send with netutil.open_keyed(); open_keyed refuses redirects, which urllib
+      follows WITH the Authorization header still attached. Four rounds of this
+      fix were re-broken by adding a call site — see docs/adr/0019.
+    paths:
+      include:
+        - "src/**"
+        - "tools/**"
+      exclude:
+        # The ONE choke point, pinned by its exact path. NOT a suffix match: the
+        # predecessor's `endswith('charon/netutil.py')` made every nested
+        # `*/charon/netutil.py` an exemption.
+        - "src/charon/netutil.py"
+        # This rule file's own prose, and the gate runner that shells out to it.
+        - "tools/semgrep-key-egress.yml"
+    patterns:
+      - pattern-either:
+          # -- Sending primitives (urllib, all spellings) -------------------
+          # Semgrep resolves `from urllib.request import urlopen as u` to the
+          # fully-qualified name, so the aliased and bare-name forms both match
+          # this single pattern. That is the property the AST linter lacked.
+          - pattern: urllib.request.urlopen(...)
+          - pattern: urllib.request.build_opener(...)
+          - pattern: urllib.request.install_opener(...)
+          - pattern: urllib.request.OpenerDirector(...)
+          - pattern: urllib.request.Request(...)
+          # NOTE: there is deliberately no generic `$OPENER.open(...)` pattern.
+          # It was tried and produced four false positives on real code
+          # (`Path.open`, `os.open`, `webbrowser.open`) while catching nothing
+          # the construction patterns above miss: an opener cannot be `.open()`ed
+          # without first being CONSTRUCTED by `build_opener` or
+          # `OpenerDirector`, both of which are banned outright. Banning the
+          # constructor rather than the method is both narrower and stricter —
+          # `bo().open(r)` and a module-level `_OPENER = build_opener()` are each
+          # caught at the point the opener comes into existence.
+          # -- Header attachment on a request object -----------------------
+          # Fails CLOSED on the header NAME: ANY add_header is a violation
+          # regardless of how the name is spelled, so concatenation, f-strings
+          # and variable indirection have nothing to evade.
+          - pattern: $REQ.add_header(...)
+          # -- Other transports the predecessor knew nothing about ----------
+          - pattern: http.client.HTTPSConnection(...)
+          - pattern: http.client.HTTPConnection(...)
+          - pattern: requests.$METHOD(...)
+          - pattern: requests.Session(...)
+          - pattern: httpx.$METHOD(...)
+          - pattern: httpx.Client(...)
+          - pattern: httpx.AsyncClient(...)
+          # Only OUTBOUND connection establishment. `socketserver` and the
+          # gateway's own inbound listener bind/listen/accept and are untouched,
+          # so no exception is needed for proxy_server.py.
+          - pattern: socket.create_connection(...)
+
+  # ── Rule B: tests/ ────────────────────────────────────────────────────────
+  # Tests are NOT shipped, and they legitimately act as HTTP clients: they stand
+  # up attacker/victim sockets and drive the gateway's own inbound auth, so 66
+  # call sites use urlopen and 44 build a literal Authorization header. Applying
+  # Rule A here would need ~40 exceptions and would produce exactly the noisy
+  # gate that gets switched off — which is the H3 failure mode restated. So the
+  # test-scoped rule targets only the shape that is indefensible IN A TEST: a
+  # header name assembled at runtime rather than written as a visible literal.
+  # A reviewer can read `"Authorization"` and reason about it; `H` or
+  # `"Auth" + "orization"` is either an evasion fixture (which belongs under
+  # tests/fixtures/key_egress/, excluded below) or an obfuscation with no
+  # legitimate purpose.
+  - id: charon-test-obfuscated-auth-header
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Authorization-style header name assembled at runtime instead of written as
+      a literal. This is the exact shape that evaded the round-5 AST linter. If
+      this is a deliberate evasion fixture, move it under
+      tests/fixtures/key_egress/ where the gate test asserts it stays RED.
+    paths:
+      include:
+        - "tests/**"
+      exclude:
+        # The evasion corpus is SUPPOSED to contain these shapes. It is scanned
+        # explicitly, and asserted RED, by tests/test_key_egress_gate.py.
+        - "tests/fixtures/key_egress/**"
+    patterns:
+      - pattern-either:
+          - pattern: $REQ.add_header($NAME + $REST, ...)
+          - pattern: $REQ.add_header(f"...{$X}...", ...)
+      - pattern-not: $REQ.add_header("...", ...)

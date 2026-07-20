@@ -19,7 +19,13 @@ dependencies = []
 
 [project.optional-dependencies]
 service = ["fastapi>=0.110", "uvicorn>=0.29", "pydantic>=2"]
-dev = ["pytest>=8", "pytest-xdist>=3.8", "ruff>=0.4", "mypy>=1.9", "pip-audit>=2.7", "httpx>=0.27"]
+# semgrep drives the key-egress choke-point gate (tools/check_key_egress.py). It
+# is a CI/lint tool like ruff and mypy — never imported at runtime — so it does
+# NOT breach the stdlib-only core invariant above. tools/check_key_egress.py
+# exits 2 (not 0) when it is missing, so a runner without it fails loudly instead
+# of reporting a scan it never performed.
+dev = ["pytest>=8", "pytest-xdist>=3.8", "ruff>=0.4", "mypy>=1.9", "pip-audit>=2.7",
+       "httpx>=0.27", "semgrep>=1.60"]
 # BUILD-time only — never installed into the privileged gateway path (ADR-0005 D5)
 packaging = ["pyinstaller>=6.0"]
 

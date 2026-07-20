@@ -108,8 +108,16 @@ declares** — it is never sent to another host. Keys stored by Charon itself
 PROVIDER rather than the env-var name, since an env-var name can be shared by
 several providers; those are bound to the host they were stored for.
 
-Gateway start only ever READS this directory, so mounting the config volume
-`:ro` is safe, and rotating a key is just editing `.env` and restarting.
+Gateway **start-up** only ever READS this directory, and rotating a key is just
+editing `.env` and restarting.
+
+Do **not**, however, mount the config volume `:ro`. By default the config dir is
+also the state dir, and several components create and persist files there while
+the gateway is *running* — the quality scorer, the balance tracker's auto-park
+state, virtual keys, and the policy router. A read-only mount therefore starts
+cleanly and then silently loses auto-park state and quality scores, or errors
+mid-request. If you want the config genuinely read-only, point state elsewhere
+with `--state-dir` and mount only that directory read-write.
 
 Two cases need action after upgrading an existing deployment — both are reported
 as a `WARNING:` line on stderr at gateway start, naming the provider:
