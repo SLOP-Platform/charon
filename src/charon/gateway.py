@@ -543,21 +543,37 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
                     name, effective_base, str(key), skip_probe=skip_probe)
                 if not probe.get("valid"):
                     return 400, {"error": {"message": probe["message"]}, "probe": probe}
-            elif base_url and not secrets.same_base(effective_base, current_base):
-                # Moving a provider to a base it was not vetted for, with no fresh
-                # key: whatever key already resolves for it would ride along. Only
-                # an operator re-supplying a key that validates against the NEW
-                # base re-establishes that binding.
-                if secrets.get_provider_key(name, key_env=key_env,
-                                            base_url=current_base) is not None:
-                    return 400, {"error": {"message": (
-                        "changing base_url for a provider that has a stored key "
-                        "requires re-supplying the key so it can be validated "
-                        "against the new base")}}
+            # A key that was PROVED to work against the effective base. ``skipped``
+            # is not proof: ``skip_probe`` short-circuits to valid=True with no HTTP
+            # call at all, so treating it as validation let a caller (a) repoint a
+            # provider onto an attacker base and (b) overwrite the operator's real
+            # key with junk — both with a single unauthenticated-to-the-key POST,
+            # since ``skip_probe`` is read straight off the request payload.
+            validated = bool(probe and probe.get("valid") and not probe.get("skipped"))
+            has_stored_key = secrets.get_provider_key(
+                name, key_env=key_env, base_url=current_base) is not None
+            if (base_url and not secrets.same_base(effective_base, current_base)
+                    and not validated and has_stored_key):
+                # Moving a provider to a base it was not vetted for, without a key
+                # proved against that base: whatever key already resolves for it
+                # would ride along. Only an operator re-supplying a key that
+                # VALIDATES against the NEW base re-establishes that binding.
+                return 400, {"error": {"message": (
+                    "changing base_url for a provider that has a stored key "
+                    "requires re-supplying the key so it can be validated "
+                    "against the new base")}}
+            if key and not validated and has_stored_key:
+                # Unprobed writes may ESTABLISH a key, never REPLACE one. That keeps
+                # the documented escape hatch (onboarding a token-gated provider
+                # whose key cannot be probed pre-activation) while removing its
+                # credential-destruction power over an existing key.
+                return 400, {"error": {"message": (
+                    "this provider already has a stored key; replacing it requires a "
+                    "successful probe (skip_probe cannot overwrite an existing key)")}}
             config.add_provider(name, base_url=base_url,
                                 strip_v1=(preset.strip_v1 if base_url else None))
             if key:
-                secrets.set_provider_key(name, str(key))
+                secrets.set_provider_key(name, str(key), base_url=effective_base)
             _reload()
             return 200, {"ok": True, "provider": name, "probe": probe}
         if action == "models":

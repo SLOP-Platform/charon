@@ -58,7 +58,11 @@ def summary() -> dict:
         except ValueError:
             base, ke = e.get("base_url"), e.get("key_env")
         entry: dict[str, Any] = {
-            "base_url": e.get("base_url"),
+            # Both fields report the RESOLVED value. Mixing a resolved key_env with
+            # the raw persisted base_url made the two halves of one dict describe
+            # different providers, and a provider with no persisted base reported
+            # null next to a preset key_env it does resolve.
+            "base_url": base,
             "key_env": ke,
             # Asked through the ONE resolver, so the console reports "key set"
             # exactly when a key would actually be sent — not when some shared

@@ -16,11 +16,9 @@ from __future__ import annotations
 
 import json
 import math
-import urllib.request
 from dataclasses import dataclass, replace
-from urllib.parse import urlsplit
 
-from .netutil import BROWSER_UA  # shared browser-like UA (P5 — Cloudflare 1010)
+from . import netutil  # key-egress choke point + shared BROWSER_UA
 from .provider_presets import MERGED_RAW_DATA  # data merged from category modules
 
 # ── Upstream wire-format vocabulary (SR-6) ─────────────────────────────────────
@@ -101,13 +99,6 @@ PRESETS: dict[str, ProviderPreset] = {
     k: ProviderPreset(**v) for k, v in MERGED_RAW_DATA.items()}
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    """Refuse redirects — a redirect could carry the ``Authorization`` Bearer to
-    another host (urllib does NOT strip it cross-host). Key-exfil guard."""
-    def redirect_request(self, *a, **k):  # noqa: ANN002, ANN003
-        return None
-
-
 _MAX_MODELS_BYTES = 1_000_000  # cap the /models response (memory-DoS guard)
 
 
@@ -135,14 +126,12 @@ def validate_base_url(base_url: str) -> str:
     A falsy ``base_url`` (``""`` or ``None``) raises — callers that treat an
     absent base as non-fatal should branch before calling this (mirrors the old
     ``raw_base = base_url.rstrip("/") if base_url else ""`` sites, which left
-    empty-string.URL construction to the caller)."""
-    parts = urlsplit(base_url)
-    if parts.scheme not in ("http", "https"):
-        raise ValueError(f"invalid base URL scheme {parts.scheme!r}")
-    host = parts.hostname or ""
-    if host.startswith("169.254.") or host == "metadata.google.internal":
-        raise ValueError(f"refusing link-local / metadata host {host!r}")
-    return base_url.rstrip("/")
+    empty-string.URL construction to the caller).
+
+    Re-exported from :mod:`netutil` so the key-egress choke point can apply the
+    same guard without importing this module (``providers`` imports ``netutil``,
+    not the reverse)."""
+    return netutil.validate_base_url(base_url)
 
 
 def join_endpoint(base_url: str, path: str) -> str:
@@ -259,12 +248,8 @@ def list_models(name: str, overrides: dict | None = None, *,
     propagate (the caller reports them)."""
     preset = resolve(name, overrides)
     url = models_url(preset.base_url)
-    req = urllib.request.Request(url, method="GET")
-    req.add_header("User-Agent", BROWSER_UA)
-    if api_key:
-        req.add_header("Authorization", "Bearer " + api_key)
-    opener = urllib.request.build_opener(_NoRedirect())
-    resp = opener.open(req, timeout=timeout)
+    req = netutil.keyed_request(url, api_key=api_key, method="GET")
+    resp = netutil.open_keyed(req, timeout=timeout)
     raw = resp.read(_MAX_MODELS_BYTES + 1)
     if len(raw) > _MAX_MODELS_BYTES:
         raise ValueError("models response too large")

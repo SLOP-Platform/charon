@@ -7,6 +7,8 @@ Scans src/ for:
   (b) Secrets/tokens in string literals
   (c) Hardcoded non-loopback IP addresses in string literals
   (d) ``eval()``, ``exec()``, and ``subprocess.run/call/Popen(..., shell=True)``
+  (e) Key-egress bypass: an ``Authorization`` header built, or an outbound request
+      sent, anywhere except the single choke point in ``src/charon/netutil.py``
 
 Stdlib only. Exit 0 on clean, 1 on violation.
 """
@@ -26,6 +28,58 @@ _SECRET_PATTERNS: list[re.Pattern] = [
 _IP_REGEX = re.compile(r'\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\b')
 
 _SUBPROCESS_FUNCS = frozenset({'run', 'call', 'Popen', 'check_call', 'check_output'})
+
+# ── (e) key-egress choke point ────────────────────────────────────────────────
+# Four consecutive rounds of the provider-key-exfil fix worked by hand-enumerating
+# the key-bearing call sites, and every round missed one — round 4 left the
+# forwarder (the highest-volume send in the product) following redirects with the
+# provider key attached, and two adversarial reviews of that round each missed
+# three MORE unconverted sinks. Enumeration does not converge, so the rule is
+# structural instead: exactly ONE module may attach credentials to an outbound
+# request or put one on the wire. A new send site cannot reintroduce the class
+# because it cannot build the unsafe request in the first place.
+_EGRESS_CHOKE_POINT = 'charon/netutil.py'
+# Sending primitives that bypass netutil.open_keyed's no-redirect opener.
+_BANNED_SENDERS = frozenset({'urlopen', 'build_opener'})
+
+
+def _is_egress_choke_point(path: Path) -> bool:
+    return path.as_posix().endswith(_EGRESS_CHOKE_POINT)
+
+
+def _check_key_egress(node: ast.AST, path: Path) -> list[str]:
+    """(e) Authorization headers and outbound sends belong to netutil ONLY."""
+    violations: list[str] = []
+    if _is_egress_choke_point(path):
+        return violations
+
+    # An Authorization header built via `req.add_header("Authorization", ...)`.
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        if node.func.attr == 'add_header' and node.args:
+            first = node.args[0]
+            if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                if first.value.lower() == 'authorization':
+                    violations.append(
+                        f"{path}:{node.lineno}: builds an Authorization header outside "
+                        f"the key-egress choke point — use netutil.keyed_request(api_key=…)")
+        # An outbound send via `urllib.request.urlopen(...)` / `build_opener(...)`.
+        if node.func.attr in _BANNED_SENDERS:
+            violations.append(
+                f"{path}:{node.lineno}: {node.func.attr}() outside the key-egress "
+                f"choke point — send via netutil.open_keyed() (it refuses redirects, "
+                f"which urllib follows WITH the Authorization header attached)")
+
+    # An Authorization header passed as a dict literal (e.g. to urllib.request.Request
+    # or keyed_request) — the shape that hid one of the misses in round 4.
+    if isinstance(node, ast.Dict):
+        for key in node.keys:
+            if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                if key.value.lower() == 'authorization':
+                    violations.append(
+                        f"{path}:{node.lineno}: Authorization header in a dict literal "
+                        f"outside the key-egress choke point — pass it as "
+                        f"netutil.keyed_request(api_key=…)")
+    return violations
 
 
 def _in_finally(tree: ast.AST, lineno: int) -> bool:
@@ -235,6 +289,8 @@ def scan_file(path: Path) -> list[str]:
                         finally_set.add(sub.lineno)
 
     for node in ast.walk(tree):
+        violations.extend(_check_key_egress(node, path))
+
         if isinstance(node, ast.ExceptHandler):
             violations.extend(_check_except(node, path, source_lines, finally_set, tree))
 

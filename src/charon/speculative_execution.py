@@ -26,13 +26,13 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 
+from . import netutil  # key-egress choke point (keyed_request/open_keyed)
 from .failover_loop import (
     FAILOVER,
     OK,
     AttemptResult,
     invoke_with_failover,
 )
-from .netutil import BROWSER_UA
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ class SpeculativeExecutor:
     def _call_upstream(self, route: object, req: urllib.request.Request) -> SpecResult:
         start = time.monotonic()
         try:
-            resp = urllib.request.urlopen(req, timeout=self.timeout_s)
+            resp = netutil.open_keyed(req, timeout=self.timeout_s)
             body = resp.read()
             result = SpecResult(
                 provider=getattr(route, "label", "unknown"),
@@ -212,9 +212,8 @@ class SpeculativeExecutor:
                 data = json.dumps(parsed).encode()
             except (json.JSONDecodeError, UnicodeDecodeError):
                 pass
-        req = urllib.request.Request(url, data=data, method="POST")
-        req.add_header("User-Agent", BROWSER_UA)  # P5: avoid CF-1010 on provider POST
-        req.add_header("Content-Type", content_type)
-        if api_key:
-            req.add_header("Authorization", f"Bearer {api_key}")
-        return req
+        # Key-egress choke point: the ONLY constructor allowed to attach the
+        # provider key, and open_keyed is the only thing that may send it.
+        return netutil.keyed_request(
+            url, api_key=api_key or None, data=data, method="POST",
+            headers={"Content-Type": content_type})

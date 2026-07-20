@@ -191,7 +191,7 @@ def test_execute_first_good_wins_unaffected() -> None:
             _t.sleep(2.0)
             return _http_response(200, b"{}")
 
-    with mock.patch("charon.speculative_execution.urllib.request.urlopen",
+    with mock.patch("charon.speculative_execution.netutil.open_keyed",
                     side_effect=fake_urlopen):
         result = se.execute(routes, b"{}")
 
@@ -228,7 +228,7 @@ def test_execute_failover_mid_race_yields_next_result() -> None:
     for r in routes:
         r.upstream_base = f"https://{r.label}.example.com"
 
-    with mock.patch("charon.speculative_execution.urllib.request.urlopen",
+    with mock.patch("charon.speculative_execution.netutil.open_keyed",
                     side_effect=fake_urlopen):
         result = se.execute(routes, b"{}")
 
@@ -256,7 +256,7 @@ def test_execute_all_fail_raises_exhaustion() -> None:
     for r in routes:
         r.upstream_base = f"https://{r.label}.example.com"
 
-    with mock.patch("charon.speculative_execution.urllib.request.urlopen",
+    with mock.patch("charon.speculative_execution.netutil.open_keyed",
                     side_effect=fake_urlopen):
         with pytest.raises(RuntimeError) as ei:
             se.execute(routes, b"{}")
@@ -291,7 +291,7 @@ def test_execute_failover_does_not_reissue() -> None:
     for r in routes:
         r.upstream_base = f"https://{r.label}.example.com"
 
-    with mock.patch("charon.speculative_execution.urllib.request.urlopen",
+    with mock.patch("charon.speculative_execution.netutil.open_keyed",
                     side_effect=fake_urlopen):
         with pytest.raises(RuntimeError):
             se.execute(routes, b"{}")

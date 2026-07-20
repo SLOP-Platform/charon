@@ -21,7 +21,7 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from .netutil import BROWSER_UA
+from . import netutil  # key-egress choke point (keyed_request/open_keyed)
 
 # Cap the streamed bytes buffered while looking for the response ``model`` id.
 _STREAM_HEAD_CAP = 65536
@@ -97,14 +97,13 @@ class _RoutingHandler(http.server.BaseHTTPRequestHandler):
 
         req_data = json.dumps(body).encode()
         url = srv.upstream_base + "/chat/completions"
-        req = urllib.request.Request(url, data=req_data, method="POST")
-        req.add_header("User-Agent", BROWSER_UA)  # P5: avoid CF-1010 on provider POST
-        req.add_header("Content-Type", "application/json")
-        if srv.api_key:
-            req.add_header("Authorization", "Bearer " + srv.api_key)
-
         try:
-            resp = urllib.request.urlopen(req, timeout=300)
+            # Key-egress choke point: attaches the Bearer, SSRF-validates the base
+            # and refuses redirects (urllib does NOT strip Authorization cross-host).
+            req = netutil.keyed_request(
+                url, api_key=srv.api_key or None, data=req_data, method="POST",
+                headers={"Content-Type": "application/json"})
+            resp = netutil.open_keyed(req, timeout=300)
         except urllib.error.HTTPError as exc:
             srv.note_request()
             self._relay_error(exc)

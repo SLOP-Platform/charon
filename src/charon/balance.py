@@ -36,14 +36,13 @@ import json
 import os
 import threading
 import time
-import urllib.request
 import uuid
 from collections.abc import Callable
 from pathlib import Path
 from threading import Lock
 from typing import Any
 
-from .netutil import BROWSER_UA  # shared browser-like UA (P5 — Cloudflare 1010)
+from . import netutil  # key-egress choke point (keyed_request/open_keyed)
 
 # AUTO-PARK persistence: the parked-provider set survives a gateway restart by
 # being written to this file under the tracker's ``state_dir`` — same JSON +
@@ -64,26 +63,12 @@ _AUTO_REARM_MIN_USD = 0.0
 # ---------------------------------------------------------------------------
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    """Refuse to follow redirects — these requests carry the provider key as a
-    Bearer, and urllib does NOT strip Authorization cross-host, so a 302 from a
-    balance endpoint would hand the key to whatever host it points at. Same
-    stance as ``providers.list_models`` and the key probe."""
-
-    def redirect_request(self, *a, **k):  # noqa: ANN002, ANN003
-        return None
-
-
 def _poll_deepseek(base_url: str, api_key: str, timeout: float) -> float | None:
     """DeepSeek ``GET /user/balance`` → return remaining USD."""
-    import urllib.request
-
     url = base_url.rstrip("/") + "/user/balance"
-    req = urllib.request.Request(url, method="GET")
-    req.add_header("User-Agent", BROWSER_UA)
-    req.add_header("Authorization", "Bearer " + api_key)
     try:
-        resp = urllib.request.build_opener(_NoRedirect()).open(req, timeout=timeout)
+        req = netutil.keyed_request(url, api_key=api_key, method="GET")
+        resp = netutil.open_keyed(req, timeout=timeout)
         data = json.loads(resp.read(100_000).decode("utf-8", "replace"))
     except Exception:  # noqa: BLE001
         return None
@@ -103,14 +88,10 @@ def _poll_deepseek(base_url: str, api_key: str, timeout: float) -> float | None:
 
 def _poll_openrouter(base_url: str, api_key: str, timeout: float) -> float | None:
     """OpenRouter ``GET /api/v1/credits`` → data.credits (float USD)."""
-    import urllib.request
-
     url = base_url.rstrip("/") + "/credits"
-    req = urllib.request.Request(url, method="GET")
-    req.add_header("User-Agent", BROWSER_UA)
-    req.add_header("Authorization", "Bearer " + api_key)
     try:
-        resp = urllib.request.build_opener(_NoRedirect()).open(req, timeout=timeout)
+        req = netutil.keyed_request(url, api_key=api_key, method="GET")
+        resp = netutil.open_keyed(req, timeout=timeout)
         data = json.loads(resp.read(100_000).decode("utf-8", "replace"))
     except Exception:  # noqa: BLE001
         return None
@@ -130,16 +111,13 @@ def _poll_openrouter(base_url: str, api_key: str, timeout: float) -> float | Non
 
 def _poll_nanogpt(base_url: str, api_key: str, timeout: float) -> float | None:
     """NanoGPT ``POST /api/check-balance`` → balance (float USD)."""
-    import urllib.request
-
     url = base_url.rstrip("/") + "/api/check-balance"
     body = json.dumps({}).encode()
-    req = urllib.request.Request(url, data=body, method="POST")
-    req.add_header("User-Agent", BROWSER_UA)
-    req.add_header("Content-Type", "application/json")
-    req.add_header("Authorization", "Bearer " + api_key)
     try:
-        resp = urllib.request.build_opener(_NoRedirect()).open(req, timeout=timeout)
+        req = netutil.keyed_request(
+            url, api_key=api_key, data=body, method="POST",
+            headers={"Content-Type": "application/json"})
+        resp = netutil.open_keyed(req, timeout=timeout)
         data = json.loads(resp.read(100_000).decode("utf-8", "replace"))
     except Exception:  # noqa: BLE001
         return None
@@ -261,11 +239,19 @@ class BalanceTracker:
             except ValueError:
                 provider_base = raw.get("base_url")
             base_url = raw.get("balance_base_url") or provider_base
+            be = raw.get("balance_key_env") or raw.get("key_env")
+            # Decide the key BEFORE overwriting raw["base_url"]. Writing the
+            # balance base back into the entry first made it the provider's own
+            # base on any second call with the same dict, so `same_host` compared
+            # the balance base against itself, passed, and re-enabled the key send
+            # — the guard silently disarming itself on re-entry.
+            off_host = bool(provider_base) and not _sec.same_host(base_url, provider_base)
             if base_url:
                 raw["base_url"] = str(base_url)
-            be = raw.get("balance_key_env") or raw.get("key_env")
-            if provider_base and not _sec.same_host(base_url, provider_base):
-                raw["api_key"] = ""  # off-host balance endpoint: send no key
+            if off_host:
+                # Off-host balance endpoint: send no key, and do not poll it with an
+                # empty Bearer either (the adapters treat a falsy key as "no key").
+                raw["api_key"] = ""
             elif be and isinstance(be, str):
                 raw["api_key"] = _sec.get_provider_key(
                     provider, key_env=be, base_url=provider_base or base_url

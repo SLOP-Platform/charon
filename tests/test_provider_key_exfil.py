@@ -75,6 +75,14 @@ class _Redirector(http.server.BaseHTTPRequestHandler):
         pass
 
     def _redirect(self):
+        srv = self.server
+        length = int(self.headers.get("Content-Length") or 0)
+        if length:
+            self.rfile.read(length)
+        # Recorded so a test can prove the key really was in flight — otherwise
+        # "the attacker saw nothing" is also true of a request that never carried
+        # a key, and the assertion would be vacuous.
+        srv.seen_auths.append(self.headers.get("Authorization"))  # type: ignore[attr-defined]
         self.send_response(302)
         self.send_header("Location", self.server.target)  # type: ignore[attr-defined]
         self.send_header("Content-Length", "0")
@@ -323,6 +331,109 @@ def test_sink_balance_poller_sends_no_victim_key_off_host(victim_install, monkey
         legit.shutdown(), attacker.shutdown()
 
 
+class _RedirectAfterTransient(http.server.BaseHTTPRequestHandler):
+    """First request → a bare ``503`` (the transient status the forwarder retries
+    ONCE, ``forwarder.py`` RETRY-ONCE), every request after → a 302 at the
+    attacker. Exercises the retry leg specifically: it is a SECOND key-bearing
+    send, and round 4 left both legs following redirects."""
+
+    def log_message(self, *a):
+        pass
+
+    def _reply(self):
+        srv = self.server
+        length = int(self.headers.get("Content-Length") or 0)
+        if length:
+            self.rfile.read(length)
+        srv.hits.append(self.headers.get("Authorization"))  # type: ignore[attr-defined]
+        if len(srv.hits) == 1:  # type: ignore[attr-defined]
+            body = b'{"error":{"message":"service unavailable"}}'
+            self.send_response(503)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        self.send_response(302)
+        self.send_header("Location", self.server.target)  # type: ignore[attr-defined]
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    do_GET = do_POST = _reply
+
+
+def test_forwarder_does_not_follow_redirect_to_attacker(victim_install):
+    """F1 — the round-4 miss, and the highest-volume key-bearing send there is.
+
+    ``_build_upstream_req`` attaches ``Authorization: Bearer <provider key>`` and
+    the two sends used bare ``urllib.request.urlopen``, whose default
+    ``HTTPRedirectHandler`` re-sends that header to the redirect target — urllib
+    does NOT strip Authorization cross-host. A hijacked/lapsed/attacker-operated
+    upstream answering 302 therefore harvested the operator's real provider key on
+    EVERY proxied completion. No local access required.
+
+    The provider here is entirely legitimate — its own base, its own real key — so
+    nothing is mis-bound: the leak is purely the redirect. Both legs are covered,
+    the first attempt and the RETRY-ONCE leg.
+    """
+    attacker = _start()
+    redirector = _start(_Redirector, target=f"{_origin(attacker)}/v1/chat/completions")
+    # Registered directly, as an operator install is: the setup handler's own key
+    # probe refuses a redirecting base (a 302 fails validation), so going through
+    # it could not produce the state under test.
+    config.add_provider("vic", base_url=_base(redirector))
+    secrets.set_provider_key("vic", REAL_KEY, base_url=_base(redirector))
+    server = _serve(victim_install)
+    try:
+        # The model goes in through the handler so it lands in the LIVE routing
+        # table (the provider could not: the setup probe refuses a redirecting base).
+        st, body = _req(server.url + "/charon/models", "POST", token="t", body={
+            "id": "vic-model", "provider": "vic", "upstream_model": "m1"})
+        assert st == 200, body
+
+        _req(server.url + "/v1/chat/completions", "POST", token="t", body={
+            "model": "vic-model", "messages": [{"role": "user", "content": "hi"}]})
+
+        # Positive control: the key really was on the wire to the (legit) upstream,
+        # so this test would notice if the route silently stopped sending one.
+        assert f"Bearer {REAL_KEY}" in redirector.seen_auths, \
+            "route sent no key at all — the redirect assertion below is vacuous"
+        _assert_no_real_key(attacker, "forwarder (302 off a proxied completion)")
+    finally:
+        server.shutdown(), redirector.shutdown(), attacker.shutdown()
+
+
+def test_forwarder_retry_leg_does_not_follow_redirect_to_attacker(victim_install):
+    """The same hazard on the RETRY-ONCE leg (``forwarder.py`` retries a transient
+    503 against the SAME provider): a second key-bearing send, and a second bite at
+    the key if it follows redirects."""
+    attacker = _start()
+    upstream = _start(_RedirectAfterTransient,
+                      target=f"{_origin(attacker)}/v1/chat/completions")
+    upstream.hits = []  # type: ignore[attr-defined]
+    config.add_provider("vic", base_url=_base(upstream))
+    secrets.set_provider_key("vic", REAL_KEY, base_url=_base(upstream))
+    server = _serve(victim_install)
+    try:
+        # The model goes in through the handler so it lands in the LIVE routing
+        # table (the provider could not: the setup probe refuses a redirecting base).
+        st, body = _req(server.url + "/charon/models", "POST", token="t", body={
+            "id": "vic-model", "provider": "vic", "upstream_model": "m1"})
+        assert st == 200, body
+
+        _req(server.url + "/v1/chat/completions", "POST", token="t", body={
+            "model": "vic-model", "messages": [{"role": "user", "content": "hi"}]})
+
+        # The retry leg must actually have run, or the redirect below was never
+        # reached and the assertion proves nothing.
+        assert len(upstream.hits) >= 2, \
+            f"retry leg never fired (hits={upstream.hits!r}) — assertion is vacuous"
+        assert f"Bearer {REAL_KEY}" in upstream.hits, "retry sent no key at all"
+        _assert_no_real_key(attacker, "forwarder RETRY-ONCE leg (302 on retry)")
+    finally:
+        server.shutdown(), upstream.shutdown(), attacker.shutdown()
+
+
 def test_balance_poll_does_not_follow_redirect_to_attacker(victim_install):
     """A key-bearing request must NOT follow a 302: urllib does not strip
     Authorization cross-host, so a redirecting balance endpoint would otherwise
@@ -362,6 +473,176 @@ def test_setup_handler_cannot_overwrite_another_providers_stored_key(victim_inst
         server.shutdown(), legit.shutdown(), attacker.shutdown()
 
 
+def test_skip_probe_cannot_overwrite_a_providers_own_stored_key(victim_install):
+    """The SAME-provider half of the destruction attack, which the cross-provider
+    test above does not reach. ``skip_probe`` is read straight off the request
+    payload and short-circuits validation to ``valid=True`` with no HTTP call, so a
+    single POST used to replace the operator's real key with junk. An unprobed
+    write may ESTABLISH a key, never REPLACE one."""
+    legit = _start()
+    server = _serve(victim_install)
+    try:
+        _add_victim(server, legit)
+        st, body = _req(server.url + "/charon/providers", "POST", token="t", body={
+            "name": "vic", "key": "junk", "skip_probe": True})
+        assert st == 400, body
+        assert secrets.load_secrets()["provider:vic"] == REAL_KEY, \
+            "the provider's own stored key was destroyed via skip_probe"
+    finally:
+        server.shutdown(), legit.shutdown()
+
+
+def test_skip_probe_cannot_repoint_a_provider_onto_an_attacker_base(victim_install):
+    """``skip_probe`` also bypassed the repoint guard entirely: the guard sat in an
+    ``elif`` reached only when NO key was supplied, and a supplied key + skipped
+    probe counted as validation. That persisted an attacker base AND overwrote the
+    key in one unauthenticated-to-the-key call."""
+    legit, attacker = _start(), _start()
+    server = _serve(victim_install)
+    try:
+        _add_victim(server, legit)
+        st, body = _req(server.url + "/charon/providers", "POST", token="t", body={
+            "name": "vic", "base_url": _base(attacker),
+            "key": "junk", "skip_probe": True})
+        assert st == 400, body
+        assert secrets.same_base(
+            providers.resolve("vic", config.load_providers().get("vic")).base_url,
+            _base(legit)), "the attacker base was persisted"
+        _req(server.url + "/charon/models/import", "POST", token="t",
+             body={"provider": "vic"})
+        _assert_no_real_key(attacker, "skip_probe repoint")
+    finally:
+        server.shutdown(), legit.shutdown(), attacker.shutdown()
+
+
+def test_skip_probe_can_still_establish_a_first_key(monkeypatch, tmp_path):
+    """The escape hatch itself survives: onboarding a token-gated provider whose
+    key cannot be probed pre-activation still works. Only REPLACING an existing key
+    and REPOINTING a base are refused."""
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    legit = _start()
+    server = _serve(tmp_path)
+    try:
+        st, body = _req(server.url + "/charon/providers", "POST", token="t", body={
+            "name": "vic", "base_url": _base(legit),
+            "key": "sk-unprobed", "skip_probe": True})
+        assert st == 200, body
+        assert secrets.load_secrets()["provider:vic"] == "sk-unprobed"
+    finally:
+        server.shutdown(), legit.shutdown()
+
+
+def test_stored_provider_key_is_bound_to_its_base(monkeypatch, tmp_path):
+    """F3 — the per-provider store is base-bound too, not just the legacy fallback.
+
+    Step 1 of the resolver used to return the stored key for ANY ``base_url`` the
+    caller passed, and its only compensating control was one ``elif`` in one HTTP
+    handler. Any overlooked write path to ``providers.json[name]["base_url"]`` was
+    therefore an immediate full key exfil with no second line of defence."""
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    secrets.set_provider_key("vic", REAL_KEY, base_url="https://legit.example/v1")
+    assert secrets.get_provider_key(
+        "vic", base_url="https://legit.example/v1") == REAL_KEY
+    # A different PATH on the bound host is the same credential scope.
+    assert secrets.get_provider_key(
+        "vic", base_url="https://legit.example/v2/beta") == REAL_KEY
+    # A different HOST is not — this is the exfil direction.
+    assert secrets.get_provider_key("vic", base_url="https://attacker.example/v1") is None
+    # An entry with no recorded binding fails CLOSED (set_provider_key cannot
+    # create one, so this only arises from a hand-edited/foreign secrets file).
+    secrets.set_secret("STRAY", "x")  # force a rewrite that keeps provider:orphan out
+    secrets._write_secret("provider:orphan", REAL_KEY)
+    assert secrets.get_provider_key("orphan", base_url="https://anywhere.example/v1") is None
+
+
+def test_provider_key_cannot_be_stored_unbound(monkeypatch, tmp_path):
+    """The binding is mandatory — that is what lets the resolver fail closed on a
+    missing one rather than having to fall open for compatibility."""
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    for bad in (None, "", "not-a-url", "file:///etc/passwd"):
+        with pytest.raises(ValueError):
+            secrets.set_provider_key("vic", REAL_KEY, base_url=bad)
+
+
+def test_malformed_port_in_a_base_never_raises(monkeypatch, tmp_path):
+    """F5 — ``parts.port`` sat outside the ``try``, and ``parts.port`` (not
+    ``urlsplit``) is what raises. ``_validate_base_url`` accepts these URLs because
+    it only reads ``.hostname``, so they are persistable: the uncaught ValueError
+    surfaced as a remote 500 and could stop the gateway starting outright."""
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    for bad in ("https://h:99999/v1", "https://h:abc/v1", "https://h:-1/v1"):
+        assert secrets._normalize_base(bad) is None
+        assert secrets.same_base(bad, bad) is False
+        assert secrets.same_host(bad, bad) is False
+        assert secrets.get_provider_key("vic", key_env=VICTIM_ENV, base_url=bad) is None
+        assert secrets._env_fallback_allowed("OPENROUTER_API_KEY", bad) is False
+
+
+def test_unicode_host_folds_the_way_the_socket_folds_it():
+    """A near-miss fixed as a class: ``U+212A`` KELVIN SIGN lower-cases to ``k``, so
+    ``api.deepseeK.com`` compared EQUAL to the preset host under ``str.lower()``.
+    That was harmless only because IDNA nameprep happens to fold it identically —
+    luck, not design, since the check used ``str.lower()`` while the socket uses
+    IDNA. Both sides now go through IDNA, so agreement is by construction."""
+    kelvin = "https://api.deepseeK.com/v1"
+    assert secrets._normalize_base(kelvin) == secrets._normalize_base(
+        "https://api.deepseek.com/v1")
+    assert "K" not in (secrets._normalize_base(kelvin) or "")
+    # A genuinely different host still does not match.
+    assert not secrets.same_host("https://api.deepseek.com.evil.example/v1",
+                                 "https://api.deepseek.com/v1")
+
+
+def test_provider_id_charset_matches_the_config_store(monkeypatch, tmp_path):
+    """F6 — ``set_provider_key`` was stricter than ``config.add_provider``, so an id
+    containing ``/`` or ``:`` could be persisted as a provider but could never hold
+    a key, and any code path storing one raised mid-write."""
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    from charon.config import _store
+    for pid in ("a/b", "a:b", "a.b", "A-B", "9x", "my_prov"):
+        _store._check_id("provider", pid)          # accepted by the config store …
+        secrets._check_provider_id(pid)            # … so it must be accepted here
+    for bad in ("", "_weird", "/x"):
+        with pytest.raises(ValueError):
+            secrets._check_provider_id(bad)
+
+
+def test_direct_upstream_base_entry_still_resolves_its_key(monkeypatch, tmp_path):
+    """A legacy direct-model entry (``upstream_base`` + ``key_env``, no provider id)
+    must keep resolving. Binding at full-path granularity meant a base differing
+    from the preset by one segment silently sent NO key — a hard 401 with no
+    failover and no recovery path, since a direct entry can never hold a
+    per-provider key."""
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    preset = providers.PRESETS["openrouter"]
+    monkeypatch.setenv(preset.key_env, "sk-real")
+    for base in ("https://openrouter.ai/api/v1", "https://openrouter.ai/api/v1/",
+                 "https://openrouter.ai/api", "https://openrouter.ai/api/v1/beta"):
+        assert secrets.get_provider_key(
+            None, key_env=preset.key_env, base_url=base) == "sk-real", base
+    # …but a different host is still refused.
+    assert secrets.get_provider_key(
+        None, key_env=preset.key_env, base_url="https://openrouter.ai.evil.example/v1") is None
+
+
+def test_models_import_all_sees_per_provider_keys(monkeypatch, tmp_path, capsys):
+    """HIGH-3 — an unconverted sink gated on ``preset.key_env in os.environ`` while
+    every onboarding path now writes only ``provider:<id>``, which ``apply_to_env``
+    deliberately cannot export. Every provider was skipped silently: a fresh install
+    running ``models import --all`` got "0 model(s) from 0 provider(s)"."""
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    preset = providers.PRESETS["openrouter"]
+    monkeypatch.delenv(preset.key_env, raising=False)
+    config.add_provider("openrouter")
+    secrets.set_provider_key("openrouter", "sk-xyz", base_url=preset.base_url)
+    from charon import cli
+    seen: list[str] = []
+    monkeypatch.setattr(cli, "_import_models",
+                        lambda name, **k: seen.append(name) or ([], []))
+    cli._import_all_models(quiet=True)
+    assert "openrouter" in seen, "import --all skipped a provider that HAS a key"
+
+
 # ---------------------------------------------------------------- the resolver
 
 
@@ -398,7 +679,7 @@ def test_per_provider_secret_wins_over_a_stale_env_var(monkeypatch, tmp_path):
     monkeypatch.setenv("CHARON_HOME", str(tmp_path))
     preset = providers.PRESETS["openrouter"]
     monkeypatch.setenv(preset.key_env, "sk-stale-env")
-    secrets.set_provider_key("openrouter", "sk-fresh")
+    secrets.set_provider_key("openrouter", "sk-fresh", base_url=preset.base_url)
     secrets.apply_to_env()
     assert secrets.get_provider_key(
         "openrouter", key_env=preset.key_env, base_url=preset.base_url) == "sk-fresh"
@@ -432,10 +713,10 @@ def test_legit_add_import_and_completion_still_work(monkeypatch, tmp_path):
         server.shutdown(), legit.shutdown()
 
 
-def test_existing_install_key_env_fallback_and_migration(monkeypatch, tmp_path):
+def test_existing_install_key_env_fallback_still_resolves(monkeypatch, tmp_path):
     """Back-compat: an install written by an older version (providers.json with a
     ``key_env``, secrets.json keyed by that name, or the var injected via ``.env``)
-    keeps resolving, and ``migrate_provider_secrets`` is idempotent."""
+    keeps resolving through the base-bound legacy fallback."""
     monkeypatch.setenv("CHARON_HOME", str(tmp_path))
     preset = providers.PRESETS["openrouter"]
     config.add_provider("openrouter", key_env=preset.key_env)
@@ -443,10 +724,42 @@ def test_existing_install_key_env_fallback_and_migration(monkeypatch, tmp_path):
     monkeypatch.delenv(preset.key_env, raising=False)
     assert secrets.get_provider_key(
         "openrouter", key_env=preset.key_env, base_url=preset.base_url) == REAL_KEY
-    assert "openrouter" in secrets.migrate_provider_secrets()
-    assert secrets.load_secrets()["provider:openrouter"] == REAL_KEY
-    assert secrets.load_secrets()[preset.key_env] == REAL_KEY  # non-destructive
-    assert secrets.migrate_provider_secrets() == []            # idempotent
+
+
+def test_env_key_rotation_takes_effect(monkeypatch, tmp_path):
+    """A ``.env`` key must stay ROTATABLE. An earlier revision snapshotted
+    ``os.environ[key_env]`` into ``provider:<id>`` at gateway start, and that entry
+    outranks the env var — so an operator who rotated a revoked key kept presenting
+    the OLD one, every request 401'd (a 401 is returned as-is, never failed over),
+    and nothing in the log explained it. Only deleting an entry out of secrets.json
+    on the volume recovered it."""
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    preset = providers.PRESETS["openrouter"]
+    config.add_provider("openrouter", key_env=preset.key_env)
+    monkeypatch.setenv(preset.key_env, "sk-OLD")
+    assert secrets.get_provider_key(
+        "openrouter", key_env=preset.key_env, base_url=preset.base_url) == "sk-OLD"
+    monkeypatch.setenv(preset.key_env, "sk-NEW")  # operator edits .env, restarts
+    assert secrets.get_provider_key(
+        "openrouter", key_env=preset.key_env, base_url=preset.base_url) == "sk-NEW"
+
+
+def test_gateway_start_writes_nothing_to_the_config_dir(monkeypatch, tmp_path):
+    """Gateway start must stay READ-ONLY on the config dir. It briefly promoted
+    legacy secrets on startup, which turned a normal hardening choice (mounting the
+    config volume ``:ro``) — or a full disk — into a crash-loop instead of a
+    serving container, and persisted env-only keys to disk unasked."""
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    monkeypatch.setenv(providers.PRESETS["openrouter"].key_env, "sk-env-only")
+
+    def _explode(*a, **k):
+        raise AssertionError("gateway start wrote to the secrets file")
+
+    monkeypatch.setattr(secrets, "_write_secret", _explode)
+    from charon import cli
+    cli._warn_unsendable_keys()
+    secrets.apply_to_env()
+    assert not (tmp_path / "secrets.json").exists()
 
 
 def test_balance_poll_keeps_working_for_a_same_host_balance_endpoint(victim_install):
@@ -454,7 +767,7 @@ def test_balance_poll_keeps_working_for_a_same_host_balance_endpoint(victim_inst
     on its own host (a different PATH) must still get the key."""
     legit = _start()
     try:
-        secrets.set_provider_key("vic", REAL_KEY)
+        secrets.set_provider_key("vic", REAL_KEY, base_url=_base(legit))
         tracker = balance.BalanceTracker(config={"vic": {
             "mode": "poll", "funding_class": 3,
             "base_url": _base(legit),

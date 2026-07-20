@@ -22,6 +22,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from .. import netutil  # key-egress choke point (keyed_request/open_keyed)
 from ..ports.reviewer import Findings, ReviewerError
 from ..types import Outcome, WorkUnit
 
@@ -99,13 +100,13 @@ class GatewayReviewer:
         }).encode()
 
         url = f"{self._base_url}/chat/completions"
-        headers: dict[str, str] = {"Content-Type": "application/json"}
-        if self._token:
-            headers["Authorization"] = f"Bearer {self._token}"
-
-        req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
         try:
-            with urllib.request.urlopen(req, timeout=self._timeout_s) as resp:
+            # Key-egress choke point: the reviewer token rides as a Bearer, so it
+            # gets the same no-redirect, base-validated treatment as a provider key.
+            req = netutil.keyed_request(
+                url, api_key=self._token or None, data=payload, method="POST",
+                headers={"Content-Type": "application/json"})
+            with netutil.open_keyed(req, timeout=self._timeout_s) as resp:
                 body = json.loads(resp.read())
         except urllib.error.HTTPError as exc:
             raise ReviewerError(f"gateway HTTP {exc.code}: {exc.reason}") from exc

@@ -102,14 +102,34 @@ echo "OPENROUTER_API_KEY=sk-..." >> .env
 `.env` is gitignored; values flow into the container env and Charon's
 `apply_to_env()` makes them available to the matching `key_env`.
 
-A key supplied this way is read-only and **bound to the base URL its built-in
-preset declares** — it is never sent anywhere else. Keys stored by Charon itself
+A key supplied this way is read-only and **bound to the host its built-in preset
+declares** — it is never sent to another host. Keys stored by Charon itself
 (`providers add --key`, the setup wizard, the web console) are saved against the
 PROVIDER rather than the env-var name, since an env-var name can be shared by
-several providers. On first start the gateway copies any legacy
-`{key_env: value}` entries in `secrets.json` across; the copy is idempotent and
-non-destructive, so restarts and rollbacks on a mounted volume both stay safe,
-and no action is needed on an existing deployment.
+several providers; those are bound to the host they were stored for.
+
+Gateway start only ever READS this directory, so mounting the config volume
+`:ro` is safe, and rotating a key is just editing `.env` and restarting.
+
+Two cases need action after upgrading an existing deployment — both are reported
+as a `WARNING:` line on stderr at gateway start, naming the provider:
+
+- a provider whose `base_url` you overrode to something other than its preset
+  (a corporate proxy, say) while its key lives only in `.env`. The env key is
+  bound to the preset host, so it will not be sent to the overridden one;
+- a model entry using `upstream_base` + `key_env` pointing at a host no preset
+  claims.
+
+In both cases re-supply the key so it is stored against the provider:
+
+```bash
+docker compose run --rm gateway providers add <name> --base-url <your-base> --key sk-...
+```
+
+Rolling back to a pre-upgrade image keeps working for keys that were already in
+`.env` or in a legacy `{key_env: value}` `secrets.json` entry — neither is ever
+removed. A key stored *after* upgrading lives under a `provider:<id>` entry that
+an older image does not read, so re-add that provider if you roll back.
 
 ### (c) Bring your own config
 
