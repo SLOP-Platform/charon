@@ -1,9 +1,9 @@
 """Config summary — CLI/console view (no secrets leaked)."""
 from __future__ import annotations
 
-import os
 from typing import Any
 
+from .. import providers as _providers
 from .. import secrets
 from .fallback import (
     load_fallback_pricing,
@@ -52,11 +52,23 @@ def summary() -> dict:
     secs = secrets.load_secrets()
     provs = {}
     for n, e in load_providers().items():
-        ke = e.get("key_env")
+        try:
+            resolved = _providers.resolve(n, e)
+            base, ke = resolved.base_url, resolved.key_env
+        except ValueError:
+            base, ke = e.get("base_url"), e.get("key_env")
         entry: dict[str, Any] = {
-            "base_url": e.get("base_url"),
+            # Both fields report the RESOLVED value. Mixing a resolved key_env with
+            # the raw persisted base_url made the two halves of one dict describe
+            # different providers, and a provider with no persisted base reported
+            # null next to a preset key_env it does resolve.
+            "base_url": base,
             "key_env": ke,
-            "key_set": bool(ke and (os.environ.get(ke) or ke in secs)),
+            # Asked through the ONE resolver, so the console reports "key set"
+            # exactly when a key would actually be sent — not when some shared
+            # env var merely happens to be populated.
+            "key_set": bool(secrets.get_provider_key(
+                n, key_env=ke, base_url=base, secs=secs)),
         }
         # DRAIN-AND-PARK balance fields (non-secret — no keys)
         for bk in ("funding_class", "starting_balance", "mode",

@@ -17,16 +17,18 @@ import os
 import re
 import subprocess
 import sys
-import urllib.request
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from . import __version__, api
+from . import (
+    __version__,
+    api,
+    netutil,  # key-egress choke point (keyed_request/open_keyed)
+)
 from .api import _invocation_name
 from .doctor import probe
-from .netutil import BROWSER_UA
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
@@ -146,9 +148,67 @@ def _cmd_ledger(args: argparse.Namespace) -> int:
     return 0
 
 
+def _warn_unsendable_keys() -> None:
+    """Warn about any provider whose key is PRESENT but will not be SENT.
+
+    Provider keys are base-bound, so a key can be perfectly well configured and
+    still resolve to nothing — most commonly when ``base_url`` is overridden to a
+    corporate proxy while the key only exists under the preset-bound ``key_env``.
+    Every symptom of that is otherwise silent and misleading: the provider simply
+    sends no ``Authorization`` header, hard-401s, and a 401 is returned as-is
+    rather than failed over. Best-effort and never fatal — a startup diagnostic
+    must not be able to stop the gateway starting."""
+    try:
+        from . import config, providers, secrets
+        prov_cfg = config.load_providers()
+        for name in sorted(set(prov_cfg) | set(providers.PRESETS)):
+            try:
+                p = providers.resolve(name, prov_cfg.get(name))
+            except ValueError:
+                continue
+            if not p.key_env or not os.environ.get(p.key_env):
+                continue
+            if secrets.get_provider_key(
+                    name, key_env=p.key_env, base_url=p.base_url) is not None:
+                continue
+            print(
+                f"WARNING: provider {name!r} has a key under ${p.key_env} but it will "
+                f"NOT be sent: that key is not bound to the base this provider "
+                f"resolves to ({p.base_url}). Re-supply it with "
+                f"`{_invocation_name()} providers add {name} --key ...` so it is "
+                f"stored against the provider.",
+                file=sys.stderr)
+
+        # Direct model entries carrying their own upstream_base + key_env. These
+        # live in models.json and are NOT reachable by iterating providers, so
+        # round 5 documented a WARNING for them (docs/docker.md) that the code
+        # never emitted — the operator read the doc, saw no warning, concluded
+        # they were fine, and the model 401'd silently in production.
+        for model_id, spec in sorted(config.load_models().items()):
+            if not isinstance(spec, dict):
+                continue
+            key_env = spec.get("key_env")
+            base = spec.get("upstream_base")
+            if not key_env or not base or not os.environ.get(key_env):
+                continue
+            if secrets.get_provider_key(
+                    model_id, key_env=key_env, base_url=base) is not None:
+                continue
+            print(
+                f"WARNING: model {model_id!r} has a key under ${key_env} but it will "
+                f"NOT be sent: that key is not bound to this model's upstream base "
+                f"({base}). Re-supply it with "
+                f"`{_invocation_name()} providers add <provider> --base-url {base} "
+                f"--key ...` so it is stored against the provider.",
+                file=sys.stderr)
+    except Exception:  # noqa: BLE001 — diagnostics must never block startup
+        pass
+
+
 def _cmd_gateway(args: argparse.Namespace) -> int:
     from . import gateway, secrets
     secrets.apply_to_env()  # load stored provider keys (0600 user-local file) into env
+    _warn_unsendable_keys()  # fail LOUD on a configured-but-unsendable key
     # default config source = the user-local config dir (where `providers add` /
     # `charon setup` write), so the gateway "just works" after setup with no flags.
     state_dir = args.state_dir or (None if args.config else str(secrets.config_dir()))
@@ -166,6 +226,21 @@ def _cmd_gateway(args: argparse.Namespace) -> int:
 
 
 def _cmd_gate(args: argparse.Namespace) -> int:
+    """Thin shim over the repo-local runner (tools/run_gate.py) when there is one.
+
+    This entrypoint resolves ``charon`` through the import machinery, which under
+    an editable install points at whatever checkout was installed — not
+    necessarily the one the operator is standing in. ``gate_runner.CHECKS`` shells
+    its tool scripts CWD-relative, so the two halves could come from different
+    commits and a branch's new gate would silently not run. Re-exec'ing the
+    CWD-local script makes both halves come from the same tree. If there is no
+    ``tools/run_gate.py`` here (an installed binary outside a checkout), fall
+    through to the in-process runner, whose ``_verify_same_tree`` guard then
+    reports the skew rather than hiding it.
+    """
+    local_runner = Path.cwd() / "tools" / "run_gate.py"
+    if local_runner.is_file():
+        return subprocess.run([sys.executable, str(local_runner)]).returncode
     from .gate_runner import run_gate
     return run_gate()
 
@@ -174,11 +249,23 @@ def _cmd_providers(args: argparse.Namespace) -> int:
     from . import providers, secrets
     secrets.apply_to_env()
     if args.action == "list":
-        for name, p in sorted(providers.PRESETS.items()):
+        from . import config
+        overrides_all = config.load_providers()
+        for name, preset in sorted(providers.PRESETS.items()):
+            # Resolve the provider the way the SEND sites do — with any
+            # ``providers.json`` overrides applied. Asking about the raw preset
+            # base made this print "[key SET]" for a provider whose base was
+            # overridden, i.e. one that resolves no key and will send none.
+            try:
+                p = providers.resolve(name, overrides_all.get(name))
+            except ValueError:
+                p = preset
             if p.key_env is None:
                 state = "no key needed"
             else:
-                state = "key SET" if os.environ.get(p.key_env) else "key MISSING"
+                have = secrets.get_provider_key(
+                    name, key_env=p.key_env, base_url=p.base_url)
+                state = "key SET" if have else "key MISSING"
             note = f" — {p.note}" if p.note else ""
             print(f"{name:12} {p.base_url:34} key_env={p.key_env or '-':20} [{state}]{note}")
         return 0
@@ -211,20 +298,16 @@ def _cmd_providers(args: argparse.Namespace) -> int:
             print(f'provider "{args.name}" saved, but no key entered — add it later '
                   f"with `{_invocation_name()} providers add {args.name}`", file=sys.stderr)
             return 2
-        path = secrets.set_secret(key_env, value)
-        print(f'stored {key_env} in {path} (0600) {_mask_key(value)}'
-              f' + provider "{args.name}" in config.')
+        # Stored against the PROVIDER, not the env-var name — see secrets.py.
+        # ``--key-env`` stays accepted and persisted so an existing `.env`
+        # deployment keeps resolving, but it is no longer a write target.
+        path = secrets.set_provider_key(args.name, value, base_url=preset.base_url)
+        print(f'stored the key for "{args.name}" in {path} (0600) {_mask_key(value)}'
+              f" + provider in config (key_env {key_env} still honoured).")
         return 0
     if args.action == "test":
         return _provider_test(args.name, args.base_url)
     return 2
-
-
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    """Refuse to follow redirects — a redirect could otherwise carry headers to
-    another host (urllib does NOT strip Authorization cross-host)."""
-    def redirect_request(self, *a, **k):
-        return None
 
 
 def _import_models(name: str, *, free_only: bool = False, into_pool: str | None = None,
@@ -241,8 +324,9 @@ def _import_models(name: str, *, free_only: bool = False, into_pool: str | None 
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return None
-    key_env = (overrides or {}).get("key_env") or preset.key_env
-    api_key = os.environ.get(key_env) if key_env else None
+    from . import secrets
+    api_key = secrets.get_provider_key(
+        name, key_env=preset.key_env, base_url=preset.base_url)
     try:
         found = providers.list_models(name, overrides, api_key=api_key)
     except Exception as exc:  # network/HTTP/parse — report, don't crash
@@ -288,7 +372,15 @@ def _import_all_models(free_only: bool = False, into_pool: str | None = None,
             preset = providers.resolve(name, config.load_providers().get(name))
         except ValueError:
             continue
-        if preset.key_env and preset.key_env not in os.environ:
+        # Ask the ONE resolver, not os.environ: keys are stored per provider and
+        # `provider:<id>` entries deliberately never reach the environment, so an
+        # `os.environ` check reported "no key" for every provider onboarded through
+        # `providers add --key` / the wizard / the web console — turning
+        # `models import --all` into a silent "0 model(s) from 0 provider(s)" on
+        # every fresh install.
+        from . import secrets as _secrets
+        if preset.key_env and _secrets.get_provider_key(
+                name, key_env=preset.key_env, base_url=preset.base_url) is None:
             continue  # no key set — skip silently
         res = _import_models(name, free_only=free_only, into_pool=None, quiet=True)
         if res is not None:
@@ -382,13 +474,7 @@ def _do_probe(base_url: str, api_key: str) -> str | None:
     """Send ONE minimal chat-completion probe to ``base_url``. Returns None on
     success or an error message string. Does the actual POST at /chat/completions."""
     import urllib.error
-    import urllib.request
 
-    class _NoRedirect(urllib.request.HTTPRedirectHandler):
-        def redirect_request(self, *a, **k):
-            return None
-
-    opener = urllib.request.build_opener(_NoRedirect())
     raw_base = base_url.rstrip("/")
     body = json.dumps({
         "model": ".",
@@ -396,11 +482,10 @@ def _do_probe(base_url: str, api_key: str) -> str | None:
         "max_tokens": 1,
     }).encode()
     try:
-        req = urllib.request.Request(raw_base + "/chat/completions", data=body, method="POST")
-        req.add_header("User-Agent", BROWSER_UA)
-        req.add_header("Content-Type", "application/json")
-        req.add_header("Authorization", "Bearer " + api_key)
-        resp = opener.open(req, timeout=15.0)
+        req = netutil.keyed_request(
+            raw_base + "/chat/completions", api_key=api_key, data=body, method="POST",
+            headers={"Content-Type": "application/json"})
+        resp = netutil.open_keyed(req, timeout=15.0)
         resp.read(1024)
         return None
     except urllib.error.HTTPError as exc:
@@ -510,9 +595,9 @@ def _cmd_setup(args: argparse.Namespace) -> int:
             if key_env:
                 key = getpass.getpass(f"  paste the API key for {name} [blank to skip]: ")
                 if key:
-                    secrets.set_secret(key_env, key)
+                    secrets.set_provider_key(name, key, base_url=preset.base_url)
                     stored = True
-                    print(f"  key stored (0600, as {key_env}) {_mask_key(key)}")
+                    print(f"  key stored (0600, for provider '{name}') {_mask_key(key)}")
                     err = _probe_key(preset, key)
                     if err:
                         print(f"  WARNING: key check failed — {err}", file=sys.stderr)
@@ -638,11 +723,12 @@ def _provider_test(name: str, base_url: str | None) -> int:
         print(f"error: refusing to probe link-local host {parts.hostname}", file=sys.stderr)
         return 2
     url = preset.base_url.rstrip("/") + "/models"
-    opener = urllib.request.build_opener(_NoRedirect())
-    req = urllib.request.Request(url, method="GET")
-    req.add_header("User-Agent", BROWSER_UA)  # NO Authorization header
     try:
-        resp = opener.open(req, timeout=20)
+        # api_key deliberately absent — this probe checks the BASE resolves, and
+        # must never carry a key. Same choke point regardless (netutil is the only
+        # sender in the tree, so an unkeyed probe cannot drift into a keyed one).
+        req = netutil.keyed_request(url, method="GET")
+        resp = netutil.open_keyed(req, timeout=20)
         print(f"{name}: base OK — HTTP {resp.status} from {url}")
         return 0
     except urllib.error.HTTPError as exc:

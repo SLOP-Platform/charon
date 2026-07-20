@@ -42,6 +42,14 @@ import re
 import sys
 from pathlib import Path
 
+# Repo root on sys.path so the gate contract resolves both when this file is run
+# standalone (python3 tools/check_*.py, sys.path[0]=tools/) and when the test
+# suite imports it as tools.check_* (sys.path[0]=repo root).
+_GC_ROOT = Path(__file__).resolve().parent.parent
+if str(_GC_ROOT) not in sys.path:
+    sys.path.insert(0, str(_GC_ROOT))
+from tools.gate_contract import emit_work_units  # noqa: E402
+
 _ACTION_RE = re.compile(r"""uses:\s*([^\s@'"]+)@([^\s'"]+)""")
 _RUN_KEY_RE = re.compile(r"^(\s*)run:\s*(.*)$")
 _SHA_RE = re.compile(r"[0-9a-fA-F]{40}")
@@ -200,6 +208,7 @@ def scan_workflow_file(path: Path) -> list[str]:
 def main(root: str = ".github/workflows") -> int:
     base = Path(root)
     files = sorted(set(base.glob("*.yml")) | set(base.glob("*.yaml")))
+    emit_work_units(len(files))
     all_violations: list[str] = []
     for f in files:
         all_violations.extend(scan_workflow_file(f))

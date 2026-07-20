@@ -102,6 +102,43 @@ echo "OPENROUTER_API_KEY=sk-..." >> .env
 `.env` is gitignored; values flow into the container env and Charon's
 `apply_to_env()` makes them available to the matching `key_env`.
 
+A key supplied this way is read-only and **bound to the host its built-in preset
+declares** — it is never sent to another host. Keys stored by Charon itself
+(`providers add --key`, the setup wizard, the web console) are saved against the
+PROVIDER rather than the env-var name, since an env-var name can be shared by
+several providers; those are bound to the host they were stored for.
+
+Gateway **start-up** only ever READS this directory, and rotating a key is just
+editing `.env` and restarting.
+
+Do **not**, however, mount the config volume `:ro`. By default the config dir is
+also the state dir, and several components create and persist files there while
+the gateway is *running* — the quality scorer, the balance tracker's auto-park
+state, virtual keys, and the policy router. A read-only mount therefore starts
+cleanly and then silently loses auto-park state and quality scores, or errors
+mid-request. If you want the config genuinely read-only, point state elsewhere
+with `--state-dir` and mount only that directory read-write.
+
+Two cases need action after upgrading an existing deployment — both are reported
+as a `WARNING:` line on stderr at gateway start, naming the provider:
+
+- a provider whose `base_url` you overrode to something other than its preset
+  (a corporate proxy, say) while its key lives only in `.env`. The env key is
+  bound to the preset host, so it will not be sent to the overridden one;
+- a model entry using `upstream_base` + `key_env` pointing at a host no preset
+  claims.
+
+In both cases re-supply the key so it is stored against the provider:
+
+```bash
+docker compose run --rm gateway providers add <name> --base-url <your-base> --key sk-...
+```
+
+Rolling back to a pre-upgrade image keeps working for keys that were already in
+`.env` or in a legacy `{key_env: value}` `secrets.json` entry — neither is ever
+removed. A key stored *after* upgrading lives under a `provider:<id>` entry that
+an older image does not read, so re-add that provider if you roll back.
+
 ### (c) Bring your own config
 
 If you already have a populated `~/.charon` on the host, mount it instead of the

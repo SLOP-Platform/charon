@@ -129,8 +129,8 @@ class TestPollAdapterParsing:
         body = json.dumps({"balance": {"total_remaining": 42.50}}).encode()
         mock = MagicMock()
         mock.read.return_value = body
-        with patch("urllib.request.build_opener") as bo:
-            bo.return_value.open.return_value = mock
+        with patch("charon.netutil._OPENER") as bo:
+            bo.open.return_value = mock
             result = _poll_deepseek("https://api.deepseek.com/v1", "sk-test", 20.0)
             assert result == 42.50
 
@@ -138,8 +138,8 @@ class TestPollAdapterParsing:
         body = json.dumps({"balance": {"total_balance": 7.33}}).encode()
         mock = MagicMock()
         mock.read.return_value = body
-        with patch("urllib.request.build_opener") as bo:
-            bo.return_value.open.return_value = mock
+        with patch("charon.netutil._OPENER") as bo:
+            bo.open.return_value = mock
             result = _poll_deepseek("https://api.deepseek.com/v1", "sk-test", 20.0)
             assert result == 7.33
 
@@ -147,8 +147,8 @@ class TestPollAdapterParsing:
         body = json.dumps({"data": "no balance key"}).encode()
         mock = MagicMock()
         mock.read.return_value = body
-        with patch("urllib.request.build_opener") as bo:
-            bo.return_value.open.return_value = mock
+        with patch("charon.netutil._OPENER") as bo:
+            bo.open.return_value = mock
             result = _poll_deepseek("https://api.deepseek.com/v1", "sk-test", 20.0)
             assert result is None
 
@@ -156,8 +156,8 @@ class TestPollAdapterParsing:
         body = json.dumps({"data": {"credits": 55.00}}).encode()
         mock = MagicMock()
         mock.read.return_value = body
-        with patch("urllib.request.build_opener") as bo:
-            bo.return_value.open.return_value = mock
+        with patch("charon.netutil._OPENER") as bo:
+            bo.open.return_value = mock
             result = _poll_openrouter("https://openrouter.ai/api/v1", "sk-test", 20.0)
             assert result == 55.00
 
@@ -165,8 +165,8 @@ class TestPollAdapterParsing:
         body = json.dumps({"not_data": {}}).encode()
         mock = MagicMock()
         mock.read.return_value = body
-        with patch("urllib.request.build_opener") as bo:
-            bo.return_value.open.return_value = mock
+        with patch("charon.netutil._OPENER") as bo:
+            bo.open.return_value = mock
             result = _poll_openrouter("https://openrouter.ai/api/v1", "sk-test", 20.0)
             assert result is None
 
@@ -174,16 +174,16 @@ class TestPollAdapterParsing:
         body = json.dumps({"balance": 3.75}).encode()
         mock = MagicMock()
         mock.read.return_value = body
-        with patch("urllib.request.build_opener") as bo:
-            bo.return_value.open.return_value = mock
+        with patch("charon.netutil._OPENER") as bo:
+            bo.open.return_value = mock
             result = _poll_nanogpt("https://nano-gpt.com/api/v1", "sk-test", 20.0)
             assert result == 3.75
 
     def test_poll_adapter_handles_http_error(self):
         import urllib.error
 
-        with patch("urllib.request.build_opener") as bo:
-            bo.return_value.open.side_effect = urllib.error.URLError("timeout")
+        with patch("charon.netutil._OPENER") as bo:
+            bo.open.side_effect = urllib.error.URLError("timeout")
             result = _poll_deepseek("https://api.deepseek.com/v1", "sk-test", 20.0)
             assert result is None
 
@@ -191,8 +191,8 @@ class TestPollAdapterParsing:
         body = json.dumps({"balance": {"total_remaining": "twelve"}}).encode()
         mock = MagicMock()
         mock.read.return_value = body
-        with patch("urllib.request.build_opener") as bo:
-            bo.return_value.open.return_value = mock
+        with patch("charon.netutil._OPENER") as bo:
+            bo.open.return_value = mock
             result = _poll_deepseek("https://api.deepseek.com/v1", "sk-test", 20.0)
             assert result is None
 
@@ -214,8 +214,8 @@ class TestForcePoll:
         body = json.dumps({"balance": {"total_remaining": 100.0}}).encode()
         mock = MagicMock()
         mock.read.return_value = body
-        with patch("urllib.request.build_opener") as bo:
-            bo.return_value.open.return_value = mock
+        with patch("charon.netutil._OPENER") as bo:
+            bo.open.return_value = mock
             bt = BalanceTracker(
                 config={
                     "deepseek": {
@@ -289,8 +289,8 @@ class TestCounterUnconfiguredProvider:
         body = json.dumps({"balance": {"total_remaining": 99.0}}).encode()
         mock = MagicMock()
         mock.read.return_value = body
-        with patch("urllib.request.build_opener") as bo:
-            bo.return_value.open.return_value = mock
+        with patch("charon.netutil._OPENER") as bo:
+            bo.open.return_value = mock
             bt = BalanceTracker(
                 config={
                     "deepseek": {
@@ -343,10 +343,10 @@ class TestPollerBrowserUA:
         body = json.dumps({}).encode()
         mock = MagicMock()
         mock.read.return_value = body
-        with patch("urllib.request.build_opener") as bo:
-            bo.return_value.open.return_value = mock
+        with patch("charon.netutil._OPENER") as bo:
+            bo.open.return_value = mock
             poll_fn(base, key, 20.0)
-            req = bo.return_value.open.call_args[0][0]
+            req = bo.open.call_args[0][0]
         # urllib normalizes header keys to title-case with the rest lowercased
         return req.get_header("User-agent")
 

@@ -20,6 +20,14 @@ import argparse
 import sys
 from pathlib import Path
 
+# Repo root on sys.path so the gate contract resolves both when this file is run
+# standalone (python3 tools/check_*.py, sys.path[0]=tools/) and when the test
+# suite imports it as tools.check_* (sys.path[0]=repo root).
+_GC_ROOT = Path(__file__).resolve().parent.parent
+if str(_GC_ROOT) not in sys.path:
+    sys.path.insert(0, str(_GC_ROOT))
+from tools.gate_contract import emit_work_units  # noqa: E402
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FRAGMENT_DIR = REPO_ROOT / "docs" / "review-log"
 OUTPUT_PATH = REPO_ROOT / "docs" / "REVIEW-LOG.md"
@@ -80,6 +88,7 @@ def main(argv: list[str] | None = None) -> int:
         help="exit non-zero if docs/REVIEW-LOG.md is stale vs the fragments",
     )
     args = parser.parse_args(argv)
+    emit_work_units(len(sorted(FRAGMENT_DIR.glob("*.md"))) if FRAGMENT_DIR.is_dir() else 0)
 
     if args.check:
         if check(FRAGMENT_DIR, OUTPUT_PATH):

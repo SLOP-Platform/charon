@@ -18,6 +18,14 @@ import re
 import sys
 from pathlib import Path
 
+# Repo root on sys.path so the gate contract resolves both when this file is run
+# standalone (python3 tools/check_*.py, sys.path[0]=tools/) and when the test
+# suite imports it as tools.check_* (sys.path[0]=repo root).
+_GC_ROOT = Path(__file__).resolve().parent.parent
+if str(_GC_ROOT) not in sys.path:
+    sys.path.insert(0, str(_GC_ROOT))
+from tools.gate_contract import emit_work_units  # noqa: E402
+
 _SECRET_PATTERNS: list[re.Pattern] = [
     re.compile(r'sk-[a-zA-Z0-9_-]{20,}'),
     re.compile(r'[A-Za-z0-9+/]{40,}={0,2}'),
@@ -256,8 +264,10 @@ def scan_file(path: Path) -> list[str]:
 
 def main(root: str = "src") -> int:
     base = Path(root)
+    files = sorted(base.rglob("*.py"))
+    emit_work_units(len(files))
     all_violations: list[str] = []
-    for py in sorted(base.rglob("*.py")):
+    for py in files:
         all_violations.extend(scan_file(py))
     if all_violations:
         print("security VIOLATION:", file=sys.stderr)

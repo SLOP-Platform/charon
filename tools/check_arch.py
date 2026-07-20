@@ -20,6 +20,14 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+# Repo root on sys.path so the gate contract resolves both when this file is run
+# standalone (python3 tools/check_*.py, sys.path[0]=tools/) and when the test
+# suite imports it as tools.check_* (sys.path[0]=repo root).
+_GC_ROOT = Path(__file__).resolve().parent.parent
+if str(_GC_ROOT) not in sys.path:
+    sys.path.insert(0, str(_GC_ROOT))
+from tools.gate_contract import emit_work_units  # noqa: E402
+
 # ── constants ───────────────────────────────────────────────────────────────
 
 _ENGINE_FORBIDDEN: frozenset[str] = frozenset({
@@ -513,6 +521,7 @@ _CHECKS = [
 
 def main(root: str = "src") -> int:
     base = Path(root)
+    emit_work_units(len(sorted(base.rglob("*.py"))))
     all_violations: list[str] = []
     for name, fn in _CHECKS:
         violations = fn(base)

@@ -337,8 +337,8 @@ def test_auto_unpark_on_poll_recovery():
     body = json.dumps({"data": {"credits": 12.34}}).encode()
     mock = MagicMock()
     mock.read.return_value = body
-    with patch("urllib.request.build_opener") as bo:
-        bo.return_value.open.return_value = mock
+    with patch("charon.netutil._OPENER") as bo:
+        bo.open.return_value = mock
         remaining = bt.remaining("openrouter")
 
     assert remaining == 12.34
@@ -360,8 +360,8 @@ def test_poll_provider_stays_parked_when_balance_still_zero():
     body = json.dumps({"data": {"credits": 0.0}}).encode()
     mock = MagicMock()
     mock.read.return_value = body
-    with patch("urllib.request.build_opener") as bo:
-        bo.return_value.open.return_value = mock
+    with patch("charon.netutil._OPENER") as bo:
+        bo.open.return_value = mock
         remaining = bt.remaining("openrouter")
 
     assert remaining == 0.0

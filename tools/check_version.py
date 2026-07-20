@@ -19,6 +19,14 @@ import tomllib
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
+# Repo root on sys.path so the gate contract resolves both when this file is run
+# standalone (python3 tools/check_*.py, sys.path[0]=tools/) and when the test
+# suite imports it as tools.check_* (sys.path[0]=repo root).
+_GC_ROOT = Path(__file__).resolve().parent.parent
+if str(_GC_ROOT) not in sys.path:
+    sys.path.insert(0, str(_GC_ROOT))
+from tools.gate_contract import emit_work_units  # noqa: E402
+
 _LITERAL = re.compile(r"""__version__\s*=\s*['"]([^'"]+)['"]""")
 
 
@@ -46,6 +54,7 @@ def _literal_drift(declared: str) -> list[str]:
 def main() -> int:
     declared = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
 
+    emit_work_units(len(sorted(Path("src").rglob("*.py"))) if Path("src").is_dir() else 0)
     drift = _literal_drift(declared)
     if drift:
         print(f"VERSION DRIFT: pyproject={declared} but source literals disagree: "

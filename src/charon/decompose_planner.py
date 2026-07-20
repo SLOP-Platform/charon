@@ -50,7 +50,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from . import decompose_sizing
+from . import (
+    decompose_sizing,
+    netutil,  # key-egress choke point (keyed_request/open_keyed)
+)
 from .failover_loop import (
     FAILOVER,
     OK,
@@ -60,7 +63,6 @@ from .failover_loop import (
 )
 from .intake import IntakeError, PlanUnit, assert_disjoint_waves
 from .ledger import validate_task_id
-from .netutil import BROWSER_UA
 
 DEFAULT_TIER = "high"
 DEFAULT_MAX_REPROMPTS = 2
@@ -383,7 +385,6 @@ def _post_chat_openai(
         candidate.
       * 200 but the body/content is not a parseable JSON dict → return ``None``
         (parse/quality fault of THIS model → re-prompt the SAME model)."""
-    from . import recommend
 
     raw_base = base_url.rstrip("/")
     body = json.dumps(
@@ -394,15 +395,11 @@ def _post_chat_openai(
             "max_tokens": 4000,
         }
     ).encode()
-    req = urllib.request.Request(
-        raw_base + "/chat/completions", data=body, method="POST"
-    )
-    req.add_header("User-Agent", BROWSER_UA)
-    req.add_header("Content-Type", "application/json")
-    req.add_header("Authorization", "Bearer " + api_key)
-    opener = urllib.request.build_opener(recommend._NoRedirect())
     try:
-        resp = opener.open(req, timeout=timeout)
+        req = netutil.keyed_request(
+            raw_base + "/chat/completions", api_key=api_key, data=body, method="POST",
+            headers={"Content-Type": "application/json"})
+        resp = netutil.open_keyed(req, timeout=timeout)
         raw = resp.read(400_000)
     except urllib.error.HTTPError as e:
         # HTTPError is a URLError subclass — catch it first to read the status code.

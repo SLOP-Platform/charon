@@ -159,7 +159,7 @@ def test_work_empty_plan_surfaces_review_reasons(tmp_path: Path, capsys) -> None
 def test_probe_key_sends_shared_browser_ua() -> None:
     """P5: `charon` key probe must carry the shared browser-like UA so a Cloudflare-
     fronted provider (error 1010 → 403) does not wrongly report a valid key INVALID."""
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import patch
 
     from charon.netutil import BROWSER_UA
 
@@ -175,13 +175,12 @@ def test_probe_key_sends_shared_browser_ua() -> None:
         seen.append(req.get_header("User-agent"))
         return _Resp()
 
-    opener = MagicMock()
-    opener.open.side_effect = _fake_open
-
     class Preset:
         base_url = "https://api.groq.com/openai/v1"
 
-    with patch("urllib.request.build_opener", return_value=opener):
+    # Every outbound send now goes through the shared key-egress choke point, so
+    # that is the seam to patch (build_opener is banned outside netutil).
+    with patch("charon.netutil.open_keyed", side_effect=_fake_open):
         cli_mod._do_probe(Preset.base_url, "sk-x")
 
     assert seen
@@ -193,7 +192,7 @@ def test_probe_key_sends_shared_browser_ua() -> None:
 def test_provider_test_sends_shared_browser_ua() -> None:
     """P5: `charon providers test` base-resolve probe (GET /models, no creds) must
     carry the shared browser-like UA so a CF-fronted base is not wrongly failed."""
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import patch
 
     from charon.netutil import BROWSER_UA
 
@@ -209,10 +208,7 @@ def test_provider_test_sends_shared_browser_ua() -> None:
         seen.append(req.get_header("User-agent"))
         return _Resp()
 
-    opener = MagicMock()
-    opener.open.side_effect = _fake_open
-
-    with patch("charon.cli.urllib.request.build_opener", return_value=opener):
+    with patch("charon.netutil.open_keyed", side_effect=_fake_open):
         cli_mod._provider_test("groq", "https://api.groq.com/openai/v1")
 
     assert seen
