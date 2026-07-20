@@ -231,17 +231,20 @@ def add_provider(name: str, *, base_url: str | None = None, key_env: str | None 
         if v is not None:
             entry[k] = v
     # KEY<->BASE_URL COUPLING (provider-key exfiltration guard) — chokepoint backstop.
-    # If this write repoints an existing provider's base_url to a DIFFERENT host and
-    # the caller did not re-affirm ``key_env`` in the same call, drop the stale key
-    # binding: the stored key was vetted for the OLD base, not the new one, and must
-    # not silently carry over (the merge that let a bare ``{base_url: attacker}`` keep
-    # the existing key_env). Re-supplying key_env is a deliberate re-binding and is
-    # kept. The gateway HTTP path enforces the stronger rule (a fresh key must be
-    # re-validated against the new base); this guards every other caller.
+    # If this write binds an INHERITED key_env (one carried from the existing entry,
+    # not re-affirmed in this call) to a base_url that differs from what it was
+    # previously bound to, drop the stale key binding: the stored key was vetted for
+    # the OLD base (or no base at all), not the new one, and must not silently carry
+    # over (the merge that let a bare ``{base_url: attacker}`` keep the existing
+    # key_env). This also covers a previously base-LESS provider gaining a base
+    # (old_base=None). Re-supplying key_env is a deliberate re-binding and is kept.
+    # The gateway HTTP path enforces the stronger rule (a fresh key must be
+    # re-validated against the base); this guards every other caller.
+    inherited_key = key_env is None and existing.get("key_env")
     old_base = existing.get("base_url")
     new_base = entry.get("base_url")
-    if (key_env is None and old_base and new_base
-            and str(old_base).rstrip("/") != str(new_base).rstrip("/")):
+    if (inherited_key and new_base
+            and str(new_base).rstrip("/") != str(old_base or "").rstrip("/")):
         entry.pop("key_env", None)
     # DRAIN-AND-PARK balance fields (scalar writes to avoid union-type inference)
     if funding_class is not None:

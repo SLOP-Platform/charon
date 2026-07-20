@@ -497,6 +497,26 @@ def build_server(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> 
     return server
 
 
+def _key_base_established(providers_mod, config_mod, key_env: str, base_url: str) -> bool:
+    """True if ``(key_env, base_url)`` is an already-vetted provider pairing.
+
+    A pairing is vetted when a built-in preset ships it, or a persisted provider
+    already binds this exact ``key_env`` to this exact ``base_url`` — meaning the
+    key was validated against that base at some earlier write (or shipped trusted).
+    Used by the key<->base coupling guard so a caller cannot bind an existing
+    secret to an UNvetted base (new provider or repoint) without re-supplying the
+    key. Bases are compared with trailing slashes normalized."""
+    norm = base_url.rstrip("/")
+    vetted = {p.base_url.rstrip("/")
+              for p in providers_mod.PRESETS.values()
+              if p.key_env == key_env and p.base_url}
+    for entry in config_mod.load_providers().values():
+        if (isinstance(entry, dict) and entry.get("key_env") == key_env
+                and entry.get("base_url")):
+            vetted.add(str(entry["base_url"]).rstrip("/"))
+    return norm in vetted
+
+
 def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
     """A web-setup write handler: ``(action, payload) -> (status, dict)`` that writes
     config to ``setup_dir`` (+ keys to the 0600 secrets file) and hot-reloads the
@@ -525,24 +545,25 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
             skip_probe = bool(payload.get("skip_probe"))
             # KEY<->BASE_URL COUPLING (provider-key exfiltration guard).
             # INVARIANT: a stored provider key must NEVER be sent to a base_url
-            # the operator has not vetted FOR THAT KEY. Repointing an existing
-            # provider's base_url while silently reusing its key (env var) lets a
-            # caller redirect the real key to an attacker host via a later keyed
-            # upstream call (e.g. models/import). Resolve the base the key is
-            # currently bound to (preset/persisted, NO override); if this call
-            # moves base_url to a different host, refuse unless a fresh key is
-            # supplied and validated against the new base below.
-            trusted_base = None
-            try:
-                trusted_base = P.resolve(name).base_url  # no override → current binding
-            except ValueError:
-                trusted_base = None  # brand-new provider: no prior key binding to protect
-            rebasing = (base_url is not None and trusted_base is not None
-                        and base_url.rstrip("/") != trusted_base.rstrip("/"))
-            if rebasing and not key:
-                return 400, {"error": {"message":
-                    "changing a provider's base_url requires re-supplying its key "
-                    "for the new base_url (the existing key is not vetted for it)"}}
+            # the operator has not vetted FOR THAT KEY. The guard is on the
+            # key<->base BINDING, not the provider name — so it covers BOTH
+            # repointing an existing provider AND creating a NEW provider that
+            # aliases an existing key_env onto an attacker base. Either would let
+            # a later keyed upstream call (e.g. models/import) leak the real key.
+            # Rule: if this write binds a key_env whose secret ALREADY EXISTS to a
+            # base that is not an already-established (vetted) pairing for that
+            # key_env, refuse — unless a fresh key is supplied and validated
+            # against that base below (which re-establishes the pairing).
+            effective_base = base_url or preset.base_url
+            if key_env and not key and effective_base:
+                secret_exists = (bool(os.environ.get(key_env))
+                                 or key_env in secrets.load_secrets())
+                if secret_exists and not _key_base_established(
+                        P, config, key_env, effective_base):
+                    return 400, {"error": {"message":
+                        "binding a provider key to a new base_url requires "
+                        "re-supplying the key for that base_url (the existing key "
+                        "is not vetted for it)"}}
             # Validate the key BEFORE persisting (probe a real completion),
             # unless the operator explicitly opted out (token-gated / limited-
             # access keys where even /models isn't reachable pre-activation).

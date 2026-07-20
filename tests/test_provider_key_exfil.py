@@ -146,6 +146,70 @@ def test_repoint_base_url_with_fresh_key_is_allowed(monkeypatch, tmp_path):
         b.shutdown()
 
 
+def test_new_provider_aliasing_existing_key_is_refused_and_leaks_no_key(monkeypatch, tmp_path):
+    """BYPASS regression: the guard is on the key<->base BINDING, not the provider
+    name. Creating a NEW provider that aliases an EXISTING key_env onto an attacker
+    base (no fresh key) must be refused, and the existing secret must never leak."""
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    monkeypatch.delenv("VIC_KEY", raising=False)  # secrets.apply_to_env() uses setdefault
+    legit = _start_server()
+    attacker = _start_server()
+    server = gateway.build_server(
+        GatewayConfig(host="127.0.0.1", port=0, token="t", model_ids=[]),
+        setup_dir=tmp_path)
+    server.serve_in_thread()
+    try:
+        legit_base = f"http://127.0.0.1:{legit.server_address[1]}/v1"
+        attacker_base = f"http://127.0.0.1:{attacker.server_address[1]}/v1"
+        # Establish a legit provider + real key (secret VIC_KEY now exists).
+        st, body = _req(server.url + "/charon/providers", "POST", token="t", body={
+            "name": "vic", "base_url": legit_base,
+            "key_env": "VIC_KEY", "key": "sk-REAL-secret"})
+        assert st == 200, body
+        legit.seen_auth = None
+        attacker.seen_auth = None
+
+        # EXPLOIT — a brand-NEW provider name aliasing VIC_KEY onto the attacker,
+        # NO key. Must be refused (existing key not vetted for that base).
+        st, body = _req(server.url + "/charon/providers", "POST", token="t", body={
+            "name": "evil", "base_url": attacker_base, "key_env": "VIC_KEY"})
+        assert st == 400, f"aliasing an existing key onto a new base must 400, got {st}: {body}"
+        assert "evil" not in config.load_providers()
+
+        # Even if the import is attempted, the attacker gets nothing.
+        st, _ = _req(server.url + "/charon/models/import", "POST", token="t",
+                     body={"provider": "evil"})
+        assert attacker.seen_auth is None, \
+            f"KEY EXFILTRATED via aliasing: attacker received {attacker.seen_auth!r}"
+    finally:
+        server.shutdown()
+        legit.shutdown()
+        attacker.shutdown()
+
+
+def test_new_provider_with_fresh_key_is_allowed(monkeypatch, tmp_path):
+    """Legit: a brand-new provider WITH a fresh key that validates against its base
+    is accepted — the new-provider path must not over-block real usage."""
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    monkeypatch.delenv("NEW_KEY", raising=False)
+    legit = _start_server()
+    server = gateway.build_server(
+        GatewayConfig(host="127.0.0.1", port=0, token="t", model_ids=[]),
+        setup_dir=tmp_path)
+    server.serve_in_thread()
+    try:
+        legit_base = f"http://127.0.0.1:{legit.server_address[1]}/v1"
+        st, body = _req(server.url + "/charon/providers", "POST", token="t", body={
+            "name": "fresh", "base_url": legit_base,
+            "key_env": "NEW_KEY", "key": "sk-fresh"})
+        assert st == 200, body
+        assert config.load_providers()["fresh"]["base_url"] == legit_base
+        assert secrets.load_secrets().get("NEW_KEY") == "sk-fresh"
+    finally:
+        server.shutdown()
+        legit.shutdown()
+
+
 # ------------------------------------------------------ store-level coupling backstop
 
 def test_store_drops_stale_key_on_bare_base_url_repoint(monkeypatch, tmp_path):
@@ -169,6 +233,18 @@ def test_store_keeps_key_when_reaffirmed_on_repoint(monkeypatch, tmp_path):
     assert config.load_providers()["vic"]["key_env"] == "VIC_KEY"
 
 
+def test_store_drops_inherited_key_when_baseless_provider_gains_base(monkeypatch, tmp_path):
+    """F2: a previously base-LESS provider that later gains a base_url without
+    re-affirming key_env must not silently carry the inherited key onto that base."""
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    config.add_provider("vic", key_env="VIC_KEY")  # key_env, no base_url yet
+    assert config.load_providers()["vic"].get("base_url") is None
+    config.add_provider("vic", base_url="http://127.0.0.1:8/v1")  # base added, no key_env
+    entry = config.load_providers()["vic"]
+    assert entry["base_url"] == "http://127.0.0.1:8/v1"
+    assert entry.get("key_env") is None, "inherited key must drop when a base is first set"
+
+
 def test_store_keeps_key_on_unrelated_edit(monkeypatch, tmp_path):
     """Editing a quirk without changing base_url must NOT touch the key binding."""
     monkeypatch.setenv("CHARON_HOME", str(tmp_path))
@@ -180,11 +256,13 @@ def test_store_keeps_key_on_unrelated_edit(monkeypatch, tmp_path):
 
 # --------------------------------------------------- metadata block, LAN still allowed
 
+# Illustrative RFC1918 literals — this test EXISTS to prove private ranges are not
+# blocked (real self-hosted providers live there), so the addresses are intentional.
 @pytest.mark.parametrize("lan", [
-    "http://10.0.0.5:11434/v1",       # self-hosted Ollama on a private LAN
-    "http://192.168.1.9/v1",
+    "http://10.0.0.5:11434/v1",       # self-hosted Ollama on a private LAN  # public-clean: allow
+    "http://192.168.1.9/v1",  # public-clean: allow
     "http://127.0.0.1:8080/v1",       # loopback
-    "http://172.16.0.4/v1",
+    "http://172.16.0.4/v1",  # public-clean: allow
 ])
 def test_lan_and_loopback_bases_allowed(lan):
     """The fix must NOT blanket-block private/RFC1918 ranges — real usage."""
