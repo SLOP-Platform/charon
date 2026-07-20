@@ -26,6 +26,15 @@ CHARON_REPO="/home/stack/code/charon"
 PRIV_REPO="/home/stack/charon-private"
 DATE_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 DATE_HUMAN="$(date -u +%Y-%m-%d)"
+
+# The machine-GENERATED-STATE emitter (truth-of-record block: origin/master SHAs, open PRs,
+# stranded-work signal — all from LIVE queries, timeout-bounded + fail-soft on a gh/network
+# outage). Sourced (not inlined) so the SAME generator can be exercised hermetically by
+# fleet/tests/handoff-generated-state.test.sh for the GitHub-outage resilience path without
+# running this whole script. CHARON_REPO/PRIV_REPO above seed its repo-location defaults.
+_HS_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+source "$_HS_HERE/handoff-generated-state.sh"
 # ANTI-CLOBBER: SESSION is REQUIRED and must be REAL (not the literal string "unknown") —
 # a copied/placeholder handoff (e.g. seeding a new session's file from a different session's
 # old content, as happened in 3647e0e) is only obviously-wrong if the provenance stamp below
@@ -93,11 +102,22 @@ $(freshness_stamp "$CHARON_REPO" "Product")
 $(freshness_stamp "$PRIV_REPO" "Rig")
 
 ---
+PREAMBLE
+
+# GENERATED-STATE (truth-of-record) — emitted from LIVE queries here so a session physically
+# cannot hand-assert false state ("PR #NN can't merge") in this region: the handoff PULLS its
+# state instead of asserting it. origin/master SHAs, real open-PR state, stranded branches and
+# uncommitted work are all machine-queried; a gh/network outage fails soft to UNAVAILABLE lines.
+emit_generated_state
+
+cat <<'DONEHDR'
+
+---
 
 ## Done / committed@SHA
 
 > Latest 5 SHAs on master (rig + product). Edit only to highlight commits the next session must NOT regress.
-PREAMBLE
+DONEHDR
 
 # --- done / committed@SHA -------------------------------------------------------
 # A red gate is fatal, but section rendering is best-effort: we wrap in { ; } || true so a
@@ -275,9 +295,12 @@ echo '```'
 echo '```'
 
 # --- open PRs ----------------------------------------------------------------
-echo "### Open PRs"
+# The AUTHORITATIVE open-PR list is the GENERATED-STATE block above (both repos, timeout-bounded).
+# This is a convenience raw dump; bound it with `timeout` so a gh/GitHub outage cannot HANG the
+# whole handoff (2026-07-19 incident) — fail-soft to a note, never block.
+echo "### Open PRs (raw — see GENERATED-STATE block above for the authoritative list)"
 echo '```'
-gh pr list --repo SLOP-Platform/charon --state open --json number,title,headRefName,state 2>/dev/null || echo "(gh not available)"
+timeout "${HANDOFF_STATE_TIMEOUT:-15}" gh pr list --repo SLOP-Platform/charon --state open --json number,title,headRefName,state 2>/dev/null || echo "(gh unavailable / timed out — see GENERATED-STATE block above)"
 echo '```'
 
 # --- gate --------------------------------------------------------------------
