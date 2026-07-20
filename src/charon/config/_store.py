@@ -14,11 +14,12 @@ def _validate_base_url(base_url: str) -> None:
     """A provider base URL later receives the real key as a Bearer on forward, so it
     must be http(s) and not a link-local/cloud-metadata host (SSRF / key-exfil guard,
     security review MED) — mirrors `charon providers test`."""
+    from ..providers import _is_metadata_host  # shared blocklist (avoid drift)
     parts = urlsplit(base_url)
     if parts.scheme not in ("http", "https"):
         raise ValueError(f"base_url must be http(s), got {parts.scheme!r}")
     host = parts.hostname or ""
-    if host.startswith("169.254.") or host == "metadata.google.internal":
+    if _is_metadata_host(host):
         raise ValueError(f"refusing link-local / metadata base_url host {host!r}")
 
 

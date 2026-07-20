@@ -124,6 +124,26 @@ _MAX_MODELS_BYTES = 1_000_000  # cap the /models response (memory-DoS guard)
 # thin endpoint-specific entry points callers should reach for.
 
 
+# Cloud-instance metadata endpoints — never a legitimate provider host, always a
+# credential-theft target for SSRF. We deliberately do NOT block private/RFC1918
+# ranges: the gateway legitimately talks to LAN/self-hosted providers (a local
+# Ollama at 10.x/192.168.x/localhost). The robust key-exfil defense is the
+# key<->base_url coupling, not an IP blocklist; this only fences the metadata IMDS.
+_METADATA_HOSTS = frozenset({
+    "metadata.google.internal",  # GCP
+    "fd00:ec2::254",             # AWS IMDSv6 (169.254.169.254 covered by the prefix below)
+})
+
+
+def _is_metadata_host(host: str) -> bool:
+    """True for cloud-metadata / link-local hosts that must never receive a key.
+
+    ``host`` is expected already lowercased (``urlsplit().hostname`` normalizes it).
+    Covers the 169.254/16 link-local block (AWS/GCP/Azure/OpenStack IMDSv4) plus the
+    named metadata endpoints. RFC1918 / loopback are intentionally NOT here."""
+    return host.startswith("169.254.") or host in _METADATA_HOSTS
+
+
 def validate_base_url(base_url: str) -> str:
     """Validate ``base_url`` and return it with trailing slashes stripped.
 
@@ -140,7 +160,7 @@ def validate_base_url(base_url: str) -> str:
     if parts.scheme not in ("http", "https"):
         raise ValueError(f"invalid base URL scheme {parts.scheme!r}")
     host = parts.hostname or ""
-    if host.startswith("169.254.") or host == "metadata.google.internal":
+    if _is_metadata_host(host):
         raise ValueError(f"refusing link-local / metadata host {host!r}")
     return base_url.rstrip("/")
 

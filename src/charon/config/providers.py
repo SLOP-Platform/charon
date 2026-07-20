@@ -223,12 +223,26 @@ def add_provider(name: str, *, base_url: str | None = None, key_env: str | None 
         # normalize first so validation errors are raised before we touch disk
         free_tier = _normalize_free_tier_block(free_tier)
     provs = load_providers()
-    entry = dict(provs.get(name) or {})
+    existing = dict(provs.get(name) or {})
+    entry = dict(existing)
     for k, v in (("base_url", base_url), ("key_env", key_env),
                  ("strip_v1", strip_v1), ("downgrade_prone", downgrade_prone),
                  ("max_context", max_context), ("max_concurrency", max_concurrency)):
         if v is not None:
             entry[k] = v
+    # KEY<->BASE_URL COUPLING (provider-key exfiltration guard) — chokepoint backstop.
+    # If this write repoints an existing provider's base_url to a DIFFERENT host and
+    # the caller did not re-affirm ``key_env`` in the same call, drop the stale key
+    # binding: the stored key was vetted for the OLD base, not the new one, and must
+    # not silently carry over (the merge that let a bare ``{base_url: attacker}`` keep
+    # the existing key_env). Re-supplying key_env is a deliberate re-binding and is
+    # kept. The gateway HTTP path enforces the stronger rule (a fresh key must be
+    # re-validated against the new base); this guards every other caller.
+    old_base = existing.get("base_url")
+    new_base = entry.get("base_url")
+    if (key_env is None and old_base and new_base
+            and str(old_base).rstrip("/") != str(new_base).rstrip("/")):
+        entry.pop("key_env", None)
     # DRAIN-AND-PARK balance fields (scalar writes to avoid union-type inference)
     if funding_class is not None:
         entry["funding_class"] = funding_class

@@ -523,6 +523,26 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
             key_env = (payload.get("key_env") or preset.key_env) or None
             key = (payload.get("key") or None)
             skip_probe = bool(payload.get("skip_probe"))
+            # KEY<->BASE_URL COUPLING (provider-key exfiltration guard).
+            # INVARIANT: a stored provider key must NEVER be sent to a base_url
+            # the operator has not vetted FOR THAT KEY. Repointing an existing
+            # provider's base_url while silently reusing its key (env var) lets a
+            # caller redirect the real key to an attacker host via a later keyed
+            # upstream call (e.g. models/import). Resolve the base the key is
+            # currently bound to (preset/persisted, NO override); if this call
+            # moves base_url to a different host, refuse unless a fresh key is
+            # supplied and validated against the new base below.
+            trusted_base = None
+            try:
+                trusted_base = P.resolve(name).base_url  # no override → current binding
+            except ValueError:
+                trusted_base = None  # brand-new provider: no prior key binding to protect
+            rebasing = (base_url is not None and trusted_base is not None
+                        and base_url.rstrip("/") != trusted_base.rstrip("/"))
+            if rebasing and not key:
+                return 400, {"error": {"message":
+                    "changing a provider's base_url requires re-supplying its key "
+                    "for the new base_url (the existing key is not vetted for it)"}}
             # Validate the key BEFORE persisting (probe a real completion),
             # unless the operator explicitly opted out (token-gated / limited-
             # access keys where even /models isn't reachable pre-activation).
