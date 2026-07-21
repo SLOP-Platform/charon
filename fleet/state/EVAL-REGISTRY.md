@@ -71,3 +71,35 @@ independent verdict). Non-LiteLLM tool evals that already exist as standalone do
 `EVAL-RelayFreeLLM.md`, `RELAYFREELLM-COMPARISON.md`, `HAND-ROLLED-AUDIT.md`, etc.) have NOT
 yet been backfilled as rows here — do that incrementally the next time any of those tools
 comes up for re-evaluation, rather than in one bulk pass.
+
+## HAND-ROLL JUSTIFICATION ANTI-PATTERNS (negative weight — treat adversarially)
+
+These are the reasons historically used to confidently recommend HAND-ROLLING or reject
+ADOPTING. As of 2026-07-21 (`MANAGER-OPERATING-RULES.md` §0; memory `no-rig-as-product-adopt-dont-handroll`)
+each carries NEGATIVE weight in any build-vs-adopt eval: seeing one is evidence the eval is
+DRIFTED, not a point for the build side. If a hand-roll recommendation rests on one of these,
+it is unsupported until the adversarial counter is met with tested evidence. Full derivation +
+citations: `scratchpad/HANDROLL-JUSTIFICATION-ANTIPATTERNS.md` (mined from EVAL-REGISTRY-RECONCILE,
+HAND-ROLLED-AUDIT, GAP-AUDIT-toolfirst, KSF-LINTER-TOOLS-REVIEW, ADRs 0003/0004/0005/0017).
+
+Front-of-eval standing cost: months of ~zero shipped product while a hand-rolled rig grew
+as large as the product; ~70% of every layer was reinvented commodity; hand-rolled guards
+(sed/awk YAML parser, bespoke AST linter) shipped weaker & buggier than the tools they
+replaced. The build side starts in this hole.
+
+- AP-1  "core is stdlib / no-dependency / self-contained"  → INVALID for the substrate; applies ONLY to the product privileged core, never the rig/CI/dev-tooling. Name the boundary first. [root cause of the whole drift]
+- AP-2  "it's the differentiator / don't outsource the core"  → prove it's the novel ~30% AND that the differentiation has shipped; else it's protecting commodity under a "core" label.
+- AP-3  "too heavy / wrong stack (FastAPI/Postgres/Redis/200MB)"  → weigh only the SLICE needed (data-only / library-only / lazy plugin); check if the dep is already in-repo (FastAPI+uvicorn already ship for service/app.py).
+- AP-4  "supply-chain / security risk"  → ZERO weight without a cited CVE/advisory/SUPPLY-CHAIN.md finding; otherwise drifted hand-waving.
+- AP-5  "borrow the design, don't embed"  → porting a pattern IS a hand-roll (you own+maintain it); test library-only and plugin-wrap first.
+- AP-6  "genuinely novel, no tool fits"  → is the novelty inherent or manufactured by a prior hand-roll? Requires a code-read of candidates; novel slice is only outcome-graded routing + OOB grader + disjoint-owns.
+- AP-7  "we can do it in ~N lines / dependency-free"  → LOC is the floor not the cost; hand-rolled parsers/linters/guards shipped weaker than the tool. Preference presented as a finding.
+- AP-8  "duplicative of our runner/core"  → question-begging; ask "does this make our hand-roll UNNECESSARY," not "does it duplicate it." Durable-exec engines / merge-queue were never even evaluated under this framing.
+- AP-9  "overkill for a solo dev / not multi-tenant"  → solo-dev is a reason to ADOPT (offload maintenance); name the specific unused capability that costs you (server/broker/ops-team) or it doesn't count.
+- AP-10 "single-person / low-star / new / unmaintained"  → judge by reading the code, not stars/age; Charon/SLOP are zero-star too. Low-star is not a disqualifier.
+- AP-11 "lock-in / license"  → quantify: if adoption is reversible (your data, your format) lock-in ~0; read the license (MIT/Apache = adopt) instead of asserting it.
+
+Rule: a build-vs-adopt verdict that leans on any AP-# above is DRIFTED by default and must
+be re-tested against its adversarial counter before it can be cited as settled. State the
+COMMODITY-SUBSTRATE vs NOVEL-SLICE split explicitly and adopt the substrate unless there is
+specific tested evidence (not one of these assertions) that it doesn't fit.
