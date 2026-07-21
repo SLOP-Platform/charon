@@ -5,6 +5,9 @@ work_class: coding
 branch: feat/wire-brain-into-gateway
 parked: true
 note: |
+  SUPERSEDED 2026-07-21 (operator-approved) by GATEWAY-GRADE-ORDER-MVP, which wires the outcome-grade
+  overlay into the ADOPTED litellm.Router routing decision instead of the hand-rolled forwarder /
+  brain_router this draft assumed. Stays parked; do not build. Retained for reference only.
   DRAFT — operator review only. `parked: true` so no droid auto-claims it. This is ADR-0017's
   ratified MVP ("wire the fleet's outcome-graded brain into the gateway request router, with a
   cold-start fallback"), scoped honestly against the live code. UN-PARK only after the operator

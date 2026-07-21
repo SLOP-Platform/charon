@@ -3,6 +3,13 @@ tier: strong
 difficulty: 4
 work_class: money-path
 branch: feat/ft-wire-quota
+parked: true
+note: |
+  SUPERSEDED / PARKED 2026-07-21 (operator-approved). Free-tier-quota intent FOLDED into
+  GATEWAY-LITELLM-ADOPT (litellm.Router routing config); do not rebuild the hand-rolled forwarder
+  version. This ticket owned the hand-rolled forwarder.py + gateway.py free-tier injection that the
+  litellm.Router adopt replaces — un-parking it would owns-collide the adopt. Parked to clear the
+  collision and let GATEWAY-LITELLM-ADOPT / GATEWAY-GRADE-ORDER-MVP go live.
 depends_on: FT-QUOTA-ENGINE, FT-CONFIG-SURFACE, FT-CATALOG-SEED, FAIL-LOUD-CONTRACT, FORWARDER-RECONCILE, PROVIDER-PROBE-FIX, GATEWAY-NONTOKEN-METERING
 dep-kind: build
 serial_justified: cohesive single wiring — all logic lives in the new free_tier_gate.py; the forwarder.py + gateway.py edits are one minimal injection call each and must land together as one activation.

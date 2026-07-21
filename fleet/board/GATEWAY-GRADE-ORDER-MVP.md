@@ -3,13 +3,13 @@ tier: strong
 difficulty: 5
 work_class: routing
 branch: feat/gateway-grade-order-mvp
-parked: true
+parked: false
 depends_on: GATEWAY-LITELLM-ADOPT
 real-dep: GATEWAY-LITELLM-ADOPT the overlay hooks into litellm.Router's routing decision, which does not exist until the adopt lands; building it against the deleted hand-rolled forwarder is throwaway
-parked_reason: staged behind GATEWAY-LITELLM-ADOPT; operator-approved direction (2026-07-21) but not live until the adopt un-parks. PARKED.
+seq_reason: sequenced behind GATEWAY-LITELLM-ADOPT (hard build prereq, see real-dep); claimable once the adopt lands. LIVE (un-parked 2026-07-21).
 note: |
-  DRAFT — operator-APPROVED direction (2026-07-21), staged not-yet-live. `parked: true` so no droid
-  auto-claims it. This is the SECOND (and genuinely NOVEL) leg of the gateway MVP: the outcome-grade
+  LIVE 2026-07-21 — operator-APPROVED (2026-07-21), UN-PARKED. Sequenced behind GATEWAY-LITELLM-ADOPT
+  (its build prereq). This is the SECOND (and genuinely NOVEL) leg of the gateway MVP: the outcome-grade
   overlay + a NEUTRAL product-side grade store/format, wired into litellm.Router's routing decision.
   Adopt the commodity plane FIRST (GATEWAY-LITELLM-ADOPT), build ONLY this novel ~30% here. Basis:
   scratchpad/GATEWAY-MVP-ADOPT-VS-BUILD.md + docs/adr/0017-outcome-graded-gateway.md + §0. Supersedes /

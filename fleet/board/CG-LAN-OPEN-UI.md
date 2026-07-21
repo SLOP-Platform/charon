@@ -4,7 +4,7 @@ difficulty: 2
 work_class: gateway-auth
 branch: feat/cg-lan-open-ui
 parked: true
-note: ABANDONED 2026-07-19 — superseded by the existing /charon/login session-cookie flow (already a simple browser auth layer); lan_open_ui introduced a key-exfil hole. Do not build.
+note: ABANDONED 2026-07-19 — superseded by the existing /charon/login session-cookie flow (already a simple browser auth layer); lan_open_ui introduced a key-exfil hole. Do not build. Also superseded 2026-07-21 by GATEWAY-LITELLM-ADOPT, which adopts litellm.Router for the proxy_server.py money-path; remains abandoned.
   DRAFT — operator review. Scoped 2026-07-19 from CG-AUTH-INVESTIGATION.md (code-confirmed).
 owns: src/charon/proxy_server.py, src/charon/gateway.py, tests/test_gateway_lan_open_ui.py
 depends_on:

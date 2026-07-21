@@ -5,6 +5,9 @@ work_class: coding
 branch: feat/product-grades-store
 parked: true
 note: |
+  SUPERSEDED 2026-07-21 (operator-approved) by GATEWAY-GRADE-ORDER-MVP, which builds the neutral
+  product-side grade store on the ADOPTED litellm.Router attach point instead of the hand-rolled
+  forwarder this draft assumed. Stays parked; do not build. Retained for reference only.
   DRAFT — operator review only. `parked: true` so no droid auto-claims it. This is the BUILD
   PREREQUISITE that ADR-0017's MVP ("wire the outcome-graded brain into the gateway") silently
   assumed already existed but does NOT: the product gateway has NO outcome store and MUST NOT import

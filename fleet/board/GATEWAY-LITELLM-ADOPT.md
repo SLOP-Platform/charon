@@ -3,10 +3,13 @@ tier: strong
 difficulty: 5
 work_class: money-path
 branch: feat/gateway-litellm-adopt
-parked: true
+parked: false
 note: |
-  DRAFT — operator-APPROVED direction (2026-07-21), staged not-yet-live. `parked: true` so no droid
-  auto-claims it. This is the FIRST leg of the operator-approved gateway MVP: adopt LiteLLM for the
+  LIVE 2026-07-21 — operator-APPROVED (2026-07-21), UN-PARKED: the un-park gate is now cleared —
+  FT-WIRE-QUOTA (was live, owned forwarder.py) and CG-LAN-OPEN-UI (owned proxy_server.py) are both
+  parked/superseded, so this ticket no longer owns-collides and is live-claimable. FT-WIRE-QUOTA's
+  free-tier-quota intent is FOLDED into this adopt (litellm.Router routing config), not rebuilt.
+  This is the FIRST leg of the operator-approved gateway MVP: adopt LiteLLM for the
   commodity plane FIRST (sequence B), THEN build the outcome-grade overlay (GATEWAY-GRADE-ORDER-MVP).
   Basis: scratchpad/GATEWAY-MVP-ADOPT-VS-BUILD.md deep-dive + docs/adr/0017-outcome-graded-gateway.md
   + MANAGER-OPERATING-RULES.md §0 (adopt-substrate-first; the stdlib-only/AP-1 basis is REMOVED).
