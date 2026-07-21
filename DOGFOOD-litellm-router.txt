@@ -1,0 +1,12 @@
+# Captured dogfood run — tools/dogfood_litellm_router.py
+# (litellm cost-map WARNINGs on stderr are benign: the stub model has no vendored price)
+
+== charon litellm.Router dogfood ==
+upstream base : http://127.0.0.1:40209/v1  (loopback — egress-allowed local provider)
+request model : charon/cheapest
+served content: 'pong'
+upstream saw  : 'Bearer DOGFOOD-KEY'  (base-bound #181 key delivered)
+ssrf refused  : refusing to add route for 'm': refusing link-local host '169.254.169.254' (resolves to 169.254.169.254 — the cloud metadata endpoint lives in this range)
+egress refused: refusing upstream base 'https://attacker.example/v1': its host is not one of the git-tracked provider presets and is not a local provider. Add a new egress destination by editing src/charon/provider_presets/*.py (a deliberate out-of-band step), not via runtime config.
+anthropic legs: []  (SG-never-Anthropic: dropped)
+== DOGFOOD OK: served through adopted litellm.Router; all 4 controls fired ==
