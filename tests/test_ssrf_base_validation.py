@@ -160,14 +160,13 @@ def test_parser_matches_inet_aton_exactly(host: str) -> None:
 
 
 def test_ipv4_mapped_ipv6_is_unwrapped_before_classification() -> None:
-    """``::ffff:169.254.169.254`` reports is_link_local == False as an IPv6Address.
+    """``::ffff:169.254.169.254`` must be blocked as the mapped metadata address.
 
-    IPv6 link-local means fe80::/10, so classifying the wrapper alone lets the
-    mapped metadata address straight through. The guard must classify the
-    EMBEDDED address in its own right.
+    Whether the stdlib classifies the IPv6 *wrapper* as link-local varies across
+    CPython point releases (3.12 began delegating IPv4-mapped classification to the
+    embedded address), so the guard must not depend on it: it classifies the
+    EMBEDDED address in its own right and blocks regardless of the stdlib version.
     """
-    import ipaddress
-    assert ipaddress.ip_address("::ffff:169.254.169.254").is_link_local is False
     for spelling in ("[::ffff:169.254.169.254]", "[::ffff:a9fe:a9fe]"):
         with pytest.raises(ValueError, match="link-local"):
             netutil.validate_base_url(f"http://{spelling}/v1")
