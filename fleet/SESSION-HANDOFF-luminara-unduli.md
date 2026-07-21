@@ -179,6 +179,7 @@ eeb93b9 docs(adr-0017): amend — gateway consumes grades, does not produce them
 **New this session (carry forward):**
 - **Substrate-first gate** → **PARKED** per operator (built twice, evaded 9 then 4 ways; ended with 3 parsers on the same files). Branch `feat/substrate-first-gate-v2` NOT landed. Fold into the meta-gate deep-dive, don't rebuild.
 - **Meta-gate research** → DONE; the deep-dive is first-action #2(b).
+- **Pre-existing untracked rig WIP** (flagged by session-start every boot, carried unticketed across sessions — the "note-then-stale" failure the operator called out) → RESOLVED, not noted: `.ksf/keystone.db` gitignored (tool artifact); the two authored files are now scheduled — `FREE-TIER-LIMITS.tsv` is covered by the EXISTING live ticket `fleet/board/FT-LIMITS-GROQ-RECONCILE.md` (the board gate caught my duplicate — deleted it), and `fleet/board/REACHABILITY-AUDIT-LAND.md` (NEW) lands REACHABILITY-AUDIT.md under REACHABILITY-GATE. The process gap itself → `fleet/board/WIP-CLOSE-GATE.md` (mechanize a close-gate: end-session cannot close with untracked WIP unless committed/gitignored/ticketed; evaluate in the meta-gate ADOPT deep-dive, don't hand-roll). DOCTRINE (operator 2026-07-21): every pre-existing issue is fix-now OR ticket+schedule — NEVER a bare note. [[never-ignore-preexisting-issues]]
 
 ---
 
