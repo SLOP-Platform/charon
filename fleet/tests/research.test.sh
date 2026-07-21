@@ -59,7 +59,7 @@ write_record(){
   if [ "$reuse" = "yes" ]; then
     printf '%s\n' '## Reuse-Check' >> "$f"
     printf '\n' >> "$f"
-    printf '%s\n' 'Searched: fleet/memory/markdown/, fleet/scratch/, fleet/research-registry/.' >> "$f"
+    printf '%s\n' 'Searched: fleet/scratch/, fleet/research-registry/.' >> "$f"
     printf '%s\n' 'Nothing relevant — moving on.' >> "$f"
     printf '\n' >> "$f"
   fi

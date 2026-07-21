@@ -344,8 +344,6 @@ $topic
 
 ### (1) REUSE-CHECK FIRST
 Search OUR internal sources BEFORE any external one:
-- \`fleet/memory/markdown/*.md\` — manager session memory (pinned + searchable)
-- \`fleet/memory/markdown/pin.md\` — pinned core, always loaded
 - \`fleet/research-registry/*.md\` — prior research on the same or related topics
   (registry lives at \`\${RESEARCH_REGISTRY_DIR:-$FLEET/state/research-registry}\`)
 - \`fleet/scratch/*.md\` — past ad-hoc research notes
