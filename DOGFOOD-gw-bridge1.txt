@@ -1,0 +1,16 @@
+=== GW-BRIDGE-1 dogfood: Router-path silent-downgrade guard ===
+requested (agent) model : premium-v4
+model litellm SENT      : openai/premium-v4  (route.upstream_model)
+model upstream RETURNED : cheap-free-model   <-- silent downgrade
+--- guard verdict ---
+downgrade flagged       : True
+response headers        : {'X-Charon-Downgrade': 'served a different model than requested'}
+served model (as-is)    : cheap-free-model
+served content          : 'pong'
+upstream completions    : 1   (1 => served as-is, NOT discard-and-rebilled)
+observer cumulative cost: 0.0   (0.0 => guard never re-billed; it only classifies)
+classify note           : silent downgrade: asked 'openai/premium-v4', got 'cheap-free-model'
+--- honest-echo control ---
+downgrade flagged       : False   (False => no false-positive)
+X-Charon-Downgrade set  : False
+=== dogfood OK ===
