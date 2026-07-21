@@ -1,4 +1,8 @@
 {
+  "charon.egress.nginx_credproxy_template_stub": {
+    "disposition": "keep-pending-phase2-credproxy",
+    "reason": "Deliberately inert Phase-2 placeholder. The credential-injecting nginx reverse proxy (Track C custody) is the NEXT unit after this Phase-1 egress-allowlist work; this stub returns a TODO string and is intentionally not wired until custody moves out of the process. Exercised by tests/test_egress_allowlist.py::test_nginx_credproxy_template_is_an_inert_phase2_stub, which asserts it stays inert."
+  },
   "charon.api.list_ledgers": {
     "disposition": "keep-detector-false-positive-uvicorn-string-load",
     "reason": "Called from charon.service.app (api.list_ledgers()) but that call site doesn't count: service/app.py is loaded by uvicorn via the string 'charon.service.app:app' (see service/__main__.py), which is invisible to static AST reachability, so the whole module reads as unreachable and this call cascades as a false positive."

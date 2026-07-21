@@ -57,11 +57,19 @@ def _int_or_none(v: object) -> int | None:
 
 
 def route_from_spec(spec: dict, providers_cfg: dict,
-                     *, model_id: str | None = None) -> _UpstreamRoute | None:
+                     *, model_id: str | None = None,
+                     enforce_preset_allowlist: bool = False) -> _UpstreamRoute | None:
     """One registry entry → UpstreamRoute. A ``provider`` reference (P3) resolves
     base_url/key_env/quirks from a preset (+ ``[providers.<name>]`` overrides); a
     direct ``upstream_base`` entry (P1/P2) still works. Returns None when neither
-    yields a base (not HTTP-serveable)."""
+    yields a base (not HTTP-serveable).
+
+    ``enforce_preset_allowlist`` (Phase-1 key-exfil control): when True — set only
+    for the ATTACKER-WRITABLE ``providers.json`` runtime store — a BUILT-IN preset
+    provider whose effective base was overridden off the git-tracked preset hosts
+    has its route dropped (see the check below). It is False for the trusted,
+    operator-managed ``--config charon.toml`` file, where overriding a preset's
+    base is a first-class documented feature."""
     prov = spec.get("provider")
     if prov:
         preset = _providers_mod.resolve(prov, providers_cfg.get(prov))
@@ -86,7 +94,34 @@ def route_from_spec(spec: dict, providers_cfg: dict,
         adapter = str(spec.get("adapter") or "") or None
         max_context = _int_or_none(spec.get("context_window") or spec.get("max_context"))
         max_concurrency = _int_or_none(spec.get("max_concurrency"))
+    from charon import egress as _egress
     from charon import secrets as _secrets
+
+    # KEY-EXFIL FIX (Phase-1 app layer): a BUILT-IN preset provider's base is
+    # NON-OVERRIDABLE off the git-tracked preset hosts. The effective base here is
+    # preset ⊕ [providers.<name>] override — and providers.json is attacker-writable
+    # via the token-gated add_provider handler (blast-radius §6-B: a poisoned entry
+    # leaks on EVERY completion with no further attacker action). A built-in preset's
+    # OWN base is always allowlisted, so a preset provider whose EFFECTIVE base is
+    # not allowlisted was necessarily repointed off-preset by such an override —
+    # drop it, fail CLOSED, rather than route a key there. This is checked on the
+    # resolved value (the LiteLLM CVE-2024-6587 lesson: validate the effective
+    # config, not a request's top-level shape). Deliberately scoped to preset
+    # providers: operator-authored direct ``upstream_base`` entries (the shipped
+    # P1/P2 feature) and locally-configured non-preset providers are trusted config,
+    # not request-supplied — their arbitrary-host SSRF surface is round-6 MEDIUM-4,
+    # constrained by the network-layer egress denial (Smokescreen), not here.
+    if (enforce_preset_allowlist and prov and prov in _providers_mod.PRESETS
+            and not _egress.is_allowed_base(base)):
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "dropping route for model %r: built-in preset provider %r was overridden "
+            "in the runtime provider store to base %r, whose host is not a git-tracked "
+            "preset — refusing to route a key to an off-preset override "
+            "(charon.egress allowlist). Add new egress destinations by editing the "
+            "presets, not via the runtime store.",
+            model_id, prov, base)
+        return None
 
     return _UpstreamRoute(
         upstream_base=str(base),
@@ -109,6 +144,7 @@ def route_from_spec(spec: dict, providers_cfg: dict,
 def build_routes_and_pools(
     registry: dict, pool_map: dict, providers_cfg: dict | None = None,
     *, metered_costs: dict[tuple[str, str], float] | None = None,
+    enforce_preset_allowlist: bool = False,
 ) -> tuple[dict[str, _UpstreamRoute], dict[str, list[_UpstreamRoute]], list[str]]:
     """Compile a model registry + ``pool_map`` (virtual id → [model id]) into
     single routes (concrete models) and failover chains (virtual ids). Each chain
@@ -134,7 +170,8 @@ def build_routes_and_pools(
         if isinstance(spec, dict):
             if spec.get("enabled") is False:
                 continue
-            r = route_from_spec(spec, providers_cfg, model_id=mid)
+            r = route_from_spec(spec, providers_cfg, model_id=mid,
+                                enforce_preset_allowlist=enforce_preset_allowlist)
             if r is not None:
                 routes[mid] = r
 
@@ -171,7 +208,8 @@ def build_routes_and_pools(
     return routes, pools, sorted(set(routes) | set(pools))
 
 
-def tier_pools(registry: dict, providers_cfg: dict) -> dict[str, list[_UpstreamRoute]]:
+def tier_pools(registry: dict, providers_cfg: dict,
+               *, enforce_preset_allowlist: bool = False) -> dict[str, list[_UpstreamRoute]]:
     """Compile ``tiers.json`` members into failover chains via the SAME
     ``build_routes_and_pools`` the gateway uses for ``pools.json`` (DTC HARD REQ #2).
 
@@ -182,7 +220,9 @@ def tier_pools(registry: dict, providers_cfg: dict) -> dict[str, list[_UpstreamR
     compiler. Absent/empty ``tiers.json`` → no member matches → no tier vids (behavior
     unchanged)."""
     members = _config_mod.load_tiers().get("members") or {}
-    _, pools, _ = build_routes_and_pools(registry, members, providers_cfg)
+    _, pools, _ = build_routes_and_pools(
+        registry, members, providers_cfg,
+        enforce_preset_allowlist=enforce_preset_allowlist)
     return pools
 
 
@@ -192,6 +232,7 @@ def build_fallback_chain(
     pools: dict[str, list[_UpstreamRoute]],
     providers_cfg: dict,
     fallback_names: list[str],
+    enforce_preset_allowlist: bool = False,
 ) -> tuple[dict[str, _UpstreamRoute], dict[str, list[_UpstreamRoute]]]:
     """Append global fallback providers to the end of every pool chain (after
     the model's own providers — they're tried LAST) and to single-route models."""
@@ -201,7 +242,8 @@ def build_fallback_chain(
     fallback_routes: list[_UpstreamRoute] = []
     for fname in fallback_names:
         try:
-            r = route_from_spec({"provider": fname}, providers_cfg)
+            r = route_from_spec({"provider": fname}, providers_cfg,
+                                enforce_preset_allowlist=enforce_preset_allowlist)
             if r is not None:
                 fallback_routes.append(r)
         except ValueError:

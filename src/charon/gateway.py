@@ -218,8 +218,16 @@ def load_config(
             except (OSError, json.JSONDecodeError):
                 pass
 
-    routes, pools, _ = routing_policy.build_routes_and_pools(registry, pool_map, providers_cfg)
-    for vid, chain in routing_policy.tier_pools(registry, providers_cfg).items():
+    # Phase-1 key-exfil control: enforce the preset allowlist on preset-provider
+    # base OVERRIDES only when they come from the ATTACKER-WRITABLE runtime store
+    # (providers.json, written by the token-gated add_provider handler). A
+    # ``--config charon.toml`` file is operator-managed and trusted, so overriding
+    # a preset's base there stays a first-class feature (route_from_spec docstring).
+    _enforce_allowlist = toml_path is None
+    routes, pools, _ = routing_policy.build_routes_and_pools(
+        registry, pool_map, providers_cfg, enforce_preset_allowlist=_enforce_allowlist)
+    for vid, chain in routing_policy.tier_pools(
+            registry, providers_cfg, enforce_preset_allowlist=_enforce_allowlist).items():
         pools.setdefault(vid, chain)  # explicit pools.json vid WINS on name collision
 
     # ---- Global fallback providers (Wave 2) ----
@@ -227,7 +235,8 @@ def load_config(
     fallback_names = _cfg.load_fallback_providers()
     routes, pools = routing_policy.build_fallback_chain(
         routes=routes, pools=pools,
-        providers_cfg=providers_cfg, fallback_names=fallback_names)
+        providers_cfg=providers_cfg, fallback_names=fallback_names,
+        enforce_preset_allowlist=_enforce_allowlist)
 
     _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio",
                   "cost_class")
@@ -517,6 +526,11 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
             s["fallback"] = config.load_fallback_providers()
             return 200, s
         if action == "providers":
+            from . import egress
+            # LiteLLM CVE-2024-6587 lesson: reject a base-override key at ANY depth
+            # except the single sanctioned top-level ``base_url``. A top-level-only
+            # check is a no-op when the value nests (their first fix's exact bug).
+            egress.assert_no_nested_base_override(payload)
             name = str(payload.get("name") or "").strip()
             base_url = payload.get("base_url") or None
             preset = P.resolve(name, {"base_url": base_url} if base_url else None)  # validates
@@ -534,6 +548,20 @@ def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
             except ValueError:
                 current_base, key_env = None, None
             effective_base = base_url or preset.base_url
+            # Egress allowlist (Phase-1): a request may not REPOINT a built-in preset
+            # provider (which may hold a victim key) off its git-tracked preset host —
+            # blast-radius §6-A/B, the exact key-exfil entry point. Fail closed here so
+            # the poison never persists and the operator gets immediate feedback;
+            # route_from_spec re-checks at use time as the backstop. Scoped to preset
+            # names: adding a genuinely new custom provider (operator's own key, bound
+            # to that base) stays allowed — the network-layer egress denial constrains
+            # its destination. Adding a new PRESET destination is a deliberate preset
+            # edit (DESIGN §2.1), not a POST.
+            if name in P.PRESETS:
+                try:
+                    egress.assert_base_allowed(effective_base)
+                except egress.EgressPolicyError as exc:
+                    return 400, {"error": {"message": str(exc)}}
             # Validate the key BEFORE persisting (probe a real completion),
             # unless the operator explicitly opted out (token-gated / limited-
             # access keys where even /models isn't reachable pre-activation).
@@ -692,6 +720,17 @@ def run(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> int:
     if cfg.token is None and os.environ.get(_TOKEN_ENV) == "":
         print(f"warning: {_TOKEN_ENV} is set but EMPTY — running UNGATED on loopback",
               file=sys.stderr)
+    # Phase-1 refuse-to-serve self-test: prove the container's egress is actually
+    # denied (a connect to a non-provider public host must fail). Gated behind
+    # CHARON_EGRESS_SELFTEST — the egress-denial infra deploys separately, so this
+    # is OFF until the operator has stood it up (else a pre-infra install refuses
+    # to serve). See charon.egress.run_startup_egress_selftest.
+    from . import egress
+    try:
+        egress.run_startup_egress_selftest()
+    except egress.EgressPolicyError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     try:
         server = build_server(cfg, setup_dir=setup_dir)
     except GatewayBindRefused as exc:

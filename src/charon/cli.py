@@ -830,6 +830,17 @@ def _cmd_logout(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_egress(args: argparse.Namespace) -> int:
+    """Print the egress allowlist config for the outbound proxy. GENERATOR, NOT
+    ENFORCER: this only prints; the operator reviews and applies it out-of-band."""
+    from . import egress
+    if args.egress_action == "acl":
+        print(egress.generate_smokescreen_acl())
+        print(egress.smokescreen_reload_hint(container=args.container))
+        return 0
+    return 2
+
+
 def _cmd_doctor(args: argparse.Namespace) -> int:
     from .config import load_sandbox_policy
     from .fence import AutonomyPolicy
@@ -2155,6 +2166,17 @@ def build_parser() -> argparse.ArgumentParser:
     d = sub.add_parser("doctor", help="Check that your coding-agent setup works")
     d.add_argument("--backend-cmd", default=None, help='e.g. "claude-code acp"')
     d.set_defaults(func=_cmd_doctor)
+
+    eg = sub.add_parser(
+        "egress",
+        help="Generate the egress allowlist config for the outbound proxy")
+    egsub = eg.add_subparsers(dest="egress_action", required=True)
+    ega = egsub.add_parser(
+        "acl",
+        help="print a Smokescreen egress-ACL fragment from the git-tracked presets")
+    ega.add_argument("--container", default="smokescreen",
+                     help="Smokescreen container name for the reload hint")
+    eg.set_defaults(func=_cmd_egress)
 
     rs = sub.add_parser("reset",
                         help="Clear local config (--all also removes saved keys)")
