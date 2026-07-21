@@ -12,6 +12,15 @@ mechanical, prefer the mechanism (hook / gate / launcher flag) over recall.
 
 ---
 
+## 0. HARD STANDING DIRECTIVE — ADOPT-FIRST (operator, verbatim — no session may paraphrase, narrow, or invert these; loaded FIRST every session)
+
+- **Adopting a suitable existing tool/library is the default and preferred path.** Before *any* build, deep-dive for a sane, logical adopt option; prefer it if one exists. `[no-rig-as-product-adopt-dont-handroll]`
+- **Hand-rolling / new rig code is the LAST choice** — an ugly option, avoided if at all possible. Not forbidden (sane reasons can exist), but it carries a **significant negative weight** in every build-vs-adopt evaluation. `[no-rig-as-product-adopt-dont-handroll]`
+- **Any proposal to hand-roll or build rig is met ADVERSARIALLY by default** — the session argues against it and must prove no sane adopt option exists. `[no-rig-as-product-adopt-dont-handroll]`
+- **The history of lost time/effort from hand-rolling** (rig-became-the-product, fixes-breeding-fixes, never shipping) is **always on the front of these evals** — the standing cost on the "build" side of the ledger (catalogued anti-patterns: `fleet/state/EVAL-REGISTRY.md` HAND-ROLL JUSTIFICATION ANTI-PATTERNS). `[no-rig-as-product-adopt-dont-handroll]`
+- **The stdlib-only / `dependencies=[]` core rule is REMOVED** — a maintained dependency is allowed and no ADR is required to add one. (Dependency choices are still evaluated sanely — removed as a *prohibition*, not as a *thought*.) `[no-rig-as-product-adopt-dont-handroll]`
+- **Refocus on the shippable product** (the gateway MVP), not the rig. When in doubt, work the product. `[no-rig-as-product-adopt-dont-handroll]`
+
 ## 1. CADENCE (drive at the operator's pace)
 
 - Work in PHASES: gather ALL results/answers for the current phase, present them together, then WAIT for operator answers before starting the next phase. Do not race ahead or stack moves. `[work-in-phases-gather-then-wait]`
