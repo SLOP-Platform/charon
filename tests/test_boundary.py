@@ -7,7 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from tools.check_boundary import scan_engine, scan_file
+from tools.check_boundary import scan_file
 
 # Repo root (…/charon) and its src/ dir, resolved absolutely from this file so
 # subprocesses we spawn below do not depend on the ambient CWD or a *relative*
@@ -95,69 +95,11 @@ def test_service_app_runs_no_privileged_loop_in_process() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# ADR-0010 D2 / ADR-0005 R3 — engine stdlib-only boundary (unit tests)
-# ---------------------------------------------------------------------------
-
-
-def test_engine_scan_is_noop_when_dir_absent(tmp_path: Path) -> None:
-    """scan_engine returns no violations when engine/ does not exist (build step 0)."""
-    assert scan_engine(tmp_path) == []
-
-
-def test_engine_scan_allows_stdlib_and_charon(tmp_path: Path) -> None:
-    eng = tmp_path / "charon" / "engine"
-    eng.mkdir(parents=True)
-    f = eng / "board.py"
-    f.write_text("import os\nimport json\nfrom charon.ledger import Ledger\n")
-    assert scan_engine(tmp_path) == []
-
-
-def test_engine_scan_flags_third_party_import(tmp_path: Path) -> None:
-    eng = tmp_path / "charon" / "engine"
-    eng.mkdir(parents=True)
-    f = eng / "bad.py"
-    f.write_text("import requests\n")
-    violations = scan_engine(tmp_path)
-    assert any("requests" in v for v in violations)
-
-
-def test_engine_scan_flags_third_party_from_import(tmp_path: Path) -> None:
-    eng = tmp_path / "charon" / "engine"
-    eng.mkdir(parents=True)
-    f = eng / "bad.py"
-    f.write_text("from httpx import AsyncClient\n")
-    violations = scan_engine(tmp_path)
-    assert any("httpx" in v for v in violations)
-
-
-def test_engine_scan_allows_relative_import(tmp_path: Path) -> None:
-    """Relative imports (from ..ledger import X) are intra-charon — must not be flagged."""
-    eng = tmp_path / "charon" / "engine"
-    eng.mkdir(parents=True)
-    f = eng / "coordinator.py"
-    f.write_text("from ..ledger import Ledger\nfrom .board import Board\n")
-    assert scan_engine(tmp_path) == []
-
-
-def test_engine_scan_flags_absolute_third_party_not_relative(tmp_path: Path) -> None:
-    """Absolute third-party import must still fail; relative sibling must still pass."""
-    eng = tmp_path / "charon" / "engine"
-    eng.mkdir(parents=True)
-    f = eng / "mixed.py"
-    f.write_text("from .board import Board\nimport requests\n")
-    violations = scan_engine(tmp_path)
-    assert any("requests" in v for v in violations)
-    assert not any(".board" in v or "board" in v and "requests" not in v for v in violations)
-
-
-def test_ports_worker_scan_flags_third_party(tmp_path: Path) -> None:
-    ports = tmp_path / "charon" / "ports"
-    ports.mkdir(parents=True)
-    worker = ports / "worker.py"
-    worker.write_text("import pydantic\n")
-    violations = scan_engine(tmp_path)
-    assert any("pydantic" in v for v in violations)
+# NOTE (2026-07-21): the engine stdlib-only boundary unit tests were REMOVED per
+# the operator ADOPT-FIRST directive. Third-party imports inside engine/ are no
+# longer a violation, so `scan_engine` and its red-proofs were retired. The host-
+# project boundary (no slop/mediastack) and the transitive layer-isolation guard
+# below remain enforced.
 
 
 # ---------------------------------------------------------------------------

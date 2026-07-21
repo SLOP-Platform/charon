@@ -3,6 +3,12 @@
 > **Supersedes** the earlier "build-four-planes" draft of this ADR. Same goal,
 > inverted build posture: integrate established tools; build only the gap.
 
+> **SUPERSEDED (stdlib-only invariant) 2026-07-21 by operator ADOPT-FIRST directive** —
+> the "stdlib-only privileged core / no runtime dependencies" invariant referenced here
+> is removed. Maintained dependencies are allowed and no ADR is required to add one;
+> adopt-first is the default and hand-rolling is the last-resort choice (negative eval
+> weight). Other invariants in this ADR stand.
+
 - **Status:** Accepted (2026-06-26; product framing & §7 routing posture amended by ADR-0005)
 - **Deciders:** Nnyan (solo operator)
 - **Repo:** `github.com/SLOP-Platform/charon` *(name TBD)*

@@ -2,6 +2,11 @@
 
 > Renumbered from 0011 (collision with the Switchboard ADR), 2026-07-19.
 
+> **NOTE 2026-07-21 (ADOPT-FIRST directive):** the "stdlib-only" qualifier used for the
+> intake/consumer module is superseded — maintained runtime dependencies are allowed, no
+> ADR required (adopt-first; hand-rolling last-resort). See ADR-0005 / ADR-0019 notes. The
+> anti-dilution rule (gateway path imports nothing from here) is unaffected.
+
 Status: **Proposed** (2026-06-26). Implements **ADR-0008 Phase 1** (the non-coder
 front door) and **ADR-0010 build-seq step 4**. Builds on ADR-0007 (`land.py` units
 loader + propose-default gate), ADR-0010 (`engine/board.py` unit schema). Honors

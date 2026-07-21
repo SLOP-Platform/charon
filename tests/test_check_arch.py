@@ -18,8 +18,6 @@ class TestCleanCodebase:
         assert violations == []
         violations = M.check_circular_imports(Path("src"))
         assert violations == []
-        violations = M.check_stdlib_only(Path("src"))
-        assert violations == []
         violations = M.check_product_clean(Path("src"))
         assert violations == []
 
@@ -202,55 +200,9 @@ class TestCircularImports:
         assert violations == []
 
 
-class TestStdlibOnly:
-    def test_stdlib_and_charon_imports_clean(self, tmp_path: Path) -> None:
-        src = tmp_path / "src" / "charon"
-        src.mkdir(parents=True)
-        (src / "gateway.py").write_text(
-            "import json\nimport os\nfrom pathlib import Path\n"
-            "from charon.netutil import is_loopback\n"
-        )
-        violations = M.check_stdlib_only(src.parent)
-        assert violations == []
-
-    def test_third_party_import_flagged(self, tmp_path: Path) -> None:
-        src = tmp_path / "src" / "charon"
-        src.mkdir(parents=True)
-        (src / "gateway.py").write_text(
-            "import requests\n"
-        )
-        violations = M.check_stdlib_only(src.parent)
-        assert len(violations) >= 1
-        assert any("stdlib-only" in v for v in violations)
-
-    def test_third_party_from_import_flagged(self, tmp_path: Path) -> None:
-        src = tmp_path / "src" / "charon"
-        src.mkdir(parents=True)
-        (src / "proxy_server.py").write_text(
-            "from flask import Flask\n"
-        )
-        violations = M.check_stdlib_only(src.parent)
-        assert len(violations) >= 1
-        assert any("stdlib-only" in v for v in violations)
-
-    def test_relative_imports_always_allowed(self, tmp_path: Path) -> None:
-        src = tmp_path / "src" / "charon"
-        src.mkdir(parents=True)
-        (src / "gateway.py").write_text(
-            "from .netutil import is_loopback\n"
-        )
-        violations = M.check_stdlib_only(src.parent)
-        assert violations == []
-
-    def test_subdirectory_files_not_checked(self, tmp_path: Path) -> None:
-        src = tmp_path / "src" / "charon" / "sub"
-        src.mkdir(parents=True)
-        (src / "mod.py").write_text(
-            "import requests\n"
-        )
-        # Only top-level glob("*.py") — sub/ files are not checked
-        violations = M.check_stdlib_only(src.parent.parent)
-        assert violations == []
+# NOTE (2026-07-21): TestStdlibOnly removed — the "stdlib-only core" check was
+# retired per the operator ADOPT-FIRST directive. Third-party runtime imports are
+# no longer a violation, so there is nothing to red-proof.
 
 
 class TestProductClean:

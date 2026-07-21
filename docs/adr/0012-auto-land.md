@@ -2,6 +2,11 @@
 
 > Post-MVP per ADR-0017 (fleet orchestration deferred; gateway MVP first).
 
+> **NOTE 2026-07-21 (ADOPT-FIRST directive):** this ADR's "privileged core stays
+> stdlib-only" clause is superseded — maintained runtime dependencies are allowed, no ADR
+> required (adopt-first; hand-rolling last-resort). See ADR-0005 / ADR-0019 notes. The
+> anti-dilution rule that the gateway request path stays untouched is unaffected.
+
 Status: **Accepted** (2026-06-26). Builds on ADR-0007 D4/D5/D6 (propose-default land gate;
 `land.py`), ADR-0010 D4 (scanner matrix; advisory-until-measured), ADR-0009 (sandbox/isolation),
 ADR-0003 (default-deny / L0-propose). Honors ADR-0005 R3 / ADR-0007 D11 (anti-dilution: the

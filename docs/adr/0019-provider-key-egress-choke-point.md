@@ -239,10 +239,18 @@ that reports how much work it actually did (§5.7).
 ## 6. STOPGAP — this code should be DELETED, not ported
 
 **The hand-rolled transport hardening in `netutil.py` exists only because the core
-is stdlib-only today.** `pyproject.toml` declares `dependencies = []` — the
-privileged loop carries no unvetted third-party code (reconciliation BR-3).
-Adding a runtime dependency would be the first breach of that invariant and is
-being decided separately, on its own ADR.
+is stdlib-only today.** `pyproject.toml` declares `dependencies = []` as a current
+fact.
+
+> **SUPERSEDED (stdlib-only prohibition) 2026-07-21 by operator ADOPT-FIRST directive.**
+> The claim below — that "adding a runtime dependency would be the first breach of that
+> invariant and is being decided separately, on its own ADR" — no longer holds. A
+> maintained runtime dependency is ALLOWED and **no ADR is required** to add one;
+> adopting a suitable existing library (e.g. LiteLLM per ADR-0017) is the default,
+> preferred path and hand-rolling is the last-resort choice with negative eval weight.
+> `dependencies = []` remains a current fact, not a mandate. This strengthens §6's own
+> conclusion that the hand-rolled `netutil.py` hardening should be DELETED once a
+> suitable dependency is adopted.
 
 If the **LiteLLM adopt (ADR-0017)** lands, the substrate provides natively what
 this module hand-rolls:

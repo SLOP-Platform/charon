@@ -6,6 +6,13 @@
 > only, not gateway mode). ADR-0001's continuity plane, fence/autonomy ladder, and
 > thin-core invariants remain in force.
 
+> **SUPERSEDED (stdlib-only mandate) 2026-07-21 by operator ADOPT-FIRST directive** —
+> every "Core stays stdlib-only / any new dependency needs justification" clause in this
+> ADR (incl. R3 and §"Core stays stdlib-only") is removed. A maintained runtime
+> dependency is ALLOWED and no ADR is required to add one; adopting a suitable existing
+> library is the default, preferred path and hand-rolling is the last-resort choice with
+> negative eval weight. The gateway-first framing and other decisions here stand.
+
 > **Relates-to ADR-0017 (2026-07-19).** Charon's gateway **identity** is kept and reinforced by ADR-0017. What changes: the hand-rolled stdlib proxy **core** this ADR builds (`proxy_server.py` / failover) is to be **replaced by adopting LiteLLM** per ADR-0017 — the gateway-first *policy* is unchanged, only the implementation substrate.
 
 - **Status:** Accepted (2026-06-26)
