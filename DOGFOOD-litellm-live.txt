@@ -1,0 +1,51 @@
+================================================================================
+CHARON — litellm.Router LIVE-WIRE-IN evidence probe
+litellm==1.93.0  (library-only Router; no proxy/FastAPI/Prisma stack)
+================================================================================
+
+[1] LIVE SERVE through litellm.Router (constructed ONCE) + base-bound key
+[92m00:36:20 - LiteLLM:WARNING[0m: utils.py:2730 - register_model: model=4ed9c43f6e16b64b6fe21984c281a74e78451f470a03517f0edf0079960ff80c not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m00:36:20 - LiteLLM:WARNING[0m: utils.py:2730 - register_model: model=openai/ma not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+    Router built once: 1 deployment(s); cooldown_time=45.0
+    served: object='chat.completion' content='pong' usage_present=True
+    upstream saw Authorization='Bearer STUB-KEY-BOUND' path='/v1/chat/completions'
+    RESULT: PASS — served through Router; base-bound key delivered to its own base.
+
+[2] SG-never-Anthropic — the Anthropic leg is dropped from the model_list
+    model_list(anthropic-only) = []
+    RESULT: PASS — no Anthropic deployment exists; SG can never route to it.
+
+[3] egress allowlist + SSRF refusal fire BEFORE the Router is built
+    off-preset base refused: refusing upstream base 'https://attacker.example/v1': its host is not one of the git-tracked provider presets and is not a local provider. Add a new egress destination by editing src/charon/provider_presets/*.py (a deliberate out-of-band step), not via runtime config.
+    metadata/SSRF base refused: refusing to add route for 'm1': refusing link-local host '169.254.169.254' (resolves to 169.254.169.254 — the cloud metadata endpoint lives in this range)
+    RESULT: PASS — both refused pre-Router; the key is never dialed off-allowlist.
+
+[4] PROBE — silent-downgrade (SR-1/SR-2): does the Router path re-host the guard?
+    requested upstream_model='ma'; response.model='CHEAPER-SUBSTITUTE'
+    observer.classify(...).pseudo_success = True  (a genuine silent downgrade)
+    FINDING: complete_via_router returns the body UN-GATED. It does NOT call
+             observer.record, emit X-Charon-Downgrade, or run the
+             failover_on_downgrade serve-vs-refetch decision. The SR-1/SR-2
+             double-bill guard is NOT re-hosted on the Router path => DEFERRED.
+
+[5] PROBE — metering: is Charon's observer / BalanceTracker fed by the Router path?
+    complete_via_router -> router.completion -> dict. It never invokes
+    srv.observer.record / srv.balance_tracker.record_spend / srv.spend_limiter.record.
+    litellm computes its OWN cost (its callback); that is NOT bridged to
+    BalanceTracker, so drain-then-park spend would not advance on the Router path.
+    FINDING: cost metering + drain-then-park spend recording NOT re-hosted => DEFERRED.
+
+================================================================================
+SUMMARY
+  PROVEN LIVE + SAFE : Router serve path, base-bound key, SG-never-Anthropic,
+                       egress allowlist, SSRF refusal, Router-built-once.
+  DEFERRED (NOT re-hosted on the live Router path — ADOPT-MAP §Slice boundary):
+    - SR-1/SR-2 silent-downgrade double-bill guard (observer.record + serve/refetch)
+    - cost metering + drain-then-park spend recording (cost-callback -> BalanceTracker)
+    - streaming SSE relay + the ADR-0016 exhaustion envelope
+  => Replacing forwarder.forward_with_failover (accept #4: delete ~650-750 LOC)
+     REQUIRES these bridges. They are the 'larger than one pass, highest-stakes'
+     re-host the design-of-record deferred; not landed here, to avoid a
+     half-migrated / silently-double-billing money-path.
+================================================================================
+EXIT: 0
