@@ -6,6 +6,7 @@ parked: false
 project: ROUTER
 branch: feat/peak-pricing-aware
 depends_on: PRICING-LIMITS-CHECK-SH
+real-dep: PRICING-LIMITS-CHECK-SH — the peak/off-peak schedule data + its freshness check live in the pricing-limits checker; this ticket CONSUMES that data to resolve the effective current price. True build/correctness prereq though owns are disjoint.
 owns: src/charon/routing_policy/pricing.py, tests/test_peak_pricing.py
 note: |
   Operator 2026-07-21 (mace-windu): SG must be aware of providers/models/APIs with PEAK / time-varying
