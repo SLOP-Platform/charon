@@ -48,6 +48,10 @@ HEAD_REF="${RIG_CI_HEAD:-HEAD}"
 # is hermetic, offline and fast. NEVER replace this with a `for t in fleet/tests/*.test.sh` sweep.
 CI_SUITES=(
   rig-ci.test.sh            # this gate's own fail-on-revert tests
+  substrate-first-gate.test.sh # hermetic: throwaway board + fixture EVAL-REGISTRY under mktemp -d,
+                            # no network. Red-proofs the creation-time build-vs-adopt gate on all
+                            # its detection paths (requirement / anti-reframe diagnostic /
+                            # registry-alignment consult / same-change provenance). ~1s.
   base-integrity.test.sh    # hermetic: isolated git fixture, BASE_INTEGRITY_OFFLINE
   board-correctness.test.sh # hermetic: throwaway board fixture
   parked-semantics.test.sh  # hermetic
@@ -183,6 +187,21 @@ cmd_board(){
   done < <(_scoped_board_files)
   # The diff WAS computed (guarded above), so n=0 here is a real, trustworthy "nothing to check".
   echo "board: $n changed ticket(s) checked (marker-independent checks only; diff scope resolved)"
+
+  # n=0 used to be a clean GREEN even when the PR was 900 lines of new code, because the substrate
+  # gate only ever saw fleet/board/*.md files. "Land code with no ticket" was therefore the cheapest
+  # way to skip the gate entirely — it simply never ran. ONE call for the whole diff (not per-ticket):
+  # a code change with no fleet/board/*.md ticket is a change the substrate question was never asked
+  # about [[adopt-substrate-build-only-novel-slice]]. Not a duplicate of WORK-GATE-UNIVERSAL, which
+  # specs decompose-sizing at launch and inert-code detection at done — neither asserts a code change
+  # HAS a ticket. No-op (rc 0, "not applicable") when no diff range is resolvable.
+  local _pht_out
+  _pht_out="$(bash "$HERE/substrate-first-gate.sh" pr-has-ticket 2>&1)"
+  if [ $? -ne 0 ]; then
+    while IFS= read -r _l; do [ -n "$_l" ] && red "${_l#  RED  }"; done <<<"$_pht_out"
+  else
+    printf '%s\n' "$_pht_out"
+  fi
   return $RED
 }
 
@@ -228,6 +247,21 @@ _check_ticket(){
     esac
   done
   unset IFS
+
+  # SUBSTRATE-FIRST [[adopt-substrate-build-only-novel-slice]] — a ticket whose work_class means
+  # "write non-trivial new code" must answer the PRIOR question (what established EXTERNAL tool
+  # covers this, and why not adopt it) before any build option is chosen. Marker-independent:
+  # answerable from the ticket file + fleet/state/EVAL-REGISTRY.md alone, so it belongs in CI.
+  # DELEGATED, not reimplemented — fleet/checks/substrate-first-gate.sh is the single rule module,
+  # so the rule cannot drift between this scope check and any other caller. DIFF-SCOPED: this only
+  # runs on tickets CHANGED in the PR (cmd_board loops over _scoped_board_files), so existing
+  # tickets are grandfathered and never retroactively red.
+  # Capture the output; do NOT pipe (pipefail would inherit the gate's own exit 1).
+  local _sub_out
+  _sub_out="$(bash "$HERE/substrate-first-gate.sh" check "$f" 2>&1)"
+  if [ $? -ne 0 ]; then
+    while IFS= read -r _l; do [ -n "$_l" ] && red "${_l#  RED  }"; done <<<"$_sub_out"
+  fi
 
   # D&S standing rule — accept it inline in the ticket (`ds:` block) or in a `prompt:` file.
   if ! grep -qiE '##[[:space:]]*dependencies[[:space:]]*&[[:space:]]*sequence|^ds:' "$f"; then

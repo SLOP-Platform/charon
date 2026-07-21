@@ -61,6 +61,14 @@ jobs:
           # (it now fails CLOSED — see rig-ci-scope.sh:_resolve_scope). Do not lower this.
           fetch-depth: 0   # need base..head history for the diff scoping
 
+      # The substrate-first gate parses ticket frontmatter with a REAL YAML parser rather than
+      # hand-rolled sed/awk (see fleet/checks/substrate_first_gate.py — the v1 hand-roll carried nine
+      # working evasions, five of them parser-class). PINNED via fleet/checks/requirements.txt: an
+      # unpinned parser is a gate whose behaviour can change under it without a commit. The gate
+      # FAILS CLOSED if this is missing, so a broken install reds CI rather than silently skipping.
+      - name: Install pinned rig-gate dependencies
+        run: python3 -m pip install --quiet --disable-pip-version-check -r fleet/checks/requirements.txt
+
       # RIG_CI_BASE / RIG_CI_HEAD are set PER-STEP, never as job-level `env:`.
       # They were job-level until 2026-07-19, which meant the `tests` step inherited them too --
       # and the suites below build THROWAWAY FIXTURE REPOS in $TMPDIR that do not contain

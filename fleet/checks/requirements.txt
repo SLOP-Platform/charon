@@ -1,0 +1,12 @@
+# Pinned Python dependencies for the RIG's checks (fleet/checks/*).
+#
+# This is the RIG's tool-dependency surface, NOT the product's. The PRODUCT's privileged core
+# (code/charon, pyproject.toml `dependencies = []`) is stdlib-only on purpose; this rig runs on
+# ubuntu-latest with a Python toolchain where `pip install` is not a constraint. Adopting a real
+# parser here instead of hand-rolling one is [[adopt-substrate-build-only-novel-slice]] in action.
+#
+# PINNED on purpose: an unpinned parser is a gate whose behaviour can change under it without a
+# commit. fleet/checks/substrate_first_gate.py FAILS CLOSED (exit 1 with a clear message) if PyYAML
+# is not importable, so a broken/missing install reds CI rather than silently skipping every ticket.
+# Keep the version here in sync with the fail-closed hint in substrate_first_gate.py.
+PyYAML==6.0.3
