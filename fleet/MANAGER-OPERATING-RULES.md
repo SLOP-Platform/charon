@@ -20,6 +20,7 @@ mechanical, prefer the mechanism (hook / gate / launcher flag) over recall.
 - **The history of lost time/effort from hand-rolling** (rig-became-the-product, fixes-breeding-fixes, never shipping) is **always on the front of these evals** — the standing cost on the "build" side of the ledger (catalogued anti-patterns: `fleet/state/EVAL-REGISTRY.md` HAND-ROLL JUSTIFICATION ANTI-PATTERNS). `[no-rig-as-product-adopt-dont-handroll]`
 - **The stdlib-only / `dependencies=[]` core rule is REMOVED** — a maintained dependency is allowed and no ADR is required to add one. (Dependency choices are still evaluated sanely — removed as a *prohibition*, not as a *thought*.) `[no-rig-as-product-adopt-dont-handroll]`
 - **Refocus on the shippable product** (the gateway MVP), not the rig. When in doubt, work the product. `[no-rig-as-product-adopt-dont-handroll]`
+- **e2e + dogfood are the NORM for ALL key money-path code** (gateway request/routing/failover/cost/keys/provider-send) — never unit-tests-only. The done-contract AND the independent adversarial review require a full-path e2e test + a real dogfood run to exist and pass before money code lands. `[e2e-dogfood-norm-for-money-code]`
 
 ## 1. CADENCE (drive at the operator's pace)
 
