@@ -34,12 +34,21 @@ its security screening (controls 1, 2, 3, 5, 6) run and are testable regardless.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from charon import egress, netutil, providers, secrets
 
 if TYPE_CHECKING:  # annotation-only; avoids importing the proxy_server graph at runtime
+    from charon.proxy import ProxyObservation
     from charon.proxy_server import UpstreamRoute
+
+# The response header the hand-rolled serve path emits on a GENUINE silent downgrade
+# (proxy_server.py:365). The Router serve path has no HTTP shell of its own yet, so the
+# guard surfaces the SAME marker for a future serve shell to emit verbatim — one marker
+# contract shared with the money path.
+DOWNGRADE_HEADER = "X-Charon-Downgrade"
+_DOWNGRADE_HEADER_VALUE = "served a different model than requested"
 
 # The money-path retries a transient upstream error once (forwarder.py); mirror it.
 DEFAULT_NUM_RETRIES = 1
@@ -215,6 +224,29 @@ def no_redirect_client(*, timeout: float = 180.0):  # noqa: ANN201 - httpx type 
     return httpx.Client(follow_redirects=False, timeout=timeout)
 
 
+def _raw_completion(router: Any, body: dict, *, timeout: float = 180.0) -> Any:
+    """Issue ONE ``Router.completion`` and return litellm's raw ``ModelResponse`` (which still
+    carries ``_hidden_params`` — the selected deployment's ``model_id`` / ``litellm_model_name``
+    the downgrade guard needs). Raises whatever litellm raises when no deployment can serve."""
+    model = body.get("model")
+    messages = body.get("messages") or []
+    passthrough = {
+        k: body[k] for k in ("temperature", "top_p", "max_tokens", "tools", "tool_choice",
+                             "stop", "response_format")
+        if k in body
+    }
+    return router.completion(model=model, messages=messages, timeout=timeout, **passthrough)
+
+
+def _to_dict(resp: Any) -> dict:
+    """Normalize litellm's pydantic ``ModelResponse`` to a plain dict for the caller."""
+    for attr in ("model_dump", "dict"):
+        fn = getattr(resp, attr, None)
+        if callable(fn):
+            return fn()
+    return dict(resp)  # last resort (already a mapping)
+
+
 def complete_via_router(router: Any, body: dict, *, timeout: float = 180.0) -> dict:
     """Serve ONE OpenAI chat-completions request through the adopted ``litellm.Router``
     (non-streaming slice) and return the response as a plain dict.
@@ -223,21 +255,90 @@ def complete_via_router(router: Any, body: dict, *, timeout: float = 180.0) -> d
     (controls applied to the model_list) → ``Router.completion`` → httpx send to the selected
     deployment's ``api_base`` carrying its base-bound key. Raises whatever litellm raises when
     no deployment can serve the requested model (e.g. an all-Anthropic model whose only legs
-    were dropped by control 5)."""
-    model = body.get("model")
-    messages = body.get("messages") or []
-    passthrough = {
-        k: body[k] for k in ("temperature", "top_p", "max_tokens", "tools", "tool_choice",
-                             "stop", "response_format")
-        if k in body
-    }
-    resp = router.completion(model=model, messages=messages, timeout=timeout, **passthrough)
-    # litellm returns a pydantic ModelResponse; normalize to a plain dict for the caller.
-    for attr in ("model_dump", "dict"):
-        fn = getattr(resp, attr, None)
-        if callable(fn):
-            return fn()
-    return dict(resp)  # last resort (already a mapping)
+    were dropped by control 5).
+
+    Downgrade-unaware: see :func:`complete_via_router_guarded` for the SR-1/SR-2 silent-downgrade
+    guard the future cutover needs."""
+    return _to_dict(_raw_completion(router, body, timeout=timeout))
+
+
+def _selected_upstream_model(router: Any, resp: Any, fallback: str | None) -> str | None:
+    """The NATIVE upstream model litellm actually SENT for this response — the ``expected``
+    the SR-1 compare needs (forwarder.py uses ``route.upstream_model``; here the Router chose
+    the deployment, so we recover ITS model). Primary: ``_hidden_params['litellm_model_name']``
+    (e.g. ``'openai/ma'``); fallback: match ``_hidden_params['model_id']`` to a
+    ``model_list`` entry's ``model_info.id``.
+
+    On failure returns *fallback* = the RETURNED model id, so the caller compares a value
+    against itself and flags NO downgrade. This is the D025-safe default: never fabricate a
+    mismatch we cannot substantiate, because a false downgrade is exactly the false-positive
+    that drove the SR-1 double-bill — better to under-flag than to re-bill an honest 200."""
+    hp = getattr(resp, "_hidden_params", None) or {}
+    name = hp.get("litellm_model_name")
+    if name:
+        return name
+    dep_id = hp.get("model_id")
+    if dep_id:
+        for entry in (getattr(router, "model_list", None) or []):
+            if (entry.get("model_info") or {}).get("id") == dep_id:
+                return (entry.get("litellm_params") or {}).get("model")
+    return fallback
+
+
+@dataclass(frozen=True)
+class GuardedResponse:
+    """A Router-served response plus the SR-1/SR-2 downgrade verdict and the header a future
+    serve shell emits. ``response`` is the already-billed 200 served AS-IS (never re-fetched,
+    never re-billed — D025). ``downgrade`` is the canonical :meth:`GatewayProxy.classify`
+    verdict; when True, ``headers`` carries ``X-Charon-Downgrade``."""
+
+    response: dict
+    downgrade: bool
+    headers: dict[str, str] = field(default_factory=dict)
+    observation: ProxyObservation | None = None
+
+
+def complete_via_router_guarded(
+    router: Any, body: dict, *, observer: Any = None, timeout: float = 180.0,
+) -> GuardedResponse:
+    """Serve ONE request through the Router **with the SR-1/SR-2 silent-downgrade guard** the
+    future money-path cutover requires — the Router-path analogue of the hand-rolled
+    forwarder's post-200 downgrade handling (forwarder.py:785-834).
+
+    Exactly ONE upstream completion is issued and its already-billed 200 is served AS-IS. If the
+    returned model's final ``/``-segment differs from the model litellm actually SENT (the
+    canonical namespace/quant-tolerant compare — REUSED from ``proxy.GatewayProxy.classify`` /
+    ``_normalize_model_id``, the SAME source of truth forwarder.py calls, NOT a second
+    implementation), the response is marked a genuine downgrade: ``headers`` gains
+    ``X-Charon-Downgrade`` and the completion is served unchanged. It is **never** discarded and
+    re-fetched from the next deployment (that discard-and-rebill was the 2026-07-03 SR-1/SR-2
+    double-bill). This guard only CLASSIFIES (pure) — it never calls ``record``/``observe``, so
+    it can add no fresh billable spend (D025: an already-billed 200 is served as-is with the
+    marker).
+
+    ``observer`` — an optional live ``proxy.GatewayProxy`` to classify with (shares its
+    pricing/normalization); a throwaway one is used when omitted. It is used PURELY for its
+    canonical ``classify`` compare; no state is mutated on it.
+    """
+    from charon.proxy import GatewayProxy  # canonical SR-1/SR-2 downgrade classifier
+
+    requested = body.get("model")
+    raw = _raw_completion(router, body, timeout=timeout)
+    served = _to_dict(raw)
+
+    obs = (observer or GatewayProxy()).classify(
+        requested_model=requested,
+        status=200,
+        headers=None,
+        body=served,  # carries the RETURNED model id (body["model"])
+        # the NATIVE model litellm SENT — the SR-1 ``expected`` (forwarder: route.upstream_model)
+        expected_model=_selected_upstream_model(router, raw, fallback=served.get("model")),
+    )
+    headers: dict[str, str] = {}
+    if obs.pseudo_success:
+        headers[DOWNGRADE_HEADER] = _DOWNGRADE_HEADER_VALUE
+    return GuardedResponse(
+        response=served, downgrade=obs.pseudo_success, headers=headers, observation=obs)
 
 
 def make_router(
