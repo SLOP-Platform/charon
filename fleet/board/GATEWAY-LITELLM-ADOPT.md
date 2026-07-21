@@ -3,8 +3,20 @@ tier: strong
 difficulty: 5
 work_class: money-path
 branch: feat/gateway-litellm-adopt
-parked: false
+parked: true
 note: |
+  PARKED 2026-07-21 — DECOMPOSED, no longer directly claimable. The opt-in FIRST SLICE DELIVERED and
+  LANDED (product master 7e16e4a: src/charon/litellm_plane/ — config->Router mapping, controls 1-6,
+  fail-on-revert tests + e2e + dogfood, litellm as the optional `router` extra). A wholesale live swap was
+  proven NOT safely one-pass (it would reintroduce the SETTLED D025 silent-downgrade double-bill), so the
+  LIVE wire-in is decomposed into 4 ADDITIVE bridges + 1 cutover, each with its own fail-on-revert e2e:
+    - GW-BRIDGE-1-DOWNGRADE-REHOST (D025 silent-downgrade re-host on the Router path)
+    - GW-BRIDGE-2-METERING-SPEND  (cost callback -> BalanceTracker; gated on ADR-0020)
+    - GW-BRIDGE-3-STREAMING-SSE   (SSE relay + ADR-0016 exhaustion envelope)
+    - GW-BRIDGE-4-PARK-COOLDOWN   (park <-> Router-cooldown unification, sole-leg guard)
+    - GW-CUTOVER-LIVE-WIRE        (live route swap + ~650-750 LOC delete + litellm -> core dep)
+  CLAIM THOSE, not this. History below is preserved for provenance.
+  ---
   LIVE 2026-07-21 — operator-APPROVED (2026-07-21), UN-PARKED: the un-park gate is now cleared —
   FT-WIRE-QUOTA (was live, owned forwarder.py) and CG-LAN-OPEN-UI (owned proxy_server.py) are both
   parked/superseded, so this ticket no longer owns-collides and is live-claimable. FT-WIRE-QUOTA's

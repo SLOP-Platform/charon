@@ -4,9 +4,9 @@ difficulty: 5
 work_class: routing
 branch: feat/gateway-grade-order-mvp
 parked: false
-depends_on: GATEWAY-LITELLM-ADOPT
-real-dep: GATEWAY-LITELLM-ADOPT the overlay hooks into litellm.Router's routing decision, which does not exist until the adopt lands; building it against the deleted hand-rolled forwarder is throwaway
-seq_reason: sequenced behind GATEWAY-LITELLM-ADOPT (hard build prereq, see real-dep); claimable once the adopt lands. LIVE (un-parked 2026-07-21).
+depends_on: GW-CUTOVER-LIVE-WIRE
+real-dep: GW-CUTOVER-LIVE-WIRE the overlay hooks into litellm.Router's LIVE routing decision, which does not serve traffic until the cutover lands (GATEWAY-LITELLM-ADOPT was decomposed into GW-BRIDGE-1..4 + GW-CUTOVER-LIVE-WIRE); building it against the deleted hand-rolled forwarder is throwaway
+seq_reason: sequenced behind GW-CUTOVER-LIVE-WIRE (hard build prereq, see real-dep); claimable once the live cutover lands. LIVE (un-parked 2026-07-21).
 note: |
   LIVE 2026-07-21 — operator-APPROVED (2026-07-21), UN-PARKED. Sequenced behind GATEWAY-LITELLM-ADOPT
   (its build prereq). This is the SECOND (and genuinely NOVEL) leg of the gateway MVP: the outcome-grade
@@ -77,10 +77,11 @@ scope: |
 ds: |
   ## Dependencies & sequence
 
-  depends_on: GATEWAY-LITELLM-ADOPT — HARD BUILD PREREQ (real-dep, see marker). The overlay hooks into
-    litellm.Router's routing callback; that Router does not exist until the adopt lands, and the
-    pre-adopt forwarder attach points (forwarder.py:388/:556) are DELETED by the adopt. BLOCKED until
-    GATEWAY-LITELLM-ADOPT is done; claimable the moment it lands (same dep-gated pattern as
+  depends_on: GW-CUTOVER-LIVE-WIRE — HARD BUILD PREREQ (real-dep, see marker). The overlay hooks into
+    litellm.Router's LIVE routing callback; that Router does not serve traffic until GW-CUTOVER-LIVE-WIRE
+    lands (GATEWAY-LITELLM-ADOPT was decomposed into GW-BRIDGE-1..4 + GW-CUTOVER-LIVE-WIRE), and the
+    pre-adopt forwarder attach points (forwarder.py:388/:556) are DELETED by the cutover. BLOCKED until
+    GW-CUTOVER-LIVE-WIRE is done; claimable the moment it lands (same dep-gated pattern as
     GH-SEAM-CHOKEPOINT). This is why the dep is a genuine build/correctness prereq, not merge-order.
 
   SEQUENCE RATIONALE (adopt-first, per §0): adopt the commodity plane FIRST, then build ONLY this novel
