@@ -17,7 +17,7 @@ import urllib.request
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
-from . import translate
+from . import netutil, translate
 from .netutil import BROWSER_UA
 from .providers import WIRE_ANTHROPIC
 from .proxy_response import _extract, _pre_flight_estimate
@@ -216,23 +216,29 @@ def _build_upstream_req(handler, srv, route: UpstreamRoute, orig_bj: dict,
         path = path[len("/v1"):]  # upstream_base already ends in /v1
     url = route.upstream_base.rstrip("/") + path
 
-    req = urllib.request.Request(url, data=data, method=handler.command)
+    fwd_headers: dict[str, str] = {}
     for hk in handler.headers.keys():
         # User-Agent is normalized separately (below) — never forwarded raw.
+        # An inbound Authorization is already in _SKIP_HEADERS: the client's token
+        # authenticates it to US and must never ride upstream in place of the
+        # provider key (netutil.keyed_request would reject it outright anyway).
         if hk.lower() not in _SKIP_HEADERS and hk.lower() != "user-agent":
-            req.add_header(hk, handler.headers[hk])
-    req.add_header("Content-Type", "application/json")
+            fwd_headers[hk] = handler.headers[hk]
+    fwd_headers["Content-Type"] = "application/json"
     # Egress identity: forward the agent's real UA (some gateways 403 an unknown
     # one), but replace an absent/library-default UA — "Python-urllib/3.x" trips
     # Cloudflare 1010 (→403). Live-verified.
     client_ua = handler.headers.get("User-Agent", "")
     if client_ua and not client_ua.lower().startswith(_BANNED_UA_PREFIXES):
-        req.add_header("User-Agent", client_ua)
+        ua = client_ua
     else:
-        req.add_header("User-Agent", _DEFAULT_UA)
-    if route.api_key:
-        req.add_header("Authorization", f"Bearer {route.api_key}")
-    return req
+        ua = _DEFAULT_UA
+    # The provider key goes on via the shared choke point, which also disables
+    # redirect-following — this is the highest-volume key-bearing send in the
+    # product and it followed redirects with the key attached until now.
+    return netutil.keyed_request(url, api_key=route.api_key or None, data=data,
+                                 method=handler.command, headers=fwd_headers,
+                                 user_agent=ua)
 
 
 def _required_capability(body: dict) -> str | None:
@@ -560,7 +566,6 @@ def forward_with_failover(handler, srv) -> None:
         more = i < len(ordered) - 1
         okey = route.pool_id or requested  # exclusion/observe key (orchestrator compat)
         expected = route.upstream_model or requested or None
-        req = _build_upstream_req(handler, srv, route, orig_bj, raw_body)
         # Resolve the response-shape adapter for THIS attempt (IDENTITY unless the
         # provider declares one). Every call site is guarded by `if route.adapter`
         # so the default path is provably byte-identical (never re-encodes).
@@ -570,7 +575,11 @@ def forward_with_failover(handler, srv) -> None:
         srv.inflight_inc(route)
         start = time.monotonic()
         try:
-            resp = urllib.request.urlopen(req, timeout=srv.fwd_timeout)
+            # Built inside the try: keyed_request SSRF-validates the upstream base,
+            # so a malformed/link-local base now fails over like any other
+            # unreachable provider instead of escaping as a 500.
+            req = _build_upstream_req(handler, srv, route, orig_bj, raw_body)
+            resp = netutil.open_keyed(req, timeout=srv.fwd_timeout)
             status, rhdrs = resp.status, dict(resp.headers)
         except urllib.error.HTTPError as exc:
             resp, status, rhdrs = exc, exc.code, dict(exc.headers)
@@ -614,11 +623,14 @@ def forward_with_failover(handler, srv) -> None:
                         resp.close()
                     except Exception:  # best-effort close of the spent attempt's fd
                         pass
-                    retry_req = _build_upstream_req(handler, srv, route, orig_bj, raw_body)
                     srv.inflight_inc(route)
                     start = time.monotonic()
                     try:
-                        resp = urllib.request.urlopen(retry_req, timeout=srv.fwd_timeout)
+                        # Same choke point on the retry leg — the redirect-following
+                        # bug had two bites at the key, this one included.
+                        retry_req = _build_upstream_req(handler, srv, route,
+                                                       orig_bj, raw_body)
+                        resp = netutil.open_keyed(retry_req, timeout=srv.fwd_timeout)
                         status, rhdrs = resp.status, dict(resp.headers)
                     except urllib.error.HTTPError as exc:
                         resp, status, rhdrs = exc, exc.code, dict(exc.headers)

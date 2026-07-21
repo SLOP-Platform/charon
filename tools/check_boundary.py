@@ -20,6 +20,14 @@ import ast
 import sys
 from pathlib import Path
 
+# Repo root on sys.path so the gate contract resolves both when this file is run
+# standalone (python3 tools/check_*.py, sys.path[0]=tools/) and when the test
+# suite imports it as tools.check_* (sys.path[0]=repo root).
+_GC_ROOT = Path(__file__).resolve().parent.parent
+if str(_GC_ROOT) not in sys.path:
+    sys.path.insert(0, str(_GC_ROOT))
+from tools.gate_contract import emit_work_units  # noqa: E402
+
 FORBIDDEN = ("slop", "mediastack")
 
 # Available from Python 3.10+; covers all stdlib top-level names.
@@ -101,8 +109,10 @@ def scan_engine(src_root: Path) -> list[str]:
 
 def main(root: str = "src") -> int:
     base = Path(root)
+    files = sorted(base.rglob("*.py"))
+    emit_work_units(len(files))
     all_violations: list[str] = []
-    for py in base.rglob("*.py"):
+    for py in files:
         all_violations.extend(scan_file(py))
     # Engine stdlib-only guard (ADR-0010 D2 / ADR-0005 R3).
     all_violations.extend(scan_engine(base))

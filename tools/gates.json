@@ -7,7 +7,9 @@
     "covers": "no host-project/build-rig references in src/",
     "ci_step": true,
     "invariant": "All src/ paths are product-clean",
-    "red_proof": "tests/test_boundary.py"
+    "red_proof": "tests/test_boundary.py",
+    "min_work_units": 50,
+    "work_units": "python files under src/ parsed for host-project references"
   },
   {
     "id": "version-check",
@@ -17,7 +19,9 @@
     "covers": "single source of truth for version in pyproject.toml",
     "ci_step": true,
     "invariant": "Installed package version matches pyproject.toml",
-    "red_proof": null
+    "red_proof": null,
+    "min_work_units": 50,
+    "work_units": "python files under src/ scanned for __version__ literals"
   },
   {
     "id": "ruff-lint",
@@ -47,7 +51,9 @@
     "covers": "all functional and regression test assertions",
     "ci_step": true,
     "invariant": "All tests pass with PYTHONPATH=src",
-    "red_proof": null
+    "red_proof": null,
+    "min_work_units": 1500,
+    "work_units": "test cases collected by pytest"
   },
   {
     "id": "validate-board",
@@ -68,7 +74,9 @@
     "covers": "architecture layer isolation, circular imports, stdlib-only, product-clean",
     "ci_step": true,
     "invariant": "Engine never imports gateway, no circular imports, stdlib-only core, product-clean",
-    "red_proof": "tests/test_check_arch.py"
+    "red_proof": "tests/test_check_arch.py",
+    "min_work_units": 50,
+    "work_units": "python files under src/ parsed for layer/import violations"
   },
   {
     "id": "check-decisions",
@@ -78,7 +86,9 @@
     "covers": "DECISIONS.md register integrity and cross-references",
     "ci_step": true,
     "invariant": "Decision register is monotonic, well-formed, and cross-references are valid",
-    "red_proof": "tests/test_check_decisions.py"
+    "red_proof": "tests/test_check_decisions.py",
+    "min_work_units": 5,
+    "work_units": "decision rows in docs/DECISIONS.md linted"
   },
   {
     "id": "render-review-log",
@@ -88,7 +98,9 @@
     "covers": "docs/REVIEW-LOG.md freshness vs fragment directory",
     "ci_step": true,
     "invariant": "Review log rollup matches its source fragments",
-    "red_proof": "tests/test_render_review_log.py"
+    "red_proof": "tests/test_render_review_log.py",
+    "min_work_units": 5,
+    "work_units": "review-log fragments rendered"
   },
   {
     "id": "gate-registry",
@@ -98,7 +110,9 @@
     "covers": "gate registry consistency and coverage completeness",
     "ci_step": true,
     "invariant": "Every gate has a living enforcer and no two gates overlap",
-    "red_proof": null
+    "red_proof": null,
+    "min_work_units": 10,
+    "work_units": "gate entries in tools/gates.json validated"
   },
   {
     "id": "security-scan",
@@ -108,7 +122,9 @@
     "covers": "bare excepts, secrets in source, hardcoded IPs, dangerous eval/exec/shell=True",
     "ci_step": true,
     "invariant": "No source file silently swallows exceptions, embeds secrets, hardcodes IPs, or uses eval/exec/subprocess-shell",
-    "red_proof": "tests/test_check_security.py"
+    "red_proof": "tests/test_check_security.py",
+    "min_work_units": 50,
+    "work_units": "python files under src/ AST-walked for anti-patterns"
   },
   {
     "id": "test-patterns",
@@ -118,7 +134,9 @@
     "covers": "duplicate test names, missing docstrings, parametrize ratio, test function line count",
     "ci_step": true,
     "invariant": "All test files are free of duplicate names and encouraged toward parametrization and documentation",
-    "red_proof": "tests/test_check_test_patterns.py"
+    "red_proof": "tests/test_check_test_patterns.py",
+    "min_work_units": 50,
+    "work_units": "test_*.py files under tests/ parsed"
   },
   {
     "id": "charon-gate",
@@ -138,7 +156,9 @@
     "covers": "action-ref pin policy, fragile Windows smoke patterns, packaging-trigger path scoping",
     "ci_step": true,
     "invariant": "Every .github/workflows/*.yml conforms to the action-pin/Windows-smoke/path-trigger policy",
-    "red_proof": "tests/test_check_workflows.py"
+    "red_proof": "tests/test_check_workflows.py",
+    "min_work_units": 1,
+    "work_units": "CI workflow files under .github/workflows/ scanned"
   },
   {
     "id": "public-clean",
@@ -148,7 +168,9 @@
     "covers": "personal/internal tokens (internal IPs, home paths, rig/host names, hex secrets) in tracked files",
     "ci_step": true,
     "invariant": "No tracked file contains unallowlisted personal/internal info",
-    "red_proof": "tests/test_public_clean.py"
+    "red_proof": "tests/test_public_clean.py",
+    "min_work_units": 100,
+    "work_units": "git-tracked files scanned for personal/internal patterns"
   },
   {
     "id": "no-rig-import-check",
@@ -158,7 +180,9 @@
     "covers": "product hot path never imports the rig grader (benchmark/grader_daemon)",
     "ci_step": true,
     "invariant": "no src/charon/ module imports benchmark or grader_daemon (outside privileged-loop zones)",
-    "red_proof": "tests/test_workclass_taxonomy.py"
+    "red_proof": "tests/test_workclass_taxonomy.py",
+    "min_work_units": 50,
+    "work_units": "python files under src/ scanned for rig imports"
   },
   {
     "id": "inert-code",
@@ -168,7 +192,9 @@
     "covers": "0-caller unreachable public symbols in src/charon (built but never wired in)",
     "ci_step": true,
     "invariant": "Every 0-caller public symbol in src/charon is either reachable, @inert_by_design, or tracked in tools/inert-code-disposition.json with a {reason, disposition} entry",
-    "red_proof": "tests/test_check_inert_code.py"
+    "red_proof": "tests/test_check_inert_code.py",
+    "min_work_units": 50,
+    "work_units": "python files under src/ walked for public symbols"
   },
   {
     "id": "catalog-case-quant",
@@ -178,7 +204,9 @@
     "covers": "catalog model ids are canonical (no case mismatches, no quantization suffix, no namespace prefix, no normalization collisions)",
     "ci_step": true,
     "invariant": "Every catalog entry has a canonical id; no two entries collide under normalization",
-    "red_proof": "tests/test_catalog_gate_wire.py"
+    "red_proof": "tests/test_catalog_gate_wire.py",
+    "min_work_units": 5,
+    "work_units": "catalog model ids compared"
   },
   {
     "id": "reachability-gate",

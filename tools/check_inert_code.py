@@ -45,6 +45,8 @@ if str(REPO_ROOT) not in sys.path:
 
 from tools._vendor.ksf_inert_code import check_inert_code  # noqa: E402
 
+from tools.gate_contract import emit_work_units  # noqa: E402
+
 DISPOSITION_PATH = REPO_ROOT / "tools" / "inert-code-disposition.json"
 _VALID_DISPOSITIONS = re.compile(r"^(wire|delete|keep-.+)$")
 _MESSAGE_RE = re.compile(r"^inert-code: (\S+) unreachable")
@@ -120,6 +122,10 @@ def check(repo_root: Path = REPO_ROOT) -> tuple[bool, list[str], list[str], list
 def main() -> int:
     passed, undisposed, dead, schema_issues = check()
     dispositions = load_dispositions()
+    # Work units = source files walked for public symbols, not dead symbols
+    # found. A clean tree legitimately has zero dead symbols; a gate pointed at
+    # the wrong tree also has zero. Counting the INPUT distinguishes them.
+    emit_work_units(len(sorted((REPO_ROOT / "src").rglob("*.py"))))
 
     print(
         f"inert-code: {len(dead)} dead symbol(s) found, "

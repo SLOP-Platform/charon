@@ -178,7 +178,7 @@ def test_provider_add_key_not_echoed(home, monkeypatch):
             # Config summary must not leak the key
             st2, body2, _ = _req(base + "/charon/config", token="t")
             # Key IS stored in secrets
-            assert secrets.load_secrets().get("MOCKTEST_KEY") == "sk-secret-12345"
+            assert secrets.load_secrets().get("provider:mocktest") == "sk-secret-12345"
         finally:
             server.shutdown()
     finally:
@@ -327,7 +327,7 @@ def test_validate_provider_key_sends_shared_browser_ua():
 
     opener = MagicMock()
     opener.open.side_effect = _fake_open
-    with patch("urllib.request.build_opener", return_value=opener):
+    with patch("charon.netutil._OPENER", opener):
         config.validate_provider_key("groq", "https://api.groq.com/openai/v1", "sk-x")
 
     assert seen  # both /models and /chat/completions probes ran

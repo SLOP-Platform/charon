@@ -34,9 +34,11 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import providers
+from . import (
+    netutil,  # key-egress choke point (keyed_request/open_keyed)
+    providers,
+)
 from .api import _invocation_name
-from .netutil import BROWSER_UA  # shared browser-like UA (P5 — Cloudflare 1010)
 
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = 8080
@@ -58,13 +60,9 @@ def discover_models(host: str, port: int, token: str | None, *,
     leak) and the body is size-capped. Raises :class:`GatewayUnreachable` on any
     transport/HTTP error so the caller can fail closed without writing config."""
     url = f"http://{host}:{port}/v1/models"
-    req = urllib.request.Request(url, method="GET")
-    req.add_header("User-Agent", BROWSER_UA)
-    if token:
-        req.add_header("Authorization", "Bearer " + token)
-    opener = urllib.request.build_opener(providers._NoRedirect())
     try:
-        resp = opener.open(req, timeout=timeout)
+        req = netutil.keyed_request(url, api_key=token, method="GET")
+        resp = netutil.open_keyed(req, timeout=timeout)
         raw = resp.read(_MAX_MODELS_BYTES + 1)
     except urllib.error.HTTPError as exc:
         hint = " (token rejected?)" if exc.code in (401, 403) else ""

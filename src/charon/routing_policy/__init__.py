@@ -86,11 +86,15 @@ def route_from_spec(spec: dict, providers_cfg: dict,
         adapter = str(spec.get("adapter") or "") or None
         max_context = _int_or_none(spec.get("context_window") or spec.get("max_context"))
         max_concurrency = _int_or_none(spec.get("max_concurrency"))
-    import os
+    from charon import secrets as _secrets
 
     return _UpstreamRoute(
         upstream_base=str(base),
-        api_key=os.environ.get(key_env) if key_env else None,
+        # KEY-EXFIL FIX: the forward path resolves through the ONE provider-key
+        # resolver, not `os.environ[key_env]`. This is the sink that fires on
+        # EVERY proxied completion, so a mis-bound key here leaks with no
+        # attacker action at all once a bad entry is persisted.
+        api_key=_secrets.get_provider_key(prov, key_env=key_env, base_url=base),
         upstream_model=spec.get("upstream_model"),
         provider=prov,
         strip_v1=strip_v1,

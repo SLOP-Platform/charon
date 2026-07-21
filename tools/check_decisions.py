@@ -17,6 +17,14 @@ import re
 import sys
 from pathlib import Path
 
+# Repo root on sys.path so the gate contract resolves both when this file is run
+# standalone (python3 tools/check_*.py, sys.path[0]=tools/) and when the test
+# suite imports it as tools.check_* (sys.path[0]=repo root).
+_GC_ROOT = Path(__file__).resolve().parent.parent
+if str(_GC_ROOT) not in sys.path:
+    sys.path.insert(0, str(_GC_ROOT))
+from tools.gate_contract import emit_work_units  # noqa: E402
+
 # Status values allowed in the register.
 _STATUS_RE = re.compile(r"^(Settled|Open|Superseded→D\d{3,})$")
 
@@ -130,6 +138,7 @@ def lint(docs_dir: Path | None = None) -> list[str]:
         return [f"register not found: {register}"]
 
     rows = _parse_rows(register.read_text())
+    emit_work_units(len(rows))
     if not rows:
         return ["no decision rows found"]
 

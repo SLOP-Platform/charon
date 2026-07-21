@@ -25,6 +25,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import netutil  # key-egress choke point (keyed_request/open_keyed)
 from .failover_loop import (
     FAILOVER,
     OK,
@@ -32,7 +33,6 @@ from .failover_loop import (
     AttemptResult,
     invoke_with_failover,
 )
-from .netutil import BROWSER_UA  # shared browser-like UA (P5 — Cloudflare 1010)
 
 
 @dataclass
@@ -45,11 +45,6 @@ class TierRecommendation:
 # ----------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------
-
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, *a, **k):
-        return None
-
 
 def _find_trusted_models(config_dir: str | Path) -> list[tuple[str, str, str]]:
     """Find already-configured models that have working API keys, EXCLUDING every
@@ -90,10 +85,9 @@ def _find_trusted_models(config_dir: str | Path) -> list[tuple[str, str, str]]:
             model_id=mid, provider=prov_name, base_url=base_url
         ):
             continue
-        key_env = prov.get("key_env") or resolved.key_env
-        if not key_env:
-            continue
-        api_key = os.environ.get(key_env) or secs.get(key_env)
+        api_key = secrets.get_provider_key(
+            prov_name, key_env=prov.get("key_env") or resolved.key_env,
+            base_url=base_url, secs=secs)
         if not api_key:
             continue
         trusted.append((mid, base_url, api_key))
@@ -193,13 +187,11 @@ def _post_tier_ranking(
         "temperature": 0.0,
         "max_tokens": 2000,
     }).encode()
-    req = urllib.request.Request(raw_base + "/chat/completions", data=body, method="POST")
-    req.add_header("User-Agent", BROWSER_UA)
-    req.add_header("Content-Type", "application/json")
-    req.add_header("Authorization", "Bearer " + api_key)
-    opener = urllib.request.build_opener(_NoRedirect())
     try:
-        resp = opener.open(req, timeout=timeout)
+        req = netutil.keyed_request(
+            raw_base + "/chat/completions", api_key=api_key, data=body, method="POST",
+            headers={"Content-Type": "application/json"})
+        resp = netutil.open_keyed(req, timeout=timeout)
         raw = resp.read(200_000)
     except urllib.error.HTTPError as e:
         # HTTPError is a URLError subclass — catch it first to read the status code.

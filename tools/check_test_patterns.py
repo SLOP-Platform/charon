@@ -25,6 +25,14 @@ import ast
 import sys
 from pathlib import Path
 
+# Repo root on sys.path so the gate contract resolves both when this file is run
+# standalone (python3 tools/check_*.py, sys.path[0]=tools/) and when the test
+# suite imports it as tools.check_* (sys.path[0]=repo root).
+_GC_ROOT = Path(__file__).resolve().parent.parent
+if str(_GC_ROOT) not in sys.path:
+    sys.path.insert(0, str(_GC_ROOT))
+from tools.gate_contract import emit_work_units  # noqa: E402
+
 _PARAMETRIZE_TARGET_RATIO = 0.1
 _MAX_LINES = 50
 
@@ -265,6 +273,8 @@ def main(argv: list[str] | None = None) -> int:
     args = [a for a in argv[1:] if not a.startswith("-")]
     root = args[0] if args else "tests"
 
+    emit_work_units(len([p for p in Path(root).rglob("test_*.py")
+                         if "/__pycache__/" not in str(p)]))
     errors, warnings = scan_tests(root)
 
     exit_code = 0

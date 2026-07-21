@@ -9,6 +9,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Repo root on sys.path so the gate contract resolves both when this file is run
+# standalone (python3 tools/check_*.py, sys.path[0]=tools/) and when the test
+# suite imports it as tools.check_* (sys.path[0]=repo root).
+_GC_ROOT = Path(__file__).resolve().parent.parent
+if str(_GC_ROOT) not in sys.path:
+    sys.path.insert(0, str(_GC_ROOT))
+from tools.gate_contract import emit_work_units  # noqa: E402
+
 _PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r'10\.\d+\.\d+\.\d+'), 'internal IP (10.0.0.0/8)'),
     (re.compile(r'10\.0\.1\.\d+'), 'coordinator LAN subnet (10.0.1.0/24)'),   # named, explicit;
@@ -263,6 +271,7 @@ def main(argv: list[str] | None = None) -> int:
         all_v = _scan_rel_paths(argv, exceptions)
     else:
         all_v = scan_tracked(exceptions)
+        emit_work_units(len(sorted(_tracked_files())))
     if all_v:
         print("PUBLIC-CLEAN VIOLATION — personal/internal info found:", file=sys.stderr)
         for v in all_v:

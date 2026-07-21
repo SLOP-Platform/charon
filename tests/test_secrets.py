@@ -37,7 +37,12 @@ def test_apply_to_env_does_not_override_explicit(monkeypatch, tmp_path):
 def test_providers_add_stores_key_without_echo(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("CHARON_HOME", str(tmp_path))
     assert cli.main(["providers", "add", "openrouter", "--key", "sk-xyz"]) == 0
-    assert secrets.load_secrets()["OPENROUTER_API_KEY"] == "sk-xyz"
+    # Stored against the PROVIDER, never the shared env-var name (KEY-EXFIL FIX).
+    assert secrets.load_secrets()["provider:openrouter"] == "sk-xyz"
+    assert "OPENROUTER_API_KEY" not in secrets.load_secrets()
+    assert secrets.get_provider_key(
+        "openrouter", key_env="OPENROUTER_API_KEY",
+        base_url="https://openrouter.ai/api/v1") == "sk-xyz"
     out = capsys.readouterr()
     assert "sk-xyz" not in out.out and "sk-xyz" not in out.err  # never printed (stdout or stderr)
 
@@ -123,4 +128,4 @@ def test_providers_add_custom_with_base_url(monkeypatch, tmp_path):
     monkeypatch.setenv("CHARON_HOME", str(tmp_path))
     rc = cli.main(["providers", "add", "mygw", "--base-url", "http://localhost:9/v1",
                    "--key-env", "MYGW_KEY", "--key", "secret"])
-    assert rc == 0 and secrets.load_secrets()["MYGW_KEY"] == "secret"
+    assert rc == 0 and secrets.load_secrets()["provider:mygw"] == "secret"

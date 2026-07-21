@@ -83,13 +83,15 @@ class TestDiscoverProvider:
         def _raise_os_error(*a, **kw):  # noqa: ANN002, ANN003
             raise OSError("timed out")
 
-        import charon.discover
-        orig = charon.discover.urllib.request.urlopen
-        charon.discover.urllib.request.urlopen = _raise_os_error
+        # Patch the shared key-egress sender (netutil.open_keyed) — discover no
+        # longer calls urlopen directly, every outbound send goes through it.
+        from charon import netutil
+        orig = netutil.open_keyed
+        netutil.open_keyed = _raise_os_error
         try:
             assert discover_provider("http://127.0.0.1:1/v1", None, timeout=0.001) is None
         finally:
-            charon.discover.urllib.request.urlopen = orig
+            netutil.open_keyed = orig
 
     def test_returns_none_on_invalid_json(self):
         class H(http.server.BaseHTTPRequestHandler):
@@ -424,7 +426,7 @@ class TestOpenRouterImport:
             {"id": "openai/gpt-4o", "pricing": {"prompt": "5", "completion": "15"}},
             {"id": "anthropic/claude-sonnet", "pricing": {"prompt": "3", "completion": "15"}},
         ]).encode()
-        monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout: _FakeResp(200, raw))
+        monkeypatch.setattr("charon.netutil.open_keyed", lambda req, timeout: _FakeResp(200, raw))
         result = discover_openrouter()
         assert result is not None
         assert len(result) == 2
@@ -432,7 +434,7 @@ class TestOpenRouterImport:
     def test_discover_openrouter_returns_none_on_error(self, monkeypatch):
         def _fail(*a, **kw):
             _raise(_fake_urlerr(500))
-        monkeypatch.setattr("urllib.request.urlopen", _fail)
+        monkeypatch.setattr("charon.netutil.open_keyed", _fail)
         assert discover_openrouter() is None
 
     def test_fuzzy_match_exact(self):
@@ -459,7 +461,7 @@ class TestOpenRouterImport:
             {"id": "gpt-4o", "pricing": {"prompt": "5", "completion": "15"}},
             {"id": "unknown/model-zzz", "pricing": {"prompt": "1", "completion": "1"}},
         ]).encode()
-        monkeypatch.setattr("charon.discover.urllib.request.urlopen",
+        monkeypatch.setattr("charon.netutil.open_keyed",
                             lambda req, timeout: _FakeResp(200, raw))
         monkeypatch.setattr("charon.discover.config.load_models",
                             lambda **kw: {"gpt-4o": {}, "claude": {}})
@@ -473,7 +475,7 @@ class TestOpenRouterImport:
         raw = json.dumps([
             {"id": "brand-new-model", "pricing": {"prompt": "2", "completion": "8"}},
         ]).encode()
-        monkeypatch.setattr("charon.discover.urllib.request.urlopen",
+        monkeypatch.setattr("charon.netutil.open_keyed",
                             lambda req, timeout: _FakeResp(200, raw))
         monkeypatch.setattr("charon.discover.config.load_models", lambda **kw: {})
         monkeypatch.setattr("charon.discover.secrets.config_dir", lambda **kw: tmp_path)

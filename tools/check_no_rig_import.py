@@ -35,6 +35,14 @@ import ast
 import sys
 from pathlib import Path
 
+# Repo root on sys.path so the gate contract resolves both when this file is run
+# standalone (python3 tools/check_*.py, sys.path[0]=tools/) and when the test
+# suite imports it as tools.check_* (sys.path[0]=repo root).
+_GC_ROOT = Path(__file__).resolve().parent.parent
+if str(_GC_ROOT) not in sys.path:
+    sys.path.insert(0, str(_GC_ROOT))
+from tools.gate_contract import emit_work_units  # noqa: E402
+
 # Rig-package names — MUST NOT appear on the product hot path.
 FORBIDDEN_RIG_PACKAGES: frozenset[str] = frozenset({"benchmark", "grader_daemon"})
 
@@ -115,6 +123,7 @@ def main(root: str = "src") -> int:
     if not base.exists():
         print(f"no-rig-import: root {base!r} does not exist", file=sys.stderr)
         return 1
+    emit_work_units(len(sorted(base.rglob("*.py"))))
     violations = scan_hot_path(base)
     if violations:
         print("PRODUCT-PATH RIG-IMPORT VIOLATION (GATEWAY-PROGRAM §1.9 red-team fix #2):",

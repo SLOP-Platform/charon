@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import threading
 import time
 from collections.abc import Callable
@@ -71,12 +70,14 @@ def _normalize(raw: str) -> str:
 
 def _default_list_models(name: str, overrides: dict | None) -> list[dict]:
     """Poll one provider's ``GET /models`` using the shared, SSRF-guarded
-    ``providers.list_models`` (never a bespoke fetcher). The provider key is read
-    from its resolved ``key_env`` in the process env (populated by
-    ``secrets.apply_to_env`` in the running gateway)."""
+    ``providers.list_models`` (never a bespoke fetcher). The provider key comes
+    from the ONE resolver (``secrets.get_provider_key``), so a refresh can never
+    send a key to a base that key is not bound to."""
+    from charon import secrets as _secrets
+
     preset = _providers_mod.resolve(name, overrides)
-    key_env = (overrides or {}).get("key_env") or preset.key_env
-    api_key = os.environ.get(key_env) if key_env else None
+    api_key = _secrets.get_provider_key(
+        name, key_env=preset.key_env, base_url=preset.base_url)
     return _providers_mod.list_models(name, overrides, api_key=api_key)
 
 

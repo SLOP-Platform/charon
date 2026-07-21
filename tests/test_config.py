@@ -79,7 +79,8 @@ def test_setup_wizard_end_to_end(monkeypatch, tmp_path):
     assert "gpt-4o" in models and models["deepseek-chat"]["free"] is True
     assert pools["auto"] == ["gpt-4o", "deepseek-chat"]
     secs = secrets.load_secrets()
-    assert secs["OPENROUTER_API_KEY"] == "sk-or" and secs["DEEPSEEK_API_KEY"] == "sk-deep"
+    # Keys are stored per PROVIDER, never under the shared env-var name (KEY-EXFIL FIX).
+    assert secs["provider:openrouter"] == "sk-or" and secs["provider:deepseek"] == "sk-deep"
 
 
 def test_setup_no_tty_exits_gracefully(monkeypatch, tmp_path):
@@ -122,7 +123,8 @@ def test_providers_add_custom_persists_provider(monkeypatch, tmp_path):
                    "--key-env", "DEEPSEEK_KEY", "--key", "sk-deep"])
     assert rc == 0
     assert config.load_providers()["deepseek"]["base_url"] == "https://api.deepseek.com/v1"
-    assert secrets.load_secrets()["DEEPSEEK_KEY"] == "sk-deep"
+    assert config.load_providers()["deepseek"]["key_env"] == "DEEPSEEK_KEY"
+    assert secrets.load_secrets()["provider:deepseek"] == "sk-deep"
     os.environ.pop("DEEPSEEK_KEY", None)
 
 
@@ -258,7 +260,7 @@ def test_validate_provider_key_models_ok_short_circuits_chat_probe():
 
     opener = MagicMock()
     opener.open.side_effect = _fake_open
-    with patch("urllib.request.build_opener", return_value=opener):
+    with patch("charon.netutil._OPENER", opener):
         result = kp.validate_provider_key("test", "https://api.example.com/v1", "sk-x")
 
     assert result["valid"] is True, f"expected valid=True, got {result!r}"
@@ -288,7 +290,7 @@ def test_validate_provider_key_models_unreachable_still_rejects_on_chat_400():
 
     opener = MagicMock()
     opener.open.side_effect = _fake_open
-    with patch("urllib.request.build_opener", return_value=opener):
+    with patch("charon.netutil._OPENER", opener):
         result = kp.validate_provider_key("test", "https://api.example.com/v1", "sk-x")
 
     assert result["valid"] is False
@@ -303,15 +305,16 @@ def test_validate_provider_key_skip_probe_returns_skipped_without_network():
     from charon.config import keyprobe as kp
 
     opener = MagicMock()
-    with patch("urllib.request.build_opener", return_value=opener) as bo:
+    with patch("charon.netutil._OPENER", opener):
         result = kp.validate_provider_key(
             "test", "https://api.example.com/v1", "sk-x", skip_probe=True)
 
     assert result["valid"] is True
     assert result.get("skipped") is True
     assert "skipped" in result["message"].lower()
-    # No HTTP work done.
-    assert bo.call_count == 0  # build_opener was never called
+    # No HTTP work done. netutil's opener is a module global built once at
+    # import, so "was it constructed?" is no longer a signal — the only honest
+    # assertion is that nothing was ever SENT through it.
     assert opener.open.call_count == 0
 
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# @covers: catalog
 """Catalog case/quant-mismatch detector (mechanizes directive #30).
 
 The pseudo-success compare (`proxy._normalize_model_id`) is case- and
@@ -27,6 +28,15 @@ from collections.abc import Iterable
 # stdlib-only; imported for the shared normalization primitive (single source of
 # truth with the live compare, so the detector can never drift from proxy.py).
 from charon.proxy import _QUANT_SUFFIX, _normalize_model_id
+
+from pathlib import Path
+# Repo root on sys.path so the gate contract resolves both when this file is run
+# standalone (python3 tools/check_*.py, sys.path[0]=tools/) and when the test
+# suite imports it as tools.check_* (sys.path[0]=repo root).
+_GC_ROOT = Path(__file__).resolve().parent.parent
+if str(_GC_ROOT) not in sys.path:
+    sys.path.insert(0, str(_GC_ROOT))
+from tools.gate_contract import emit_work_units  # noqa: E402
 
 
 def _is_non_canonical(model_id: str) -> str:
@@ -88,6 +98,7 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         return 2
 
+    emit_work_units(len(ids))
     problems = find_mismatches(ids)
     if problems:
         print("check_catalog_case_quant: catalog case/quant mismatch(es):",

@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import json
 import urllib.error
-import urllib.request
 
+from .. import netutil  # key-egress choke point (keyed_request/open_keyed)
 from ..netutil import BROWSER_UA
 
 _VALIDATE_TIMEOUT = 15.0
@@ -55,21 +55,14 @@ def validate_provider_key(
     except ValueError as exc:
         return {"valid": False, "message": str(exc)}
 
-    class _NoRedirect(urllib.request.HTTPRedirectHandler):
-        def redirect_request(self, *a, **k):  # noqa: ANN002, ANN003
-            return None
-
-    opener = urllib.request.build_opener(_NoRedirect())
-
     # Probe 1: GET /models — cheap, tells us the key works + model count
     models_count = 0
     models_ok = False
     first_model_id: str | None = None
     try:
-        req = urllib.request.Request(models_endpoint, method="GET")
-        req.add_header("User-Agent", _VALIDATE_UA)
-        req.add_header("Authorization", "Bearer " + api_key)
-        resp = opener.open(req, timeout=_VALIDATE_TIMEOUT)
+        req = netutil.keyed_request(models_endpoint, api_key=api_key, method="GET",
+                                    user_agent=_VALIDATE_UA)
+        resp = netutil.open_keyed(req, timeout=_VALIDATE_TIMEOUT)
         raw = resp.read(200_000)
         data = json.loads(raw.decode("utf-8", "replace"))
         items = data.get("data") if isinstance(data, dict) else data
@@ -101,11 +94,10 @@ def validate_provider_key(
             "messages": [{"role": "user", "content": "hi"}],
             "max_tokens": 1,
         }).encode()
-        req = urllib.request.Request(chat_endpoint, data=body, method="POST")
-        req.add_header("User-Agent", _VALIDATE_UA)
-        req.add_header("Content-Type", "application/json")
-        req.add_header("Authorization", "Bearer " + api_key)
-        resp = opener.open(req, timeout=_VALIDATE_TIMEOUT)
+        req = netutil.keyed_request(chat_endpoint, api_key=api_key, data=body,
+                                    method="POST", user_agent=_VALIDATE_UA,
+                                    headers={"Content-Type": "application/json"})
+        resp = netutil.open_keyed(req, timeout=_VALIDATE_TIMEOUT)
         resp.read(1024)
         return {"valid": True, "message": "key validated — chat probe succeeded",
                 "models_count": models_count}

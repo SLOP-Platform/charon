@@ -213,6 +213,14 @@ def add_provider(name: str, *, base_url: str | None = None, key_env: str | None 
         _validate_base_url(str(base_url))
     if key_env is not None and not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", str(key_env)):
         raise ValueError(f"invalid key-env name {key_env!r}")
+    # The balance fields are a SECOND key<->base indirection (balance.py polls
+    # balance_base_url with the balance_key_env key) and used to be persisted
+    # with no validation at all — unlike base_url. Same guards, same reasons.
+    if balance_base_url is not None:
+        _validate_base_url(str(balance_base_url))
+    if balance_key_env is not None and not re.match(
+            r"^[A-Za-z_][A-Za-z0-9_]*$", str(balance_key_env)):
+        raise ValueError(f"invalid balance key-env name {balance_key_env!r}")
     if funding_class is not None and funding_class not in _FUNDING_CLASSES:
         raise ValueError(
             f"funding_class must be one of {sorted(_FUNDING_CLASSES)}, "

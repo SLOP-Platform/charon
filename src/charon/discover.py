@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
-import os
-import urllib.error
-import urllib.request
 from pathlib import Path
 
-from . import config, providers, secrets
-from .netutil import BROWSER_UA  # shared browser-like UA (P5 — Cloudflare 1010)
+from . import (
+    config,
+    netutil,  # key-egress choke point (keyed_request/open_keyed)
+    providers,
+    secrets,
+)
 
 _COST_MAP_FILE = "cost_map.json"
 
@@ -38,13 +39,12 @@ def discover_provider(base_url: str, api_key: str | None,
     except ValueError:
         return None
 
-    req = urllib.request.Request(url, method="GET")
-    req.add_header("User-Agent", BROWSER_UA)
-    if api_key:
-        req.add_header("Authorization", "Bearer " + api_key)
-
     try:
-        resp = urllib.request.urlopen(req, timeout=timeout)
+        # netutil is the key-egress choke point: it attaches the Bearer and
+        # disables redirect-following (urllib does NOT strip Authorization
+        # cross-host, so a 302 here would hand the key to another host).
+        req = netutil.keyed_request(url, api_key=api_key, method="GET")
+        resp = netutil.open_keyed(req, timeout=timeout)
         raw = resp.read()
         data = json.loads(raw.decode("utf-8", "replace"))
     except Exception:  # noqa: BLE001
@@ -152,9 +152,7 @@ def discover_models(refresh: bool = False, timeout: int = 10,
         key_env = override.get("key_env", preset.key_env)
         strip = override.get("strip_v1", preset.strip_v1)
 
-        api_key: str | None = None
-        if key_env:
-            api_key = os.environ.get(key_env) or secs.get(key_env)
+        api_key = secrets.get_provider_key(name, key_env=key_env, base_url=base, secs=secs)
 
         targets.append((name, base, api_key, strip))
         seen.add(name)
@@ -166,9 +164,9 @@ def discover_models(refresh: bool = False, timeout: int = 10,
         if not isinstance(base, str):
             continue
         key_env = prov.get("key_env")
-        api_key = None
-        if isinstance(key_env, str):
-            api_key = os.environ.get(key_env) or secs.get(key_env)
+        api_key = secrets.get_provider_key(
+            name, key_env=key_env if isinstance(key_env, str) else None,
+            base_url=base, secs=secs)
         strip = prov.get("strip_v1", True)
         targets.append((name, base, api_key, strip))
 
@@ -258,10 +256,9 @@ _ALIAS_FILE = "model_aliases.json"
 
 def discover_openrouter(timeout: float = 10) -> list[dict] | None:
     """Fetch the OpenRouter model catalogue (no auth needed)."""
-    req = urllib.request.Request(_OPENROUTER_API, method="GET")
-    req.add_header("User-Agent", BROWSER_UA)
     try:
-        resp = urllib.request.urlopen(req, timeout=timeout)
+        req = netutil.keyed_request(_OPENROUTER_API, method="GET")
+        resp = netutil.open_keyed(req, timeout=timeout)
         raw = resp.read()
         data = json.loads(raw.decode("utf-8", "replace"))
     except Exception:  # noqa: BLE001

@@ -19,6 +19,14 @@ import shutil
 import sys
 from pathlib import Path
 
+# Repo root on sys.path so the gate contract resolves both when this file is run
+# standalone (python3 tools/check_*.py, sys.path[0]=tools/) and when the test
+# suite imports it as tools.check_* (sys.path[0]=repo root).
+_GC_ROOT = Path(__file__).resolve().parent.parent
+if str(_GC_ROOT) not in sys.path:
+    sys.path.insert(0, str(_GC_ROOT))
+from tools.gate_contract import emit_work_units  # noqa: E402
+
 TOOLS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = TOOLS_DIR.parent
 GATES_PATH = TOOLS_DIR / "gates.json"
@@ -27,6 +35,10 @@ ALL_DOMAINS: frozenset[str] = frozenset({
     "boundary", "security", "arch", "test", "test-patterns",
     "lint", "type", "version", "registry", "gate", "fleet", "docs", "decisions",
     "public-clean", "inert", "ci-infra", "no-rig-import", "reachability",
+    # "catalog" was reported as an unknown domain for as long as the
+    # catalog-case-quant gate has existed — registered here rather than left as
+    # standing noise, because a permanently-noisy registry is one nobody reads.
+    "catalog",
 })
 
 
@@ -109,7 +121,35 @@ def validate() -> int:
         print("ERROR: gates.json is empty", file=sys.stderr)
         return 1
 
+    emit_work_units(len(gates))
     issues: list[str] = []
+
+    # 0. Zero-work-units contract (tools/gate_contract.py). Every ci_step gate
+    #    driven by a tools/*.py script must DECLARE how much work it expects to
+    #    examine, so gate_runner can fail closed when a gate reports less. This
+    #    is the ratchet: a gate added later cannot silently opt out of the
+    #    contract, which is exactly how the inert key-egress gate shipped green.
+    #    A declared 0 is permitted only with a written `work_units_note`, so
+    #    "this gate legitimately examines nothing countable" is a decision on the
+    #    record rather than an omission.
+    for i, gate in enumerate(gates):
+        if not isinstance(gate, dict) or not gate.get("ci_step"):
+            continue
+        gid = gate.get("id", f"#{i}")
+        enforcer_parts = str(gate.get("enforcer", "")).split()
+        script = next((p for p in enforcer_parts if p.startswith("tools/")), None)
+        if script is None:
+            continue
+        if "min_work_units" not in gate:
+            issues.append(
+                f"{gid}: ci_step gate {script} does not declare 'min_work_units' "
+                "(zero-work-units contract, tools/gate_contract.py)")
+        elif not isinstance(gate["min_work_units"], int) or gate["min_work_units"] < 0:
+            issues.append(f"{gid}: 'min_work_units' must be a non-negative integer")
+        elif gate["min_work_units"] == 0 and not str(gate.get("work_units_note", "")).strip():
+            issues.append(
+                f"{gid}: declares min_work_units 0 without a 'work_units_note' "
+                "explaining why this gate examines nothing countable")
 
     # 1. Schema validation + enforcer existence
     required_fields = {"id", "domain", "enforcer"}

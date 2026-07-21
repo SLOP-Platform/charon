@@ -9,11 +9,12 @@ import hmac
 import json
 import threading
 import time
-import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 
 from charon.types import ObsEvent, ObsTarget
+
+from . import netutil  # key-egress choke point (keyed_request/open_keyed)
 
 
 class Observability:
@@ -99,16 +100,16 @@ class Observability:
             body = json.dumps(data).encode("utf-8")
             secret_bytes = (self._webhook_secret or "").encode("utf-8")
             sig = hmac.new(secret_bytes, body, hashlib.sha256).hexdigest()
-            req = urllib.request.Request(
+            req = netutil.keyed_request(
                 self._webhook_url,
                 data=body,
+                method="POST",
                 headers={
                     "Content-Type": "application/json",
                     "X-Charon-Signature": sig,
                 },
-                method="POST",
             )
-            urllib.request.urlopen(req, timeout=5)
+            netutil.open_keyed(req, timeout=5)
         except Exception:  # noqa: BLE001 — non-blocking by design
             pass
 
@@ -134,15 +135,16 @@ class Observability:
             auth_str = base64.b64encode(
                 f"{self._langfuse_public_key}:{self._langfuse_secret_key}".encode()
             ).decode()
-            req = urllib.request.Request(
+            # Basic credentials go through the same choke point as a Bearer — a
+            # 302 off the Langfuse host would otherwise leak the project keys.
+            req = netutil.keyed_request(
                 self._langfuse_url,
+                api_key=auth_str,
+                auth_scheme="Basic",
                 data=body,
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Basic {auth_str}",
-                },
                 method="POST",
+                headers={"Content-Type": "application/json"},
             )
-            urllib.request.urlopen(req, timeout=5)
+            netutil.open_keyed(req, timeout=5)
         except Exception:  # noqa: BLE001 — non-blocking by design
             pass
