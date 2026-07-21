@@ -71,9 +71,9 @@
     "name": "Architecture boundary checker",
     "domain": "arch",
     "enforcer": "tools/check_arch.py",
-    "covers": "architecture layer isolation, circular imports, stdlib-only, product-clean",
+    "covers": "architecture layer isolation, circular imports, product-clean",
     "ci_step": true,
-    "invariant": "Engine never imports gateway, no circular imports, stdlib-only core, product-clean",
+    "invariant": "Engine never imports gateway, no circular imports, product-clean",
     "red_proof": "tests/test_check_arch.py",
     "min_work_units": 50,
     "work_units": "python files under src/ parsed for layer/import violations"

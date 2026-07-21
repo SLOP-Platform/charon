@@ -12,9 +12,12 @@ license = { text = "MIT" }
 authors = [{ name = "Nnyan", email = "Nnyan@users.noreply.github.com" }]
 keywords = ["agents", "orchestration", "acp", "llm", "autonomous"]
 
-# Tier 1 core has NO runtime dependencies (stdlib only) — the privileged loop
-# carries no unvetted third-party code (reconciliation BR-3). The HTTP service
-# is an OPTIONAL extra so FastAPI never lands in the core/privileged install.
+# The core currently declares no runtime dependencies — this is a CURRENT FACT,
+# not a mandate. Per the operator ADOPT-FIRST directive (2026-07-21) a maintained
+# runtime dependency is ALLOWED and no ADR is required to add one; adopting a
+# suitable existing library is the default, preferred path and hand-rolling is the
+# last-resort choice. The HTTP service remains an OPTIONAL extra so its stack only
+# lands when the service surface is installed.
 dependencies = []
 
 [project.optional-dependencies]

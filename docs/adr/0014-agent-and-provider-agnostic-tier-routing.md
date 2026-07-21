@@ -2,6 +2,11 @@
 
 > **Parked / subordinate to ADR-0017 (2026-07-19).** Relates-to: ADR-0017. The work-engine this tier-routing rides on is **deferred** per ADR-0017, and its provider plumbing is to be **adopted (LiteLLM)** rather than hand-rolled. The decisions below stand but are subordinate to 0017; treat as post-MVP.
 
+> **SUPERSEDED (stdlib-only clause) 2026-07-21 by operator ADOPT-FIRST directive** — this
+> ADR's "privileged core stays stdlib-only" clause is removed. A maintained runtime
+> dependency is ALLOWED, no ADR required; adopt-first is the default and hand-rolling the
+> last resort (negative eval weight).
+
 Status: **Proposed** (2026-06-27). Builds on ADR-0005 (gateway-first; the
 `vid→pool→provider` failover core), ADR-0004 (roles/pools/frontend), ADR-0010
 (native engine substrate; D003 ACP workers, D005 deferred `WorkerBackend` port),

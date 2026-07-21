@@ -2,6 +2,12 @@
 
 > **SUPERSEDED (posture) by ADR-0017, 2026-07-19.** This ADR's "build the work-engine native NOW" posture is superseded: per ADR-0017 the engine is **deferred** (gateway MVP first), and when fleet-orchestration reaches the critical path the direction is to **adopt a commodity substrate (DBOS/Restate)**, not build native. The decisions below stand as the record of the native-substrate design; only the build-now / build-native posture is overtaken.
 
+> **SUPERSEDED (D2 engine stdlib-only) 2026-07-21 by operator ADOPT-FIRST directive** —
+> the D2 "engine stdlib-only / no third-party dependencies" rule is removed, and the gate
+> that enforced it (`check_boundary.py` engine scan) is retired. A maintained runtime
+> dependency is ALLOWED with no ADR required; adopt-first is the default, hand-rolling the
+> last resort. Layer isolation (engine off the gateway path) is unaffected and still enforced.
+
 Status: **Accepted** (2026-06-26; revised after a 4-lens DTC; engine substrate shipped); **posture superseded by ADR-0017** (engine deferred; adopt substrate when orchestration is on the critical path). **Amends ADR-0007 D10** for
 the coordination substrate. Builds on ADR-0006 (PERF-4: `run_parallel`/ledger/SharedBudget),
 ADR-0007 (safe-landing-first; `land.py`), ADR-0008 (intake→ticket-plan). Honors ADR-0005 R3 /

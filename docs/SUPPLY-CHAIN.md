@@ -1,5 +1,13 @@
 # Supply chain — the gate before anything enters the privileged loop
 
+> **UPDATED 2026-07-21 — operator ADOPT-FIRST directive.** The stdlib-only default is
+> removed: a maintained runtime dependency is ALLOWED and **no ADR is required** to add
+> one. Adopting a suitable existing library is the default, preferred path; hand-rolling is
+> the last-resort choice (negative eval weight). `dependencies = []` below is a CURRENT
+> FACT, not a mandate, and the "current state: none" framing is descriptive only. The §2
+> vetting criteria remain as *engineering guidance* for evaluating a candidate dependency —
+> they are no longer a blocking prohibition and do not require a separate ADR sign-off.
+
 Charon at autonomy ≥ L1 spawns CLI coding agents and can apply their diffs. Any
 dependency that runs *inside that loop* is part of the trust boundary. This
 document is the **gate**: a dependency or external service does not enter the

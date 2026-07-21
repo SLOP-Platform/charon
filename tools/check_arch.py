@@ -7,9 +7,14 @@ Checks:
    cli, config, connect, providers, secrets.
 2. Gateway isolation: gateway.py, proxy_server.py never import from engine/.
 3. No circular imports: walk full import graph, detect cycles.
-4. Stdlib-only core: src/charon/*.py uses only stdlib + charon.* imports.
-5. Product-clean: no vendor/provider names hardcoded in engine/ or gateway/
+4. Product-clean: no vendor/provider names hardcoded in engine/ or gateway/
    (string-literal scan, excluding docstrings and long templates).
+
+NOTE (2026-07-21): the former "stdlib-only core" check was REMOVED per the
+operator ADOPT-FIRST directive — a maintained runtime dependency is allowed and
+no ADR is required to add one. Layer isolation, circular-import, and
+product-clean invariants remain enforced; third-party imports are no longer a
+violation.
 
 Exit 0 on clean, 1 on violation. Diagnostics go to stderr.
 """
@@ -434,38 +439,7 @@ def check_circular_imports(src_root: Path) -> list[str]:
     return []
 
 
-# ── check 4: stdlib-only core ───────────────────────────────────────────────
-
-
-def check_stdlib_only(src_root: Path) -> list[str]:
-    """Top-level ``src/charon/*.py`` files must use only stdlib + charon.* imports."""
-    violations: list[str] = []
-    for py_file in sorted((src_root / "charon").glob("*.py")):
-        tree = ast.parse(py_file.read_text(), filename=str(py_file))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    head = alias.name.split(".")[0]
-                    if head not in _STDLIB_TOPS and head != "charon" and head != "__future__":
-                        violations.append(
-                            f"{py_file}:{node.lineno}: stdlib-only: "
-                            f"import {alias.name}"
-                        )
-            elif isinstance(node, ast.ImportFrom):
-                if node.level and node.level > 0:
-                    continue  # relative → intra-charon, always ok
-                if node.module is None:
-                    continue
-                head = node.module.split(".")[0]
-                if head not in _STDLIB_TOPS and head != "charon" and head != "__future__":
-                    violations.append(
-                        f"{py_file}:{node.lineno}: stdlib-only: "
-                        f"from {node.module} import ..."
-                    )
-    return violations
-
-
-# ── check 5: product-clean (vendor names in literals) ──────────────────────
+# ── check 4: product-clean (vendor names in literals) ──────────────────────
 
 
 def check_product_clean(src_root: Path) -> list[str]:
@@ -514,7 +488,6 @@ _CHECKS = [
     ("engine isolation", check_engine_isolation),
     ("gateway isolation", check_gateway_isolation),
     ("circular imports", check_circular_imports),
-    ("stdlib-only core", check_stdlib_only),
     ("product-clean", check_product_clean),
 ]
 
@@ -537,7 +510,7 @@ def main(root: str = "src") -> int:
         return 1
 
     print(
-        f"arch OK: no layer-isolation, circular-import, stdlib-only, "
+        f"arch OK: no layer-isolation, circular-import, "
         f"or vendor-name violations under {root}/"
     )
     return 0
