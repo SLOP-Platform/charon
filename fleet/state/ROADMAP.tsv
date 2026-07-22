@@ -116,6 +116,7 @@ Security	S5	designed	next	guard-pre-flight	catch secret leaks before push	Wave B
 Security	S3	not-started	next	history-purge	erase secrets from git history	Wave B — preflight & history
 Security	S6	parked	next	secret-hotrotate	hot-rotate secrets without restart	Wave C — secrets & guardrails
 Security	S7	parked	next	push-guard-gitc-harden	harden destructive git -C bypass	Wave C — secrets & guardrails
+Security	SEC-SBX	queued	next	subagent-worktree-sandbox	P2: confine subagent writes to their own worktree — close the instruction-is-not-a-boundary escape (2026-07-22)	Wave C — secrets & guardrails
 Backlog	K3	designed	next	grader-secfix	harden the grader against tampering	Wave A — grader & keys
 Backlog	K3S	queued	next	grader-real-shell-fix	kill live shell=True injection at real.py:54 — the site the reconcile does NOT own (RANK-0 / P1)	Wave A — grader & keys
 Backlog	K4	designed	next	bench-oob-reds-replay	grade models on past failures	Wave A — grader & keys
