@@ -28,6 +28,60 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
+# ── F1: sandbox path confinement ────────────────────────────────────────────
+#
+# GRADER-SECFIX-RECONCILE: fold in the VERIFIED path-traversal hardening from
+# feat/bench-oob-grading @ e879957 (independently verified 2026-07-10). Every
+# filesystem path derived from an attacker-controlled request field — most
+# importantly ``run_id``, which flows into the work-snapshot dir (deletable via
+# ``rmtree``) and into ``res/<run_id>.json`` — must be confined under its
+# sandbox root so a ``../`` traversal or absolute path cannot reach, or delete,
+# anything outside the bench-grader spool. Reverting this guard reddens
+# selftest/test_grader_daemon.py::test_F1_path_traversal_rejected.
+
+class SandboxError(Exception):
+    """Trust-boundary violation: untrusted input escaped the sandbox root.
+
+    Raised when an attacker-controlled request field (e.g. ``run_id``) is used
+    in a path that resolves outside the daemon's sandbox root via ``../``
+    traversal or an absolute path. Per F1 this is a HARD error — the request is
+    rejected and NOTHING outside the sandbox is written or deleted.
+    """
+
+
+def _confine(untrusted: str, sandbox_root: Path) -> Path:
+    """Resolve ``untrusted`` (attacker-controlled) under ``sandbox_root``.
+
+    F1 hardening: every path derived from a request's untrusted fields must be
+    confined so ``../`` traversal or absolute paths cannot reach a target
+    outside the sandbox. The path is resolved with ``os.path.realpath`` and
+    REJECTED (raising :class:`SandboxError`) if it does not stay within
+    ``sandbox_root``. The returned path is absolute and normalized; it is NOT
+    created — callers create/use it after confinement passes.
+
+    ``untrusted`` may be a bare name (``r1``) or a relative path (``sub/r1``);
+    both resolve under the sandbox. An absolute untrusted path, or one whose
+    realpath escapes the sandbox, raises.
+    """
+    root_real = os.path.realpath(sandbox_root)
+    # Join under the sandbox first so a bare name or relative path is anchored;
+    # os.path.join with an absolute ``untrusted`` would DISCARD the root, so
+    # reject absolute inputs explicitly before joining.
+    if os.path.isabs(untrusted):
+        raise SandboxError(
+            f"refusing absolute path from untrusted input: {untrusted!r} "
+            f"(must be relative under sandbox {root_real})"
+        )
+    candidate = os.path.realpath(os.path.join(root_real, untrusted))
+    # The confined path must equal the root or live beneath it.
+    if candidate != root_real and not candidate.startswith(root_real + os.sep):
+        raise SandboxError(
+            f"untrusted path escapes sandbox: {untrusted!r} -> {candidate} "
+            f"is not under {root_real}"
+        )
+    return Path(candidate)
+
+
 # ── configuration ──────────────────────────────────────────────────────────
 
 KEYS_DIR           = Path("/home/bench-grader/keys")
@@ -235,7 +289,12 @@ def _snapshot_worktree(worktree_path: str, run_id: str) -> Path:
     to copy before it hit the unreadable straggler.
     """
     src = Path(worktree_path)
-    dst = WORK_DIR / run_id
+    # F1 — confine the snapshot dir under WORK_DIR. ``run_id`` is
+    # attacker-controlled and flows straight into the ``rmtree(dst)`` below, so
+    # a ``../`` traversal (or an absolute run_id) could delete a path OUTSIDE
+    # the spool. ``_confine`` rejects that (raising SandboxError) BEFORE
+    # anything is removed; the caller turns it into a rejection result.
+    dst = _confine(run_id, WORK_DIR)
     if dst.exists():
         shutil.rmtree(dst)
     try:
@@ -712,8 +771,18 @@ def _append_to_ledger(model: str, unit_id: str, kind: str, score: int,
 
 def _write_result(req: dict, grade: dict, record: dict, success: bool) -> None:
     """Atomically write the result to res/<run_id>.json."""
+    run_id = req["run_id"]
+    # F1 — confine the result path under RES_DIR. ``run_id`` is
+    # attacker-controlled; reject any ``../`` traversal or absolute path before
+    # touching the filesystem, so a hostile run_id can never write outside the
+    # result spool.
+    try:
+        base = _confine(run_id, RES_DIR)
+    except SandboxError as exc:
+        log(f"REJECTED sandbox escape in result run_id={run_id!r}: {exc}")
+        return
     result = {
-        "run_id": req["run_id"],
+        "run_id": run_id,
         "model": req["model"],
         "unit_id": req["unit_id"],
         "kind": req.get("kind", "section"),
@@ -722,7 +791,7 @@ def _write_result(req: dict, grade: dict, record: dict, success: bool) -> None:
     result.update(grade)
     result["record"] = record
 
-    p = RES_DIR / f"{req['run_id']}.json"
+    p = RES_DIR / f"{base.name}.json"
     tmp = p.with_suffix(".tmp")
     tmp.write_text(json.dumps(result, indent=2) + "\n")
     tmp.chmod(0o644)
@@ -814,6 +883,25 @@ def _process_request(req_path: Path) -> None:
 
         # 7. write result
         _write_result(req, grade, record, True)
+
+    except SandboxError as exc:
+        # F1 — the untrusted run_id tried to escape the sandbox (path
+        # traversal). Nothing outside the spool was written or deleted:
+        # _confine raises before the snapshot rmtree. Record it as a hard
+        # rejection (ERROR/error), not a graded verdict.
+        log(f"REJECTED sandbox escape processing {run_id!r}: {exc}")
+        _write_result(req, {
+            "run_id": run_id,
+            "model": req.get("model", "?"),
+            "unit_id": req.get("unit_id", "?"),
+            "kind": req.get("kind", "section"),
+            "success": False,
+            "score": 0,
+            "verdict": "ERROR",
+            "gate": "error",
+            "reason": f"sandbox violation (rejected path traversal): {exc}",
+            "record": {},
+        }, {}, False)
 
     except Exception:
         log(f"unhandled exception processing {run_id}:\n{traceback.format_exc()}")
