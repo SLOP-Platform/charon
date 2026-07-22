@@ -52,6 +52,11 @@ CI_SUITES=(
                             # no network. Red-proofs the creation-time build-vs-adopt gate on all
                             # its detection paths (requirement / anti-reframe diagnostic /
                             # registry-alignment consult / same-change provenance). ~1s.
+  rule-coverage.test.sh     # hermetic: throwaway RULE_COVERAGE_* fixtures under mktemp -d, no
+                            # network. Red-proofs the §11 coverage meta-gate on every branch
+                            # (all-covered GREEN, un-exempted mechanizable GAP RED, fake-green
+                            # nonexistent/unwired artifact RED, expired exemption RED, phantom
+                            # doc_anchor RED, completeness floor RED). ~1s.
   base-integrity.test.sh    # hermetic: isolated git fixture, BASE_INTEGRITY_OFFLINE
   board-correctness.test.sh # hermetic: throwaway board fixture
   parked-semantics.test.sh  # hermetic

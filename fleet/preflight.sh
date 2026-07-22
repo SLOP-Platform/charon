@@ -315,6 +315,42 @@ executor_gate(){
   fi
 }
 
+# --- coverage_gate: MECHANIZES §11 (MANAGER-OPERATING-RULES.md) "every rule that CAN be a gate
+# MUST be a gate." Runs checks/rule-coverage.sh EVERY preflight (identical machinery to
+# board_gate / executor_gate): it re-derives the coverage matrix from RULE-REGISTRY.tsv and the
+# live rules doc and FAILS on any un-exempted mechanizable GAP, a fake-green mechanized row
+# (artifact missing / not wired), a phantom doc_anchor, or an unclassified rule (completeness
+# floor). On RED it AUTO-REGISTERS the tracked red 'rule-coverage-gap' BEFORE cmd_scan, so a
+# reintroduced advisory-by-neglect rule BLOCKS preflight; the red self-closes when GREEN again.
+COVERAGE_RED_ID="rule-coverage-gap"
+COVERAGE_CHECK="$HERE/checks/rule-coverage.sh"
+_coverage_red_status(){ awk -F"$TAB" -v id="$COVERAGE_RED_ID" '$1==id{print $7; exit}' "$TSV"; }
+_coverage_red_ensure_open(){
+  local st; st="$(_coverage_red_status)"
+  if [ -z "$st" ]; then
+    cmd_add "$COVERAGE_RED_ID" P1 rig-meta \
+      "coverage meta-gate RED: a mechanizable rule is left advisory/GAP, a mechanized row points at a missing/unwired artifact, or the registry no longer maps 1:1 to MANAGER-OPERATING-RULES.md" \
+      "bash $COVERAGE_CHECK" >/dev/null 2>&1 || true
+  elif [ "$st" = closed ]; then
+    local tmp; tmp="$(mktemp)"
+    awk -F"$TAB" -v OFS="$TAB" -v id="$COVERAGE_RED_ID" \
+      '/^#/{print;next} $1==id{$7="open";$8=""} {print}' "$TSV" > "$tmp" && mv "$tmp" "$TSV"
+  fi
+}
+coverage_gate(){
+  [ -f "$COVERAGE_CHECK" ] || { echo "coverage_gate: rule-coverage.sh not found at $COVERAGE_CHECK"; return 0; }
+  local out rc; out="$(bash "$COVERAGE_CHECK" 2>&1)"; rc=$?
+  if [ $rc -eq 0 ]; then
+    echo "coverage_gate: $(printf '%s\n' "$out" | grep -m1 -E 'coverage +:' | sed 's/^ *//')"
+    [ "$(_coverage_red_status)" = open ] && \
+      cmd_close "$COVERAGE_RED_ID" --override "auto: rule-coverage GREEN" >/dev/null 2>&1 || true
+  else
+    _coverage_red_ensure_open
+    echo "coverage_gate: COVERAGE META-GATE RED — AUTO-REGISTERED tracked red '$COVERAGE_RED_ID' (blocks preflight until every mechanizable rule is a gate or a time-boxed exempt-until)"
+    printf '%s\n' "$out" | grep 'RED:' | head -6 | sed 's/^ *//; s/^/    /'
+  fi
+}
+
 # --- handoff_gate: MECHANIZES [mechanized-handoff-gate] (MANAGER-OPERATING-RULES.md). The newest
 # HANDOFF-*.md in fleet/ MUST pass `bash fleet/handoff-check.sh <file>`; a red handoff is a recurring
 # failure mode (poor/inaccurate/incomplete handoffs stranded work for multiple sessions) so a bad
@@ -802,7 +838,7 @@ startup_budget_selftest(){
 # functions above are exposed with NO side effects.
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 case "${1:-scan}" in
-  scan|"") run_sync_checkouts; bash "$HERE/reconcile-merged.sh"; board_gate; executor_gate; handoff_gate; done_merge_gate; hold_reason_gate; detect_needs_push; startup_budget_gate; bash "$HERE/retire-done.sh"; cmd_scan; scan_rc=$?; cmd_detect; foreman_advisory; show_operator_actions; exit $scan_rc ;;
+  scan|"") run_sync_checkouts; bash "$HERE/reconcile-merged.sh"; board_gate; executor_gate; coverage_gate; handoff_gate; done_merge_gate; hold_reason_gate; detect_needs_push; startup_budget_gate; bash "$HERE/retire-done.sh"; cmd_scan; scan_rc=$?; cmd_detect; foreman_advisory; show_operator_actions; exit $scan_rc ;;
   add)     shift; cmd_add "$@" ;;
   close)   shift; cmd_close "$@" ;;
   list)    shift; cmd_list "$@" ;;

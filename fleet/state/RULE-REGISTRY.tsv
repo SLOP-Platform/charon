@@ -1,0 +1,105 @@
+# RULE-REGISTRY.tsv — coverage-meta-gate registry (build-rig only). One row per enforceable
+# rule in fleet/MANAGER-OPERATING-RULES.md. Consumed by fleet/checks/rule-coverage.sh, which
+# VERIFIES each `mechanized` row points at a real WIRED artifact and FAILS on any un-exempted
+# mechanizable `gap`. Ported classification model from mediastack/tools/enforcement_coverage.py.
+#
+# TAB-separated columns:
+#   rule_id  section  one_line  classification  enforcing_ref  doc_anchor  notes
+#     classification : mechanized | guidance | gap
+#     enforcing_ref  : mechanized -> <path>[::<required-token>] (relative to fleet/)
+#                      guidance   -> WHY it is judgment-only / unmechanizable
+#                      gap        -> target gate/ticket to build
+#     doc_anchor     : exact substring of the rule's line in MANAGER-OPERATING-RULES.md
+#     notes          : free text; a `gap` may carry `exempt-until:YYYY-MM-DD <reason>` to hold
+#                      it non-blocking (time-boxed, expiring visible debt).
+#
+# HONESTY: a rule with no real enforcing artifact is `gap` (or `guidance` if inherently
+# judgment-only), NEVER `mechanized`. Do not point a `mechanized` row at an artifact that does
+# not exist or is not wired — the gate treats that as fake-green and goes RED.
+#
+# rule_id	section	one_line	classification	enforcing_ref	doc_anchor	notes
+s0-adopt-default	0-adopt-first	Adopting a suitable existing tool/library is the default path	mechanized	checks/substrate-first-gate.sh	Adopting a suitable existing tool/library is the default	substrate-first-gate forces every build-classed ticket to answer the build-vs-adopt question at creation
+s0-handroll-last	0-adopt-first	Hand-rolling / new rig code is the LAST choice (negative weight)	guidance	the significant-negative-weight on the build side of an evaluation is a judgment, not a mechanical predicate	Hand-rolling / new rig code is the LAST choice
+s0-handroll-adversarial	0-adopt-first	Any hand-roll proposal is met adversarially by default	guidance	an adversarial argument is a review stance; substrate-first-gate asks the question but the argument itself is judgment	met ADVERSARIALLY by default
+s0-handroll-history	0-adopt-first	Lost-time history is on the front of every build-vs-adopt eval	guidance	mindset; the anti-pattern catalogue is a doc reference (EVAL-REGISTRY.md), not an enforceable predicate	The history of lost time/effort from hand-rolling
+s0-stdlib-removed	0-adopt-first	The stdlib-only / dependencies=[] prohibition is REMOVED	guidance	states the REMOVAL of a prohibition — no enforceable predicate remains to gate	core rule is REMOVED
+s0-refocus-product	0-adopt-first	Refocus on the shippable product, not the rig	guidance	product-vs-rig focus is a mindset, not a mechanical predicate	Refocus on the shippable product
+s0-e2e-dogfood	0-adopt-first	e2e + dogfood are the NORM for all money-path code	guidance	enforced by the product-repo e2e/dogfood CI + the done-contract adversarial review, outside fleet/ scope	e2e + dogfood are the NORM for ALL key money-path code
+s0-class-blast	0-adopt-first	Class-level / blast-radius response on every finding	guidance	behavioral trigger judgment on what counts as a finding / its class; not a mechanical gate	CLASS-LEVEL / BLAST-RADIUS ON EVERY FINDING
+s1-phases	1-cadence	Work in phases; gather, present, then wait	guidance	pace/cadence judgment — cannot mechanize when a session pauses for operator input	Work in PHASES: gather ALL results
+s1-pause	1-cadence	Stop and wait after any question/handed action	guidance	conversational discipline; no artifact observes the manager's turn-taking	After ANY question, input-need, or handed-off action: STOP and wait
+s1-discuss	1-cadence	Discuss and wait when operator asks a question	guidance	dialogue judgment; not mechanizable	When the operator asks a QUESTION: discuss and WAIT
+s1-adv-not-override	1-cadence	Re-confirm before overturning an operator decision	guidance	requires human judgment on what counts as overturning an operator decision	An adversarial review or DTC that overturns an OPERATOR decision
+s1-simplest	1-cadence	Lead with the simplest path; confirm failure first	guidance	design judgment on simplest-path; not a mechanical predicate	Lead with the SIMPLEST path; confirm it actually fails
+s2-color-tables	2-presentation	Present findings as color-coded tables	guidance	presentation-format judgment over free-form manager output	Present findings / questions / status as clear color-coded tables
+s2-work-top-tier	2-presentation	Present work outcome-first with tickets nested	guidance	presentation-shape judgment; not mechanizable	Present WORK as the TOP tier
+s2-remaining-unbuilt	2-presentation	Roadmap must include specced-but-unbuilt work	guidance	completeness of a narrative roadmap is a judgment call	MUST include specced-but-unbuilt
+s2-exact-command	2-presentation	Give literal copy-pasteable commands to operator	guidance	quality of a hand-authored command line is judgment-only	give the literal copy-pasteable command
+s2-droid-flags	2-presentation	Give droid launch commands with wait/retry flags	guidance	lints manager chat output, which no rig artifact observes	Droid launch commands are always given with flags
+s2-handoff-oneliner	2-presentation	Handoff bootstrap is one sentence pointing at the file	guidance	one-sentence-vs-paragraph is a stylistic judgment	At every handoff, give a one-liner copy-pasteable prompt
+s2-handoff-mechanized	2-presentation	Handoffs pass handoff-check.sh before session end	mechanized	handoff-check.sh	Handoffs are MECHANIZED, not memory.	preflight handoff_gate runs handoff-check.sh on the newest HANDOFF-*.md every scan
+s2-tl	2-presentation	TL prints one line per active ticket	guidance	terse-status formatting judgment; report.sh covers the roadmap view	one plain-language line per ACTIVE ticket
+s3-coordinator-role	3-delegation	Primary session gates/sequences/commits only	guidance	role-discipline behavior; no artifact enforces what primary does inline	Role = COORDINATOR, not worker
+s3-all-subsessions	3-delegation	Launch all substantive work in sub-sessions	guidance	delegation judgment; a gate cannot see the manager choosing to work inline	Launch ALL substantive work
+s3-write-to-file	3-delegation	Sub-sessions write to file, return a short pointer	guidance	sub-session output discipline; not mechanically observable from the rig	Sub-sessions WRITE findings to a file and return ONLY a short pointer
+s3-hand-facts	3-delegation	Hand each sub-session the exact facts	guidance	brief-quality judgment; not mechanizable	Hand each sub-session the FACTS
+s3-right-size-model	3-delegation	Right-size the model per work; never degrade quality	guidance	model-fit judgment per task; not a mechanical predicate	Right-size the model per work
+s3-name-model	3-delegation	Name the recommended model in each droid brief	guidance	brief-content judgment; BRIEF-TEMPLATE.md is the aid, not a gate	NAME the recommended model for that specific work session
+s3-brief-last-step	3-delegation	Every brief ends with commit+SHA and do-not-push	guidance	authored-brief content lint; no gate reads outbound briefs	Every droid/opencode brief ends with an explicit LAST STEP
+s3-manager-no-droids	3-delegation	Manager never spawns droids/fleet-droid.sh	guidance	behavioral boundary; the manager not-running a command is not observable	The MANAGER never spawns droids
+s3-route-builds	3-delegation	Route product builds to fresh droid sessions	guidance	delegation-target judgment; not mechanizable	Route product BUILDS to fresh droid sessions
+s3-autocompact	3-delegation	Keep auto-compact on; read big docs in slices	guidance	session-config habit; not a rig-enforceable gate	Keep auto-compact ON
+s3-doctrine-doc	3-delegation	Authoritative expanded doctrine lives in the doctrine doc	guidance	documentation pointer, not an enforceable rule	Authoritative expanded contract
+s4-touch-once	4-execution	Touch each file once; never two writers per file	mechanized	validate_board.sh	Touch each file ONCE	validate_board owns-collision fails RED on two concurrent tickets sharing an owned path
+s4-branch-diff	4-execution	Prefer the branch diff over trusting self-reports	guidance	review-habit judgment; land.sh gates the merge but not the manager's reading	Prefer reviewing the BRANCH DIFF directly
+s4-ds-at-creation	4-execution	Every ticket carries Dependencies and Sequence	mechanized	validate_board.sh	Every SLOP + Charon ticket carries Dependencies & Sequence at creation	validate_board fails a ticket with no D&S section
+s4-disjoint-owns	4-execution	A disjoint-owns dep still needs a real-dep justification	mechanized	validate_board.sh	only rules out file collisions	validate_board WCI HARD-fails an unjustified disjoint-owns dep
+s4-decompose-method	4-execution	Decompose method mechanized via wci-contention.sh	mechanized	wci-contention.sh	Recurring decompose method	wci-contention flags god-files with >=N owners for collision-free waving
+s5-blast-radius	5-review-gates	Auto-spawn a read-only blast-radius review	guidance	trigger-judgment on what counts as high-blast-radius; not a mechanical gate	Apply the BLAST-RADIUS + outside-the-box lens
+s5-adv-reviews	5-review-gates	Droid-PR reviews are adversarial by default	guidance	review-stance judgment; not mechanizable	Droid-PR reviews are ADVERSARIAL by default
+s5-never-dismiss-red	5-review-gates	Never dismiss a red as pre-existing; fix or ticket it	mechanized	preflight.sh::reds.tsv	Never dismiss a red as	preflight re-verifies every reds.tsv row; a red blocks until check_cmd passes
+s5-build-methodology	5-review-gates	Tier-by-tier build with adversarial gates	guidance	methodology doctrine; not a single mechanical predicate	Build methodology: autonomous tier-by-tier
+s6-product-standalone	6-safety	Product ships standalone; no build-rig leak	guidance	the enforcing product-leak-audit lives in the product repo, outside fleet/ scope	Charon the PRODUCT ships standalone
+s6-backup-before-loss	6-safety	Investigate and back up before data-loss ops	guidance	pre-op discipline; no rig artifact intercepts destructive ops	Before ANY data-loss-risky op
+s6-public-no-personal	6-safety	Never commit personal/internal info to public repos	guidance	enforced by the product-repo public-clean gate + pre-commit hook, outside fleet/ scope	charon + mediastack are PUBLIC
+s7-release-ready	7-mindset	Drive Charon to release-ready for fresh installs	guidance	north-star mindset; not a mechanical predicate	Drive Charon to release-ready for any fresh-install user
+s8-merge-gate-full-ci	8-merge	Merge gate is the full CI gate, never pytest-alone	mechanized	land.sh	Merge gate = the FULL CI gate	land.sh runs the repo gate and refuses-on-red before merge
+s8-landing-land-sh	8-merge	Landing/merging goes through land.sh	mechanized	land.sh	THE sanctioned path	raw git merge/push are deny-listed; land.sh is the sanctioned path
+s8-fail-on-revert-test	8-merge	Every build adds a test that fails on revert	guidance	fail-on-revert quality is a per-test judgment; no generic gate asserts it	Every build/fix MUST add a test that FAILS on revert
+s8-draft-hold	8-merge	A real hold is a hold label plus a HOLD: reason comment	mechanized	preflight.sh::hold_reason_gate	Draft is the launcher's UNCONDITIONAL default	preflight hold_reason_gate FAILS on a hold-labelled PR with no HOLD: comment
+s8-money-path-review	8-merge	Money-path/security changes get independent review	guidance	independent-review trigger is a judgment on change criticality	Money-path / security / core changes get an INDEPENDENT adversarial review
+s8-push-protocol	8-merge	Push via land-push.sh gated on the AUTONOMOUS lever	mechanized	land-push.sh	Push protocol (LEVER-GATED	raw git push deny-listed; land-push.sh self-gates on state/AUTONOMOUS
+s9-warn-250k	9-context	Warn the operator at ~250K context	guidance	context-budget habit; the session cannot gate its own token count via the rig	Warn at 250K context.
+s9-spend-ceiling	9-context	Protect the budget proactively; hand off early	guidance	budget-discipline mindset; not mechanizable	The spend limit is a CEILING, not a throttle
+s9-route-to-charon	9-context	Route sub-work to Charon gateway, not Claude	mechanized	checks/no-claude-executor.sh::CHARON_AGENT_CMD	Route sub-work to Charon, not Claude.	executor_gate FAILS if any work executor invokes claude -p/--bg
+s9-gateway-agnostic	9-context	Gateway is client-agnostic; fleet work runs off Claude	mechanized	checks/no-anthropic-in-sg.sh	The gateway is CLIENT-AGNOSTIC	no-claude-executor + no-anthropic-in-sg guard the off-Claude work path
+s9-token-economy	9-context	Token-economy is the default mode every session	guidance	economy discipline; never trims quality-bearing steps — a judgment, not a gate	Token-economy is the DEFAULT mode every session
+s9-roadmap-report-verbatim	9-context	Roadmap is report.sh output verbatim	mechanized	report.sh::ROADMAP.tsv	VERBATIM, ALWAYS.	report.sh renders the canonical waved roadmap from ROADMAP.tsv
+s9-session-end-roadmap	9-context	Print the full waved roadmap at session end	mechanized	end-session.sh	At SESSION END, print the full waved roadmap	end-session.sh runs report.sh automatically after CLOSED
+s9-project-priority	9-context	Default project sequencing priority order	guidance	priority ordering guides choice; overrides are situational judgment	HARD project priority (default sequencing)
+s9-fold-into-project	9-context	Every ticket folded into a project at creation	gap	PROJECT-MEMBERSHIP-GATE — doc claims validate_board flags tickets absent from ROADMAP.tsv but validate_board.sh has ZERO ROADMAP.tsv refs; NOT wired	EVERY new ticket / work item MUST be FOLDED	exempt-until:2026-09-15 build ROADMAP-membership check into validate_board.sh
+s10-audit-launch	10-project-start-audit	Launch a code-confirmed audit at project/wave start	guidance	the behavioral trigger; its blocking gate is tracked separately as s10-project-audit-gate	code-confirmed AUDIT before building
+s10-audit-surface	10-project-start-audit	Audit surfaces built/false-blockers/pull-ups	guidance	audit-quality judgment on what it must surface	The audit MUST surface: already-built work
+s10-no-inferred-sequence	10-project-start-audit	Never build a wave on an inferred sequence	guidance	discipline backed by the audit gap below; not itself a distinct predicate	NEVER start building a wave on an inferred sequence.
+s10-project-audit-gate	10-project-start-audit	Kickoff gate blocks build until fact-audit exists	gap	PROJECT-AUDIT-GATE (F45) — project-audit.sh is a helper; the build-blocking kickoff gate is not built	a kickoff gate that BLOCKS a project's build	exempt-until:2026-09-15 F45 kickoff gate pending
+s11-green-criteria	11-green-is-not-proof	Green is evidence only if red-proofed/non-vacuous/wired	guidance	the KSF gates enforcing this (redproof/no_vacuous/inert-code) live outside fleet/ scope	A passing/green result is EVIDENCE only if ALL hold	the coverage floor + red-proof discipline is enforced per-gate, not by one predicate here
+s11-100pct-coverage	11-green-is-not-proof	Every mechanizable rule must be a gate; drive to 100%	mechanized	checks/rule-coverage.sh::RULE-REGISTRY	GOAL = 100% enforcement coverage	this meta-gate; self-referential — the registry classifies its own enforcing rule
+s11-decompose-parallel	11-green-is-not-proof	Big efforts decomposed into parallel agents	mechanized	checks/parallelizability-gate.sh	Big efforts MUST be DECOMPOSED into multiple PARALLEL agents	a splittable-serial ticket fails the parallelizability gate
+s11-tool-first	11-green-is-not-proof	Evaluate best-in-class tools before building custom	mechanized	checks/substrate-first-gate.sh	TOOL-FIRST (build-vs-adopt)	substrate-first-gate requires a tool-eval / no-tool justification on a build-classed ticket
+s12-mechanism-ladder	12-session	Choose the work mechanism by budget-cost ladder	guidance	mechanism-selection judgment per task; not mechanizable	Mechanism-selection ladder.
+s12-five-rules-pointer	12-session	Summary of five standing rules (details in prior sections)	guidance	a pointer/summary bullet; each named rule is classified in its own row above	Five standing rules from this session
+s12-decompose-sizing	12-session	Run decompose_sizing on big batches (N-star, cap 4)	gap	WORK-GATE-UNIVERSAL Gate A — parallelizability-gate covers coarse splittable-serial; the N-star decompose_sizing check is not built	decompose_sizing before fanning out batches	exempt-until:2026-09-15 WORK-GATE-UNIVERSAL Gate A pending
+s12-e2e-wired	12-session	E2E-fully-wired work-done gate refuses unwired merges	gap	WORK-GATE-UNIVERSAL Gate B — check_inert_code + graphify wiring-gap + dogfood at the land chokepoint is not built	unwired code refused at merge	exempt-until:2026-09-15 WORK-GATE-UNIVERSAL Gate B pending
+s12-base-integrity	12-session	Gate that a ticket's base contains its prereq commits	mechanized	checks/base-integrity.sh	Base-integrity.	base-integrity.sh FAILS at launch if a ticket's base branch lacks its declared depends_on merges
+s12-class-level	12-session	Fix at the class level, never a single instance	guidance	class-vs-instance judgment on what set a finding belongs to; the standing lens, not a predicate	FIX AT THE CLASS LEVEL.
+s12-anti-accretion	12-session	Remediate class-gaps by fix/generalize/exempt only	guidance	anti-accretion is a remediation-shape judgment; per-instance-script bans are enforced by review	ANTI-ACCRETION.
+s12-independent-review	12-session	Significant change gets one independent check pre-land	guidance	independent-review trigger is a judgment on change significance	Independent-review floor.
+s12-five-core-principles	12-session	Five core principles every session (simple/elegant/class/...)	guidance	a standing-principles pointer; each principle is a mindset, not a mechanical predicate	FIVE CORE PRINCIPLES (standing, every session)
+s12-slowness-trigger	12-session	Slowness triggers root-cause investigation, never a timeout bump	guidance	investigation-trigger judgment; the perf-budget mechanization is tracked as its own future gate	SLOWNESS IS A TRIGGER.
+s12-dynamic-tools	12-session	Dynamic-data tools run on cadence+triggers, never on-demand	guidance	a design constraint on how a tool is wired; enforced when each such tool is built, not by one gate	DYNAMIC-DATA TOOLS NEVER ON-DEMAND.
+s12-friction-log	12-session	Read the startup-friction log first, append last	guidance	session-habit discipline; no rig artifact observes the read/append	STARTUP-FRICTION-LOG first + append last.
+s12-foreman	12-session	Run foreman after every feed; confirm work is claimable	mechanized	foreman.sh	FOREMAN after every feed.	preflight foreman_advisory runs foreman.sh every scan; reports STARVE/LOW/COLLISION
+s12-stiff-tool-gate	12-session	Class gate catching single-provider chat/completions calls	gap	stiff-tool class gate — no gate catches a new single-provider /chat/completions call bypassing the shared failover primitive	stiff-tool class gate	exempt-until:2026-09-15 no-stiff-single-provider-tools gate pending
+s13-startup-budget	13-startup-budget	Startup artifacts stay under a preflight-enforced byte budget	mechanized	preflight.sh::startup_budget_gate	The total token cost of startup artifacts	startup_budget_gate auto-registers a blocking red when any tracked startup file exceeds budget
+s13-self-review	13-startup-budget	Every startup-file addition self-reviewed against budget pre-commit	guidance	pre-commit self-review habit; the byte budget is gated but the worth-it judgment is human	Every addition to a tracked startup file is self-reviewed
+s13-blade-runner	13-startup-budget	The budget gate is fail-on-revert (proven by a self-test)	mechanized	preflight.sh::startup_budget_selftest	Blade-runner proof: adding text past the budget gate	startup_budget_selftest demonstrates the gate fires on an over-budget file

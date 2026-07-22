@@ -10,6 +10,9 @@ charon-rebuild-backup.git/
 fleet/state/*
 # ...except the persisted roadmap (canonical source for report.sh/handoff.sh).
 !fleet/state/ROADMAP.tsv
+# ...except the coverage-meta-gate rule registry (durable, git-tracked by design —
+# consumed by fleet/checks/rule-coverage.sh; the §11 mechanized-coverage source of truth).
+!fleet/state/RULE-REGISTRY.tsv
 # ...except the REVIEWER-DOGFOOD-REDS ground-truth corpus (durable, git-tracked by
 # design — see REDS-CORPUS.md's own OOB design note).
 !fleet/state/REDS-CORPUS.md
