@@ -2,10 +2,12 @@ repo: charon-private
 tier: strong
 difficulty: 4
 work_class: ci-infra
+substrate: Semgrep — adopt — maintained SAST/policy engine is the established substrate; this ticket ships only the novel thin slice (a git-tracked ruleset + a wrapper that sets exit-code semantics for a merge-blocking required check + a fail-on-revert canary). No hand-rolled linter/parser. [[adopt-substrate-build-only-novel-slice]]
 branch: feat/semgrep-ci-required-check
 depends_on:
 owns: fleet/checks/semgrep.sh, .github/workflows/semgrep.yml, fleet/semgrep-rules/charon-policy.yml, fleet/tests/semgrep-canary.test.sh, fleet/tests/fixtures/semgrep-known-bad.py
-serial_justified: The owned surfaces are ONE adopt-a-tool unit, not independent builds: the workflow
+serial_justified: |
+  The owned surfaces are ONE adopt-a-tool unit, not independent builds: the workflow
   (semgrep.yml) invokes the wrapper (semgrep.sh) which runs the ruleset (charon-policy.yml) against the
   known-bad fixture, and the canary test asserts that whole chain finds >=1. Splitting them ships a
   half-wired gate (a workflow with no wrapper, or a rule with no canary) — the exact zero-work-green
@@ -70,3 +72,5 @@ ds: |
 note: Created 2026-07-21 from the KS31/KS32 tool-adoption sweep (EVAL-REGISTRY.md Semgrep ADOPT row;
   scratchpad/DEEPDIVE-METAGATE.md §3 Layer D). Meta-gate authority tier — un-bypassable merge boundary
   covering every harness (Claude Code, opencode, gateway workers). NOT the key-exfil invariant.
+
+landed: PR #141 — Semgrep adopted as on-plan policy backstop; manager-verified canary 8/8 (fail-on-revert); diff-scoped, CI_RUNNER var for charon-ci-when-live

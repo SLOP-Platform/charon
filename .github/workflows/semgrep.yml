@@ -1,0 +1,78 @@
+# semgrep.yml — MERGE-BLOCKING policy backstop using the ADOPTED Semgrep engine.
+#
+# WHAT THIS IS: the authority-tier, server-side, un-bypassable required check for on-plan / policy /
+# convention drift. It runs the maintained Semgrep engine over the git-tracked ruleset
+# (fleet/semgrep-rules/) and BLOCKS MERGE on any finding. It covers ANY harness's output — Claude,
+# the opencode leg, or a non-Claude gateway worker — because it fires server-side on the diff, not in
+# the harness. (EVAL-REGISTRY: Semgrep = ADOPT.)
+#
+# WHAT THIS IS NOT: this is the POLICY/CONVENTION tier, NOT the provider-key-exfil SECURITY invariant.
+# That invariant is enforced by the egress proxy / app-layer allowlist, not here. Do not conflate.
+#
+# ---------------------------------------------------------------------------------------------------
+# RUNNER — intended target is the `charon-ci` self-hosted pool; NOT hard-pinned. Why:
+#   The rig learned (see rig-ci.yml RUNNER note) that pinning `runs-on: <self-hosted-label>` while
+#   ZERO runners are registered makes the job QUEUE FOREVER — a check that never completes is a third
+#   flavour of false green and pollutes every PR. So we use the repo's established variable pattern
+#   with a hosted fallback, which lets the check RUN AND PRODUCE A REAL RED/GREEN NOW (semgrep installs
+#   via pip on ubuntu-latest), and switches to charon-ci the moment that pool is online:
+#     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+#
+# ENABLING THE REQUIRED CHECK (do this the moment the `charon-ci` runner pool is live):
+#   1. Register the charon-ci self-hosted runner(s) on this repo.
+#   2. Set repo variable CI_RUNNER to the charon-ci runner label (`gh variable set CI_RUNNER`).
+#   3. In branch protection for `master`, add "semgrep" to the REQUIRED status checks.
+#   Until then this workflow still runs on ubuntu-latest and its result is advisory-but-real; branch
+#   protection is what makes exit 1 actually BLOCK merge.
+# ---------------------------------------------------------------------------------------------------
+name: semgrep
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: semgrep-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  semgrep:
+    # Hosted fallback by default; resolves to the charon-ci pool once CI_RUNNER is set (see header).
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # fetch-depth 0 is LOAD-BEARING: --diff scoping needs base..head history to resolve the
+          # merge-base. A shallow checkout cannot, and the wrapper then FAILS CLOSED (exit 2) rather
+          # than scan nothing and report green. Do not lower this.
+          fetch-depth: 0
+
+      # Adopt the maintained engine, PINNED TO AN EXACT VERSION. Why exact, not a range:
+      #   A merge-blocking gate must be DETERMINISTIC. A floating range (`>=1.161,<2`) lets a fresh CI
+      #   pip resolve to whatever is newest at run time, and semgrep's behaviour is not stable across
+      #   minors — e.g. `rules: []` errors on 1.161 but passes clean (exit 0) on >=1.170. A gate whose
+      #   verdict depends on which semgrep pip happened to fetch is a version-fragility we refuse.
+      #   1.161.0 is the version the canary (fleet/tests/semgrep-canary.test.sh) is validated against.
+      #   To bump: change this pin, re-run the canary locally on the new version, land together.
+      #   (The canary's vacuous-ruleset guard is ALSO made version-robust in the wrapper, so a drift
+      #   here fails loud rather than silently — belt and suspenders.)
+      - name: Install Semgrep (the adopted engine — pinned exact for a deterministic gate)
+        run: python3 -m pip install --quiet --disable-pip-version-check 'semgrep==1.161.0'
+
+      # Prove the gate itself EXECUTES before trusting its verdict: the fail-on-revert canary must pass
+      # (memory: gates-must-actually-run). If the canary reds, the gate is untrustworthy and CI reds.
+      - name: Canary — prove the gate fires and fails-on-revert
+        run: bash fleet/tests/semgrep-canary.test.sh
+
+      # DIFF-SCOPED on purpose: only NEW policy violations introduced by THIS PR block merge. A
+      # full-tree scan would red on pre-existing findings, and a gate that reds on an untouched tree
+      # gets disabled — the exact failure this gate exists to prevent (same doctrine as rig-ci.yml).
+      - name: Semgrep policy scan (PR diff only — exit 1 blocks merge)
+        env:
+          RIG_CI_BASE: ${{ github.event.pull_request.base.sha || 'origin/master' }}
+          RIG_CI_HEAD: ${{ github.sha }}
+        run: bash fleet/checks/semgrep.sh --diff
