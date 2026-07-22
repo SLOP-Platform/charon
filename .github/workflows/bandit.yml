@@ -1,0 +1,84 @@
+# bandit.yml — MERGE-BLOCKING Python SAST required check using the ADOPTED bandit scanner.
+#
+# WHAT THIS IS: the authority-tier, server-side, un-bypassable required check for INSECURE PYTHON
+# PATTERNS (KS13 SAST). It runs the maintained bandit scanner + its built-in danger-pattern tests
+# (eval/exec, subprocess shell=True, pickle, yaml.load, weak crypto, ...) over the PR diff and BLOCKS
+# MERGE on any finding at/above the configured severity. It covers ANY harness's output — Claude, the
+# opencode leg, or a non-Claude gateway worker — because it fires server-side on the diff, not in the
+# harness. (EVAL-REGISTRY: bandit = ADOPT.)
+#
+# WHAT THIS IS NOT: this is a Python SAST (does the DIFF introduce an insecure code pattern), NOT the
+# secret-scanner (gitleaks), NOT the policy/convention backstop (semgrep), and NOT the provider-key-
+# exfil SECURITY invariant (egress proxy / app-layer allowlist). It is ADDITIVE to those. Do not conflate.
+#
+# ---------------------------------------------------------------------------------------------------
+# RUNNER — intended target is the `charon-ci` self-hosted pool; NOT hard-pinned. Why:
+#   The rig learned (see rig-ci.yml RUNNER note) that pinning `runs-on: <self-hosted-label>` while
+#   ZERO runners are registered makes the job QUEUE FOREVER — a check that never completes is a third
+#   flavour of false green and pollutes every PR. So we use the repo's established variable pattern
+#   with a hosted fallback, which lets the check RUN AND PRODUCE A REAL RED/GREEN NOW (bandit installs
+#   via pip on ubuntu-latest), and switches to charon-ci the moment that pool is online:
+#     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+#
+# ENABLING THE REQUIRED CHECK (do this the moment the `charon-ci` runner pool is live):
+#   1. Register the charon-ci self-hosted runner(s) on this repo.
+#   2. Set repo variable CI_RUNNER to the charon-ci runner label (`gh variable set CI_RUNNER`).
+#   3. In branch protection for `master`, add "bandit" to the REQUIRED status checks.
+#   Until then this workflow still runs on ubuntu-latest and its result is advisory-but-real; branch
+#   protection is what makes exit 1 actually BLOCK merge.
+# ---------------------------------------------------------------------------------------------------
+name: bandit
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bandit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bandit:
+    # Hosted fallback by default; resolves to the charon-ci pool once CI_RUNNER is set (see header).
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # fetch-depth 0 is LOAD-BEARING: --diff scoping needs base..head history to resolve the
+          # merge-base. A shallow checkout cannot, and the wrapper then FAILS CLOSED (exit 2) rather
+          # than scan nothing and report green. Do not lower this.
+          fetch-depth: 0
+
+      # Adopt the maintained scanner, PINNED TO AN EXACT VERSION. Why exact, not a range/`latest`:
+      #   A merge-blocking gate must be DETERMINISTIC. A floating version lets a fresh CI pip resolve
+      #   to whatever is newest at run time, and a gate whose verdict/test-set depends on which bandit
+      #   pip happened to fetch is a version-fragility we refuse (the exact failure the SEMGREP gate hit
+      #   when CI floated the engine version). 1.9.4 is the version the canary
+      #   (fleet/tests/bandit-canary.test.sh) is validated against.
+      #   To bump: change BANDIT_VERSION, re-run the canary locally on the new version, land together.
+      - name: Install bandit (the adopted SAST — pinned exact for a deterministic gate)
+        env:
+          BANDIT_VERSION: 1.9.4
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet --disable-pip-version-check "bandit==${BANDIT_VERSION}"
+          bandit --version
+
+      # Prove the gate itself EXECUTES before trusting its verdict: the fail-on-revert canary must pass
+      # (memory: gates-must-actually-run). If the canary reds, the gate is untrustworthy and CI reds.
+      - name: Canary — prove the gate fires and fails-on-revert
+        run: bash fleet/tests/bandit-canary.test.sh
+
+      # DIFF-SCOPED on purpose: only NEW insecure code introduced by THIS PR blocks merge. A full-tree
+      # scan would red on the PRE-EXISTING shell=True at fleet/benchmark/graders/real.py:54 (owned by
+      # the separate GRADER-SECFIX ticket), and a gate that reds on untouched code gets disabled — the
+      # exact failure this gate exists to prevent (same doctrine as rig-ci.yml / semgrep.yml / gitleaks.yml).
+      - name: bandit Python SAST scan (PR diff only — exit 1 blocks merge)
+        env:
+          RIG_CI_BASE: ${{ github.event.pull_request.base.sha || 'origin/master' }}
+          RIG_CI_HEAD: ${{ github.sha }}
+        run: bash fleet/checks/bandit.sh --diff

@@ -4,13 +4,16 @@ difficulty: 3
 work_class: ci-infra
 branch: feat/bandit-adopt
 depends_on: SEMGREP-CI-REQUIRED-CHECK
-real-dep: SEMGREP-CI-REQUIRED-CHECK — genuine build/sequencing prereq, not merge-order preference. That
+substrate: bandit — adopt — maintained best-in-class Python SAST; ships only the thin wrapper plus required-check workflow plus fail-on-revert canary (the novel slice); net-new danger-pattern coverage the rig lacks; the KSF product-core don't-wrap verdict is a different (stdlib) scope. [[adopt-substrate-build-only-novel-slice]]
+real-dep: |
+  SEMGREP-CI-REQUIRED-CHECK — genuine build/sequencing prereq, not merge-order preference. That
   ticket ESTABLISHES the reusable CI-required-check scaffold this ticket consumes: the charon-ci-runner
   workflow pattern, branch-protection required-check wiring on BOTH repos, and the known-bad-fixture
   canary convention. bandit reuses that exact scaffold; owns are DISJOINT (different check/workflow/
   fixture files) so this dep is JUSTIFIED here, not implied by file overlap.
 owns: fleet/checks/bandit.sh, .github/workflows/bandit.yml, fleet/tests/bandit-canary.test.sh, fleet/tests/fixtures/bandit-known-bad.py
-serial_justified: The owned surfaces are ONE adopt-a-SAST unit: the workflow invokes the wrapper, the
+serial_justified: |
+  The owned surfaces are ONE adopt-a-SAST unit: the workflow invokes the wrapper, the
   canary test asserts the wrapper flags the planted insecure pattern in the fixture. Splitting ships a
   half-wired SAST (workflow with no wrapper, or scan with no canary) — the zero-work-green defect this
   ticket guards against. Ship together.
