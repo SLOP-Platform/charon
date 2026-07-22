@@ -201,6 +201,31 @@ mk HYPHEN 'work_class: ci-infra' 'difficulty: 4' 'owns: src/charon/hooks.py' \
   'substrate: pre-commit — adopt — it already runs the hook orchestration we would otherwise hand-roll and is aligned in the registry'
 expect GREEN HYPHEN "G8 hyphenated tool name resolves to its registry row"
 
+# G9 — OWNS-COLLISION vs a VALID REGISTRY MATCH. An adopt-ticket whose owned WRAPPER FILE is named
+# after the adopted tool (`owns: fleet/checks/semgrep.sh` + `substrate: Semgrep`, "semgrep" ⊂
+# "semgrep.sh") must NOT be red by the owns-collision substring check: a tool with a valid EXACT
+# EVAL-REGISTRY row is a proven, externally-consulted tool, not a file-being-written, regardless of
+# the filename overlap. match_rows() requires the name to EXACTLY equal a row, so this can never
+# launder a raw in-tree file into "settled substrate". Fail-on-revert: drop the registry-match guard
+# on the owns-collision check (make it fire unconditionally again) and this ticket goes RED, which is
+# what makes this assertion load-bearing rather than decorative. Every KS31 tool-adoption ticket
+# (Semgrep/Gitleaks/Bandit/Vulture — wrappers named <tool>.sh) was UNLANDABLE until this guard.
+mk ADOPT-WRAP 'work_class: ci-infra' 'difficulty: 4' 'owns: fleet/checks/semgrep.sh' \
+  'substrate: Semgrep — adopt — covers the AST rules we would otherwise hand-roll, has a maintained ruleset, and its taint mode already catches the bare-name urlopen case our own linter missed'
+expect GREEN ADOPT-WRAP "G9 registry-backed tool whose owned wrapper is named after it (owns-collision superseded)"
+
+# R11 — the owns-collision check STILL bites the genuine self-citation: a NON-registry token that
+# merely shares its name with a file the ticket is about to write. Nothing external backs it (no
+# exact registry row), so citing it as the substrate that makes writing the file unnecessary is the
+# author agreeing with themselves — RED. Distinct from R3/R4, which cite a raw in-tree PATH and are
+# caught by the anti-reframe filter; this one is a bare token, so only the owns-collision check
+# stands between it and a green gate. Fail-on-revert of the guard would leave THIS still RED (the
+# guard only SUPPRESSES on a registry match, and there is none), proving the guard narrows rather
+# than removes the protection.
+mk OWN-SELFCITE 'work_class: ci-infra' 'difficulty: 4' 'owns: fleet/checks/frobnicator.sh' \
+  'substrate: Frobnicator — adopt — an entirely made up tool with no registry row that merely shares its name with the file this ticket is about to write into the tree'
+expect RED OWN-SELFCITE "R11 non-registry token matching an owned file is still caught (self-citation)"
+
 # G6 — scan mode is ADVISORY: it must never exit non-zero, even over a board full of REDs.
 if bash "$GATE" scan "$BOARD" >/dev/null 2>&1; then ok "G6 scan mode is advisory (rc 0 over a red board)"
 else bad "G6 scan mode exited non-zero — it would false-block preflight"; fi

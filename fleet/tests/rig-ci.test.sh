@@ -42,6 +42,11 @@ PASS=0; FAIL=0
 ok(){  PASS=$((PASS+1)); echo "PASS: $1"; }
 bad(){ FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 
+# A WELL-FORMED ticket that passes EVERY marker-independent check cmd_board runs — INCLUDING the
+# substrate-first gate, which cmd_board delegates to per changed ticket. work_class ci-infra is in
+# the gate's ALWAYS set, so the ticket must carry a substrate answer; it uses the self-contained
+# `substrate: N/A` + `substrate-novel:` shape (no EVAL-REGISTRY fixture required) so these tests stay
+# hermetic and stay focused on the DIFF-SCOPING behaviour they exist to prove.
 GOOD_TICKET='tier: strong
 difficulty: 3
 work_class: ci-infra
@@ -49,17 +54,26 @@ branch: feat/%s
 depends_on:
 owns: fleet/%s.sh
 repo: charon-private
+substrate: N/A
+substrate-novel: this is a throwaway rig-ci test fixture whose only purpose is to exercise the diff scoping brain and no external tool models a fixture board like that
 ds: |
   ## Dependencies & sequence
   depends_on: NONE. wave: test.
 '
 
 # Build a fixture repo: master commit, then a feature branch. Echoes the repo path.
+# cmd_board delegates to fleet/checks/substrate-first-gate.sh (which execs substrate_first_gate.py),
+# so the fixture must carry those scripts in the SAME fleet/checks/ dir as the scope script — cmd_board
+# resolves the gate from its own $HERE. Copying them (rather than pointing at the live tree) keeps each
+# fixture a self-contained, offline checkout, exactly the fresh-checkout shape CI runs. They live in
+# the BASE commit, so they never appear in any fixture's PR diff.
 mk_repo(){
   local d; d="$(mktemp -d)"
   git -C "$d" init -q -b master
   mkdir -p "$d/fleet/checks" "$d/fleet/board" "$d/fleet/state"
   cp "$SCOPE" "$d/fleet/checks/rig-ci-scope.sh"
+  cp "$SRC/checks/substrate-first-gate.sh" "$d/fleet/checks/substrate-first-gate.sh"
+  cp "$SRC/checks/substrate_first_gate.py" "$d/fleet/checks/substrate_first_gate.py"
   printf '#!/usr/bin/env bash\necho ok\n' > "$d/fleet/ok.sh"
   git -C "$d" add -A >/dev/null; git -C "$d" commit -q -m base
   git -C "$d" checkout -q -b feat/fixture
@@ -207,8 +221,11 @@ fi
 # (5d) ANTI-OVER-BLOCK — a resolvable scope whose diff genuinely carries no ticket files is still
 #      a legitimate GREEN at n=0. The fix must distinguish "nothing to check" from "could not
 #      compute the diff", not simply red on every zero.
+#      The changed file is a NON-CODE, NON-TICKET note: this isolates the board diff-scoping property
+#      cmd_board asserts here from the separate pr-has-ticket rule (code with no board ticket is its
+#      own RED, exercised in the substrate-gate suite, not this one).
 d5b="$(mk_repo)"
-printf '#!/usr/bin/env bash\necho hi\n' > "$d5b/fleet/nonticket.sh"
+printf 'just a note, not code and not a board ticket\n' > "$d5b/fleet/nonticket.txt"
 git -C "$d5b" add -A >/dev/null; git -C "$d5b" commit -q -m nonticket
 out5d="$(run_scope "$d5b" board)"; rc5d=$?
 if [ "$rc5d" -eq 0 ] && grep -q 'board: 0 changed ticket(s) checked' <<<"$out5d"; then

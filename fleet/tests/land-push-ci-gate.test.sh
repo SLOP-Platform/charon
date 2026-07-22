@@ -375,12 +375,22 @@ git_q "$B" config "url.$D/bremote.git.insteadOf" https://github.com/test/bfixtur
 mkdir -p "$B/fleet/board" "$B/fleet/checks" "$B/fleet/prompts"
 cp "$FLEET_SRC/validate_board.sh" "$B/fleet/"
 cp "$FLEET_SRC/checks/rig-ci-scope.sh" "$B/fleet/checks/"
+# rig-ci-scope.sh's board step delegates to its SIBLING substrate-first-gate.{sh,py}, and land-push
+# runs the TARGET repo's OWN copy ($REPO/fleet/checks/rig-ci-scope.sh, land-push.sh:~173). A real
+# repo carries the whole gate set together, so a faithful fixture must too — otherwise the board step
+# 500s on a missing sibling and reds for a reason unrelated to what B5 tests. Seeded in the SEED
+# commit so it lands on origin/master and never shows up in any feat branch's PR diff.
+cp "$FLEET_SRC/checks/substrate-first-gate.sh" "$FLEET_SRC/checks/substrate_first_gate.py" "$B/fleet/checks/"
 echo seed > "$B/seed.txt"; git_q "$B" add -A; git_q "$B" commit -qm seed
 git_q "$B" push -q origin HEAD:master; git_q "$B" fetch -q origin
 git_q "$B" checkout -q -b feat/board
 
 mk_ticket(){ # mk_ticket <ID> <branch> <owns>
-  printf 'prompt: fleet/prompts/%s.md\nrepo: charon-private\nwork_class: rig-meta\nbranch: %s\nowns: %s\ndepends_on:\n\n## Dependencies & Sequence\nwave 1; no prereqs; concurrency safe.\n' \
+  # work_class rig-meta is in the substrate gate's ALWAYS set, so a well-formed rig-meta ticket must
+  # now carry a numeric difficulty AND a substrate answer — otherwise the (correctly firing) board
+  # gate reds it for a reason unrelated to the owns-collision scoping these cases test. Self-contained
+  # substrate: N/A + substrate-novel keeps the fixture hermetic (no EVAL-REGISTRY needed).
+  printf 'prompt: fleet/prompts/%s.md\nrepo: charon-private\nwork_class: rig-meta\ndifficulty: 3\nbranch: %s\nowns: %s\ndepends_on:\nsubstrate: N/A\nsubstrate-novel: a synthetic land-push CI-gate board fixture whose only purpose is to exercise the owns-collision scoping path, which no external tool models, so it is the novel in-house slice under test here\n\n## Dependencies & Sequence\nwave 1; no prereqs; concurrency safe.\n' \
     "$1" "$2" "$3" > "$B/fleet/board/$1.md"
   printf '# %s\n\n## Dependencies & Sequence\nwave 1.\n' "$1" > "$B/fleet/prompts/$1.md"
 }

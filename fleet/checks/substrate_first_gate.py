@@ -500,14 +500,30 @@ class Gate:
                 "'substrate-novel:'."
             )
             return
-        for entry in _owns_entries(owns):
-            if tool.lower() in entry.lower():
-                self.red(
-                    f"{name}: 'substrate: {tool}' appears in this ticket's own 'owns:' — a ticket cannot "
-                    "cite the file\n       it is about to write as the substrate that makes writing it "
-                    "unnecessary."
-                )
-                return
+        # OWNS-COLLISION — catch a ticket citing a NEW IN-TREE FILE IT IS ABOUT TO WRITE as the
+        # substrate that makes writing it unnecessary (self-citation). This is SUPERSEDED by a valid
+        # EXACT EVAL-REGISTRY match: a tool with a real registry row is a proven, externally-consulted
+        # tool, NOT a file-being-written — even when the wrapper it owns is NAMED AFTER it
+        # (`substrate: Semgrep` + `owns: fleet/checks/semgrep.sh`, where "semgrep" ⊂ "semgrep.sh").
+        # match_rows() demands the name EXACTLY equal a registry row, so the overlap can only be a
+        # coincidence of naming, never a way to launder an in-tree file into "settled substrate".
+        # Therefore fire this ONLY when the tool has NO registry backing; the raw in-tree-PATH reframe
+        # (`substrate: fleet/checks/foo.sh`) is caught above by _in_tree_reason and is unaffected. A
+        # registry that cannot be read is treated as NO backing, so the collision still fires there and
+        # the downstream _check_registry surfaces the fail-closed reason.
+        try:
+            registry_backed = bool(match_rows(self.rows(), tool))
+        except OSError:
+            registry_backed = False
+        if not registry_backed:
+            for entry in _owns_entries(owns):
+                if tool.lower() in entry.lower():
+                    self.red(
+                        f"{name}: 'substrate: {tool}' appears in this ticket's own 'owns:' — a ticket cannot "
+                        "cite the file\n       it is about to write as the substrate that makes writing it "
+                        "unnecessary."
+                    )
+                    return
 
         problem = substance(reason)
         if problem:
