@@ -117,6 +117,7 @@ Security	S3	not-started	next	history-purge	erase secrets from git history	Wave B
 Security	S6	parked	next	secret-hotrotate	hot-rotate secrets without restart	Wave C — secrets & guardrails
 Security	S7	parked	next	push-guard-gitc-harden	harden destructive git -C bypass	Wave C — secrets & guardrails
 Backlog	K3	designed	next	grader-secfix	harden the grader against tampering	Wave A — grader & keys
+Backlog	K3S	queued	next	grader-real-shell-fix	kill live shell=True injection at real.py:54 — the site the reconcile does NOT own (RANK-0 / P1)	Wave A — grader & keys
 Backlog	K4	designed	next	bench-oob-reds-replay	grade models on past failures	Wave A — grader & keys
 Backlog	K7	parked	next	chutes-commandcode-keys	get missing provider API keys	Wave A — grader & keys
 Backlog	K8	designed	next	tool-repair-mutating	fix mutating tool-repair behavior	Wave B — product UX
