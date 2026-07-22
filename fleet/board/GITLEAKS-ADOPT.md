@@ -2,16 +2,19 @@ repo: charon-private
 tier: strong
 difficulty: 3
 work_class: ci-infra
+substrate: gitleaks — adopt — maintained best-in-class secret scanner; this ticket ships only the thin wrapper plus a required-check workflow plus a fail-on-revert canary (the novel slice), additive to leak-guard.sh, with no hand-rolled regex scanner. [[adopt-substrate-build-only-novel-slice]]
 branch: feat/gitleaks-adopt
 depends_on: SEMGREP-CI-REQUIRED-CHECK
-real-dep: SEMGREP-CI-REQUIRED-CHECK — genuine build/sequencing prereq, not merge-order preference. That
+real-dep: |
+  SEMGREP-CI-REQUIRED-CHECK — genuine build/sequencing prereq, not merge-order preference. That
   ticket ESTABLISHES the reusable CI-required-check scaffold this ticket consumes: the charon-ci-runner
   workflow pattern, the branch-protection required-check wiring on BOTH repos, and the known-bad-fixture
   canary convention (>=1 finding or the gate is zero-work-green). gitleaks reuses that exact scaffold;
   building it before SEMGREP lands means building against an unshipped pattern. owns are DISJOINT
   (different check/workflow/fixture files) so this dep is JUSTIFIED here, not implied by file overlap.
 owns: fleet/checks/gitleaks.sh, .github/workflows/gitleaks.yml, fleet/tests/gitleaks-canary.test.sh, fleet/tests/fixtures/gitleaks-known-bad.txt
-serial_justified: The owned surfaces are ONE adopt-a-scanner unit: the workflow invokes the wrapper,
+serial_justified: |
+  The owned surfaces are ONE adopt-a-scanner unit: the workflow invokes the wrapper,
   the canary test asserts the wrapper flags the planted secret in the fixture. Splitting ships a
   half-wired scanner (workflow with no wrapper, or scan with no canary) — the zero-work-green defect
   this ticket guards against. Ship together.
