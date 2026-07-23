@@ -24,6 +24,15 @@ accept: |
     (e.g. "CRASH-PARTIAL — REVIEW/REDO, not a clean completion") AND the ticket is NOT marked
     cleanly submitted — it is flagged needs-review/redo so it re-enters the queue rather than
     masquerading as done. An EMPTY auto-commit opens no PR (release the claim for re-claim).
+  - PRE-SESSION LAUNCH REFUSAL rollback (folded 2026-07-23): when a claim is REFUSED before the
+    session runs — parallelizability-gate refusal OR no-such-board-ticket (a closed/phantom id) — the
+    launcher ROLLS BACK every marker the claim wrote (fleet/state/claims/<id>, model-used/<id>, and the
+    loop-guard run row), leaving ZERO residue, so validate_board never sees an orphan-marker RED. A
+    ticket id with NO fleet/board/<id>.md is never claimed/launched. EVIDENCE: frontier-3656758/3697177/
+    25951 repeatedly claimed the CLOSED ghost GRACEFUL-DEGRADE, each leaving an orphan claim marker that
+    re-REDs the board; fd63179 swept it once and it recurred — the fix is rollback-on-refusal at the
+    source, NOT a periodic orphan-marker sweeper. Add a fail-on-revert case: refused claim → assert no
+    residual markers (revert → orphan marker remains, test RED).
   - Preserve any real committed work (never discard — pairs with DROID-LIFECYCLE-REAP's
     preserve-committed-work guard).
   - fail-on-revert test fleet/tests/test_launcher_crash_partial.sh: simulate (a) clean exit →
