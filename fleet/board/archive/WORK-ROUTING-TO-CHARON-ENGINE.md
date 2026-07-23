@@ -71,3 +71,9 @@ harden-scope: charon-run.sh FALSE-FAILOVER fix. The limit-detector greps the mod
   failing over to the next model and marking the job EXHAUSTED though the work SUCCEEDED (observed
   2026-07-10; likely also polluted the provider-exhaustion-ledger). FIX: gate failover on opencode's
   actual exit signal / a structured marker, NOT free-text stdout. This launcher is owned here.
+
+retired: |
+  SUPERSEDED (operator review 2026-07-23): the goal — route fleet work through the CG engine — is
+  LIVE: fleet-droid.sh -> charon-run -> CG routes all droid work off-Claude; REVIEWER-TAB-POOL covers
+  review-routing; claim.sh does tier-routing; grade-order routing covers work-classification. No unique
+  residual. Retired as done-by-supersession.
