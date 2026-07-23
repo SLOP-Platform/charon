@@ -191,6 +191,36 @@ while IFS="$TAB" read -r branch sha files pr; do
   if [ -n "$branch" ] && grep -Fxq -- "$branch" <<< "$DONE_BRANCHES"; then continue; fi
   id="$(ticket_for_pr "$branch" "${files:-}")" || continue   # no board ticket maps -> ignore
   _done_id "$id" && continue                                  # already done -> idempotent no-op
+  # CREATION-PR GUARD (root fix, 2026-07-23): a merged PR that ADDED this ticket's OWN board file is
+  # the ticket's CREATION, not its completion — a ticket is not "done" because it was created. Its
+  # `branch:`/`owns:` will always match its own creation PR, so without this guard reconcile
+  # false-closes brand-new tickets the moment their creation PR lands (bit WORKLOOP-INTEGRITY-STACK-
+  # SPIKE then BLAST-TIER-ENFORCEMENT-DESIGN). Detect via the merge adding fleet/board/<id>.md. Only
+  # checkable with a merge sha; the no-sha branch-list path below is unaffected (it needs a real
+  # completion PR). One `git show` per would-close PR (rare) — no hot-path cost.
+  # CREATION-PR GUARD (root fix, 2026-07-23): the gh per-PR `files` list is authoritative regardless
+  # of merge-commit shape (git show --diff-filter=A is EMPTY on a merge commit, and a just-merged
+  # squash may report no oid — both broke sha-based detection). A CREATION PR touches the ticket's
+  # OWN board file but delivers NONE of its `owns:` (the deliverable); a COMPLETION PR delivers owns.
+  # Skip a would-close whose files touch fleet/board/<id>.md yet include none of the ticket's owns:.
+  if [ -n "${files:-}" ] && printf '%s' "$files" | tr ',' '\n' | grep -qx "fleet/board/$id.md"; then
+    _bf="$BOARD/$id.md"; [ -e "$_bf" ] || _bf="$BOARD/archive/$id.md"
+    _owns="$(awk -F: '/^owns:/{sub(/^owns:[[:space:]]*/,"");print;exit}' "$_bf" 2>/dev/null)"
+    _delivered=""
+    if [ -n "$_owns" ]; then
+      _oldIFS="$IFS"; IFS=','
+      for _op in $_owns; do
+        _op="$(printf '%s' "$_op" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+        [ -n "$_op" ] || continue
+        if printf '%s' "$files" | tr ',' '\n' | grep -qx "$_op"; then _delivered=1; break; fi
+      done
+      IFS="$_oldIFS"
+    fi
+    if [ -z "$_delivered" ]; then
+      echo "reconcile-merged: merged PR (branch=$branch) touched fleet/board/$id.md but delivered NONE of $id's owns: — CREATION PR, NOT auto-closing (created != done)." >&2
+      continue
+    fi
+  fi
   echo "reconcile-merged: merged PR (branch=$branch) maps to $id — auto-closing WITH proof."
   rc=0
   if [ -n "${sha:-}" ]; then
