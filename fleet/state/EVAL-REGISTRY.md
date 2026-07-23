@@ -103,8 +103,20 @@ replaced. The build side starts in this hole.
 - AP-9  "overkill for a solo dev / not multi-tenant"  → solo-dev is a reason to ADOPT (offload maintenance); name the specific unused capability that costs you (server/broker/ops-team) or it doesn't count.
 - AP-10 "single-person / low-star / new / unmaintained"  → judge by reading the code, not stars/age; Charon/SLOP are zero-star too. Low-star is not a disqualifier.
 - AP-11 "lock-in / license"  → quantify: if adoption is reversible (your data, your format) lock-in ~0; read the license (MIT/Apache = adopt) instead of asserting it.
+- AP-12 "source/README inspection shows it won't fit" (a REJECT justified by reading the code/docs, NOT running it)  → INVALID as disproof whenever the tool is RUNNABLE on an available host. The fleet has real hosts (4-LOM — Docker usable non-root, 12 cores/11GB; plus BB-8, Rocinante, LO-LA59, others); "we couldn't run it hands-on" is almost never true. A REJECT verdict requires an EXECUTED trial — commands + observed output/errors — not a file:line citation. Source-reading can conclusively confirm an ABSENCE (e.g. "no `gitea/` adapter dir exists"), but it can NEVER stand in for the make-or-break RUN of a runnable candidate. A registry receipt that is only source/docs inspection is a claim, not a trial.
 
 Rule: a build-vs-adopt verdict that leans on any AP-# above is DRIFTED by default and must
 be re-tested against its adversarial counter before it can be cited as settled. State the
 COMMODITY-SUBSTRATE vs NOVEL-SLICE split explicitly and adopt the substrate unless there is
 specific tested evidence (not one of these assertions) that it doesn't fit.
+
+HAND-ROLL IS NEVER THE DEFAULT (operator, 2026-07-23; MANAGER-OPERATING-RULES.md §0). This binds
+verdicts AND their rankings — including DESIGN-SPIKE deliverables, not only build tickets:
+- A reject's "next-best" MUST LEAD with an ADOPT candidate. A hand-roll may appear as next-best
+  ONLY after EVERY adopt candidate has been EXECUTED (AP-12) and adversarially disproven. Ranking
+  hand-roll first — or presenting "~N LOC we own" as the recommended path — is itself an AP-5/AP-7
+  drift and is REJECTED on sight.
+- "Pattern-only / borrow the design / re-implement it ourselves" is a hand-roll (AP-5): it must
+  clear the same executed-trial + adopt-disproof bar as any other build option.
+- A design spike that recommends hand-roll for a runnable candidate without an executed trial for it
+  has NOT met its accept bar, regardless of how well-cited the source read is — bounce it, do not land it.
