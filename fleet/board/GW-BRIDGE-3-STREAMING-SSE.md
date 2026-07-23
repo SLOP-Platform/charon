@@ -2,6 +2,7 @@ repo: charon
 tier: strong
 difficulty: 4
 work_class: money-path
+priority: 1
 branch: feat/gw-bridge3-streaming-sse
 parked: false
 depends_on: GW-BRIDGE-1-DOWNGRADE-REHOST

@@ -2,6 +2,7 @@ repo: charon
 tier: strong
 difficulty: 5
 work_class: routing
+priority: 1
 branch: feat/gateway-grade-order-mvp
 parked: false
 depends_on: GW-CUTOVER-LIVE-WIRE
