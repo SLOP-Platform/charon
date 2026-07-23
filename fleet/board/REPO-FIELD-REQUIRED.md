@@ -44,6 +44,11 @@ accept: |
         implied repo from owns exactly as the backfill in (b) does; a ticket whose owns span BOTH repos is
         the same "genuine finding — surface, don't guess" case. Fail-on-revert fixture: a ticket with
         `repo: charon-private` + owns `src/charon/x.py` -> REJECTED; flip repo to `charon` -> GREEN.
+    (a3) TIER validation (added 2026-07-23 — a stray `tier: standard` slipped through silently because
+        validate_board checks work_class but NOT tier): RED when `tier:` is not in the canonical set
+        (economy/strong/frontier + the rank aliases from `charon tier ranks`: low/med/high, haiku/sonnet/
+        opus). Same shape as the work_class rule. Fixture: `tier: standard` -> REJECTED; `tier: strong` ->
+        GREEN. Reuse `charon tier ranks` as the source of truth — do NOT hardcode a second tier list.
     (b) BACKFILL the 120. Mechanical, but NOT blind: determine each ticket's real repo from its
         `owns:` paths (absolute /home/stack/charon-private/... or fleet/* -> charon-private;
         src/charon/*, tests/* -> charon), not from a guess. Tickets whose owns span both repos are a
