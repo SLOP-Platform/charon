@@ -33,20 +33,37 @@ drank=$(rank "$TIER")
 # (3 per file per pass: parked / note / tier) AND called canon() (also O(board) — see _lib.sh) for
 # every `depends_on` dep. On a 1000-file fixture the "no claimable" worst case took ~6-8s wall
 # (already >5s threshold) and was O(n²) in board size. The fix is index-once:
-#   • ONE awk pass reads every board+archive file once, emitting a TSV row per ticket (file, id,
-#     tier, rank, parked, note, depends_on) — the same fields the old `meta()` returned.
+#   • ONE awk pass reads every board+archive file once and emits a TSV row per ticket with
+#     the FULL set of fields the loop needs (file, id, tier, rank, parked, note, deps,
+#     priority, blast, revdep). revdep is the BLOCKING axis (how many open board tickets
+#     list this id in their depends_on:) — pre-computed by stashing per-row deps in awk
+#     arrays and tallying in the END block of the SAME awk (avoids a separate pipeline).
+#     A naive per-loop revdep count hits a sort-order trap: the INDEX is sorted by file path,
+#     but dependents are filed alphabetically AFTER their dep most of the time, so a single
+#     pass that increments revdep as it walks the rows would rate HIGH-BLOCK as blocking=0
+#     even though two open tickets depend on it. The stash-and-tally approach is O(N) over
+#     the same N files; no second awk, no extra file I/O.
 #   • The four `state/<bucket>` dirs are pre-collected into per-set NUL-delimited files (the
 #     sets are normally tiny, <20 entries each; mktemp + NUL join).
 #   • The claim loop is a SINGLE awk over the sorted INDEX: integer compares + small NUL-file
-#     membership lookups (line-by-line, no in-memory split). No bash-per-iteration overhead,
-#     no per-dep canon, no per-file `[ -e ]` fork.
+#     membership lookups (line-by-line, no in-memory split), then a composite-key minimum.
+#     No bash-per-iteration overhead, no per-dep canon, no per-file `[ -e ]` fork.
 # Iteration ORDER is preserved by sorting the INDEX on the file path (LC_ALL=C, the byte order
-# bash uses for `$BOARD/*.md` glob expansion), so claim-priority over candidates is bit-for-bit
-# identical to the old code. Total wall on 2000-file fixture: from ~13s (O(n²)) down to <0.3s.
+# bash uses for `$BOARD/*.md` glob expansion), so two tickets with IDENTICAL selection keys
+# tie-break on file path (= id, since paths are `board/<id>.md`), exactly matching the OLD
+# alphabetical-first behaviour. Total wall on 2000-file fixture: from ~13s (O(n²)) down to <0.3s.
 # NOTE: a previous draft stuffed the state-id sets into shell vars joined with $'\0' and passed
 # them to awk via -v. That silently dropped the NUL bytes (POSIX shell vars cannot contain NUL),
 # collapsing the sets into one concatenated string and breaking the case-insensitive "already in
 # claimed" check. Using temp files side-steps the NUL-in-env limitation.
+# SELECTION LADDER (ticket PRIORITY-CONSOLIDATION, canonical axis:
+#   fleet/state/PRIORITY-LADDER.md — see that doc for the full band table):
+#   a. priority: ASC  (0 = most urgent, unset = +infinity / lowest)
+#   b. BLOCKING DESC  (revdep — how many open board tickets list this id in depends_on)
+#   c. BLAST   DESC   (own count — how many owned surfaces; bigger = start it earlier)
+#   d. difficulty DESC (start the big-effort ones first so they overlap anything else)
+#   e. id ASC         (deterministic final tie-break, mirrors the OLD alphabetical-first order)
+#   CLAIM_ONLY hard-pin (case-insensitive single-ticket filter) short-circuits ALL of the above.
 TMPDIR_BASE="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR_BASE"' EXIT
 CLAIMED_SET="$TMPDIR_BASE/claimed"
@@ -77,7 +94,22 @@ shopt -s nullglob
 TICKET_FILES=("$BOARD"/*.md "$BOARD"/archive/*.md)
 shopt -u nullglob
 if [ "${#TICKET_FILES[@]}" -gt 0 ]; then
-  # ONE awk reads every file once, emitting <file>\t<id>\t<tier>\t<rank>\t<parked-lc>\t<note>\t<deps>.
+  # ONE awk reads every file once, emitting 10 TSV fields per ticket:
+  #   <file> <id> <tier> <rank> <parked-lc> <note> <deps> <priority> <blast> <revdep>
+  #   - priority: integer band 0..5 (unset -> 9999 = lowest, sequenced by the graph), read as the
+  #     raw first integer in the value so `priority: 2`, `priority: P2`, `priority: HIGH` are all
+  #     tolerated; invalid values (no integer present) collapse to 9999 too. The drift test in
+  #     fleet/tests/priority-validator.test.sh REJECTS the non-integer values upstream so this
+  #     permissive parse is the last line of defence, not the first.
+  #   - blast:    count of comma-separated `owns:` paths. Empty / missing `owns:` = 0.
+  #   - revdep:   how many OTHER tickets in the file set list this id in their `depends_on:`.
+  #     Computed by stashing every id and its deps in arrays DURING the per-file read, then
+  #     tallying in the END block as a second pass over the arrays. Naive alternative — do
+  #     the revdep count in the claim-loop awk — hit a sort-order trap (the INDEX is sorted
+  #     by file path, but dependents are filed AFTER their dep alphabetically most of the
+  #     time, so a single-pass count misses them; HIGH-BLOCK was rated blocking=0 even
+  #     though two open tickets depended on it). One awk program over the same N files is
+  #     O(N) and the END pass over stashed rows is O(N * avg-deps) — both small. No fork.
   # `rank` is pre-resolved in the awk's RANK dict (passed in via `rank_lookup` env) so the loop body
   # only does integer compares + small set-file lookups. The INDEX is then sorted by file path so
   # claim-priority over candidates matches the OLD code's `$BOARD/*.md` glob order.
@@ -93,19 +125,71 @@ if [ "${#TICKET_FILES[@]}" -gt 0 ]; then
     {
       file = $0
       id = file; sub(/^.*\//, "", id); sub(/\.md$/, "", id)
-      tier = ""; parked = ""; note = ""; deps = ""
+      tier = ""; parked = ""; note = ""; deps = ""; prio_raw = ""; owns = ""
       RS_SAVED = RS; RS = "\n"
       while ((getline line < file) > 0) {
-        if      (line ~ /^tier:[[:space:]]*/)      { sub(/^tier:[[:space:]]*/, "", line);      tier   = line }
-        else if (line ~ /^parked:[[:space:]]*/)   { sub(/^parked:[[:space:]]*/, "", line);   parked = tolower(line) }
-        else if (line ~ /^note:[[:space:]]*/)     { sub(/^note:[[:space:]]*/, "", line);     note   = line }
-        else if (line ~ /^depends_on:[[:space:]]*/){ sub(/^depends_on:[[:space:]]*/, "", line);deps   = line }
+        if      (line ~ /^tier:[[:space:]]*/)        { sub(/^tier:[[:space:]]*/, "", line);        tier   = line }
+        else if (line ~ /^parked:[[:space:]]*/)     { sub(/^parked:[[:space:]]*/, "", line);     parked = tolower(line) }
+        else if (line ~ /^note:[[:space:]]*/)       { sub(/^note:[[:space:]]*/, "", line);       note   = line }
+        else if (line ~ /^depends_on:[[:space:]]*/) { sub(/^depends_on:[[:space:]]*/, "", line); deps   = line }
+        else if (line ~ /^priority:[[:space:]]*/)   { sub(/^priority:[[:space:]]*/, "", line);   prio_raw = line }
+        else if (line ~ /^owns:[[:space:]]*/)        { sub(/^owns:[[:space:]]*/, "", line);        owns   = line }
       }
       RS = RS_SAVED
       close(file)
-      gsub(/[\t\n]/, " ", tier); gsub(/[\t\n]/, " ", parked); gsub(/[\t\n]/, " ", note); gsub(/[\t\n]/, " ", deps)
+      gsub(/[\t\n]/, " ", tier); gsub(/[\t\n]/, " ", parked); gsub(/[\t\n]/, " ", note)
+      gsub(/[\t\n]/, " ", deps); gsub(/[\t\n]/, " ", prio_raw); gsub(/[\t\n]/, " ", owns)
       rank = (tier in RANK) ? RANK[tier] : 0
-      print file "\t" id "\t" tier "\t" rank "\t" parked "\t" note "\t" deps
+      # priority: extract the FIRST integer in the value; empty/missing -> 9999 (lowest band).
+      prio = 9999
+      if (prio_raw != "") {
+        if (match(prio_raw, /-?[0-9]+/)) {
+          prio = substr(prio_raw, RSTART, RLENGTH) + 0
+          if (prio < 0) prio = 0
+          if (prio > 5) prio = 5
+        }
+      }
+      # blast: count comma-separated `owns:` paths, ignoring empties and pure whitespace entries.
+      blast = 0
+      if (owns != "") {
+        nowns = split(owns, oa, ",")
+        for (oi = 1; oi <= nowns; oi++) {
+          ot = oa[oi]; gsub(/^[[:space:]]+|[[:space:]]+$/, "", ot)
+          if (ot != "") blast++
+        }
+      }
+      # Stash for the END pass that computes revdep (BLOCKING axis).
+      nrow++
+      f_id[nrow]    = id;    f_file[nrow]   = file;   f_tier[nrow]   = tier
+      f_rank[nrow]  = rank;  f_parked[nrow] = parked; f_note[nrow]   = note
+      f_deps[nrow]  = deps;  f_prio[nrow]   = prio;   f_blast[nrow]  = blast
+    }
+    END {
+      # Tally revdep = how many OPEN tickets depend on each id (the BLOCKING axis). A dependent
+      # that is ARCHIVED is done/retired and is NOT waiting on anything, so it must NOT inflate
+      # the blocking score of its dep — count a dependent row ONLY when its file lives on the
+      # active board, never under board/archive/. (Done tickets are moved to archive/ by
+      # retire-done.sh, so the archive-path skip is the open-dependents filter. A dep that is
+      # in the done_set but somehow still on the active board is a board-hygiene bug the
+      # reconcile sweep catches — not something to silently miscount here.)
+      for (i = 1; i <= nrow; i++) {
+        if (f_file[i] ~ /\/archive\//) continue   # archived dependent: done, not blocking
+        d = f_deps[i]
+        if (d == "") continue
+        nd = split(d, da, ",")
+        for (di = 1; di <= nd; di++) {
+          dd = da[di]; sub(/^[[:space:]]+/, "", dd); sub(/[[:space:]]+$/, "", dd)
+          if (dd == "") continue
+          dl = tolower(dd)
+          if (dl in revdep) revdep[dl]++; else revdep[dl] = 1
+        }
+      }
+      # Emit the INDEX with revdep attached.
+      for (i = 1; i <= nrow; i++) {
+        rd = (tolower(f_id[i]) in revdep) ? revdep[tolower(f_id[i])] : 0
+        print f_file[i] "\t" f_id[i] "\t" f_tier[i] "\t" f_rank[i] "\t" f_parked[i] \
+              "\t" f_note[i] "\t" f_deps[i] "\t" f_prio[i] "\t" f_blast[i] "\t" rd
+      }
     }
   ' | LC_ALL=C sort > "$INDEX" 2>/dev/null || true
 fi
@@ -117,9 +201,23 @@ build_set "$CLAIMED_SET"   "$STATE/claims"
 build_set "$SUBMITTED_SET" "$STATE/submitted"
 build_set "$DONE_SET"      "$STATE/done"
 build_set "$LG_SET"        "$STATE/loop-guard"
-# 2) CLAIM LOOP (single awk over the sorted INDEX, once per pass). Prints the FIRST eligible id
-# (or empty) and exits — same "first match wins" semantics as the old bash for-loop. State-id
-# membership uses the *_SET NUL files, with the lookup key lower-cased to mirror canon().
+# 2) CLAIM LOOP — selection ladder (ticket PRIORITY-CONSOLIDATION; axis in
+# fleet/state/PRIORITY-LADDER.md). ONE pass over the pre-sorted INDEX. Each record carries
+# `revdep` (the BLOCKING axis count) baked in by the build-awk (see header above), so the
+# claim loop is pure candidate evaluation: filters, then composite key, then min-wins.
+# Composite sort key (priority ASC, blocking DESC, blast DESC, difficulty DESC, id ASC) is
+# built as a fixed-width / zero-padded joined string so lex order IS the desired total
+# order. DESC axes are inverted via `99999999 - n` to keep lex-ascending semantics across
+# the whole key. On END, print the winner's id (or nothing). Mirrors the OLD "first match
+# wins" exit semantic when two candidates are EXACTLY equal (id ASC tie-breaks to file
+# path = the OLD alphabetical id order, since paths are `board/<id>.md`).
+# `difficulty:` is read directly from each ticket file on the fly (a one-byte getline per
+# candidate, no fork; same pattern as the parked check). Missing/non-integer difficulty
+# = 0 (no reordering on that axis). `revdep` is taken STRAIGHT from the INDEX field and is
+# ALREADY the OPEN-dependents count: the INDEX-build END tally counts a dependent only when its
+# file is on the active board (archived/done dependents are skipped there). deps_all_done() below
+# is a SEPARATE filter (it drops THIS candidate when ITS OWN deps aren't done); it does not and
+# need not touch revdep.
 passes="own lower"; [ "$MODE" = own-only ] && passes="own"
 CLAIMED_ID=""
 for pass in $passes; do
@@ -152,8 +250,33 @@ for pass in $passes; do
       }
       return 1
     }
+    # 8-digit width is plenty: a 2000-file board has well under 10^8 reverse-deps / owns / diff.
+    function pad8(n) { return sprintf("%08d", n) }
+    # Read difficulty: parse the `difficulty:` line from the ticket file (one getline per
+    # candidate — no fork; same pattern as the parked check). Scans the WHOLE file for
+    # the first `^difficulty:` line so a leading `tier:` / `branch:` / `repo:` (with no
+    # digit) cannot match the regex and silently produce diff=0. Missing / non-integer
+    # / out-of-range difficulty = 0 (no reordering on that axis). A getline that
+    # does not find the line at all (file deleted between INDEX build and walk) also = 0.
+    function read_difficulty(fpath,    _l, _n) {
+      while ((getline _l < fpath) > 0) {
+        if (_l ~ /^difficulty:[[:space:]]*/) {
+          close(fpath)
+          if (match(_l, /[0-9]+/)) {
+            _n = substr(_l, RSTART, RLENGTH) + 0
+            if (_n < 0) _n = 0
+            if (_n > 5) _n = 5
+            return _n
+          }
+          return 0
+        }
+      }
+      close(fpath)
+      return 0
+    }
     {
       file = $1; id = $2; ttier = $3; trank = $4 + 0; parked = $5; note = $6; deps = $7
+      prio = $8 + 0; blast = $9 + 0; revdep_all = $10 + 0
       id_lo = tolower(id)
       # CLAIM_ONLY hard pin: consider ONLY the named ticket (case-insensitive); skip all others.
       if (only != "" && id_lo != tolower(only)) next
@@ -181,9 +304,17 @@ for pass in $passes; do
       if (trank > drank) next
       if (pass == "own") { if (ttier != tier) next } else { if (ttier == tier) next }
       if (!deps_all_done(deps)) next
-      print id
-      exit
+      # revdep_all is the BLOCKING axis (how many open board tickets list this id in
+      # depends_on:). It is computed in the INDEX-build awk and attached as field 10.
+      # The deps_all_done() filter above is what drops THIS tickets own dependencies
+      # from the unblock chain — that is the right place for the done_set check.
+      blocking = revdep_all
+      diff = read_difficulty(file)
+      key = pad8(prio) " " pad8(99999999 - blocking) " " pad8(99999999 - blast) \
+            " " pad8(99999999 - diff) " " id
+      if (best_key == "" || key < best_key) { best_key = key; best_id = id }
     }
+    END { if (best_id != "") print best_id }
     ' "$INDEX"
   )"
   [ -n "$CLAIMED_ID" ] && break

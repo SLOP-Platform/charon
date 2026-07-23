@@ -3,7 +3,7 @@ difficulty: 3
 work_class: ci-infra
 branch: feat/reviewer-dogfood-reds
 repo: charon-private
-priority: MEDIUM
+priority: 3
 depends_on:
 owns: fleet/benchmark/reviewer-dogfood.sh, fleet/state/REDS-CORPUS.md
 note: |

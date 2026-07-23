@@ -47,6 +47,12 @@ HEAD_REF="${RIG_CI_HEAD:-HEAD}"
 # excluded BY DEFAULT and only runs in CI once someone deliberately adds it here after proving it
 # is hermetic, offline and fast. NEVER replace this with a `for t in fleet/tests/*.test.sh` sweep.
 CI_SUITES=(
+  priority-validator.test.sh # hermetic: throwaway fleet + synthetic board under mktemp -d, no
+                            # network. Red-proofs the canonical numeric priority axis: drift
+                            # surface rejects HIGH/MEDIUM/P2/non-integer values; ladder surface
+                            # exercises priority>blocking>blast>difficulty>id end-to-end through
+                            # the real claim.sh. The single canary a revert to "alphabetical
+                            # first" or a drop of the revdep field fails. ~2s.
   rig-ci.test.sh            # this gate's own fail-on-revert tests
   substrate-first-gate.test.sh # hermetic: throwaway board + fixture EVAL-REGISTRY under mktemp -d,
                             # no network. Red-proofs the creation-time build-vs-adopt gate on all

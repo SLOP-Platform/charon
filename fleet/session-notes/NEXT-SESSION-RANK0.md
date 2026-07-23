@@ -1,5 +1,16 @@
 # RANK-0 — DO FIRST THING NEXT SESSION (refreshed 2026-07-22)
 
+> **Mapping to the canonical numeric axis (ticket PRIORITY-CONSOLIDATION):**
+> **RANK-0 = `priority: 0`**; a `P-band N` is a `priority: N` ticket. RANK-0 is
+> no longer a separate super-tier — the machine sees ONE band (P:0) and the rest
+> of the claim ladder (blocking → blast → difficulty → id) breaks ties. The
+> historical R0.0 / R0.1 / R0.2 / R0.3 / R0.4 naming is now a *human* framing
+> of P:0 sub-priorities; the canonical axis is `fleet/state/PRIORITY-LADDER.md`
+> and the claim selection lives in `fleet/claim.sh`. This doc retains the
+> RANK-0 narrative because the operator and the droid pool still talk in those
+> terms in chat, but it is NOT the ranking source of truth — that is the
+> PRIORITY-LADDER.
+
 > Outranks the standard project ladder (ROUTER>BRIDGE>FLEET>SECURITY>BACKLOG) and P0-P4.
 > **Process:** work runs in DETACHED off-Claude droids by default (`fleet-droid.sh <tier>`); the
 > primary chat only does fast or would-degrade work. [[work-detached-first-token-lean]]
