@@ -1,11 +1,12 @@
 repurpose-2026-07-10: grade REAL tasks (reds-replay + sub-session actuals), NOT synthetic S0-S6; write VERSIONED frozen scorecard artifacts consumed via freeze-ring (GATEWAY-PROGRAM).
+priority: 0
 tier: frontier
 difficulty: 5  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
-parked: true
+parked: false
 work_class: ci-infra
 branch: feat/bench-oob-grading
 depends_on: STAGE-DEMUX
-build-after: BENCH-PROVISIONAL-SCORING (un-parked 2026-07-08 as approved to track the pivot as active, but #20 is still PARKED; hard depends_on to a parked ticket would trip the validator, so the sequencing is expressed as build-after. RESTORE depends_on: BENCH-PROVISIONAL-SCORING when #20 is un-parked. Also gated on operator Q1 — do NOT build yet.)
+build-after-done: BENCH-PROVISIONAL-SCORING (un-parked 2026-07-08 as approved to track the pivot as active, but #20 is still PARKED; hard depends_on to a parked ticket would trip the validator, so the sequencing is expressed as build-after. RESTORE depends_on: BENCH-PROVISIONAL-SCORING when #20 is un-parked. Also gated on operator Q1 — do NOT build yet.)
 real-dep: STAGE-DEMUX — added 2026-07-16. #26's premise is that the OOB grader's verdict is what EARNS
   `stage=active`, but grader-daemon.py:410 hardcodes the literal "active" into ledger col 16 and
   _handle_capture (:452) never reads req["stage"] — so the daemon writes `active` regardless of WHO
