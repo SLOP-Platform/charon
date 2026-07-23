@@ -1,11 +1,11 @@
-repo: charon-private
+repo: charon
 tier: strong
 difficulty: 3
 work_class: greenfield-feature
 priority: 0
 branch: feat/model-grade-preseed
 depends_on:
-owns: fleet/state/MODEL-GRADE-PRESEED.md
+owns: src/charon/capability/grades_import.py, tests/test_grades_import.py
 work_class_note: |
   Cold-start BRIDGE for the ranking pipeline (audit 2026-07-23). Today grades.py returns 0 real-outcome
   grades, so CG has NO usable ranking to route on. ADR-0017 §Cold-start (docs/adr/0017:49-54, 121-123) names
