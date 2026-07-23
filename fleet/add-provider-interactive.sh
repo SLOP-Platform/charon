@@ -22,18 +22,14 @@
 # Loop, per provider:
 #   1. Prompt for a provider name. Blank -> print a summary and exit (blank ENDS
 #      the whole script, it does not skip to the next iteration).
-#   2. Prompt for that provider's API key — VISIBLE echo (read -r, not read -rs).
-#      Tradeoff, accepted deliberately: the key is briefly visible in terminal
-#      scrollback/tmux history/screen-recording for the operator's own visual
-#      confirmation of what was pasted. It is never written to argv, ps, or any
-#      log — only to a chmod-600 mktemp file that is removed (shredded if
-#      possible) immediately after add-provider.sh consumes it.
-#   3. Registry lookup: known name -> base_url (+ any mappings) auto-filled.
-#      Unknown name -> prompt once for a base_url fallback and warn that models
-#      will need a manual import/mapping pass; never hard-fail on an unknown name.
-#   4. Write key to mktemp (chmod 600), run add-provider.sh, capture pass/fail,
-#      remove the temp key file.
-#   5. Print pass/fail for that provider, loop back to step 1.
+#   2. Prompt for that provider's API key — NO ECHO (read -rs, secrets ratchet).
+#      The key is never visible in terminal scrollback/tmux history.
+#   3. Registry lookup: known name -> base_url (+ funding_class + any mappings)
+#      auto-filled. Unknown name -> prompt once for a base_url fallback.
+#   4. Prompt for funding_class (1=free 2=sub 3=drain 4=PAYG) if not registry-known.
+#   5. Write key to mktemp (chmod 600), run add-provider.sh with --funding-class,
+#      capture pass/fail, remove the temp key file.
+#   6. Print pass/fail for that provider, loop back to step 1.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -97,6 +93,31 @@ declare -A REGISTRY_BASE_URL=(
 # without changing the lookup logic.
 declare -A REGISTRY_MODELS=()
 
+# name -> funding_class. 1=free-recurring, 2=flat-sub, 3=drain-prepaid, 4=PAYG.
+# Populated from fleet/state/REGISTRY-CANDIDATES.md and CG-PROVIDERS.md research.
+# Unknown providers are prompted.
+declare -A REGISTRY_FUNDING_CLASS=(
+  [chutes]="4"
+  [commandcode]="4"
+  [synthetic]="4"
+  [trae]="4"
+  [featherless]="4"
+  [nanogpt]="4"
+  [openrouter]="4"
+  [deepseek]="4"
+  [groq]="1"
+  [cerebras]="1"
+  [mistral]="4"
+  [together]="4"
+  [zai]="4"
+  [cline-pass]="4"
+  [fireworks]="4"
+  [sambanova]="4"
+  [replicate]="4"
+  [xai]="4"
+  [nvidia]="4"
+)
+
 # --- summary tracking --------------------------------------------------------
 declare -a SUMMARY=()
 
@@ -134,11 +155,11 @@ while true; do
     break
   fi
 
-  # Visible echo is intentional (operator explicitly wants to SEE the pasted
-  # key to confirm it was pasted correctly) — accepted scrollback tradeoff,
-  # see header note. Do not switch this to `read -rs`.
+  # SECURITY: read with echo disabled so the key is NEVER visible in terminal
+  # scrollback/tmux history/screen-recording (secrets ratchet — see TICKETS.md
+  # ADD-PROVIDER-MECHANIZE-COMPLETE requirement 4b).
   printf 'API key for %s: ' "$name"
-  if ! IFS= read -r key; then
+  if ! IFS= read -rs key; then
     printf 'add-provider-interactive: no key read (EOF) for "%s" — skipping.\n' "$name"
     SUMMARY+=("$name: SKIPPED (no key entered)")
     continue
@@ -166,6 +187,30 @@ while true; do
     printf 'add-provider-interactive: WARNING: no registry mappings for "%s" — models will need a manual import/pin pass after this add.\n' "$name" >&2
   fi
 
+  # Resolve funding_class: registry-known or prompt.
+  funding_class="${REGISTRY_FUNDING_CLASS[$name]:-}"
+  if [ -z "$funding_class" ]; then
+    printf 'Funding class for %s (1=free 2=sub 3=drain 4=PAYG) [default=4]: ' "$name"
+    if ! IFS= read -r fc_in; then fc_in=""; fi
+    funding_class="${fc_in:-4}"
+    case "$funding_class" in
+      1|2|3|4) ;;
+      *) printf 'add-provider-interactive: invalid funding_class "%s" — using 4 (PAYG)\n' "$funding_class" >&2
+         funding_class="4" ;;
+    esac
+  fi
+
+  # Optional: record free-tier rate limits from a JSON file.
+  ft_flag=()
+  printf 'Free-tier limits file for %s (blank to skip): ' "$name"
+  if IFS= read -r ft_path && [ -n "$ft_path" ]; then
+    if [ -f "$ft_path" ]; then
+      ft_flag=(--free-tier "$ft_path")
+    else
+      printf 'add-provider-interactive: WARNING: free-tier file not found: %s — skipping\n' "$ft_path" >&2
+    fi
+  fi
+
   # shellcheck disable=SC2206 # word-splitting is intentional: registry values
   # are literal "model:upstream" tokens with no embedded whitespace/globs.
   mappings=(${REGISTRY_MODELS[$name]:-})
@@ -178,8 +223,8 @@ while true; do
   # add-provider.sh consumes it below.
   unset key
 
-  printf 'add-provider-interactive: adding "%s" (base_url=%s)...\n' "$name" "$base_url"
-  if "$ADD_PROVIDER" "${DRY_RUN_FLAG[@]}" "$name" "$base_url" "$keyfile" "${mappings[@]+"${mappings[@]}"}"; then
+  printf 'add-provider-interactive: adding "%s" (base_url=%s, funding_class=%s)...\n' "$name" "$base_url" "$funding_class"
+  if "$ADD_PROVIDER" "${DRY_RUN_FLAG[@]}" --funding-class "$funding_class" "${ft_flag[@]+"${ft_flag[@]}"}" "$name" "$base_url" "$keyfile" "${mappings[@]+"${mappings[@]}"}"; then
     printf 'add-provider-interactive: "%s" — SUCCESS\n' "$name"
     SUMMARY+=("$name: SUCCESS")
   else

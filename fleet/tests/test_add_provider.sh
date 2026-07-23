@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
 # test_add_provider.sh — FAIL-ON-REVERT tests for fleet/add-provider.sh
-# (ADD-PROVIDER-MECHANIZE). Runs the script ONLY in --dry-run mode: no real ssh,
-# no real docker, no traffic to .60 — everything is asserted against the printed
-# command sequence.
+# (ADD-PROVIDER-MECHANIZE-COMPLETE). Runs the script ONLY in --dry-run mode:
+# no real ssh, no real docker, no traffic to .60 — everything is asserted
+# against the printed command sequence.
 #
 # Covers:
 #   (a) dry-run exits 0 and the KEY VALUE never appears anywhere in the emitted
 #       output (the whole point of piping the key over stdin instead of --key).
 #   (b) the exact remote CLI call sequence is present, IN ORDER: backup ->
-#       providers add (key over stdin) -> models import -> model:upstream mapping
-#       -> providers test -> docker restart -> /v1/models verify.
-#   (c) argument validation (bad base_url scheme, missing key file) fails loud.
-#   (d) idempotent: running twice produces the same shape of sequence both times.
+#       providers add (key over stdin) -> funding_class set -> models import ->
+#       model:upstream mapping -> providers test (--base-url) -> docker restart
+#       -> pricing verify -> routable check.
+#   (c) argument validation (bad base_url scheme, missing --funding-class,
+#       missing key file) fails loud.
+#   (d) --funding-class is REQUIRED and validated (1/2/3/4 only).
+#   (e) idempotent: running twice produces the same shape of sequence.
 #
 # Revert the key-safety handling (e.g. swap the stdin pipe for `--key "$(cat
 # "$KEYFILE")"` on argv) -> the key VALUE shows up in the printed docker exec
@@ -33,7 +36,7 @@ printf '%s' "$SECRET" > "$KEYFILE"
 
 # ---------------------------------------------------------------------------
 echo "== t1: dry-run exits 0 and never prints the key value =="
-out="$(bash "$SCRIPT" --dry-run myprov https://api.example.com/v1 "$KEYFILE" phi-4:microsoft/phi-4 2>&1)"; rc=$?
+out="$(bash "$SCRIPT" --dry-run --funding-class 4 myprov https://api.example.com/v1 "$KEYFILE" phi-4:microsoft/phi-4 2>&1)"; rc=$?
 check "t1 exit 0" "$rc" "0"
 if printf '%s' "$out" | grep -qF "$SECRET"; then
   bad "t1 key value ABSENT from emitted output (H1: key leaked into a printed command)"
@@ -46,11 +49,13 @@ echo "== t2: exact remote CLI call sequence present =="
 declare -a pats=(
   'docker exec .*charon-gateway-1.* sh -c .cp -f /data/providers\.json .*providers\.json\.bak-'
   "docker exec -i .*charon-gateway-1.* python3 -m charon\\.cli providers add 'myprov' --base-url 'https://api\\.example\\.com/v1'"
+  "docker exec .*charon-gateway-1.* python3 -c .*config\\.add_provider.*funding_class"
   "docker exec .*charon-gateway-1.* python3 -m charon\\.cli models import 'myprov'"
   "docker exec .*charon-gateway-1.* python3 -c .*config\\.add_model.*'phi-4' 'myprov' 'microsoft/phi-4' '50'"
-  "docker exec .*charon-gateway-1.* python3 -m charon\\.cli providers test 'myprov'"
+  "docker exec .*charon-gateway-1.* python3 -m charon\\.cli providers test 'myprov' --base-url"
   'docker restart .*charon-gateway-1'
-  '/v1/models'
+  'DRYRUN.*pricing verify'
+  'DRYRUN.*routable check'
 )
 seq_ok=1
 for pat in "${pats[@]}"; do
@@ -67,17 +72,19 @@ echo "== t2b: sequence is IN ORDER =="
 line_no(){ printf '%s\n' "$out" | grep -nE "$1" | head -1 | cut -d: -f1; }
 l1="$(line_no 'providers\.json\.bak-')"
 l2="$(line_no "providers add 'myprov'")"
-l3="$(line_no "models import 'myprov'")"
-l4="$(line_no "config\\.add_model")"
-l5="$(line_no "providers test 'myprov'")"
-l6="$(line_no 'docker restart')"
-l7="$(line_no '/v1/models')"
-if [ -n "$l1" ] && [ -n "$l2" ] && [ -n "$l3" ] && [ -n "$l4" ] && [ -n "$l5" ] && [ -n "$l6" ] && [ -n "$l7" ] \
+l3="$(line_no 'funding_class')"
+l4="$(line_no "models import 'myprov'")"
+l5="$(line_no "config\\.add_model")"
+l6="$(line_no "providers test 'myprov' --base-url")"
+l7="$(line_no 'docker restart')"
+l8="$(line_no 'pricing verify')"
+l9="$(line_no 'routable check')"
+if [ -n "$l1" ] && [ -n "$l2" ] && [ -n "$l3" ] && [ -n "$l4" ] && [ -n "$l5" ] && [ -n "$l6" ] && [ -n "$l7" ] && [ -n "$l8" ] && [ -n "$l9" ] \
    && [ "$l1" -lt "$l2" ] && [ "$l2" -lt "$l3" ] && [ "$l3" -lt "$l4" ] && [ "$l4" -lt "$l5" ] \
-   && [ "$l5" -lt "$l6" ] && [ "$l6" -lt "$l7" ]; then
-  ok "t2b backup < add < import < mapping < test < restart < verify"
+   && [ "$l5" -lt "$l6" ] && [ "$l6" -lt "$l7" ] && [ "$l7" -lt "$l8" ] && [ "$l8" -lt "$l9" ]; then
+  ok "t2b backup < add < fc-set < import < mapping < test < restart < pricing < routable"
 else
-  bad "t2b backup < add < import < mapping < test < restart < verify (lines: $l1 $l2 $l3 $l4 $l5 $l6 $l7)"
+  bad "t2b backup < add < fc-set < import < mapping < test < restart < pricing < routable (lines: $l1 $l2 $l3 $l4 $l5 $l6 $l7 $l8 $l9)"
 fi
 
 echo "== t2c: the key is piped via stdin, not embedded as --key on the add command =="
@@ -94,7 +101,7 @@ fi
 
 # ---------------------------------------------------------------------------
 echo "== t3: no model:upstream args -> no mapping step, rest unchanged =="
-out3="$(bash "$SCRIPT" --dry-run otherprov https://api.example.com/v1 "$KEYFILE" 2>&1)"; rc3=$?
+out3="$(bash "$SCRIPT" --dry-run --funding-class 4 otherprov https://api.example.com/v1 "$KEYFILE" 2>&1)"; rc3=$?
 check "t3 exit 0" "$rc3" "0"
 if printf '%s' "$out3" | grep -q "config.add_model"; then
   bad "t3 no mapping step when no model:upstream given"
@@ -109,22 +116,30 @@ fi
 
 # ---------------------------------------------------------------------------
 echo "== t4: argument validation fails loud =="
-rc=0; bash "$SCRIPT" --dry-run badprov ftp://not-http/v1 "$KEYFILE" >/dev/null 2>&1 || rc=$?
+rc=0; bash "$SCRIPT" --dry-run --funding-class 4 badprov ftp://not-http/v1 "$KEYFILE" >/dev/null 2>&1 || rc=$?
 [ "$rc" -ne 0 ] && ok "t4a rejects non-http(s) base_url" || bad "t4a rejects non-http(s) base_url"
 
-rc=0; bash "$SCRIPT" --dry-run badprov https://api.example.com/v1 "$D/does-not-exist.key" >/dev/null 2>&1 || rc=$?
+rc=0; bash "$SCRIPT" --dry-run --funding-class 4 badprov https://api.example.com/v1 "$D/does-not-exist.key" >/dev/null 2>&1 || rc=$?
 [ "$rc" -ne 0 ] && ok "t4b rejects a missing key file" || bad "t4b rejects a missing key file"
 
-rc=0; bash "$SCRIPT" --dry-run "bad name" https://api.example.com/v1 "$KEYFILE" >/dev/null 2>&1 || rc=$?
+rc=0; bash "$SCRIPT" --dry-run --funding-class 4 "bad name" https://api.example.com/v1 "$KEYFILE" >/dev/null 2>&1 || rc=$?
 [ "$rc" -ne 0 ] && ok "t4c rejects an invalid provider name" || bad "t4c rejects an invalid provider name"
 
-rc=0; bash "$SCRIPT" --dry-run onlyoneargument >/dev/null 2>&1 || rc=$?
+rc=0; bash "$SCRIPT" --dry-run --funding-class 4 onlyoneargument >/dev/null 2>&1 || rc=$?
 [ "$rc" -ne 0 ] && ok "t4d rejects too few args" || bad "t4d rejects too few args"
+
+printf '== t4e: --funding-class is required ==\n'
+rc=0; bash "$SCRIPT" --dry-run noclass https://api.example.com/v1 "$KEYFILE" >/dev/null 2>&1 || rc=$?
+[ "$rc" -ne 0 ] && ok "t4e rejects missing --funding-class" || bad "t4e rejects missing --funding-class"
+
+printf '== t4f: --funding-class must be 1-4 ==\n'
+rc=0; bash "$SCRIPT" --dry-run --funding-class 5 badfc https://api.example.com/v1 "$KEYFILE" >/dev/null 2>&1 || rc=$?
+[ "$rc" -ne 0 ] && ok "t4f rejects invalid funding_class=5" || bad "t4f rejects invalid funding_class=5"
 
 # ---------------------------------------------------------------------------
 echo "== t5: idempotent — same dry-run twice yields the same call shape =="
-out5a="$(bash "$SCRIPT" --dry-run idem https://api.example.com/v1 "$KEYFILE" m1:up/m1 2>&1 | sed -E 's/[0-9]{8}T[0-9]{6}Z//g')"
-out5b="$(bash "$SCRIPT" --dry-run idem https://api.example.com/v1 "$KEYFILE" m1:up/m1 2>&1 | sed -E 's/[0-9]{8}T[0-9]{6}Z//g')"
+out5a="$(bash "$SCRIPT" --dry-run --funding-class 3 idem https://api.example.com/v1 "$KEYFILE" m1:up/m1 2>&1 | sed -E 's/[0-9]{8}T[0-9]{6}Z//g')"
+out5b="$(bash "$SCRIPT" --dry-run --funding-class 3 idem https://api.example.com/v1 "$KEYFILE" m1:up/m1 2>&1 | sed -E 's/[0-9]{8}T[0-9]{6}Z//g')"
 check "t5 identical shape on re-run" "$out5a" "$out5b"
 
 rm -rf "$D"
