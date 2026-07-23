@@ -92,7 +92,7 @@ p0_worktree_setup(){
 # MULTI-REPO: maps a ticket's `repo:` field -> repo path / worktree / base branch / gate.
 # Absent field -> key `charon` (product) => IDENTICAL behavior to the old hardwired path.
 source "$FLEET/repo-registry.sh"
-usage(){ echo "usage: fleet-droid.sh <frontier|strong|economy|low|med|high|opus|sonnet|haiku> [--wait <min>] [--retries <n>] [--patience <cycles>] [--serial-justified=<reason>]"; exit 2; }
+usage(){ echo "usage: fleet-droid.sh <frontier|strong|economy|low|med|high|opus|sonnet|haiku> [--wait <min>] [--retries <n>] [--patience <cycles>] [--serial-justified=<reason>] [--only <TICKET-ID>]"; exit 2; }
 
 # ---- DETENTION-REDLINE: shared tier/chain helpers ------------------------------------------------
 # Defined ONCE and used by BOTH the main claim loop and the `resolve` hook below, so the chain a
@@ -190,11 +190,14 @@ if [ "${1:-}" = "resolve" ]; then
   fi
 fi
 
-TIER=""; WAIT_MIN=3; RETRIES=6; PATIENCE=1; SERIAL_JUSTIFIED=""
+TIER=""; WAIT_MIN=3; RETRIES=6; PATIENCE=1; SERIAL_JUSTIFIED=""; ONLY_TICKET=""
 while [ $# -gt 0 ]; do case "$1" in
   --wait)     WAIT_MIN="${2:?--wait needs minutes}"; shift 2;;
   --retries)  RETRIES="${2:?--retries needs a count}"; shift 2;;
   --patience) PATIENCE="${2:?--patience needs a cycle count}"; shift 2;;
+  # HARD PIN: this tab considers ONLY the named ticket (via CLAIM_ONLY -> claim.sh). The deterministic
+  # "pin a droid to a named ticket" mechanism. Pair with `--wait 0` for a one-shot pinned run.
+  --only)     ONLY_TICKET="${2:?--only needs a ticket id}"; shift 2;;
   # F46 PARALLELIZABILITY-GATE escape hatch: justifies a SERIAL launch of a claimed ticket
   # that the gate would otherwise refuse (splittable: difficulty>=M AND >1 owned surface,
   # not yet decomposed). Applies to whatever this tab claims next — a per-run override, not
@@ -204,6 +207,8 @@ while [ $# -gt 0 ]; do case "$1" in
   *) usage;;
 esac; done
 [ -n "$TIER" ] || usage
+# Export the hard-pin to claim.sh (empty = normal free-claim). See --only above.
+export CLAIM_ONLY="$ONLY_TICKET"
 # OFF-CLAUDE tier resolution: turn the tier arg into a GATEWAY model FAILOVER CHAIN (charon/<id>),
 # NOT an Anthropic model. `charon tier resolve` only exposes an ANTHROPIC executor (its tier members
 # are haiku/sonnet/opus) and config has NO tier->gateway-model map, so the per-tier chain lives in a

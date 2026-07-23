@@ -12,6 +12,11 @@ if [ "${1:-}" = "--dry-run" ]; then DRY_RUN=true; shift; fi
 TIER="${1:?usage: claim.sh [--dry-run] <tier> <droid> [both|own-only]}"; DROID="${2:?usage: claim.sh [--dry-run] <tier> <droid> [both|own-only]}"
 MODE="${3:-both}"
 case "$MODE" in both|own-only) ;; *) echo "usage: claim.sh [--dry-run] <tier> <droid> [both|own-only]" >&2; exit 2;; esac
+# CLAIM_ONLY (env) = HARD PIN: if set, this claim considers ONLY the named ticket id (case-insensitive)
+# and nothing else — the deterministic "pin a droid to a named ticket" mechanism the free-claim
+# ladder lacks. All other filters (tier/deps/parked/submitted/claimed/done) still apply, so a pinned
+# ticket that is already claimed/submitted/done or dep-blocked correctly yields NONE.
+ONLY="${CLAIM_ONLY:-}"
 source "$FLEET/_lib.sh"
 # Load tier ranks ONCE, BEFORE flock, from `charon tier ranks` (canonical+aliases,
 # alias-folded). Pure data; never spawn Python under the lock. Legacy fallback when
@@ -124,7 +129,8 @@ for pass in $passes; do
         -v claimed_set="$CLAIMED_SET" \
         -v submitted_set="$SUBMITTED_SET" \
         -v done_set="$DONE_SET" \
-        -v lg_set="$LG_SET" '
+        -v lg_set="$LG_SET" \
+        -v only="$ONLY" '
     function in_set(fpath, key,    line) {
       # Linear scan of a NUL-delimited set file. Sets are tiny (usually <20 entries), so the
       # read+compare is O(set-size) per call — still a net win over the OLD per-file
@@ -149,6 +155,8 @@ for pass in $passes; do
     {
       file = $1; id = $2; ttier = $3; trank = $4 + 0; parked = $5; note = $6; deps = $7
       id_lo = tolower(id)
+      # CLAIM_ONLY hard pin: consider ONLY the named ticket (case-insensitive); skip all others.
+      if (only != "" && id_lo != tolower(only)) next
       # The INDEX was built outside the lock; a ticket may have been DELETED between build and
       # lock-acquire (e.g. retire-done.sh moved a board/<id>.md to board/archive/<id>.md — that
       # preserves the ticket under a new path and would now show up twice: once in the open
