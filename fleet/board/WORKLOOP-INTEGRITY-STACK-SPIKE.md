@@ -13,6 +13,23 @@ work_class_note: |
   real). POSTURE: solution-seeking — adopt where it fits; reject only with strong hands-on evidence and
   name the next-best. [[research-posture-solution-seeking]] [[adopt-substrate-build-only-novel-slice]]
 accept: |
+  ⛔ RE-BRIEF (2026-07-23 — the first attempt, closed PR #161, was BOUNCED): it was a source/docs audit,
+  not a RUN, and it defaulted 3/4 verdicts to hand-roll. Both are now hard-blocked by landed doctrine —
+  EVAL-REGISTRY.md AP-12 (source-reading is NOT a valid trial for a RUNNABLE candidate) and
+  HAND-ROLL-IS-NEVER-THE-DEFAULT. This attempt MUST satisfy:
+    • EXECUTED TRIALS ON REAL HOSTS. We have them — 4-LOM (10.0.1.60, `ssh -i ~/.ssh/4lom stack@…`; Docker
+      usable non-root, 12 cores / 11GB free), plus BB-8, Rocinante, LO-LA59. "Couldn't run it hands-on" is
+      NOT available. Each layer's verdict receipt MUST include the ACTUAL host + commands run + observed
+      output/errors (a transcript), NOT a file:line source citation. Source-reading may confirm an ABSENCE
+      (e.g. "no gitea/ adapter dir") but can NEVER stand in for the make-or-break RUN.
+    • ADOPT-FIRST RANKING. A REJECT's "next-best" MUST LEAD with an ADOPT candidate; a hand-roll may be
+      named ONLY after EVERY adopt option has been EXECUTED and adversarially disproven. Ranking hand-roll
+      first, or "~N LOC we own" as the recommended path, is auto-rejected drift (AP-5/AP-7).
+    • BUILD ON, don't redo, the closed PR #161 doc's CONFIRMED facts (git-topology reframe; Databricks
+      authorship) — cite them as evidence; the RUNS (ao/Omnigent/Windmill/Archon) are what must actually happen.
+    • COMPLETION SELF-CHECK: if any verdict on a runnable tool lacks an executed-trial transcript, the
+      deliverable is INCOMPLETE — do not submit it as done.
+
   A hands-on spike (NOT doc-reading) producing, for EACH layer, an adopt / reject / adopt-with-caveats
   verdict + an EVAL-REGISTRY row, plus one integrated "adopt this stack, wired in this order" recommendation
   (or a reasoned reject-with-next-best). Run the make-or-break integration test for real:
