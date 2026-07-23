@@ -99,5 +99,5 @@ still-pending source. It left three downstream stale references behind
   actuals ledger and freeze-ring scorecard."""` docstring is a
   package-level overview, not a deadref to the deleted module — left
   alone.
-- `docs/review-log/DEDUP-ACTUALS-DELETE.md` belongs to the other
-  droid's ticket — not modified.
+- `docs/review-log/DEDUP-ACTUALS-DELETE.md` belongs to another
+  ticket — not modified.
