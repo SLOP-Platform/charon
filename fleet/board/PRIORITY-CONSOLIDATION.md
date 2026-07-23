@@ -1,11 +1,16 @@
 repo: charon-private
 tier: strong
 difficulty: 3
-work_class: feature
+work_class: rig-meta
 branch: feat/priority-consolidation
 priority: 0
 depends_on:
 owns: fleet/claim.sh, fleet/state/PRIORITY-LADDER.md
+serial_justified: |
+  One tightly-coupled change to a single hot-path awk (claim.sh's pick loop) + its axis doc: the
+  numeric priority axis, the priority→blocking→blast→difficulty selection ladder, and the legacy-ticket
+  normalization are one contract — splitting them orphans the selection semantics (a half-applied ladder
+  reads a priority field nothing writes, or writes fields nothing reads). Genuinely serial verification.
 work_class_note: |
   Operator-set (2026-07-23). Consolidate the DRIFTED ranking nomenclatures (RANK-0 / R0.x, the P0-P4
   cg-priority ladder, the project ladder, and a `priority:` field used 3 inconsistent ways —

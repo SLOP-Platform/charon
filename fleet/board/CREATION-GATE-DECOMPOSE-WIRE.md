@@ -7,7 +7,7 @@ owns: fleet/checks/parallelizability-gate.sh, fleet/claim.sh, /home/stack/charon
 serial_justified: One cohesive gate-timing fix — the gate script's placeholder-difficulty blind
   spot, its queue-entry wire point, and the board-validation hard-fail are one invariant
   (a splittable ticket must never reach claimable); splitting orphans the contract.
-depends_on: PROJECT-MEMBERSHIP-GATE
+depends_on: PROJECT-MEMBERSHIP-GATE, PRIORITY-CONSOLIDATION
 real-dep: PROJECT-MEMBERSHIP-GATE owns validate_board.sh (adds project-membership checks); this
   ticket adds a hard-fail path to the SAME file. Rebase onto its merge, don't run concurrently.
 dep-kind: build
