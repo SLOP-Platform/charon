@@ -1,6 +1,10 @@
 # ADR-0020 — LiteLLM Metering Bridge: routing cost accounting through litellm callbacks
 
-- **Status:** Proposed / Pending (DECISION-PENDING — gates GW-BRIDGE-2-METERING-SPEND)
+- **Status:** ACCEPTED — VERIFY-ONLY (operator Nnyan, 2026-07-23). The litellm cost callback is adopted as a
+  CROSS-CHECK only; **Charon's own cost computation remains the source of record** for money accounting.
+  GW-BRIDGE-2-METERING-SPEND is now claimable under the re-scoped (verify-only) contract below. Promotion to
+  callback-as-source-of-record (the original Proposed option) stays DEFERRED until litellm's exactly-once
+  billing is proven with evidence (open question 1) — a future ADR amendment, not this one.
 - **Deciders:** Nnyan (solo operator)
 - **Repo:** `github.com/SLOP-Platform/charon`
 - **Relates to:** ADR-0016 (vendored price data / exhaustion envelope), ADR-0017 (outcome-graded
@@ -22,12 +26,22 @@ authority that decides how much a request cost, and therefore when a provider dr
 Handing that authority to a third-party callback is a decision that must be made deliberately,
 which is why this ADR gates the bridge.
 
-## Decision (PENDING)
+## Decision (ACCEPTED — verify-only, 2026-07-23)
 
-**Proposed:** route per-request cost accounting through the litellm cost callback into the
-existing `BalanceTracker`, making the callback the source of record for token-priced spend —
-**only if** the following invariants are provably preserved. Until ratified, GW-BRIDGE-2 is not
-claimable.
+**Decided:** GW-BRIDGE-2 wires the litellm cost callback as a **VERIFY-ONLY cross-check** against Charon's
+own per-request cost computation, which **remains the source of record** that advances `BalanceTracker`
+and drives drain-then-park. The callback does NOT become the money authority in this bridge. Rationale
+(operator): the three invariants below are exactly the failure modes that have bitten before
+(`charon-meter-inert`, the double-bill leak), and Charon's own drain-then-park/funding-class metering was
+proven live 2026-07-23; do not hand money-authority to a third-party callback's exactly-once behavior for a
+code-shrink. The cross-check surfaces divergence (callback cost vs Charon cost) as an alert, buying
+defense-in-depth now and the evidence needed to later promote to source-of-record.
+
+The invariants below still hold as the acceptance test — but as "the cross-check must not corrupt or
+override Charon's authoritative accounting," not "the callback must safely BE the authority."
+
+**Original Proposed option (callback = source of record) is DEFERRED**, not rejected — revisit via a new
+ADR once open question 1 (exactly-once on failover/retry/cooldown) is answered with evidence.
 
 ### Non-negotiable invariants (the bridge must prove each with a fail-on-revert test)
 
@@ -61,4 +75,5 @@ path at cutover; energy/non-token metering stays Charon policy fed alongside. **
 cannot be proven:** keep Charon's own cost computation as the source of record and use the litellm
 callback only as a cross-check (verify-only), or defer the metering move past the cutover.
 
-**Gates:** `GW-BRIDGE-2-METERING-SPEND` (board) — do not claim until this ADR is **Accepted**.
+**Gates:** `GW-BRIDGE-2-METERING-SPEND` (board) — **UNGATED as of 2026-07-23** (ADR Accepted, verify-only).
+Claimable under the verify-only contract; the bridge must NOT make the callback the source of record.
