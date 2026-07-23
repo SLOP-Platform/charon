@@ -52,3 +52,10 @@ scope: |
   check_cmd with an untrusted {worktree} substitution) — the ONE execution site GRADER-SECFIX-RECONCILE
   does not own. RANK-0 security ratchet, Priority-1 (operator-mandated 2026-07-22).
   [[security-is-a-ratchet-gate]] [[monitored-preflight-failure-attribution]]
+impl: |
+  DONE on fix/grader-real-shell-injection (2026-07-22): grade_reds_replay now runs check_cmd as an
+  argv list with shell=False; the {worktree} snapshot path is substituted per-token so it can never
+  inject; a check_cmd carrying shell metacharacters is refused with an explicit BLOCK/error verdict
+  (never run through a shell). Fail-on-revert proof: fleet/benchmark/selftest/test_real_shell_injection.py
+  (test_shell_injection_is_neutralized goes RED if shell=True is reintroduced). bandit (diff) + semgrep
+  clean; grader selftests green.

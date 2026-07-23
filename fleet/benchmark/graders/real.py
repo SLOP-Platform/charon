@@ -19,6 +19,8 @@ before executing it.  Exit 0 → MERGE (100).  Non-zero → BLOCK (0).
 """
 from __future__ import annotations
 
+import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -48,10 +50,35 @@ def grade_reds_replay(snapshot: Path, unit_id: str) -> dict | None:
         if cols[0] != unit_id:
             continue
         # cols: unit_id, red_id, prefix_snapshot, check_cmd, expect_green_exit, work_class, note
-        check_cmd = cols[3].replace("{worktree}", str(snapshot))
+        # SECURITY (GRADER-REAL-SHELL-INJECTION-FIX): check_cmd is a template from the OOB keys with
+        # the untrusted {worktree} snapshot path substituted in. Run it as an argv list with
+        # shell=False so neither the substituted path nor a hostile template can inject a shell
+        # command. A template that genuinely needs shell features (pipes/redirects/subshells) is a
+        # key-authoring error and is surfaced as an explicit BLOCK, never run through a shell.
+        template = cols[3]
+        if re.search(r"[|&;<>`$()]", template):
+            return {
+                "score": 0, "verdict": "BLOCK", "gate": "error",
+                "reason": (
+                    f"reds-replay: check_cmd uses shell metacharacters ({template!r}); "
+                    "rewrite it as a plain argv command (the grader runs check_cmd with shell=False)."
+                ),
+            }
+        try:
+            argv = [tok.replace("{worktree}", str(snapshot)) for tok in shlex.split(template)]
+        except ValueError as exc:
+            return {
+                "score": 0, "verdict": "BLOCK", "gate": "error",
+                "reason": f"reds-replay: unparseable check_cmd {template!r}: {exc}",
+            }
+        if not argv:
+            return {
+                "score": 0, "verdict": "BLOCK", "gate": "error",
+                "reason": "reds-replay: empty check_cmd",
+            }
         try:
             proc = subprocess.run(
-                check_cmd, shell=True, capture_output=True, text=True,
+                argv, shell=False, capture_output=True, text=True,
                 timeout=GRADER_TIMEOUT_S, cwd=str(snapshot),
             )
         except subprocess.TimeoutExpired:
