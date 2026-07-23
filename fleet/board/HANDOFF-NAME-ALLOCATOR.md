@@ -24,6 +24,19 @@ note: |
   names remain; only when the fresh pool is exhausted may reuse occur, and then only with explicit
   disambiguation (never silent).
 accept: |
+  ⛔ BOUNCE-1 (2026-07-23) — attempt #1 (PR #210, frontier droid) REJECTED by adversarial review. The
+  allocator CORE (exclusion-set + atomic claim + the luminara-regression fail-on-revert test) was
+  independently VERIFIED CORRECT — REUSE/extend branch feat/handoff-name-allocator's core, do NOT rebuild.
+  These are HARD MUST-FIX accept items (the builder wrongly self-rescoped them to "follow-up" — self-
+  regrading accept is PROHIBITED [[document-model-self-report-lies]] [[adversarial-review-must-not-silently-override-operator]]):
+    M1. WIRE IT — handoff.sh MUST call claim-jedi-name.sh (emit the claimed name into the Bootstrap line
+        handoff.sh produces). Attempt #1 shipped the script but nothing INVOKES it — built-but-inert, the
+        exact class this ticket exists to kill. Not follow-up: the fix has NO EFFECT until wired.
+    M2. end-session.sh:176 — the named root-cause line (file-existence skip that let the reused name
+        bypass regeneration) MUST be fixed (refuse/regenerate when the handoff file predates the process),
+        as the belt-and-suspenders guard. Not follow-up.
+    M3. The "concurrent-claim" test must exercise the REAL race window (actual parallel processes), not a
+        sequential stand-in; and not depend on `diff.renames` being unset (portability).
   - fleet/state/jedi-name-pool.txt: checked-in Jedi/Star-Wars slug pool, one name per line, matching
     the existing 19 historical name slugs' format.
   - fleet/claim-jedi-name.sh: computes pool MINUS exclusion-set, where exclusion-set =
