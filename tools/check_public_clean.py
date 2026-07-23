@@ -40,8 +40,8 @@ _PATTERNS: list[tuple[re.Pattern, str]] = [
     # not part of the product (see the product-vs-rig boundary): a public reader
     # cannot act on any of it, and it advertises internal process detail.
     #
-    # The project-name pattern uses a negative lookahead for the public GitHub  # public-clean: allow
-    # organisation, which legitimately appears in install URLs in README.md and
+    # The project-name pattern uses a negative lookahead for the  # public-clean: allow
+    # public GitHub organisation, which legitimately appears in install URLs in README.md and
     # in the release workflow. The bare private project name is still caught.
     # Anchoring on the hyphen keeps the carve-out narrow.
     (re.compile(r'\bSLOP\b(?!-Platform)'), 'private project name "SLOP"'),  # public-clean: allow

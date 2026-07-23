@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "charon"
-version = "0.5.0"
+version = "0.6.0"
 description = "A thin orchestrator that ferries one unit of work across swappable coding-agent backends, keeping a vendor-neutral Work Ledger as the single source of truth."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -45,6 +45,8 @@ packages = ["src/charon"]
 [tool.ruff]
 line-length = 100
 src = ["src", "tests", "tools"]
+# Vendored third-party code (KSF inert-code gate) — not linted to our standards.
+extend-exclude = ["tools/_vendor"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]

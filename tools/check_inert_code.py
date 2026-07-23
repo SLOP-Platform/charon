@@ -44,7 +44,6 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from tools._vendor.ksf_inert_code import check_inert_code  # noqa: E402
-
 from tools.gate_contract import emit_work_units  # noqa: E402
 
 DISPOSITION_PATH = REPO_ROOT / "tools" / "inert-code-disposition.json"

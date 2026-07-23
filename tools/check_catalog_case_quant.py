@@ -24,12 +24,12 @@ from __future__ import annotations
 import sys
 from collections import defaultdict
 from collections.abc import Iterable
+from pathlib import Path
 
 # stdlib-only; imported for the shared normalization primitive (single source of
 # truth with the live compare, so the detector can never drift from proxy.py).
 from charon.proxy import _QUANT_SUFFIX, _normalize_model_id
 
-from pathlib import Path
 # Repo root on sys.path so the gate contract resolves both when this file is run
 # standalone (python3 tools/check_*.py, sys.path[0]=tools/) and when the test
 # suite imports it as tools.check_* (sys.path[0]=repo root).
