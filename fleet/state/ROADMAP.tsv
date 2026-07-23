@@ -181,6 +181,7 @@ Router	ADD-PROVIDER-MECHANIZE	done	-	add-provider-mechanize	one-command gateway 
 Router	DECOMPOSE-EFFORT-AXIS	done	-	decompose-effort-axis	effort axis on the decompose gate (EFFORT-WIRE+ESTIMATOR merged)	Model-Trust
 Router	MODEL-LIFECYCLE	done	-	model-lifecycle	fresh-install onboard + scheduled keep-fresh orchestrator — merged PR #117 (69c115d)	Model-Trust
 FLEET	SESSION-CTX-PROPAGATE	in-review	gate	sub-agent context propagation	sub-agents inherit session context via PreToolUse hook (built feat/session-ctx-propagate, needs land)	session-reliability
+FLEET	WLS-SPIKE	queued	next	workloop-stack-spike	R0 LEAD: adopt-first spike of the work-loop-integrity stack (ao first, then Omnigent/Windmill/Archon) — durable fix for the built-but-not-wired/stale/gate-decay class	session-reliability
 FLEET	BASE-INTEGRITY-GATE	queued	gate	base-integrity launch gate	refuse building a ticket on a base missing its prereqs (root cause of wrong-base bug)	session-reliability
 FLEET	COVERAGE-META-GATE	queued	gate	rule-coverage meta-gate (§11)	port mediastack enforcement_coverage; every gate-able rule must be a gate	session-reliability
 FLEET	WORK-GATE-UNIVERSAL	queued	gate	decompose-sizing + E2E-wired gates	mechanize work-discipline across inline/subsession/detached/tab	session-reliability
