@@ -7,6 +7,14 @@ branch: feat/gw-bridge4-park-cooldown
 parked: false
 depends_on: GW-BRIDGE-1-DOWNGRADE-REHOST
 dep-kind: build
+bounce_rebrief: |
+  ⛔ BOUNCED (2026-07-23, adversarial review of PR #188). The cooldown union read `router._failed_calls`
+  — an attribute that DOES NOT EXIST in the installed litellm → the union was a DEAD NO-OP in production
+  (silently degraded to park-only), and the fail-on-revert test only asserted against a fabricated mock,
+  green-lighting a feature that never fires against a real Router. FIX: read the PUBLIC
+  `router.cooldown_cache` (CooldownCache) / `_get_cooldown_deployments`, map model_id→provider. The test
+  MUST exercise a REAL litellm Router's cooldown state (not a hand-rolled mock) and prove a really-cooled
+  provider is actually excluded. Re-verify the union fires in prod, not just in the fixture.
 note: |
   BRIDGE 4 of 4. Unifies Charon's park state with litellm.Router's native model-cooldown so the two
   do not disagree, preserving the sole-leg guard. Additive, own fail-on-revert e2e. Charon's park (funding
