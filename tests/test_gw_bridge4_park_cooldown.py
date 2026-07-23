@@ -11,7 +11,10 @@ Reverting the corresponding guard in ``park_cooldown.py`` turns the test red.
 """
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
+
+import litellm
 
 from charon.balance import BalanceTracker
 from charon.litellm_plane.park_cooldown import (
@@ -263,16 +266,16 @@ def test_provider_id_from_label():
     assert _provider_id(r) == "fallback-node"
 
 
-# ── Router cooldown integration (mock Router) ────────────────────────────────
+# ── Router cooldown integration (REAL litellm.Router) ───────────────────────
 
 
 def test_router_cooled_provider_is_excluded():
-    """A provider whose deployment is cooled (Router cooldown state) is
+    """A provider whose deployment is in the Router's cooldown_cache is
     excluded alongside parked providers.
 
-    FAIL-ON-REVERT: if cooldown state is not read, a cooled deployment
+    FAIL-ON-REVERT: if cooldown state is not read from the public
+    ``router.cooldown_cache.get_active_cooldowns()``, a cooled deployment
     stays selectable — the two exclusion sets disagree."""
-    now = 1_000_000.0
     bt = _bt(providers={"acme": 5.0, "beta": 3.0})
 
     ml = [
@@ -287,14 +290,15 @@ def test_router_cooled_provider_is_excluded():
             "model_info": {"id": "dep_beta", "provider": "beta"},
         },
     ]
+    router = litellm.Router(model_list=ml)
 
-    class _MockRouter:
-        _failed_calls = {
-            "dep_acme": [now - 5, now - 10, now - 15],
-        }
-        cooldown_time = 60.0
-        allowed_fails = 3
-        model_list = ml
+    # Cool down acme via the real CooldownCache
+    router.cooldown_cache.add_deployment_to_cooldown(
+        model_id="dep_acme",
+        original_exception=Exception("test cooldown"),
+        exception_status=429,
+        cooldown_time=60.0,
+    )
 
     chain = [_R("acme"), _R("beta")]
 
@@ -303,67 +307,63 @@ def test_router_cooled_provider_is_excluded():
     assert len(result_no_router) == 2
 
     # With Router where acme is cooled — acme should be excluded
-    with _patch_monotonic(now):
-        result_with_router = park_cooldown_filter_chain(
-            chain, bt=bt, router=_MockRouter())
+    result_with_router = park_cooldown_filter_chain(chain, bt=bt, router=router)
     ids = [_provider_id(r) for r in result_with_router]
     assert "acme" not in ids, "cooled acme should be excluded"
     assert "beta" in ids
 
 
 def test_router_cooldown_expired_does_not_exclude():
-    """A deployment whose cooldown has expired is NOT excluded.
+    """A deployment whose cooldown has expired (TTL=0) is NOT excluded.
 
     FAIL-ON-REVERT: if expired cooldowns are still excluded, a recovered
     provider never re-enters the set."""
-    class _MockRouterExpired:
-        _failed_calls = {
-            "dep_acme": [100.0, 200.0, 300.0],  # all 300s old, cooldown=60
-        }
-        cooldown_time = 60.0
-        allowed_fails = 3
-        model_list = [
-            {
-                "model_name": "m1",
-                "litellm_params": {"model": "openai/gpt", "api_base": "https://api.acme.test/v1"},
-                "model_info": {"id": "dep_acme", "provider": "acme"},
-            },
-        ]
+    ml = [
+        {
+            "model_name": "m1",
+            "litellm_params": {"model": "openai/gpt", "api_base": "https://api.acme.test/v1"},
+            "model_info": {"id": "dep_acme", "provider": "acme"},
+        },
+    ]
+    router = litellm.Router(model_list=ml)
+
+    # Cool with TTL=0 — entry expires immediately
+    router.cooldown_cache.add_deployment_to_cooldown(
+        model_id="dep_acme",
+        original_exception=Exception("test"),
+        exception_status=429,
+        cooldown_time=0.0,
+    )
+    time.sleep(0.01)
 
     bt = _bt(providers={"acme": 5.0})
     chain = [_R("acme")]
-    with _patch_monotonic(1_000_000.0):  # 1M >> (300 + 60), all failures expired
-        result = park_cooldown_filter_chain(chain, bt=bt, router=_MockRouterExpired())
+    result = park_cooldown_filter_chain(chain, bt=bt, router=router)
     assert len(result) == 1
     assert _provider_id(result[0]) == "acme"
 
 
-def test_router_not_enough_fails_does_not_exclude():
-    """Fewer than allowed_fails failures does NOT cool the deployment."""
-    class _MockRouterWarm:
-        _failed_calls = {
-            "dep_acme": [100.0],  # only 1 failure, allowed_fails=3
-        }
-        cooldown_time = 60.0
-        allowed_fails = 3
-        model_list = [
-            {
-                "model_name": "m1",
-                "litellm_params": {"model": "openai/gpt", "api_base": "https://api.acme.test/v1"},
-                "model_info": {"id": "dep_acme", "provider": "acme"},
-            },
-        ]
+def test_router_not_cooled_provider_ignored():
+    """A deployment never added to the cooldown cache is NOT excluded."""
+    ml = [
+        {
+            "model_name": "m1",
+            "litellm_params": {"model": "openai/gpt", "api_base": "https://api.acme.test/v1"},
+            "model_info": {"id": "dep_acme", "provider": "acme"},
+        },
+    ]
+    router = litellm.Router(model_list=ml)
 
     bt = _bt(providers={"acme": 5.0})
     chain = [_R("acme")]
-    with _patch_monotonic(1_000_000.0):
-        result = park_cooldown_filter_chain(chain, bt=bt, router=_MockRouterWarm())
+    result = park_cooldown_filter_chain(chain, bt=bt, router=router)
     assert len(result) == 1
+    assert _provider_id(result[0]) == "acme"
 
 
 def test_router_missing_attributes_fallback():
-    """When Router lacks _failed_calls or model_list, no cooldown-based
-    exclusion is applied — the code gracefully degrades."""
+    """When Router lacks ``get_model_ids`` or ``cooldown_cache``, no
+    cooldown-based exclusion is applied — the code gracefully degrades."""
     class _BareRouter:
         pass
 
@@ -379,26 +379,3 @@ def test_router_none_does_not_crash():
     chain = [_R("acme")]
     result = park_cooldown_filter_chain(chain, bt=bt, router=None)
     assert len(result) == 1
-
-
-# ── monkey-patch helper for _monotonic ───────────────────────────────────────
-
-
-def _patch_monotonic(fake_time: float):
-    """Context manager that replaces park_cooldown._monotonic with a
-    constant-returning stub."""
-    import contextlib
-
-    @contextlib.contextmanager
-    def _ctx():
-        old = None
-        import charon.litellm_plane.park_cooldown as pc
-        old = pc._monotonic
-        pc._monotonic = lambda: fake_time
-        try:
-            yield
-        finally:
-            if old is not None:
-                pc._monotonic = old
-
-    return _ctx()

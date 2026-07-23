@@ -73,47 +73,40 @@ def excluded_provider_ids(
 
 
 def _maybe_add_cooled(router: Any, excluded: set[str]) -> None:
-    """Read *router*'s internal cooldown tracking and add cooled
-    deployment provider IDs into *excluded*.
+    """Read *router*'s ``cooldown_cache`` and add cooled deployment
+    provider IDs into *excluded*.
 
-    litellm tracks failures per deployment in ``_failed_calls``
-    (a dict of deployment_id → list of timestamps). A deployment is
-    "cooled" when the number of failures within ``cooldown_time``
-    seconds reaches ``allowed_fails``.
+    ``litellm.Router`` tracks cooldowns in its ``cooldown_cache`` (a
+    ``CooldownCache``). Deployments that have been cooled (too many recent
+    failures) are stored with a TTL equal to their cooldown time. This
+    function reads the active cooldowns from the cache and maps them back
+    to Charon provider IDs via the ``model_list`` entries' ``model_info``.
 
-    When the Router does not expose ``_failed_calls`` (different litellm
-    version), the function silently returns — cooldown filtering falls
-    back to park-only, which is strictly safer (over-excludes rather
-    than under-excludes).
+    When the Router does not expose ``get_model_ids`` or ``cooldown_cache``
+    (different litellm version), the function silently returns — cooldown
+    filtering falls back to park-only, which is strictly safer (over-excludes
+    rather than under-excludes).
     """
     try:
-        cfails: dict | None = getattr(router, "_failed_calls", None)
-        ctime: float = getattr(router, "cooldown_time", 60.0) or 60.0
-        afails: int = getattr(router, "allowed_fails", 3) or 3
-        model_list: list[dict] = getattr(router, "model_list", []) or []
-        now: float = _monotonic()
-    except Exception:  # any attribute access failure → bail gracefully
+        model_ids: list[str] = router.get_model_ids()
+        cc = router.cooldown_cache
+        cooled: list[tuple[str, Any]] = cc.get_active_cooldowns(
+            model_ids=model_ids, parent_otel_span=None,
+        )
+    except Exception:
         return
 
-    if not cfails or not model_list:
+    if not cooled:
         return
 
-    # Build a reverse lookup: deployment_id → provider_id.
-    dep_to_prov: dict[str, str] = {}
+    cooled_ids: set[str] = {cv[0] for cv in cooled}
+    model_list: list[dict] = getattr(router, "model_list", []) or []
     for entry in model_list:
         dep_id = _deployment_id(entry)
-        if dep_id:
+        if dep_id and dep_id in cooled_ids:
             prov = _provider_from_entry(entry)
             if prov:
-                dep_to_prov[dep_id] = prov
-
-    for dep_id, timestamps in cfails.items():
-        prov = dep_to_prov.get(dep_id)
-        if prov is None:
-            continue
-        recent = [ts for ts in timestamps if now - ts <= ctime]
-        if len(recent) >= afails:
-            excluded.add(prov)
+                excluded.add(prov)
 
 
 def _deployment_id(entry: dict) -> str | None:
@@ -148,12 +141,6 @@ def _provider_from_entry(entry: dict) -> str | None:
         if host:
             return str(host)
     return None
-
-
-def _monotonic() -> float:
-    """Return monotonic time. Exposed for test injection."""
-    import time
-    return time.monotonic()
 
 
 def sole_leg_guard(
