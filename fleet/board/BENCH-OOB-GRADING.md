@@ -34,6 +34,6 @@ scope: #26 (P0 INTEGRITY — the top fix; nothing the benchmark says is trustwor
   D&S: PENDING operator decision Q1 (substrate: (a) separate `bench-grader` unix user [recommended]
   vs (b) root-owned tree + sudo wrapper vs (c) second host) — DO NOT BUILD until Q1 is resolved.
   Enables trustworthy #25 (reds-replay). Authoritative: scratch/pivot-implementation-plan.md §3 + §8 Q1.
-note: HELD pending supersession review - reorg audit (WORK-REORG-PROPOSAL.md) flags this + MODEL-PREFLIGHT + GRADER-SECFIX likely SUPERSEDED by the merged EVAL-* pipeline. Verify before any build; do not route to a tab yet.
+note: SUPERSESSION VERIFIED FALSE (2026-07-23, adversarial) — KEEP. EVAL-* is a ledger CONSUMER that ASSUMES the OOB grader; BENCH-OOB IS the tamper-proof substrate (grader-daemon + 3 invariants) it sits on. NOT superseded (also clears the MODEL-PREFLIGHT/GRADER-SECFIX flag). Remaining: (a) human sign-off verification (daemon DEPLOYED), (b) STAGE-FAILCLOSED default flip. Line-410 fixed by STAGE-DEMUX. Prior: HELD pending supersession review - reorg audit (WORK-REORG-PROPOSAL.md) flags this + MODEL-PREFLIGHT + GRADER-SECFIX likely SUPERSEDED by the merged EVAL-* pipeline. Verify before any build; do not route to a tab yet.
 
 Q1-RESOLVED 2026-07-09: substrate = A (dedicated bench-grader unix user on LOCAL WSL box, answer-keys mode 0700). Still parked for BUILD pending: (1) proper #26/#25 design review, (2) build-after #20 (BENCH-PROVISIONAL-SCORING) resolution. Keep parked: true until both clear.
