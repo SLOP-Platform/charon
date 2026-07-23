@@ -142,6 +142,24 @@ if [ -z "$BASE" ]; then
 fi
 echo "land: repo=$REPO base=$BASE branch=$BRANCH"
 
+# EXISTING-BRANCH GUARD (2026-07-23): land.sh's model snapshots the CURRENT HEAD onto <branch>. If
+# <branch> ALREADY exists locally with commit(s) NOT reachable from HEAD (a droid's submitted PR branch,
+# a recovered/edited branch), that model resets it to HEAD and the land fails "NOT PROVEN" (bit stass-
+# allie 3x). The tool for landing an existing named branch is land-push.sh; or put HEAD on it first.
+# Fires ONLY when the branch exists AND diverges from HEAD — inert for the normal `checkout -b`-from-HEAD
+# flow (HEAD == branch). Fail-safe: any rev-parse error skips the guard.
+if git -C "$REPO" rev-parse --verify --quiet "refs/heads/$BRANCH" >/dev/null 2>&1; then
+  _lg_head="$(git -C "$REPO" rev-parse HEAD 2>/dev/null || true)"
+  _lg_br="$(git -C "$REPO" rev-parse "refs/heads/$BRANCH" 2>/dev/null || true)"
+  if [ -n "$_lg_head" ] && [ -n "$_lg_br" ] && [ "$_lg_head" != "$_lg_br" ] \
+     && [ -n "$(git -C "$REPO" log --oneline "$_lg_head..$_lg_br" 2>/dev/null)" ]; then
+    echo "land: REFUSING — branch '$BRANCH' already has commit(s) not in HEAD; land.sh snapshots HEAD and would clobber/desync it." >&2
+    echo "land:   VERIFIED fix — put HEAD on the branch, then re-run: (cd $REPO && git checkout -B $BRANCH $_lg_br) && bash $FLEET/land.sh $BRANCH $REPO" >&2
+    echo "land:   Or use the by-name landing tool: bash $FLEET/land-push.sh $BRANCH $REPO" >&2
+    exit 6
+  fi
+fi
+
 # 1. commit pending work — SCOPED TO THE TICKET'S `owns:` (LAND-DIRTY-SCOPE, 2026-07-19)
 #
 # THE DEFECT this replaces (present since 368053b, the file's creation): step 1 was a bare

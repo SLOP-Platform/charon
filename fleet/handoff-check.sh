@@ -134,4 +134,18 @@ for b in $BRS; do
 done
 
 say ""
+# [reds] — a handoff must not SHIP a live runtime error hidden in its auto-emitted sections
+# (stass-allie shipped a `FOREMAN_FLEET: unbound variable` red in the foreman section unmentioned).
+# Match actual bash/python/git ERROR-OUTPUT FORMATS, not prose — so a gotcha that merely mentions
+# "unbound variable" does NOT false-fire. Tight patterns only.
+say "[reds]"
+RED_HITS="$(grep -nE 'line [0-9]+: .*(unbound variable|command not found|syntax error)|Traceback \(most recent call last\)|^[[:space:]]*fatal: ' "$F" 2>/dev/null || true)"
+if [ -n "$RED_HITS" ]; then
+  miss "handoff ships a live error in an auto-emitted section — fix the source, regenerate:"
+  say "$RED_HITS" | sed 's/^/      /'
+else
+  ok "no live runtime-error signatures in the handoff"
+fi
+
+say ""
 if [ "$fail" -eq 0 ]; then say "handoff-check: PASS"; exit 0; else say "handoff-check: FAIL ($F is incomplete/inaccurate)"; exit 1; fi
