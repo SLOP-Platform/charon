@@ -595,6 +595,33 @@ echo "$outU" | grep -q "last reconciled with the remote" \
 [ -f "$wtU/precious.txt" ] && ok "u6 ON DISK: its contents intact" \
                             || bad "u6 ON DISK: its contents destroyed"
 
+echo "== (v) OPEN-PR GUARD: branch with an open PR survives --apply =="
+# A clean, fully pushed, unclaimed worktree on a branch with an open PR must be KEPT.
+# Reverting the open-PR guard makes this RED (the worktree would be reaped).
+rootV="$(mktmp)"; repoV="$(mk_repo)"; fleetV="$(mk_fleet "$rootV")"
+wtV="$rootV/repo-fleet-OPENPR1"
+git -C "$repoV" worktree add -q "$wtV" -b feat/openpr1 master >/dev/null 2>&1
+# Push so the tree reads as clean + fully pushed — ONLY the open-PR guard can save it.
+git -C "$wtV" push -q origin HEAD:refs/heads/feat-openpr1 >/dev/null 2>&1
+check "v1 fixture is clean" "$(git -C "$wtV" status --porcelain 2>/dev/null)" ""
+check "v2 fixture HEAD is fully pushed" "$(git -C "$wtV" rev-list --count HEAD --not --remotes 2>/dev/null)" "0"
+# Mock gh that reports 1 open PR for the branch
+mockdirV="$(mktmp)"
+cat > "$mockdirV/gh" <<'MOCKGH'
+#!/usr/bin/env bash
+while [[ $# -gt 0 ]]; do case "$1" in --head) shift; echo 1; exit 0 ;; esac; shift; done
+echo 0
+MOCKGH
+chmod +x "$mockdirV/gh"
+outV="$(REAPER_GH_CMD="$mockdirV/gh" run_reaper "$repoV" "$fleetV" "$rootV/repo-fleet-*" --apply 2>&1)"; rc=$?
+check "v3 apply exit 0" "$rc" "0"
+echo "$outV" | grep -q "KEEP.*$wtV" && ok "v4 open-PR worktree flagged KEEP" \
+                                     || bad "v4 open-PR worktree flagged KEEP"
+echo "$outV" | grep -q "open PR" && ok "v5 KEEP reason mentions open PR" \
+                                 || bad "v5 KEEP reason does not mention open PR (guard reverted)"
+[ -d "$wtV" ] && ok "v6 open-PR worktree SURVIVED --apply" \
+             || bad "v6 open-PR worktree was REAPED (open-PR guard missing — DESTRUCTIVE)"
+
 # cleanup
 rm -rf "$root" "$root2" "$root3" "$root4" "$root5" "$root6" "$root7" "$root8" "$root9"
 [ "${#TMPDIRS[@]}" -eq 0 ] || rm -rf "${TMPDIRS[@]}"
