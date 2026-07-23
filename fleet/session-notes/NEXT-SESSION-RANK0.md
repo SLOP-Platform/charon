@@ -18,7 +18,24 @@ The board is **72 open tickets and UNTRUSTWORTHY**: merged rig tickets don't aut
 re-claimed already-merged BANDIT-ADOPT. Do NOT run a free-claiming `fleet-droid.sh <tier>` pool until
 new-R0.1 fixes retire. Until then, PIN droids to named open tickets only.
 
-## R0.1 (new) — BOARD SELF-TRUST: repo-aware verify-merged / auto-retire   [tier: strong]
+## R0.0 (LEAD, operator-set 2026-07-22) — WORKLOOP-INTEGRITY-STACK-SPIKE (#156, on master)   [tier: strong]
+The DURABLE fix for the whole built-but-not-wired / stale-board / gate-decay class is an ADOPT-FIRST
+STACK, not piecemeal hand-rolls. Spike hands-on (evidence: `fleet/state/WORKLOOP-INTEGRITY-RESEARCH.md`
+— deep-research, 3 picks verified real via GitHub API):
+- **agent-orchestrator ("ao") FIRST** — the glue/feedback loop; make-or-break: does it drive our
+  Gitea-primary + GitHub-mirror topology or is it GitHub-coupled? Point it at the local gateway.
+- then **Omnigent** (meta-orchestration + policy gates + gateway-native), **Windmill** (durable stage
+  automation — n8n REJECTED: no checkpoint/resume), **Archon** (DoD-enforcement harness; composes on ao?).
+- PATTERNS to implement-not-install: GitHub merge queue (paid for the private rig; free on the public
+  product), trunk-based two-gate DoD, K8s-style **reconciliation loop** (= the durable board-trust/auto-retire fix).
+Deliverable = per-tool adopt/reject verdict + EVAL-REGISTRY row + one integrated adoption plan, for
+OPERATOR REVIEW before any build. Process: detached off-Claude, right-size tier (not frontier by default).
+
+> R0.1/R0.2 below are now **SUBSUMED by R0.0** (the reconciliation loop IS board-trust; the stack IS the
+> inert-wiring enforcement). Kept as the interim-stopgap framing — a manual reconcile sweep keeps the
+> board usable until the stack lands. Do NOT hand-roll them if R0.0 adopts a tool.
+
+## R0.1 (subsumed by R0.0 — interim stopgap) — BOARD SELF-TRUST: repo-aware verify-merged / auto-retire   [tier: strong]
 Fix the root that lets merged rig tickets stay claimable: `retire-done.sh` / `verify_merged` (`_lib.sh`)
 hardcode the PRODUCT repo and never read a ticket's `repo:` field, so `repo: charon-private` tickets
 NEVER verify-merge and never retire. Cluster: **VERIFY-MERGED-REPO-AWARE + REPO-FIELD-REQUIRED +
