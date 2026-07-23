@@ -165,11 +165,15 @@ if [ "${#TICKET_FILES[@]}" -gt 0 ]; then
       f_deps[nrow]  = deps;  f_prio[nrow]   = prio;   f_blast[nrow]  = blast
     }
     END {
-      # Tally revdep from the stashed deps (done-set membership is NOT checked here because
-      # the INDEX-build awk runs BEFORE the lock; the done set is rebuilt under the lock in
-      # claim.sh. The "open dep only" filter is applied in the claim-loop awk where the done
-      # set IS available — see the revdep lookup there).
+      # Tally revdep = how many OPEN tickets depend on each id (the BLOCKING axis). A dependent
+      # that is ARCHIVED is done/retired and is NOT waiting on anything, so it must NOT inflate
+      # the blocking score of its dep — count a dependent row ONLY when its file lives on the
+      # active board, never under board/archive/. (Done tickets are moved to archive/ by
+      # retire-done.sh, so the archive-path skip is the open-dependents filter. A dep that is
+      # in the done_set but somehow still on the active board is a board-hygiene bug the
+      # reconcile sweep catches — not something to silently miscount here.)
       for (i = 1; i <= nrow; i++) {
+        if (f_file[i] ~ /\/archive\//) continue   # archived dependent: done, not blocking
         d = f_deps[i]
         if (d == "") continue
         nd = split(d, da, ",")
@@ -209,9 +213,11 @@ build_set "$LG_SET"        "$STATE/loop-guard"
 # path = the OLD alphabetical id order, since paths are `board/<id>.md`).
 # `difficulty:` is read directly from each ticket file on the fly (a one-byte getline per
 # candidate, no fork; same pattern as the parked check). Missing/non-integer difficulty
-# = 0 (no reordering on that axis). `revdep` is taken STRAIGHT from the INDEX field — it
-# is the ALL-DEPS count, not the OPEN-DEPS count. The "drop deps already in done_set"
-# filter below then subtracts those. The result: revdep_effective = open dependents only.
+# = 0 (no reordering on that axis). `revdep` is taken STRAIGHT from the INDEX field and is
+# ALREADY the OPEN-dependents count: the INDEX-build END tally counts a dependent only when its
+# file is on the active board (archived/done dependents are skipped there). deps_all_done() below
+# is a SEPARATE filter (it drops THIS candidate when ITS OWN deps aren't done); it does not and
+# need not touch revdep.
 passes="own lower"; [ "$MODE" = own-only ] && passes="own"
 CLAIMED_ID=""
 for pass in $passes; do
