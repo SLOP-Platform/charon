@@ -154,7 +154,17 @@ eeb93b9 docs(adr-0017): amend — gateway consumes grades, does not produce them
 
 ## Next-action / in-flight
 
-> Auto-emitted machine state is under `## Auto-generated state` below. Fill `### Manager's first actions` terse (numbered, one file/script per item).
+> Auto-emitted machine state is under `## Auto-generated state` below. Fill `### Manager's first actions (luminara-unduli, priority order)
+
+1. **P0 build wave (tabs claim; quarantines cleared, ladder honest):** REVIEWER-TAB-POOL (mechanize PR review off-Claude — the throughput fix), WORK-LEASE-GATE (cheap commit-boundary: no session works main/un-leased ticket — mechanizes the clobber-fix), EVAL-CONTROL-GATE-FIX (0-grades repair), BENCH-OOB-GRADING (KEEP — integrity substrate; verification pass + STAGE-FAILCLOSED).
+2. **Reconciliation-gate build wave (P1, RANK-0 LEAD shipped):** RECONCILE-BOARD-PR-DONE / OWNS-TRACKED / GATE-WIRED / REVIEW-GATE (wave-1 parallel) -> RECONCILE-WIRING (wave-2). Fail-closed + timer-wireable baked in.
+3. **Supply systematization (P1):** INVENTORY-TABLE -> discovery D1-D7 + SINGLE-LEG-AUTOSWAP; catalog-refresh spine LIVE (6h).
+4. **FLOW-CANARY-FIX-FREEFIRST (P1):** on-master canary cry-wolfs (free-first hardcodes fc in {1,2} vs funding_class_order SSOT 1<3<2<4) — adopt SSOT + rewrite fake-green R2 dogfood.
+5. **Open PRs to dispense (review->merge):** #164 (ready), #86 (dependabot rebasing), #189 (GW-BRIDGE-3, needs downgrade real-stream test), #135/#169/#190 (assess).
+6. **Housekeeping:** product LOCAL master diverged (2 redundant squashed commits, work IS on origin) -> `git -C /home/stack/code/charon reset --hard origin/master`. NanoGPT over weekly cap (resets). CommandCode cancelled.
+
+**State:** Gateway v0.6.0 LIVE on 4-LOM: funded floor (deepseek/together/groq/deepinfra + free legs nvidia/cerebras/groq/mistral-codestral), funding_class ordering ACTIVE, cost-ordered. Ranking pair repairs the 0-grades cold-start. NO-CLOBBER cluster shipped (reviewer-pool+work-lease+claim-ladder-health). Reviews reviewer!=builder, gated before merge. Anti-pile: dispose PRs, don't accumulate.
+
 
 ### Manager's first actions (priority order — fill below)
 
