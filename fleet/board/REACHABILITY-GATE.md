@@ -3,7 +3,7 @@ difficulty: 3
 work_class: ci-infra
 branch: feat/reachability-gate
 repo: charon-private
-priority: HIGH
+priority: 2
 depends_on:
 owns: fleet/checks/no-unreachable-paths.sh, fleet/state/REACHABILITY-AUDIT.md
 serial_justified: PART3's gate + allowlist can only be scoped once PART1's audit produces the

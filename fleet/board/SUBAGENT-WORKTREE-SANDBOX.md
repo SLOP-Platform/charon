@@ -5,7 +5,7 @@ work_class: design-review
 branch: feat/subagent-worktree-sandbox
 depends_on:
 owns: fleet/state/SUBAGENT-WORKTREE-SANDBOX-DESIGN.md
-priority: P2
+priority: 2
 accept: |
   A design doc (fleet/state/SUBAGENT-WORKTREE-SANDBOX-DESIGN.md) that:
   (1) Documents the observed escape: a build sub explicitly instructed "do NOT touch the product repo"
@@ -31,4 +31,5 @@ ds: |
   - relationship: SIBLING to LEG-SANDBOX-HARDEN (SECURITY project, canary-exec cred-exfil) — same
     confine-untrusted-exec family, different surface (sub filesystem writes). A single adopted sandbox
     (e.g. bwrap) may cover both; coordinate the mechanism choice across the two tickets.
-  - priority: P2 (operator-set 2026-07-22) — below the RANK-0 lane, above general backlog.
+  - priority: 2 (P-band 2) — below the RANK-0 lane, above general backlog. (Operator-set
+    2026-07-22 as P2; normalized to the numeric axis by ticket PRIORITY-CONSOLIDATION.)
