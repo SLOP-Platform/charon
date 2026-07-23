@@ -15,6 +15,10 @@ tier_pools              — compile tier-based pool chains
 build_fallback_chain    — append global fallback providers to pools/routes
 CapabilityMatrix        — (model × work_class) → grade schema (Wave 2)
 derived_cost_rank       — SR-6 cost-rank derivation from per-token pricing
+ModelSignalEntry        — model-signal ledger entry with decay metadata
+model_signal_weight     — exponential half-life decay weight for a signal
+apply_decay             — apply decay weight to a model-signal entry
+rank_by_decayed_score   — rank model-signal entries by decayed score
 """
 from __future__ import annotations
 
@@ -27,6 +31,7 @@ from charon.proxy_server import UpstreamRoute as _UpstreamRoute
 from .base import DefaultPolicy, Policy
 from .cost_rank import cost_class_priority, derived_cost_rank
 from .drain import DrainPolicy
+from .ledger_decay import ModelSignalEntry, apply_decay, model_signal_weight, rank_by_decayed_score
 from .matrix import CapabilityMatrix, Grade, ModelCapability, WorkClass
 from .pools import PoolsSimplificationPolicy
 from .spill import SpillPolicy
@@ -49,6 +54,10 @@ __all__ = [
     "build_fallback_chain",
     "order_pool_by_live_cost",
     "order_chain_by_funding_class",
+    "ModelSignalEntry",
+    "apply_decay",
+    "model_signal_weight",
+    "rank_by_decayed_score",
 ]
 
 
