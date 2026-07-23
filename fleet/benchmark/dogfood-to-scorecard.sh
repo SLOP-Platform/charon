@@ -61,7 +61,8 @@ case " $VALID_CLASS " in *" $WORK_CLASS "*) ;; *) die "work_class must be one of
 
 DATE="$(date -u +%Y-%m-%d)"
 TS="$(date -u +%Y%m%d-%H%M%S)"
-OUT="$FLEET/state/scorecard-append-pathc-${TS}.sh"
+OUT="$FLEET/state/scorecard-append-pathc-${TS}-$$.sh"
+[ ! -f "$OUT" ] || die "output file already exists (same-second + same-PID collision): $OUT"
 S_PATH="$FLEET/model-scorecard.sh"
 
 # ---- classify one dogfood row into a scorecard verdict, or SKIP ----

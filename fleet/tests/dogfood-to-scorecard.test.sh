@@ -79,5 +79,61 @@ n_appends="$(grep -c '^bash "\$S" append' "$GENERATED")"
 no "$GENERATED" 'model-scorecard\.tsv' "generated script does not reference model-scorecard.tsv directly (goes through model-scorecard.sh)"
 no "$GENERATED" 'tier-models\.tsv' "generated script never touches tier-models.tsv"
 
+# === same-second collision guard (fail-on-revert) ===
+MOCKBIN="$TMP/mockbin"
+mkdir -p "$MOCKBIN"
+cat > "$MOCKBIN/date" <<'SCRIPT'
+#!/usr/bin/env bash
+for arg in "$@"; do
+  if [[ "$arg" == "+%Y%m%d-%H%M%S" ]]; then
+    echo "20260723-120000"
+    exit 0
+  fi
+  if [[ "$arg" == "+%Y-%m-%d" ]]; then
+    echo "2026-07-23"
+    exit 0
+  fi
+done
+exec /usr/bin/date "$@"
+SCRIPT
+chmod +x "$MOCKBIN/date"
+
+OUT1="$(PATH="$MOCKBIN:$PATH" "$TOOL" "$FIXTURE" --ticket COL-TEST --work-class ci-infra 2>&1)"
+GEN1="$(printf '%s\n' "$OUT1" | sed -n 's/^generated: \([^ ]*\).*/\1/p' | head -1)"
+OUT2="$(PATH="$MOCKBIN:$PATH" "$TOOL" "$FIXTURE" --ticket COL-TEST --work-class ci-infra 2>&1)"
+GEN2="$(printf '%s\n' "$OUT2" | sed -n 's/^generated: \([^ ]*\).*/\1/p' | head -1)"
+
+if [ -n "$GEN1" ] && [ -f "$GEN1" ]; then
+  ok "collision-guard: first output persists"
+else
+  bad "collision-guard: first output missing (clobbered?)"
+fi
+
+if [ -n "$GEN2" ] && [ -f "$GEN2" ]; then
+  ok "collision-guard: second output persists"
+else
+  bad "collision-guard: second output missing"
+fi
+
+if [ -n "$GEN1" ] && [ -n "$GEN2" ] && [ "$GEN1" != "$GEN2" ]; then
+  ok "collision-guard: distinct filenames (same-second, different PID)"
+else
+  bad "collision-guard: filenames NOT distinct — same-second collision not guarded"
+fi
+
+if [ -n "$GEN1" ] && [ -f "$GEN1" ] && [ -s "$GEN1" ]; then
+  ok "collision-guard: first output non-empty"
+else
+  bad "collision-guard: first output empty or missing"
+fi
+
+if [ -n "$GEN2" ] && [ -f "$GEN2" ] && [ -s "$GEN2" ]; then
+  ok "collision-guard: second output non-empty"
+else
+  bad "collision-guard: second output empty or missing"
+fi
+
+rm -f "$GEN1" "$GEN2"
+
 echo "SELFTEST SUMMARY: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1
