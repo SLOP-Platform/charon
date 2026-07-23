@@ -38,7 +38,15 @@ mkdir -p "$S/submitted"; date -u +%FT%TZ > "$S/submitted/$id"; rm -f "$S/claims/
 # and stays consistent with the idempotency scan below.
 # Idempotent: skip if a check-in whose TICKET column is this id already exists in any session-note.
 NOTES_DIR="$FLEET/session-notes"
-if [ -d "$NOTES_DIR" ] && grep -rqF "] $id  " "$NOTES_DIR" 2>/dev/null; then
+if [ -z "${SESSION:-}" ]; then
+  # AUTO (droid) submit — no named session. SKIP the check-in note: it would be named
+  # <UTC>-submit-auto.md, which NO reader ever globs (summary.sh/next.sh read *-<SESSION>.md only),
+  # so it is write-only dead cruft; worse, it lands untracked in the SHARED main checkout and
+  # strands, which is what makes land.sh refuse on a dirty tree (land.sh:155 "stray submit-auto
+  # notes"). The submitted STATE marker (state/submitted/<id>) is the real, tracked signal handoff
+  # uses. Named-session check-ins (SESSION set) still write below and ARE read.
+  :
+elif [ -d "$NOTES_DIR" ] && grep -rqF "] $id  " "$NOTES_DIR" 2>/dev/null; then
   :  # a check-in for this ticket already exists — don't double-write
 else
   ci_tier="$(meta tier "$BOARD/$id.md")"; ci_goal="$(meta scope "$BOARD/$id.md")"
