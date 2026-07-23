@@ -1,11 +1,19 @@
 tier: strong
 difficulty: 3
-work_class: rig-meta
+work_class: ci-infra
 branch: feat/reviewer-dogfood-reds
 repo: charon-private
-priority: MEDIUM
+priority: 3
 depends_on:
 owns: fleet/benchmark/reviewer-dogfood.sh, fleet/state/REDS-CORPUS.md
+note: |
+  SEQUENCING (human gate, deliberately NOT a depends_on). Do NOT implement this until
+  worker-tier ranking (Path C) is proven — the reviewer is the LAST tier to hand off and
+  the highest-stakes, so it must not be built ahead of the worker tiers it backstops.
+  This intent cannot live in 'depends_on:' because the only candidate targets (DOGFOOD,
+  COST-RANK-AUTO) are PARKED: claim.sh's deps_done checks fleet/state/done/, which a parked
+  ticket never reaches, so a dep on either would deadlock this ticket live-but-unclaimable
+  forever. Read this before claiming; confirm Path C is proven, then proceed.
 accept: |
   Build the REVIEWER-DOGFOOD eval — how we decide (and eventually get) the REVIEWER job
   (currently done by Claude Code, our single biggest Claude-cost lever) off Claude, SAFELY.
