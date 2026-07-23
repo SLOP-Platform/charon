@@ -4,8 +4,28 @@ difficulty: 4
 work_class: money-path
 priority: 0
 branch: feat/flow-canary
+owns: fleet/flow-canary.sh, fleet/tests/flow-canary.test.sh
 depends_on:
+substrate: N/A
+substrate-novel: |
+  No external synthetic-monitoring tool (blackbox_exporter, uptime probes, curl-based
+  smoke) can assert Charon's OWN internal observable effects — X-Charon-Provider routing,
+  free-first funding_class ordering, the observer meter DELTA, and parked/drained
+  exclusion (#188). Those are Charon-specific semantics, readable only from the gateway's
+  own /charon/status snapshot + `charon tier ranks`. This canary ADOPTS those live
+  surfaces (it does not re-implement the meter or the tier SSOT); the novel slice is the
+  assertion composition that turns them into a RED-on-silent-break gate. A generic HTTP
+  monitor asserts reachability — the exact R44 anti-pattern this ticket exists to replace.
 serial_justified: one coherent canary (runner + its assertions + the e2e-dogfood harness that proves it catches a seeded fault) is a single vertical slice; splitting ships a runner with no assertions or assertions with no proof.
+build_status: |
+  Thin slice BUILT 2026-07-23 (feat/flow-canary). fleet/flow-canary.sh asserts all four
+  observable-effect stages against the LIVE 4-LOM gateway (v0.6.0); verified GREEN live
+  (served-by openrouter fc1 free-first, meter cost-delta 2.78e-05, huggingface parked-and-
+  excluded). fleet/tests/flow-canary.test.sh is the fail-on-revert dogfood: 18 assertions,
+  hermetic fake gateway, every fault class (mis-route / free-first / inert-meter #167 /
+  parked-served + parked-attempted #188 / stray-standard / unserved-model) proven RED then
+  GREEN on revert. Wired into CI_SUITES. Widen-to-matrix (economy+frontier, per-provider
+  legs) + scheduled cadence are follow-ons. Awaiting adversarial review + land (reviewer≠builder).
 work_class_note: |
   Operator-approved 2026-07-23. The PROACTIVE umbrella over the whole silent-break class. Every issue this
   session was found by LUCK: stray `standard` tier, silent loop-guard quarantine, dead-no-op cooldown (#188),

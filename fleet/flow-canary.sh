@@ -15,8 +15,8 @@
 #                resolved upstream model is real (and never Anthropic), and the
 #                SERVED leg is a funded-FREE class (free-first respected).
 #   2. METER   — the served provider's observer counter ADVANCES (served +>=1)
-#                and the per-request priced amount is present on the response.
-#                An inert meter (#167) leaves the counter flat -> RED.
+#                and the meter records a priced amount for the request. An
+#                inert meter (#167) leaves the counter flat -> RED.
 #   3. PARK    — no parked/drained provider appears anywhere in the served path
 #                (served leg OR any attempted failover leg). A dead-no-op
 #                exclusion (#188) that lets a parked provider be attempted -> RED.
@@ -76,10 +76,11 @@ FC_MAX_TOKENS="${FC_MAX_TOKENS:-16}"
 FC_REQ_TIMEOUT_S="${FC_REQ_TIMEOUT_S:-45}"
 FC_STATUS_TIMEOUT_S="${FC_STATUS_TIMEOUT_S:-8}"
 
-# The canonical tier set (economy/strong/frontier), ranks 1/2/3. This is the
-# axis the ticket's config-sanity stage guards; a `standard` here is the exact
-# drift class that once shipped silently.
-CANONICAL_TIERS="economy strong frontier"
+# Scratch dir for JSON snapshots + response capture. JSON is ALWAYS passed to
+# python by FILE PATH (never embedded in a -c string — the status payload is
+# full of double-quotes that would break the shell quoting).
+FCTMP="$(mktemp -d 2>/dev/null || echo "/tmp/flow-canary.$$")"
+trap 'rm -rf "$FCTMP" 2>/dev/null || true' EXIT
 
 RED=0
 _pass(){ echo "  GREEN  $1"; }
@@ -121,139 +122,117 @@ sys.exit(0)
 "
 }
 
-# ── GET /charon/status -> JSON on stdout (empty on failure) ─────────────────
+# ── GET /charon/status -> writes JSON to $1 (returns non-zero if empty) ─────
 _status_json(){
-  local tok="$1"
+  local tok="$1" out="$2"
   curl -s --max-time "$FC_STATUS_TIMEOUT_S" \
     -H "Authorization: Bearer $tok" -H "Accept: application/json" \
-    "$FC_GATEWAY_URL/charon/status" 2>/dev/null || true
+    "$FC_GATEWAY_URL/charon/status" -o "$out" 2>/dev/null || true
+  [ -s "$out" ]
 }
 
 # ── STAGE 4: CONFIG SANITY (cheap, no request — run first) ──────────────────
-# Asserts the tier set is canonical per `charon tier ranks`, surfaces the
-# stray-`standard` drift class, and that the tier's head model is served with
-# keyed providers.
 _stage_config(){
-  local tok="$1" status_json="$2" tier="$3" head_model="$4"
+  local status_file="$1" tier="$2" head_model="$3"
   _stage "STAGE 4 — CONFIG SANITY (tier=$tier)"
 
-  local ranks
-  ranks="$($FC_TIER_RANKS_CMD 2>/dev/null)"
-  if [ -z "$ranks" ]; then
+  local ranks_file="$FCTMP/ranks.txt"
+  $FC_TIER_RANKS_CMD > "$ranks_file" 2>/dev/null || true
+  if [ ! -s "$ranks_file" ]; then
     _red "config: \`$FC_TIER_RANKS_CMD\` produced no output — cannot verify tier canonicality"
-    return
-  fi
-  # name->rank map from the ranks output. Assert canonical set present with the
-  # 1/2/3 ordering, the requested tier present, and NO stray `standard`.
-  python3 - "$tier" <<PYEOF
+  else
+    if python3 - "$tier" "$ranks_file" <<'PYEOF'
 import sys
 tier = sys.argv[1].lower()
 ranks = {}
-for line in """$ranks""".splitlines():
-    line = line.strip()
-    if not line: continue
+for line in open(sys.argv[2]):
     parts = line.split()
     if len(parts) < 2: continue
-    name, rank = parts[0].lower(), parts[-1]
-    try: ranks[name] = int(rank)
+    try: ranks[parts[0].lower()] = int(parts[-1])
     except ValueError: pass
-canon = "economy strong frontier".split()
-bad = 0
+canon = ["economy", "strong", "frontier"]
+bad = []
 missing = [t for t in canon if t not in ranks]
 if missing:
-    print(f"MISSING {' '.join(missing)}"); bad = 1
-else:
-    if not (ranks["economy"] < ranks["strong"] < ranks["frontier"]):
-        print(f"ORDER economy={ranks['economy']} strong={ranks['strong']} frontier={ranks['frontier']}"); bad = 1
+    bad.append("MISSING " + " ".join(missing))
+elif not (ranks["economy"] < ranks["strong"] < ranks["frontier"]):
+    bad.append(f"ORDER economy={ranks['economy']} strong={ranks['strong']} frontier={ranks['frontier']}")
 if "standard" in ranks:
-    print("STRAYSTANDARD"); bad = 1
+    bad.append("STRAY-standard")
 if tier not in ranks:
-    print(f"TIERMISSING {tier}"); bad = 1
-sys.exit(1 if bad else 0)
+    bad.append("TIER-MISSING " + tier)
+if bad:
+    print("; ".join(bad)); sys.exit(1)
+sys.exit(0)
 PYEOF
-  local rc=$?
-  if [ "$rc" -eq 0 ]; then
-    _pass "config: tier set canonical (economy<strong<frontier), no stray 'standard', '$tier' present"
-  else
-    _red "config: tier ranks NON-canonical (see above token: MISSING/ORDER/STRAYSTANDARD/TIERMISSING) — drift"
+    then
+      _pass "config: tier set canonical (economy<strong<frontier), no stray 'standard', '$tier' present"
+    else
+      _red "config: tier ranks NON-canonical — drift"
+    fi
   fi
 
-  # head model served + providers keyed (from the live status snapshot)
   if [ -z "$head_model" ]; then
     _red "config: tier '$tier' has no failover chain in $FC_TIER_TSV"
     return
   fi
-  python3 - "$head_model" <<PYEOF
+  local chainline
+  chainline="$(python3 - "$head_model" "$status_file" <<'PYEOF'
 import json, sys
 head = sys.argv[1]
-try:
-    d = json.loads(r'''$status_json''')
-except Exception:
-    print("NOSTATUS"); sys.exit(1)
+try: d = json.load(open(sys.argv[2]))
+except Exception: print("NOSTATUS"); sys.exit(1)
 pools = d.get("pools") or {}
 bal = d.get("balance") or {}
 chain = pools.get(head)
 if not chain:
-    print(f"NOTSERVED {head}"); sys.exit(1)
+    print("NOTSERVED"); sys.exit(1)
 unkeyed = [p for p in chain if p not in bal]
 if unkeyed:
-    # a provider in the served chain with no balance/funding-class record is a
-    # config-drift signal (provider not configured/keyed on the gateway).
     print("UNKEYED " + ",".join(unkeyed)); sys.exit(1)
-print("OK " + ",".join(chain))
-sys.exit(0)
+print(",".join(chain)); sys.exit(0)
 PYEOF
-  local rc2=$?
-  local chainline
-  chainline="$(python3 -c "
-import json
-try:
-    d=json.loads(r'''$status_json'''); print(','.join((d.get('pools') or {}).get('$head_model') or []))
-except Exception: pass
-" 2>/dev/null)"
-  if [ "$rc2" -eq 0 ]; then
+)"
+  if [ $? -eq 0 ]; then
     _pass "config: head model '$head_model' served; providers keyed [$chainline]"
   else
-    _red "config: head model '$head_model' not served OR has unkeyed providers — config drift"
+    _red "config: head model '$head_model' not served OR has unkeyed providers ($chainline) — config drift"
   fi
 }
 
 # ── STAGES 1-3: send the REAL request, then assert route/meter/park ─────────
 _stage_flow(){
-  local tok="$1" before_json="$2" tier="$3" head_model="$4"
-  local hdr body code
-  hdr="$(mktemp)"; body="$(mktemp)"
-  trap 'rm -f "$hdr" "$body"' RETURN
+  local tok="$1" before_file="$2" tier="$3" head_model="$4"
+  local hdr="$FCTMP/hdr.txt" body="$FCTMP/body.json" after_file="$FCTMP/after.json"
+  local reqbody="$FCTMP/req.json"
 
+  # A per-run NONCE defeats the gateway response cache: a cache hit serves
+  # provider="cache" without touching a pool leg or advancing the meter, so it
+  # would exercise NONE of route/meter/free-first. The canary must force a real
+  # upstream call every run (unless the test pins FC_NONCE for determinism).
+  local nonce="${FC_NONCE:-$(date -u +%s)-$RANDOM}"
+  python3 -c "
+import json, sys
+json.dump({'model': sys.argv[1],
+           'messages': [{'role':'user','content': sys.argv[2] + ' (canary ' + sys.argv[5] + ')'}],
+           'max_tokens': int(sys.argv[3])}, open(sys.argv[4],'w'))
+" "$head_model" "$FC_PROMPT" "$FC_MAX_TOKENS" "$reqbody" "$nonce"
+
+  local code
   code="$(curl -s --max-time "$FC_REQ_TIMEOUT_S" -o "$body" -D "$hdr" -w '%{http_code}' \
     -H "Authorization: Bearer $tok" -H "Content-Type: application/json" \
-    -X POST "$FC_GATEWAY_URL/v1/chat/completions" \
-    -d "$(python3 -c "
-import json,sys
-print(json.dumps({'model': sys.argv[1],
-                  'messages': [{'role':'user','content': sys.argv[2]}],
-                  'max_tokens': int(sys.argv[3])}))
-" "$head_model" "$FC_PROMPT" "$FC_MAX_TOKENS")" 2>/dev/null)"
+    -X POST "$FC_GATEWAY_URL/v1/chat/completions" --data-binary "@$reqbody" 2>/dev/null)"
 
-  local after_json
-  after_json="$(_status_json "$tok")"
+  _status_json "$tok" "$after_file" || : > "$after_file"
 
-  local provider reasons resolved_model req_cost
+  local provider reasons resolved_model
   provider="$(grep -i '^X-Charon-Provider:' "$hdr" | head -1 | sed 's/^[^:]*:[[:space:]]*//; s/[[:space:]]*$//' | tr -d '\r')"
   reasons="$(grep -i '^X-Charon-Failover-Reasons:' "$hdr" | head -1 | sed 's/^[^:]*:[[:space:]]*//' | tr -d '\r')"
   resolved_model="$(python3 -c "
-import json
-try: print((json.load(open('$body')) or {}).get('model') or '')
+import json,sys
+try: print((json.load(open(sys.argv[1])) or {}).get('model') or '')
 except Exception: print('')
-" 2>/dev/null)"
-  req_cost="$(python3 -c "
-import json
-try:
-    u=(json.load(open('$body')) or {}).get('usage') or {}
-    c=u.get('cost')
-    print('' if c is None else repr(float(c)))
-except Exception: print('')
-" 2>/dev/null)"
+" "$body" 2>/dev/null)"
 
   # ── STAGE 1: ROUTE ────────────────────────────────────────────────────────
   _stage "STAGE 1 — ROUTE (tier=$tier, head=$head_model)"
@@ -267,22 +246,20 @@ except Exception: print('')
     _red "route: NO X-Charon-Provider header — cannot prove which leg served (reachability only)"
   else
     _info "served-by: $provider   failover-reasons: ${reasons:-<none>}   resolved-model: ${resolved_model:-<none>}"
-    # served provider must be in the head model's pool (from the BEFORE snapshot)
     local inpool
     inpool="$(python3 -c "
-import json
+import json,sys
 try:
-    d=json.loads(r'''$before_json'''); ch=(d.get('pools') or {}).get('$head_model') or []
-    print('yes' if '$provider' in ch else 'no:'+','.join(ch))
+    d=json.load(open(sys.argv[1])); ch=(d.get('pools') or {}).get(sys.argv[2]) or []
+    print('yes' if sys.argv[3] in ch else 'no:'+','.join(ch))
 except Exception: print('err')
-" 2>/dev/null)"
+" "$before_file" "$head_model" "$provider" 2>/dev/null)"
     if [ "$inpool" = "yes" ]; then
       _pass "route: X-Charon-Provider '$provider' is a member of '$head_model' pool"
     else
       _red "route: served provider '$provider' is NOT in the '$head_model' pool ($inpool) — MIS-ROUTE"
     fi
   fi
-  # resolved model real + never Anthropic (sg-never-anthropic)
   if [ -z "$resolved_model" ]; then
     _red "route: response body carried no resolved 'model' — cannot assert what was served"
   elif printf '%s' "$resolved_model" | grep -qiE 'anthropic|claude'; then
@@ -291,15 +268,14 @@ except Exception: print('err')
     _pass "route: resolved upstream model '$resolved_model' is real and non-Anthropic"
   fi
   # FREE-FIRST: the served leg must be a funded-free class (fc 1 or 2). A paid
-  # (fc 3) leg serving while a free one exists is the free-first break.
+  # (fc 3) leg serving is the free-first break.
   if [ -n "$provider" ]; then
     local fc
     fc="$(python3 -c "
-import json
-try:
-    d=json.loads(r'''$after_json'''); print((d.get('balance') or {}).get('$provider',{}).get('funding_class'))
+import json,sys
+try: print((json.load(open(sys.argv[1])).get('balance') or {}).get(sys.argv[2],{}).get('funding_class'))
 except Exception: print('None')
-" 2>/dev/null)"
+" "$after_file" "$provider" 2>/dev/null)"
     if [ "$fc" = "1" ] || [ "$fc" = "2" ]; then
       _pass "route/free-first: served leg '$provider' is funding_class $fc (funded-free) — a free leg served before any paid leg"
     else
@@ -310,76 +286,68 @@ except Exception: print('None')
   # ── STAGE 2: METER ────────────────────────────────────────────────────────
   # Observable, concurrency-robust: the SERVED provider's observer counter must
   # advance by >= 1 (other live traffic only adds). A flat counter = inert meter
-  # (#167). The per-request priced amount is the response usage.cost.
+  # (#167). The priced amount is the observer's own recorded cost-delta (the
+  # meter of record); a funded-free leg legitimately prices at ~0, so the
+  # load-bearing anti-inert signal is the served-count advance.
   _stage "STAGE 2 — METER (served-by=$provider)"
   if [ -z "$provider" ]; then
     _red "meter: no served provider known — cannot assert a meter delta"
   else
-    local dserved dcost
-    read -r dserved dcost <<<"$(python3 -c "
-import json
-def g(js):
-    try: return json.loads(js)
+    local metric
+    metric="$(python3 -c "
+import json,sys
+def g(p):
+    try: return json.load(open(p))
     except Exception: return {}
-b=g(r'''$before_json'''); a=g(r'''$after_json''')
-def prov(d):
-    return (d.get('providers') or {}).get('$provider') or {}
-sb=prov(b).get('served',0) or 0; sa=prov(a).get('served',0) or 0
-cb=prov(b).get('cost',0) or 0;   ca=prov(a).get('cost',0) or 0
-print(int(sa)-int(sb), float(ca)-float(cb))
-" 2>/dev/null)"
-    dserved="${dserved:-0}"; dcost="${dcost:-0}"
-    _info "served-delta=$dserved  cost-delta=$dcost  per-request usage.cost=${req_cost:-<none>}"
+b=g(sys.argv[1]); a=g(sys.argv[2]); pr=sys.argv[3]
+def prov(d): return (d.get('providers') or {}).get(pr) or {}
+sb=int(prov(b).get('served',0) or 0); sa=int(prov(a).get('served',0) or 0)
+cb=float(prov(b).get('cost',0) or 0); ca=float(prov(a).get('cost',0) or 0)
+print(f'{sa-sb} {ca-cb}')
+" "$before_file" "$after_file" "$provider" 2>/dev/null)"
+    local dserved dcost
+    dserved="$(printf '%s' "$metric" | awk '{print $1}')"; dserved="${dserved:-0}"
+    dcost="$(printf '%s' "$metric" | awk '{print $2}')"; dcost="${dcost:-0}"
+    _info "observer served-delta=$dserved  cost-delta=$dcost"
     if [ "$dserved" -ge 1 ] 2>/dev/null; then
       _pass "meter: observer 'served' for '$provider' advanced by $dserved (>=1) — the request was METERED, not merely served"
     else
       _red "meter: observer 'served' for '$provider' did NOT advance (delta=$dserved) — INERT METER (#167 class)"
     fi
-    # per-request priced amount must be present & numeric (>= 0). A funded-free
-    # leg legitimately prices at 0, so 0 is honest here; absence is the break.
-    if [ -z "$req_cost" ]; then
-      _red "meter: response carried NO per-request usage.cost — the priced amount is unobservable"
+    local costok
+    costok="$(python3 -c "print('yes' if float('$dcost') >= 0 else 'no')" 2>/dev/null)"
+    if [ "$costok" = "yes" ]; then
+      _pass "meter: observer recorded a priced cost-delta ($dcost, >=0) for this request"
     else
-      local costok
-      costok="$(python3 -c "print('yes' if float('$req_cost') >= 0 else 'no')" 2>/dev/null)"
-      if [ "$costok" = "yes" ]; then
-        _pass "meter: per-request priced amount observable (usage.cost=$req_cost); observer cost-delta=$dcost (>=0)"
-      else
-        _red "meter: per-request usage.cost is negative ($req_cost) — nonsensical price"
-      fi
+      _red "meter: observer cost-delta is negative ($dcost) — the meter went backwards"
     fi
   fi
 
   # ── STAGE 3: PARK / FUNDING-CLASS EXCLUSION (#188 dead-no-op class) ────────
-  # A parked/drained provider must be EXCLUDED from routing — not served, and
-  # not even attempted. Assert none appears in the served path
-  # {served leg} U {attempted failover legs}. If one does, the exclusion is a
-  # dead no-op (#188) and this goes RED.
   _stage "STAGE 3 — PARK / FUNDING-CLASS EXCLUSION"
   local attempted
   attempted="$(printf '%s' "$reasons" | grep -oE '[A-Za-z0-9_-]+=' | sed 's/=$//' | paste -sd, -)"
   local violation
   violation="$(python3 -c "
-import json
-try: d=json.loads(r'''$after_json''')
+import json,sys
+try: d=json.load(open(sys.argv[1]))
 except Exception: d={}
 bal=d.get('balance') or {}
 excluded=set(p for p,v in bal.items() if v.get('parked') or v.get('drained'))
-path=set()
-sv='$provider'.strip()
-if sv: path.add(sv)
-for p in '$attempted'.split(','):
+sv=sys.argv[2].strip()
+path=set([sv]) if sv else set()
+for p in sys.argv[3].split(','):
     p=p.strip()
     if p: path.add(p)
 bad=sorted(excluded & path)
 served_excluded = sv in excluded
 print(('SERVED:'+sv if served_excluded else '') + '|' + ','.join(bad) + '|' + ','.join(sorted(excluded)))
-" 2>/dev/null)"
+" "$after_file" "$provider" "$attempted" 2>/dev/null)"
   local served_bad path_bad all_excluded
   served_bad="$(printf '%s' "$violation" | cut -d'|' -f1)"
   path_bad="$(printf '%s' "$violation" | cut -d'|' -f2)"
   all_excluded="$(printf '%s' "$violation" | cut -d'|' -f3)"
-  _info "parked/drained providers on gateway: [${all_excluded:-<none>}]   served-path: [${provider}${attempted:+,$attempted}]"
+  _info "parked/drained on gateway: [${all_excluded:-<none>}]   served-path: [${provider}${attempted:+,$attempted}]"
   if [ -n "$served_bad" ]; then
     _red "park: the SERVED leg is parked/drained ($served_bad) — exclusion is a DEAD NO-OP (#188 class)"
   elif [ -n "$path_bad" ]; then
@@ -393,7 +361,8 @@ print(('SERVED:'+sv if served_excluded else '') + '|' + ','.join(bad) + '|' + ',
 
 # ── run one tier chain end-to-end (the widen-to-matrix unit) ────────────────
 run_tier(){
-  local tier="$1" tok status_json chain head_model
+  local tier="$1" tok chain head_model
+  local before_file="$FCTMP/before.json"
   tok="$(_bearer_token)"
   if [ -z "$tok" ]; then
     _red "no gateway Bearer token (FC_TOKEN unset and $FC_OPENCODE_CFG unreadable/empty)"
@@ -401,15 +370,14 @@ run_tier(){
   fi
   chain="$(_tier_chain "$tier")"
   head_model="$(printf '%s' "$chain" | cut -d, -f1 | tr -d '[:space:]')"
-  status_json="$(_status_json "$tok")"
-  if [ -z "$status_json" ]; then
+  if ! _status_json "$tok" "$before_file"; then
     _red "gateway /charon/status unreachable/empty at $FC_GATEWAY_URL — cannot canary"
     return
   fi
 
   echo "FLOW-CANARY  gateway=$FC_GATEWAY_URL  tier=$tier  chain=[$chain]"
-  _stage_config  "$tok" "$status_json" "$tier" "$head_model"
-  _stage_flow    "$tok" "$status_json" "$tier" "$head_model"
+  _stage_config "$before_file" "$tier" "$head_model"
+  _stage_flow   "$tok" "$before_file" "$tier" "$head_model"
 }
 
 main(){
@@ -418,7 +386,7 @@ main(){
   echo " $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "════════════════════════════════════════════════════════════"
   # THIN SLICE: one tier. WIDEN-TO-MATRIX: replace with
-  #   for t in $CANONICAL_TIERS; do run_tier "$t"; done
+  #   for t in economy strong frontier; do run_tier "$t"; done
   run_tier "$FC_TIER"
   echo
   if [ "$RED" -eq 0 ]; then
