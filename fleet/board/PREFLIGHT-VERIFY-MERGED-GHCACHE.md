@@ -2,6 +2,8 @@ repo: charon-private
 tier: strong
 difficulty: 3
 work_class: refactor
+substrate: N/A
+substrate-novel: verify_merged is rig-internal orchestration glue — routing done-marker merge-proofs through the rig's own batched gh lookup. No third-party tool/library covers caching THIS rig's gh merge-truth queries; the reuse is of an in-tree helper (fleet/gh-cache.sh), not a build-vs-adopt choice against external substrate. The novel slice is the rig-specific N+1 elimination on the preflight path.
 priority: 1
 branch: fix/preflight-verify-merged-ghcache
 depends_on: GITHUB-LIMITS-HARDENING

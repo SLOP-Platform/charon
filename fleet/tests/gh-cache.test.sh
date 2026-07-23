@@ -20,6 +20,11 @@ export GH_MERGED_FIXTURE="$D/merged.tsv"
 # an empty branch is a safe no-op
 [ -z "$(branch_merged_pr Nnyan/charon-private '')" ] && ok "(c) empty branch -> empty (safe)" || bad "(c) empty branch -> empty"
 
+# pr_number_is_merged: exit-code contract over the same cached set (member->0, non-member->1, empty->1)
+if pr_number_is_merged Nnyan/charon-private 202; then ok "(e) merged PR number -> 0"; else bad "(e) merged PR number -> 0"; fi
+if pr_number_is_merged Nnyan/charon-private 999; then bad "(f) non-merged PR number -> 1"; else ok "(f) non-merged PR number -> 1"; fi
+if pr_number_is_merged Nnyan/charon-private ''; then bad "(g) empty PR number -> 1"; else ok "(g) empty PR number -> 1"; fi
+
 # fail-on-revert crux: prove the lookup does NOT shell out to gh per branch. Put a POISONED gh on
 # PATH that fails loudly; with the fixture/cache in play, 100 lookups must still succeed (0 gh calls).
 mkdir -p "$D/bin"; printf '#!/bin/sh\necho "GH-CALLED" >&2; exit 42\n' > "$D/bin/gh"; chmod +x "$D/bin/gh"
@@ -31,6 +36,14 @@ for i in $(seq 1 100); do
   grep -q GH-CALLED "$D/err" 2>/dev/null && poisoned=1
 done
 [ "$poisoned" -eq 0 ] && ok "(d) 100 lookups, ZERO gh calls (batched, not per-branch)" || bad "(d) a lookup shelled out to gh (revert of batching)"
+
+# (h) pr_number_is_merged also makes ZERO gh calls under the poisoned PATH (same batched cache)
+: > "$D/err"
+if pr_number_is_merged Nnyan/charon-private 202 2>"$D/err" && ! grep -q GH-CALLED "$D/err" 2>/dev/null; then
+  ok "(h) pr_number_is_merged: ZERO gh calls (poisoned PATH)"
+else
+  bad "(h) pr_number_is_merged shelled out to gh"
+fi
 
 rm -rf "$D"
 echo; echo "--- $PASS passed, $FAIL failed ---"

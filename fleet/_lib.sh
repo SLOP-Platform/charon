@@ -131,6 +131,11 @@ _vm_ticket_repo_field(){
 #     rely on them across long-running work. A verify_merged call must not clobber them.
 _VM_REGISTRY="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/repo-registry.sh"
 [ -f "$_VM_REGISTRY" ] && . "$_VM_REGISTRY"
+# Source the batched gh-cache (O(repos) not O(tickets) for merge-proof lookups).
+# The cache is sourced from _lib.sh so both _vm_pr_merged and _vm_branch_merged
+# delegate to it rather than issuing per-marker gh calls.
+_GH_CACHE_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/gh-cache.sh"
+[ -f "$_GH_CACHE_LIB" ] && . "$_GH_CACHE_LIB"
 # _vm_registry_path <key> -> that key's canonical checkout path. rc 1 = key unknown to the SSOT.
 _vm_registry_path(){
   command -v repo_resolve >/dev/null 2>&1 || return 2   # registry absent (minimal test fixture)
@@ -213,15 +218,13 @@ _vm_sha_in_master(){ local r; r="$(_vm_repo "${2:-}")" || return 1
                      git -C "$r" merge-base --is-ancestor "$1" origin/master 2>/dev/null; }
 _vm_pr_merged(){
   command -v gh >/dev/null 2>&1 || return 1
-  local slug m; slug="$(_vm_slug "${2:-}")" || return 1; [ -n "$slug" ] || return 1
-  m="$(gh pr view "$1" --repo "$slug" --json mergedAt -q '.mergedAt' 2>/dev/null || true)"
-  [ -n "$m" ] && [ "$m" != "null" ]
+  local slug; slug="$(_vm_slug "${2:-}")" || return 1; [ -n "$slug" ] || return 1
+  pr_number_is_merged "$slug" "$1"
 }
 _vm_branch_merged(){
   command -v gh >/dev/null 2>&1 || return 1
-  local slug n; slug="$(_vm_slug "${2:-}")" || return 1; [ -n "$slug" ] || return 1
-  n="$(gh pr list --repo "$slug" --head "$1" --state merged --json number -q '.[0].number' 2>/dev/null || true)"
-  [ -n "$n" ]
+  local slug; slug="$(_vm_slug "${2:-}")" || return 1; [ -n "$slug" ] || return 1
+  [ -n "$(branch_merged_pr "$slug" "$1")" ]
 }
 # every comma-separated `owns:` path exists in origin/master. Empty owns is NOT a positive proof.
 _vm_owns_present(){

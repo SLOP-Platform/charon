@@ -123,6 +123,13 @@ branch_merged_pr(){
   _gh_merged_tsv "$slug" | awk -F'\t' -v b="$br" '$1==b{print $2; exit}'
 }
 
+# pr_number_is_merged <repo-slug> <pr-number> -> 0 if the PR is in the cached merged set, 1 if not.
+# Pure local grep against the cached `<branch>\t<pr#>` TSV — ZERO gh calls.
+pr_number_is_merged(){
+  local slug="$1" pr="$2"; [ -n "$pr" ] || return 1
+  _gh_merged_tsv "$slug" | awk -F'\t' -v p="$pr" '$2==p{found=1; exit} END{exit !found}'
+}
+
 # merged_prs_touching_file <repo-slug> <path> -> MERGED PR number that touched <path>, or empty.
 # Pure local grep against the cached "<pr#>\t<path>" index — ZERO gh calls, ZERO search calls.
 # Empty result + no error = "no cached merged PR touched this path" (caller decides what to do).
