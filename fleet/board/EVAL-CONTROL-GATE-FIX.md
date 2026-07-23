@@ -5,6 +5,7 @@ work_class: bugfix
 priority: 0
 branch: fix/eval-control-gate-unsatisfiable
 depends_on:
+serial_justified: one unit — the grades.py control-gate fix and its fail-on-revert test are inseparable (the test asserts the exact no-control→admit fallback the fix adds; splitting ships an untested gate change or a test with no change).
 owns: src/charon/capability/grades.py, tests/test_control_gate_fix.py
 work_class_note: |
   ROOT DEFECT of "grades.py returns 0 grades" (ranking-pipeline audit 2026-07-23). The EVAL-PROMOTION-GATE
