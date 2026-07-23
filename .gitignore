@@ -73,3 +73,5 @@ fleet/reds.tsv
 fleet/scorecard.v1.json
 fleet/provider-exhaustion-ledger.tsv
 fleet/model-scorecard.tsv
+# ...and the reachability audit (REACHABILITY-GATE analysis; referenced by handoffs).
+!fleet/state/REACHABILITY-AUDIT.md
