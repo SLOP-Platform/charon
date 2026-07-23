@@ -1,11 +1,11 @@
-repo: charon-private
+repo: charon
 tier: strong
 difficulty: 3
 work_class: bugfix
 priority: 0
 branch: fix/eval-control-gate-unsatisfiable
 depends_on:
-owns: fleet/state/EVAL-CONTROL-GATE-FIX.md
+owns: src/charon/capability/grades.py, tests/test_control_gate_fix.py
 work_class_note: |
   ROOT DEFECT of "grades.py returns 0 grades" (ranking-pipeline audit 2026-07-23). The EVAL-PROMOTION-GATE
   control-panel gate (product `src/charon/capability/grades.py:651-654`, require_control_panel=True) requires

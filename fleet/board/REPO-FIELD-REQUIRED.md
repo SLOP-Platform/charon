@@ -2,6 +2,7 @@ repo: charon-private
 tier: strong
 difficulty: 3
 work_class: ci-infra
+priority: 1
 branch: feat/repo-field-required
 depends_on: VERIFY-MERGED-REPO-AWARE
 real-dep: VERIFY-MERGED-REPO-AWARE — this ticket makes `repo:` MANDATORY; that ticket makes the
@@ -34,6 +35,15 @@ accept: |
         field -> RED (today: silently defaults). Unknown value -> RED (rule 0 already does this for
         present-but-unknown values; extend it to cover ABSENT). Reuse the existing REPO_ROOTS map —
         do NOT add a second copy of the repo map (that is REPO-MAP-CONVERGE's whole subject).
+    (a2) CONSISTENCY (the recurring "session points work at the RIG" defect, operator-escalated
+        2026-07-23): also RED when the declared `repo:` is INCONSISTENT with what the `owns:` paths
+        imply — owns `src/charon/*` | `tests/*` | `docs/*` but `repo: charon-private`, or owns `fleet/*`
+        but `repo: charon`. This is the exact mis-pointing that recurs when a session files a PRODUCT-code
+        fix (e.g. grades.py) as a RIG ticket: the field is present + known (so rule (a) passes) yet points
+        at the wrong tree, so the droid checks out the wrong repo and the fix never lands. Derive the
+        implied repo from owns exactly as the backfill in (b) does; a ticket whose owns span BOTH repos is
+        the same "genuine finding — surface, don't guess" case. Fail-on-revert fixture: a ticket with
+        `repo: charon-private` + owns `src/charon/x.py` -> REJECTED; flip repo to `charon` -> GREEN.
     (b) BACKFILL the 120. Mechanical, but NOT blind: determine each ticket's real repo from its
         `owns:` paths (absolute /home/stack/charon-private/... or fleet/* -> charon-private;
         src/charon/*, tests/* -> charon), not from a guess. Tickets whose owns span both repos are a
