@@ -83,6 +83,15 @@ cap() {  # cap <model> <claimed-result> [<verdict> <gate> <evidence>]
   fi
   "$CAPTURE_SCRIPT" "${args[@]}" >/dev/null 2>&1 || true
 }
+# ANNOUNCE (observability): the MODEL failover chain is driven HERE, so the first leg (primary) is
+# known up front and the last leg on success (below) — announce both so a job's log shows
+# "started on X -> finished on Y" and a failover is visible when they differ. CAVEAT: the actual
+# UPSTREAM PROVIDER for each leg is picked by the gateway (SG) behind the charon/<model> alias and is
+# NOT surfaced to this wrapper by opencode; announcing the real provider needs an SG-side
+# X-Charon-Provider header + a session-tagged routing log (separate, not cheap). The model leg is
+# truthful and free — that is what we announce here.
+FIRST_MODEL="${MODELS[0]:-}"
+echo "[charon-run] STARTED on charon/$FIRST_MODEL (failover chain: charon/$(IFS=,; echo "${MODELS[*]}"); upstream provider chosen by gateway)" >> "$OUT"
 for M in "${MODELS[@]}"; do
   echo "===== [charon-run] attempt: charon/$M @ $(basename "$CWD") =====" >> "$OUT"
   MARK=$(wc -l < "$OUT")
@@ -181,8 +190,11 @@ for M in "${MODELS[@]}"; do
     cap "$M" "FAIL" "BLOCK" "fail" "opencode exited rc=$RC (non-limit, non-infra failure, self-evident at run time)"
     continue
   fi
+  if [ "$M" != "$FIRST_MODEL" ]; then _fo=" (failed over from charon/$FIRST_MODEL)"; else _fo=" (primary; no failover)"; fi
+  echo "[charon-run] FINISHED on charon/$M — started on charon/$FIRST_MODEL$_fo" >> "$OUT"
   echo "[charon-run] SUCCESS on model '$M' (rc=0)" >> "$OUT"
   echo "CHARON_RUN_RESULT=SUCCESS model=$M" >> "$OUT"
+  echo "CHARON_RUN_RESULT_FIRST_MODEL=$FIRST_MODEL" >> "$OUT"
   # Claim only (PROVISIONAL) -- the run exiting 0 is not yet a verified MERGE;
   # done.sh supplies the FINAL actual_verdict/gate once the merge is proof-verified.
   cap "$M" "SUCCESS"
