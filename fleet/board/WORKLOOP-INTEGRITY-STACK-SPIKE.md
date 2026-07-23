@@ -2,7 +2,7 @@ repo: charon-private
 tier: strong
 difficulty: 3
 work_class: design-review
-branch: feat/workloop-stack-spike
+branch: feat/workloop-stack-spike-run
 depends_on:
 owns: fleet/state/WORKLOOP-INTEGRITY-STACK-SPIKE.md
 work_class_note: |
