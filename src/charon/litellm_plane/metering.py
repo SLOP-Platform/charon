@@ -21,15 +21,52 @@ from charon.proxy import GatewayProxy
 _COST_TOLERANCE = 0.001
 
 
+def _cost_from_hidden(hidden: Any) -> float | None:
+    """Extract ``response_cost`` from a litellm ``_hidden_params`` carrier.
+
+    A real litellm ``ModelResponse`` carries per-request cost in
+    ``_hidden_params[\"response_cost\"]``, NOT in ``usage.cost`` (which is
+    frequently absent).  ``hidden`` may be a dict or an object exposing
+    ``response_cost``.  Returns ``None`` when the field is not present or
+    is non-numeric so the caller can fall back to ``usage.cost``.
+    """
+    if hidden is None:
+        return None
+    if isinstance(hidden, dict):
+        val = hidden.get("response_cost")
+    else:
+        val = getattr(hidden, "response_cost", None)
+    if val is None:
+        return None
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return None
+
+
 def litellm_cost(response: Any) -> float:
-    """Extract the cost litellm computed from a ModelResponse or dict response."""
-    usage = getattr(response, "usage", None)
-    if usage is not None:
-        return float(getattr(usage, "cost", 0.0) or 0.0)
+    """Extract the cost litellm computed from a ModelResponse or dict response.
+
+    Primary source: ``_hidden_params[\"response_cost\"]`` — litellm puts the
+    per-request cost there on a real ``ModelResponse``.  Fallback:
+    ``usage.cost`` (or ``usage.total_cost``) when ``_hidden_params`` is
+    absent.  Returns ``0.0`` when neither is present.
+    """
+    hidden = getattr(response, "_hidden_params", None)
+    cost = _cost_from_hidden(hidden)
+    if cost is not None:
+        return cost
     if isinstance(response, dict):
+        cost = _cost_from_hidden(response.get("_hidden_params"))
+        if cost is not None:
+            return cost
         u = response.get("usage")
         if isinstance(u, dict):
             return float(u.get("cost", u.get("total_cost", 0.0)) or 0.0)
+        return 0.0
+    usage = getattr(response, "usage", None)
+    if usage is not None:
+        return float(getattr(usage, "cost", 0.0) or 0.0)
     return 0.0
 
 
