@@ -17,6 +17,18 @@
 > **Model tier:** right-size per task — do NOT default to frontier. `economy`/`strong` for most;
 > `frontier` ONLY for genuine architecture judgement. [[subsession-model-and-token-policy]]
 
+## 🔴 2026-07-23 REFRESH (stass-allie) — CURRENT LEAD (supersedes the R0.0=WORKLOOP below)
+**LEAD = UNIFIED RECONCILIATION-GATE design** (operator-approved). Desired==actual reconciliation (RED-on-
+drift, required-check + timer) — the durable root fix for the built/planned-but-not-wired, norm-unenforced
+class. SUBSUMES R44/R45/KS24, board-trust/auto-retire, owns-untracked, and BLAST-TIER's review-gate. Build
+ADOPT-FIRST; the WORKLOOP spike VALIDATED the reconciliation-loop as implement-as-pattern. Full detail +
+the other two workstreams (WORKLOOP #172 → BOUNCE; BLAST-TIER → re-scope/park-grading) are in
+`fleet/SESSION-HANDOFF-stass-allie.md` (the canonical current handoff). BOARD IS NOW TRUSTWORTHY — the
+merged-not-retired hole is fixed (repo-aware reconcile + creation-PR guard) and the PRIORITY LADDER is live
+(`fleet/claim.sh`); the "pool parked / R0.0=WORKLOOP" framing below is HISTORICAL.
+
+---
+
 ## ✅ DONE this session (2026-07-22) — do NOT redo
 - **Prior R0.1** — COVERAGE-META-GATE + SEMGREP + GITLEAKS + BANDIT (adopted as rig CI checks) +
   VULTURE (REJECTED with proof; kept the reachability `check_inert_code.py`). All merged (#140/143/144-147).

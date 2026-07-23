@@ -73,7 +73,7 @@ cmd_handoff(){
   say "--- foreman handoff ---"
   [ -x "$FOREMAN_SH" ] || { say "foreman-cadence: foreman.sh not found (skip handoff section)"; return 0; }
   local out
-  out="$(FOREMAN_FLEET="$FOREMAN_FLEET" bash "$FOREMAN_SH" 2>&1)" || true
+  out="$(FOREMAN_FLEET="${FOREMAN_FLEET:-$FLEET}" bash "$FOREMAN_SH" 2>&1)" || true
   say ""
   say "### Foreman tier-health (auto)"
   say ""
