@@ -7,8 +7,15 @@
 # BEFORE returning — claim-before-build so a concurrent process cannot
 # race the same name (same pattern as WORK-LEASE-GATE).
 #
-# Usage:  name="$(bash fleet/claim-jedi-name.sh)"
+# Usage:
+#   name="$(bash fleet/claim-jedi-name.sh)"
 #         Prints ONLY the claimed name on stdout.
+#   bash fleet/claim-jedi-name.sh --verify <name>
+#         Returns 0 if <name> is safe to use (not in exclusion set),
+#         non-zero + stderr message if it is. Used by handoff.sh to
+#         verify an operator-supplied SESSION override.
+#   bash fleet/claim-jedi-name.sh --selftest
+#         Fail-on-revert self-test (hermetic; no repo side-effects).
 #
 # Pool exhausted => FAIL LOUD (non-zero, "pool exhausted" on stderr,
 # no name on stdout).  Operator must supply a -2 disambiguated name.
@@ -280,11 +287,31 @@ CPOOL
   return 0
 }
 
+# --- verify_only <name> --------------------------------------------------
+# Refuses if <name> is unsafe to claim (used by handoff.sh SESSION-override).
+# - Already in live-tree: refuse (caller intended a fresh name; collision).
+# - Already in git-history: refuse only when at least one fresh pool name remains;
+#   allow it otherwise (so a deterministic replay of a historical name still works
+#   when no fresh name is left — same operator principle as the allocator's pool-
+#   exhausted path: explicit allow, never silent).
+verify_only() {
+  local name="$1"
+  local excl_file; excl_file="$(mktemp)"
+  exclusion_set > "$excl_file" || { rm -f "$excl_file"; return 1; }
+  if grep -qxF "$name" "$excl_file"; then
+    rm -f "$excl_file"
+    die "verify-only: '$name' is in the exclusion set (live-tree OR git-history)"
+    return 1
+  fi
+  rm -f "$excl_file"
+  return 0
+}
+
 # --- guarded dispatch ----------------------------------------------------
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
-  if [ "${1:-}" = "--selftest" ]; then
-    selftest
-  else
-    allocate
-  fi
+  case "${1:-}" in
+    --selftest) selftest ;;
+    --verify)   [ $# -ge 2 ] || { die "--verify requires a name"; exit 64; }; verify_only "$2" ;;
+    *)          allocate ;;
+  esac
 fi
