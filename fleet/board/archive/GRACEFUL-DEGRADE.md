@@ -33,3 +33,7 @@ scope: |
   router-core (invisible failover + throttle), R10 free-tier-quota-spill, R11 drain-then-park (re-arm).
   [[charon-drain-then-park-provider-class]] [[charon-work-engine-vision]]
 ds: money-path; sequence AFTER R2 router-core. PROJECT ROUTER.
+
+retired: |
+  Park-half SUPERSEDED by live funding_class/drain-then-park (2026-07-23); PR #172 closed. Residual
+  alert-on-impact salvaged to DEGRADE-ALERT (P1).

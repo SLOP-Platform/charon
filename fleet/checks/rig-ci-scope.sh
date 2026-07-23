@@ -87,6 +87,13 @@ CI_SUITES=(
                             # never invoked and nothing leaves the box. ~2s. Guards the recurring
                             # stranded-work detector, including its never-report-clean-when-
                             # undetermined contract.
+  flow-canary.test.sh       # hermetic: a local Python stdlib HTTP fake gateway on 127.0.0.1 stands
+                            # in for the LIVE gateway (serves /charon/status + /v1/chat/completions);
+                            # the REAL fleet/flow-canary.sh runs against it via env overrides. No
+                            # live network. Fail-on-revert dogfood: seeds a mis-route / free-first
+                            # violation / inert meter (#167) / parked-served + parked-attempted
+                            # (#188) / stray-`standard` tier / unserved head model, and proves the
+                            # canary goes RED on each then GREEN on revert. ~5s.
 )
 
 VALID_WORK_CLASSES="bugfix ci-infra design-review docs frontend generalist greenfield-feature money-path refactor rig-meta routing tests"
