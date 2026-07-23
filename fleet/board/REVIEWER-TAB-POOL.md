@@ -16,6 +16,26 @@ work_class_note: |
   [[charon-headless-review-loop]] [[adversarial-review-default-for-droid-prs]] [[token-lean-review-and-droids]]
   [[reviews-use-our-own-tools]] [[no-rig-as-product-adopt-dont-handroll]]
 accept: |
+  ⛔ BOUNCE-1 (2026-07-23) — attempt #1 (PR #200, deepseek-v4-flash) REJECTED by adversarial review
+  (reviewer != builder). These 4 CONFIRMED blockers are HARD MUST-FIX; the fix must PROVE each is closed:
+    B1. reviewer!=builder is currently a STRUCTURAL NO-OP. `author_droid` came from `gh pr --json author`
+        = the fleet's shared GitHub bot login (constant across ALL droids), compared to the reviewer's
+        CHARON_DROID_ID (e.g. strong-1740901) — disjoint namespaces, the guard NEVER fires. FIX: capture
+        the BUILDING droid's CHARON_DROID_ID at build/submit time (per-PR author-droid marker) and compare
+        the reviewer's CHARON_DROID_ID against THAT. Test MUST include reviewer==builder → BLOCKED (real
+        production identities, not fabricated matching values).
+    B2. FAIL-CLOSED. A diff-fetch failure fell back to a metadata-only "review" that could still emit
+        APPROVE-FOR-MERGE. Any inability to genuinely review (diff fetch, CG error, parse failure) must
+        produce NEEDS-REVISION/BOUNCE or hard error — NEVER APPROVE.
+    B3. REAL test, WIRED into CI. The fail-on-revert test fabricated matching values (tested nothing) and
+        was never added to CI_SUITES in fleet/checks/rig-ci-scope.sh (so it never ran). Test the actual
+        production path AND register it so CI executes it.
+    B4. PROMPT-INJECTION. The raw untrusted PR diff was embedded unescaped and the verdict parser took the
+        FIRST regex match over the model's full output (incl. the diff) — a PR can steer its own approval.
+        Isolate/escape the diff; parse ONLY the reviewer model's own verdict section (robust delimiter).
+    Also: do NOT commit fleet/state/review-queue.tsv (gitignored ephemeral state — it was committed); and
+    satisfy the substrate-first gate (CI was RED — the PR touched no board ticket).
+
   Build a reviewer-tab pool that mirrors the SG-tab work model for PR REVIEWS. COMPOSE, don't hand-roll —
   reuse claim.sh's atomic claim ladder, the existing headless review loop ([[charon-headless-review-loop]]
   — `opencode --model charon/*`, off-Claude via CG), and the board/state substrate.
