@@ -183,10 +183,12 @@ def snapshot_usage() -> dict | None:
     url = status_url
     if sid:
         url = f"{_cost_url_from_status_url(status_url)}?session={quote(sid, safe='')}"
+    if urlsplit(url).scheme != "https":
+        return None
     try:
         req = urllib.request.Request(
             url, headers={"Authorization": f"Bearer {token}"})
-        with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:  # nosec B310 - url is asserted https-only above (scheme gate); no http/file/custom schemes can reach this call
             body = json.loads(resp.read())
     except Exception:  # noqa: BLE001 - best-effort: any failure -> None upstream
         return None
