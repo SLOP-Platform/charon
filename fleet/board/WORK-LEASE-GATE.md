@@ -7,12 +7,13 @@ branch: feat/work-lease-gate
 depends_on:
 serial_justified: one gate — the lease check + its write-boundary enforcement + the fail-on-revert proof are a single coupled mechanism; splitting ships a check nothing enforces, or enforcement with no check.
 work_class_note: |
-  Operator-directed 2026-07-23 after a real clobber: a manager-spawned build subagent worked in the SHARED
-  main checkout with NO fleet claim → a CG tab double-claimed the same ticket + deleted its branch, and a
-  --commit-dirty land swept the subagent's WIP to master unreviewed ([[commit-dirty-sweeps-subagent-wip]]).
-  Mechanize [[one-checkout-one-agent]] as a HARD GATE that stops ANY session type (manager subagent OR CG
-  tab) from clobbering another or working the same ticket. Cheap · simple · elegant.
-  Generalizes SUBAGENT-WORKTREE-SANDBOX (SEC-SBX) from "confine subagents" to "confine ALL work sessions".
+  Operator-directed 2026-07-23 after a real clobber. REUSE-CHECK (operator-flagged): SUBAGENT-WORKTREE-
+  SANDBOX (SEC-SBX) already DESIGNS the FILESYSTEM boundary (bwrap: a sub can't write outside its worktree)
+  — but it's designed-not-built. THIS ticket is the CHEAP COMPLEMENTARY slice, NOT a duplicate: the git
+  COMMIT-BOUNDARY check + "every work-session (incl. manager subagents) is ASSIGNED a claimed worktree,
+  never dropped into main" — the claim/ownership half the sandbox assumes but doesn't provide. Two layers of
+  one gate: SEC-SBX = filesystem confinement (heavier, adopt-first); this = the cheap git-level enforcement
+  that stops the clobber today with no bwrap. [[commit-dirty-sweeps-subagent-wip]] [[one-checkout-one-agent]]
 accept: |
   ONE universal work-lease gate, enforced at the WRITE BOUNDARY (the cheap chokepoint where clobber happens):
     1. **Lease = the existing atomic claim, made MANDATORY for every session type.** REUSE `claim.sh`'s
