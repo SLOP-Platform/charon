@@ -1,4 +1,4 @@
-repo: charon-private
+repo: charon
 tier: economy
 difficulty: 3
 work_class: routing

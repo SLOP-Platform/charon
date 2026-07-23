@@ -1,3 +1,4 @@
+repo: charon
 tier: frontier
 difficulty: 4  # auto-seeded from tier (D1 hybrid)
 work_class: money-path

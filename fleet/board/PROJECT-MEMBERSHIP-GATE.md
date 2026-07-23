@@ -1,3 +1,4 @@
+repo: charon-private
 tier: economy
 difficulty: 2
 work_class: rig-meta
