@@ -1,6 +1,7 @@
 repo: charon-private
 tier: strong
 difficulty: 3
+priority: 0
 work_class: rig-meta
 branch: feat/launcher-crash-partial-detect
 serial_justified: One cohesive exit-handling change in the launcher's droid-stand-down path; the detection + labeling + PR-status are a single decision point.
