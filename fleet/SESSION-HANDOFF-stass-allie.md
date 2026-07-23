@@ -859,7 +859,7 @@ Totals:  ✅ done=47  🔵 in-review=1  🟠 building=3  🟡 queued=14  🟣 de
 ### Foreman tier-health (auto)
 ```
 --- foreman handoff ---
-/home/stack/charon-private/fleet/foreman-cadence.sh: line 76: FOREMAN_FLEET: unbound variable
+(foreman section clean — the FOREMAN_FLEET unbound-variable red captured here at generation was root-fixed this session; foreman-cadence.sh now defaults it to $FLEET)
 
 ### Foreman tier-health (auto)
 
