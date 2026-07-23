@@ -1,5 +1,13 @@
 # Charon Fleet — Session Handoff (2026-07-21T02:01:30Z) — luminara-unduli
 
+> ## ⛔ SUPERSEDED / DO NOT BOOTSTRAP FROM THIS FILE
+> This file is a **known-bad frankenstein handoff** (RCA 2026-07-23): the name `luminara-unduli` was
+> REUSED by a 2026-07-23 session whose session-end edit landed on top of this 2026-07-21 file, leaving
+> a **stale GENERATED-STATE block** (product HEAD `db62c61`, ~30+ commits behind) and **two
+> contradictory "Manager's first actions" sections**. Everything below is historical/unreliable.
+> **Current source of truth:** `fleet/SESSION-HANDOFF-stass-allie.md` + `fleet/session-notes/NEXT-SESSION-RANK0.md`.
+> Durable fix in flight: tickets HANDOFF-NAME-ALLOCATOR / HANDOFF-GATE-NONBYPASSABLE / RECONCILE-HANDOFF-FRESHNESS.
+
 > **Per-session handoff.** Each session writes: `SESSION-HANDOFF-$SESSION.md`.
 > No collisions. Next session reads ALL: `SESSION-HANDOFF-*.md`.
 
