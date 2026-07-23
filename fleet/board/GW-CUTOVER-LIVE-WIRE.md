@@ -2,6 +2,7 @@ repo: charon
 tier: strong
 difficulty: 5
 work_class: money-path
+priority: 1
 branch: feat/gw-cutover-live-wire
 parked: false
 depends_on: GW-BRIDGE-1-DOWNGRADE-REHOST, GW-BRIDGE-2-METERING-SPEND, GW-BRIDGE-3-STREAMING-SSE, GW-BRIDGE-4-PARK-COOLDOWN
