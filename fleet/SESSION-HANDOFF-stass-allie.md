@@ -181,9 +181,22 @@ d944a26 feat(egress): Phase-1 app-layer key-exfil control — preset-derived all
    It SUBSUMES R44 (dogfood-gate), R45 (inert-startup), KS24 (lens-drift), board-trust/auto-retire, the
    owns-untracked/gitignore class, AND BLAST-TIER's review-gate + gate-blindness-ledger. **Build ADOPT-
    FIRST** — the WORKLOOP spike VALIDATED the reconciliation-loop as implement-as-pattern (no tool adopts
-   "reconcile over Charon's own state"); still consult ao/merge-queue per its verdict. Deliverable =
-   design doc for OPERATOR REVIEW. Manager- or frontier-build (high blast + eval-circularity). Do NOT
-   start it until the operator re-confirms scope next session.
+   "reconcile over Charon's own state"). Deliverable = design doc for OPERATOR REVIEW; spawns one-lens
+   build tickets on approval. Manager- or frontier-build.
+   **SCOPE CONFIRMED (operator 2026-07-23) — proceed to draft, NO re-confirm needed:**
+   - **v1 = CHEAP high-value reconcilers ONLY:** board↔PR↔done, owns-tracked (the untracked-deliverable
+     class), gate-declared-vs-actually-wired. Phase R44 e2e-observable-effects + the BLAST-TIER review-gate
+     to **v2** (R44's "prove a feature is EXERCISED with observable effects, not just reachable" is the hard
+     part — deliberately deferred).
+   - **Desired-state sources v1 = rig-self-contained:** ticket `owns:`, board↔PR/done markers, gate
+     declarations, owns-tracked. ADR/roadmap/config-manifest/registry drift = v2.
+   - **Enforcement:** rig = `preflight` + `land.sh` required + a timer; public product = native required-
+     check. The `land.sh` `git -C` bypass residual is closed properly ONLY via a Gitea server-side hook
+     once Gitea-primary lands — FLAG it, do NOT fake-close it.
+   - **Reconciliation LOGIC = implement-as-pattern** (validated). The glue/feedback-loop HARNESS stays an
+     OPEN SEAM pending WORKLOOP #172's finalized ao/Windmill verdict — do NOT hard-couple.
+   - **Proceed NOW**, independent of #172 (it only informs the harness seam). Grading consumer stays PARKED
+     (no grade-substrate circularity in v1).
 
 2. **WORKLOOP #172 → BOUNCE (decided, narrow — not yet executed).** Independent review VERIFIED the
    executed trials are REAL on 4-LOM (ao/Omnigent/Windmill/Archon) — AP-12 satisfied; do NOT re-run
