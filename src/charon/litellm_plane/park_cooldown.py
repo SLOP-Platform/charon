@@ -93,7 +93,7 @@ def _maybe_add_cooled(router: Any, excluded: set[str]) -> None:
         cooled: list[tuple[str, Any]] = cc.get_active_cooldowns(
             model_ids=model_ids, parent_otel_span=None,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001
         return
 
     if not cooled:
