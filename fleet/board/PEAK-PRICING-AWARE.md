@@ -1,5 +1,6 @@
 repo: charon
 tier: strong
+priority: 3
 difficulty: 3
 work_class: routing
 parked: false

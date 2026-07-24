@@ -1,5 +1,6 @@
 repo: charon-private
 tier: economy
+priority: 3
 difficulty: 3
 work_class: routing
 branch: feat/router-ledger-decay

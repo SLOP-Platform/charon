@@ -1,5 +1,6 @@
 repo: charon
 tier: economy
+priority: 0
 difficulty: 2
 work_class: greenfield-feature
 branch: feat/ft-catalog-seed
@@ -25,3 +26,5 @@ accept: |
   FAIL-ON-REVERT (tests/test_free_tier_catalog.py, new): the three new presets are importable/parse; the
   catalog returns groq's 14400 rpd and mistral's monthly cap in the normalized shape; an unknown provider
   returns None (no limits). Revert a preset/seed row → its test fails.
+
+SG-READY-NOTE 2026-07-24 (P0): TESTS step RED on PR #135 — fix the failing free_tier_catalog test, then merge (real work, NOT junk)
