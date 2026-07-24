@@ -5,20 +5,27 @@ WHY THIS EXISTS (drift root cause): the ticket `tier:` field was free text,
 hand-set at creation, validated for NOTHING. TIER-CANON.md defines `tier` only as
 a MODEL cost-band, never as a ticket property, so authors borrowed the model
 vocabulary (economy/strong/frontier) with no mapping function behind it. Result:
-an 86%-default-to-`strong` catch-all and wrong-capability routing (assign.py:12
+an 86%-default-to-`strong` catch-all and wrong-capability routing (assign.py:14-16
 filters eligible models by the ticket's declared tier). This module is the missing
 mapping function — a PURE, deterministic rule from signals ALREADY captured on
 every live ticket (work_class, difficulty, owns) to a tier, plus the LiteLLM
 tier-TAG (the routing half) that maps that tier to a litellm.Router model-group.
 
-TWO CONSUMERS, ONE TABLE (mirrors TIER-CANON's TIER_COST_THRESHOLDS discipline):
-  1. validate_board.sh drift check  — declared `tier` vs rule-derived tier; a
-     hand-set wrong tier can no longer silently drift (WARN, RED for a
-     configurable set in fleet/state/tier-drift-red.txt).
-  2. the gateway routing path        — classify_tier() emits the tier tag; the
-     tag resolves to a litellm model-group via fleet/tier-models.tsv (see
-     build_router_model_list / --router-validate). ZERO new deps: reuses the
-     litellm.Router already vendored for the gateway.
+ONE LIVE CONSUMER (mirrors TIER-CANON's TIER_COST_THRESHOLDS discipline):
+  1. validate_board.sh drift check — LIVE. Declared `tier` vs rule-derived tier;
+     a hand-set wrong tier can no longer silently drift (WARN by default, RED —
+     rc DRIFT_RED_RC — for the ids in fleet/state/tier-drift-red.txt).
+
+DESIGNED, NOT YET WIRED (no production caller — do not assume it is running):
+  2. the gateway routing path. classify_tier() is intended to emit a tier TAG
+     that resolves to a litellm model-group via fleet/tier-models.tsv (see
+     build_router_model_list / the `router-validate` subcommand). As of this
+     commit the real routing path (fleet/fleet-droid.sh tier_chain,
+     fleet/charon-run.sh) parses fleet/tier-models.tsv with awk and never calls
+     into this module; validate_router() is a self-contained proof exercised
+     only by fleet/capability/tests/test_tier_classify.py. Wiring it is a
+     separate ticket — this docstring previously claimed it as a live consumer,
+     which it is not.
 
 The rule itself is documented + rationalised in the derived rubric
 (scratchpad tier-classification-rubric.md §b). Thresholds/patterns live in the
@@ -33,7 +40,32 @@ import sys
 
 # ── THE ONE TABLE: signal patterns (rubric §b "Signals") ─────────────────────
 # security-critical surfaces: mis-run key/egress/auth work leaks credentials.
-SEC_RE     = re.compile(r'egress|exfil|secret|(^|[_/])key|token|auth|providers\.py|key-canary')
+#
+# ANCHORED on path-component boundaries. The original pattern was an UNANCHORED
+# substring match, and because this is the FIRST rule with no difficulty guard it
+# routed ordinary d1 documentation to the most expensive frontier chain:
+#   docs/token-budget.md ("token")   docs/authoring-guide.md ("auth")
+#   docs/keyboard-shortcuts.md ("/key")  docs/oauth-notes.md ("auth")
+#
+# Two bands, because the words differ in how ambiguous they are as English:
+#   STRONG words are rare and effectively unambiguous in a path, so they match on
+#   any component boundary (/ _ - . or string edge). This keeps genuinely
+#   security-critical compound names firing, e.g. fleet/checks/egress-key-canary.sh
+#   ("egress"), src/charon/secrets.py, src/charon/keyprobe.py, providers.py.
+#   AMBIGUOUS words (key/token/auth) are common English fragments, so they match
+#   ONLY as a WHOLE path segment or a whole filename stem — src/charon/auth.py and
+#   fleet/auth/wire.sh are security; docs/authoring-guide.md is not.
+#
+# CASE: deliberately case-INSENSITIVE. The old rule was case-SENSITIVE only by
+# accident, which made docs/authoring-guide.md frontier while fleet/state/AUTHORS.md
+# was economy. Capitalisation of a path must never decide which model chain runs
+# the work; anchoring (not case) is what does the discrimination here.
+_SEC_STRONG = r'egress|exfil|secrets?|credentials?|keyprobe|key-canary|api[_-]?keys?|providers\.py'
+_SEC_AMBIG  = r'keys?|tokens?|auth'
+SEC_RE = re.compile(
+    r'(?:^|[/_.\-])(?:' + _SEC_STRONG + r')(?:[/_.\-]|$)'      # boundary-anchored
+    r'|(?:^|/)(?:' + _SEC_AMBIG + r')(?:\.[^/]*)?(?:/|$)',     # whole segment / stem
+    re.IGNORECASE)
 # LIVE request/spend-forwarding runtime: a bug here drops or misroutes real traffic+spend.
 LIVEFWD_RE = re.compile(r'forwarder|proxy_server|gateway\.py|litellm_plane|park_cooldown|cutover')
 # money-adjacent modules (pricing tables, inventory, ledgers, quotas).
@@ -97,6 +129,15 @@ def _field(txt: str, name: str) -> str:
     return m.group(1).strip() if m else ""
 
 
+# DISTINCT sentinel for "the gate found a RED condition". It is deliberately NOT 2:
+# `python3 <missing-file>` exits 2, and argparse exits 2 on an unknown subcommand, so
+# rc 2 from this script means "the check itself is broken" and MUST be treated by the
+# caller as a hard failure, never as a successful RED/GREEN verdict. Reserving 3 for
+# the verdict is what lets validate_board.sh fail CLOSED when its own machinery is
+# missing (previously `mv tier_classify.py .bak` made the whole check vanish, GREEN).
+DRIFT_RED_RC = 3
+
+
 def _red_set(fleet_dir: str) -> set[str]:
     """Configurable RED set — tickets whose tier drift is a hard fail, not WARN.
     One ticket id per line in fleet/state/tier-drift-red.txt (# comments ok).
@@ -111,21 +152,36 @@ def _red_set(fleet_dir: str) -> set[str]:
     return out
 
 
-def board_drift(board_dir: str):
-    """-> list of (ticket, declared, derived, reason) where declared != derived."""
+def board_scan(board_dir: str):
+    """-> (rows, examined).
+
+    rows     = [(ticket, declared, derived, reason)] where declared != derived
+    examined = how many tickets actually carried a `tier:` and were compared.
+
+    `examined` exists so the caller can tell "zero drift" apart from "zero
+    tickets": a bad --board, an empty checkout or a board where nobody declares
+    `tier:` used to produce a confident silent pass (NON-VACUOUS requirement).
+    """
     rows = []
+    examined = 0
     for f in sorted(glob.glob(os.path.join(board_dir, "*.md"))):
         txt = open(f).read()
         tid = os.path.basename(f)[:-3]
         declared = _field(txt, "tier")
         if not declared:
             continue  # tier-missing is validate_board's own concern, not ours
+        examined += 1
         derived, reason = classify_tier(
             _field(txt, "work_class"), _field(txt, "difficulty"), _field(txt, "owns")
         )
         if derived != declared:
             rows.append((tid, declared, derived, reason))
-    return rows
+    return rows, examined
+
+
+def board_drift(board_dir: str):
+    """-> list of (ticket, declared, derived, reason) where declared != derived."""
+    return board_scan(board_dir)[0]
 
 
 # ── LiteLLM tier-TAG -> model-group (the routing half) ───────────────────────
@@ -215,14 +271,22 @@ def main(argv=None):
 
     if args.cmd == "drift":
         red = _red_set(fleet)
-        rows = board_drift(args.board)
+        rows, examined = board_scan(args.board)
         any_red = False
         for tid, decl, der, why in rows:
             level = "RED" if tid in red else "WARN"
             any_red = any_red or (level == "RED")
             print(f"{level} tier-drift: {tid} declared={decl} derived={der} :: {why}")
-        # exit 2 iff a RED-set ticket drifted (validate_board maps this to a hard fail)
-        return 2 if any_red else 0
+        # NON-VACUOUS: a scan that compared ZERO tickets proves nothing. Zero
+        # discovery (bad --board, empty board dir, no `tier:` anywhere) is a RED,
+        # not a silent pass.
+        if examined == 0:
+            print(f"RED tier-drift-vacuous: compared 0 declared tiers under {args.board} "
+                  f"— a zero-item scan cannot prove the board is drift-free")
+            any_red = True
+        # exit DRIFT_RED_RC iff a RED-set ticket drifted or the scan was vacuous.
+        # (validate_board maps this rc — and ONLY this rc — to a hard fail.)
+        return DRIFT_RED_RC if any_red else 0
 
     if args.cmd == "router-validate":
         for line in validate_router(os.path.join(fleet, "tier-models.tsv")):

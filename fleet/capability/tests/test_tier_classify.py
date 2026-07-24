@@ -1,7 +1,11 @@
 """test_tier_classify.py — fail-on-revert guard for the work->tier classifier.
 
-Guards the ONE tier rule (fleet/capability/tier_classify.py) that both the
-validate_board drift check and the gateway routing path read. Goes RED if:
+Guards the ONE tier rule (fleet/capability/tier_classify.py). Its only LIVE
+consumer is the validate_board drift check; the litellm routing half is designed
+but not wired (see the module docstring), and (d) below proves the tag would
+resolve, not that anything in production calls it. The gate-executed red-proof
+for the drift GATE itself lives in fleet/tests/tier-drift.test.sh (this pytest
+file is run by no gate). Goes RED if:
   (a) the rubric anchors stop deriving their intended tier (rule regressed),
   (b) the board drift scan stops catching a deliberately mis-tiered ticket,
   (c) a rule REVERT stops changing a known ticket's derived tier (the drift

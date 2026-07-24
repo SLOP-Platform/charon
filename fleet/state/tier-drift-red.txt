@@ -1,0 +1,55 @@
+# tier-drift-red.txt — the HARD-FAIL set of the validate_board tier-drift gate (2f).
+#
+# Read by fleet/capability/tier_classify.py (_red_set). A ticket id listed here whose
+# declared `tier:` disagrees with the rule-derived tier makes `tier_classify.py drift`
+# exit DRIFT_RED_RC (3), which validate_board.sh maps to a RED preflight — the wave does
+# NOT launch. Every id NOT listed here is advisory (WARN, rc 0).
+#
+# WHY THIS FILE IS TRACKED: this file is what gives the gate teeth. It shipped absent in
+# the first cut of the gate, which made EVERY mismatch a WARN among 100+ existing WARN
+# lines — the gate could not go RED in any configuration. `fleet/state/*` is gitignored,
+# so .gitignore carries an explicit `!fleet/state/tier-drift-red.txt` negation; if that
+# negation is ever dropped the gate silently reverts to advisory-only.
+# Red-proofed by fleet/tests/tier-drift.test.sh (case (a) asserts this file is present,
+# non-empty AND git-tracked; case (b)/(c) drive a real mis-tier to RED through it).
+#
+# MEMBERSHIP RULE — a drift here is a hard fail because the wrong tier spends real money
+# or runs credential-handling code on a cheap model:
+#   * SECURITY-CRITICAL surfaces (SEC_RE fires on `owns`): mis-tiering down hands
+#     key/egress/auth work to the cheapest chain.
+#   * MONEY-PATH / ROUTING work (work_class money-path|routing, or a live-forwarding /
+#     pricing / ledger module in `owns`): mis-tiering either burns frontier spend on
+#     trivia or runs spend-routing logic on a model that cannot hold the invariants.
+# One ticket id per line; `#` comments and blank lines ignored.
+# Ids that no longer exist on the board are inert (matched by id, never resolved), so a
+# done/removed ticket can be left or pruned freely.
+
+# ── security-critical ────────────────────────────────────────────────────────
+BOUNCE-1
+FIX-PROVIDER-KEY-EXFIL
+
+# ── money-path / routing ─────────────────────────────────────────────────────
+ADD-PROVIDER-MECHANIZE-COMPLETE
+ADR0016-DEPLOY-PRICED-COMPLETENESS
+DECOMPOSER-ROUTE-THROUGH-SWITCHBOARD
+DEGRADE-ALERT
+DISCOVERY-APPROVAL-WIRE
+DISCOVERY-DIFF
+FT-CATALOG-SEED
+FT-LIMITS-GROQ-RECONCILE
+FT-WIRE-QUOTA
+GATEWAY-GRADE-ORDER-MVP
+GATEWAY-NONTOKEN-METERING
+GW-BRIDGE-3-STREAMING-SSE
+GW-BRIDGE-4-PARK-COOLDOWN
+GW-CUTOVER-LIVE-WIRE
+INVENTORY-TABLE
+INVENTORY-TABLE-SHARE
+LITELLM-COST-FIELD-FIX
+ORDER-A-COST-PRIMARY-LAND
+PEAK-PRICING-AWARE
+PRICE-REFRESHER
+PRICING-LIMITS-CHECK-SH
+ROUTER-LEDGER-DECAY
+SINGLE-LEG-AUTOSWAP
+WIRE-GRADING-PRIOR-LIVE
