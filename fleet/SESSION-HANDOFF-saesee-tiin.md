@@ -183,6 +183,12 @@ e0dfd15 docs/adr 0020 accept verify only (#185)
    the control-plane's FIRING-LAYER (KS22). MUST: report carries `last_run` timestamp + manager ALARMS if the
    report is stale (anti-staleness on the reporter); server-side slow-vs-broken attribution (fixes rc=124
    false-reds); service pulls latest master. Adopt-first.
+   4b. **(operator refinement) a mechanized WATCHDOG-GATE for the service:** checks the service liveness +
+   report freshness; if stale/dead it FORCE-UPDATEs (git pull latest, clean-tree only) + RESTARTs the
+   service. Adopt the systemd pattern (`Restart=always` + `WatchdogSec` + a freshness timer) — do NOT
+   hand-roll a loop. Durability caveat: the watchdog itself must run under the OS supervisor (systemd
+   timer/unit) so it can't silently die (else "who watches the watcher" recurs). = the SELF-HEAL leg
+   applied to the sensor service itself.
 5. **The demo surfaced 60 real issues to triage** — 12 gate-test RED (8 genuine BEYOND board-correctness, 4
    slow-timeout false-reds), 8 unwired planes, 29 done-unmerged, 2 quarantined (GRACEFUL-DEGRADE,
    STRANDED-WORK-AUDIT loop-guard), 9 inert-pending. Board TSV in the demo worktree.
