@@ -4,7 +4,7 @@ priority: 0
 difficulty: 3
 work_class: rig-meta
 branch: feat/droid-bridge-register
-owns: fleet/droid-bridge.sh, fleet/fleet-droid.sh, fleet/tests/droid-bridge.test.sh
+owns: fleet/droid-bridge.sh, fleet/tests/droid-bridge.test.sh
 depends_on:
 serial_justified: name-claim + register + heartbeat + unregister-trap + pickup-gate are ONE session
   lifecycle — a droid that registers but never heartbeats (goes stale) or never unregisters (strands its
