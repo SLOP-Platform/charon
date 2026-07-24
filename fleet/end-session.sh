@@ -43,6 +43,11 @@ HANDOFF_SH="${END_SESSION_HANDOFF_SH:-$FLEET/handoff.sh}"
 CHECK_SH="${END_SESSION_CHECK_SH:-$FLEET/handoff-check.sh}"
 DEPLOY_HOOK="${END_SESSION_DEPLOY_HOOK:-$FLEET/deploy-session-end.sh}"
 
+# Process-start epoch (M2 STALE-HANDOFF GUARD). Captured ONCE at load: a handoff file whose LAST
+# GIT COMMIT predates this value was committed by a PRIOR session, not this run — the signal a
+# REUSED session name has landed on a stale handoff. Overridable for tests via END_SESSION_PROC_START.
+PROC_START="${END_SESSION_PROC_START:-$(date +%s)}"
+
 say(){ printf '%s\n' "$*"; }
 
 # ---------------------------------------------------------------------------
@@ -171,6 +176,35 @@ end_session(){
   fi
 
   local file="${END_SESSION_FILE:-${selftest_file:-$FLEET/SESSION-HANDOFF-$session.md}}"
+
+  # -- M2 STALE-HANDOFF GUARD (adversarial review 2026-07-24) ---------------------------------
+  # Belt-and-suspenders on top of the name allocator. The bare `-f` check in Phase 1 only asks
+  # "does a handoff file exist?" — so a REUSED session name that finds a SESSION-HANDOFF-<name>.md
+  # committed by a PRIOR session (e.g. 2 days ago) is treated as "already generated", falls
+  # through to Phase 2, PASSES handoff-check on the STALE content, and commits a days-old handoff
+  # as if it were this session's work (HANDOFF-FAILURE-RCA: exactly the class the allocator fights,
+  # here on the CLOSE side). Distinguishing a stale file from a legit Phase-2 file: a file THIS
+  # session wrote is uncommitted/dirty in the working tree at close time (end-session is the thing
+  # that commits it). A file that is tracked, UNMODIFIED vs HEAD, and whose LAST COMMIT predates
+  # this process's start was written by a previous session. In that case: REFUSE loudly. The
+  # operator claims a fresh name (claim-jedi-name.sh) or forces a rewrite with --regen.
+  if [ -f "$file" ] && [ "$regen" -ne 1 ]; then
+    local _wt_status _commit_epoch
+    _wt_status="$("$GIT_BIN" -C "$PRIV" status --porcelain -- "$file" 2>/dev/null || echo '__GIT_FAIL__')"
+    if [ "$_wt_status" != "__GIT_FAIL__" ] && [ -z "$_wt_status" ]; then
+      # tracked AND clean vs HEAD -> this run did not write it. Is its last commit pre-session?
+      _commit_epoch="$("$GIT_BIN" -C "$PRIV" log -1 --format=%ct -- "$file" 2>/dev/null || echo '')"
+      if [ -n "$_commit_epoch" ] && [ "$_commit_epoch" -lt "$PROC_START" ] 2>/dev/null; then
+        say "end-session: REFUSING to close — $file already exists, is committed & UNMODIFIED, and"
+        say "  its last commit ($(date -u -d "@$_commit_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "epoch $_commit_epoch")) PREDATES this session's start."
+        say "  That is a STALE handoff from a PRIOR session — the name '$session' was REUSED. Closing"
+        say "  now would commit a days-old handoff as this session's work (silent stale-file revival)."
+        say "  Fix (preferred): claim a FRESH name ->  bash $FLEET/claim-jedi-name.sh"
+        say "  Or force-regenerate over it ->          SESSION=$session bash $FLEET/end-session.sh --regen"
+        return 1
+      fi
+    fi
+  fi
 
   # -- Phase 1: generate machine-state if the handoff does not exist (or --regen) -------------
   if [ ! -f "$file" ] || [ "$regen" -eq 1 ]; then
