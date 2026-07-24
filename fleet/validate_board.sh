@@ -398,6 +398,22 @@ try:
 except Exception as e:
     wci.append(f"parallelizability-check-failed: could not run parallelizability-gate.sh — {e}")
 
+# GATE-PARITY-LAND-VS-LAUNCH: land-gate MUST be >= launch-gate — nothing lands that the
+# launcher would refuse. Re-runs EVERY launch-refusal predicate (parallelizability today,
+# extensible) HARD at land time; see fleet/checks/gate-parity.sh. Unlike the advisory scan
+# just above, ANY non-zero exit here is a real RED (fail-closed on an unrunnable predicate).
+try:
+    _gp = subprocess.run(
+        ["bash", os.path.join(fleet, "checks", "gate-parity.sh"), "scan"],
+        capture_output=True, text=True, timeout=30
+    )
+    if _gp.returncode != 0:
+        for _line in (_gp.stdout + "\n" + _gp.stderr).splitlines():
+            if _line.strip():
+                red.append(f"gate-parity: {_line.strip()}")
+except Exception as e:
+    red.append(f"gate-parity-check-failed: could not run gate-parity.sh — {e}")
+
 # 6. Uncommitted work — no session left dirty tracked files on disk.
 # Modified tracked files in src/ = a session exited without committing.
 # Untracked files (??) are OK — they belong to the active session.
