@@ -5,6 +5,7 @@ difficulty: 2
 work_class: rig-meta
 branch: feat/board-reds-triage
 depends_on: 4LOM-CANARY-SERVICE
+real-dep: 4LOM-CANARY-SERVICE — consumes its canary-report.tsv slow-vs-broken attribution to know which reds are genuine (vs slow false-reds); cannot disposition without it
 owns: fleet/state/gate-red-disposition.tsv, fleet/reds-triage.sh, fleet/tests/reds-triage.test.sh
 serial_justified: the disposition ledger + the "every genuine red is dispositioned or it's flagged" gate are
   one anti-forgetting mechanism — a triage with no durable ledger just re-loses the reds it was meant to fix.
