@@ -56,6 +56,32 @@
     "work_units": "test cases collected by pytest"
   },
   {
+    "id": "diff-cover",
+    "name": "Diff coverage gate",
+    "domain": "coverage",
+    "enforcer": "python3 tools/diff_cover_gate.py",
+    "covers": "every new/changed line in the PR diff must be exercised by the test run",
+    "ci_step": true,
+    "invariant": "No new/changed line is unexercised",
+    "red_proof": "tests/test_diff_cover_mutmut_gate.py",
+    "min_work_units": 0,
+    "work_units": "changed lines in src/ tools/ tests/ checked for coverage",
+    "work_units_note": "0 when there is no diff (trunk check), actual line count on a feature branch"
+  },
+  {
+    "id": "mutmut",
+    "name": "Mutation testing gate (diff-scoped)",
+    "domain": "mutation",
+    "enforcer": "python3 tools/mutmut_diff_gate.py",
+    "covers": "every changed line has a test that can kill a mutant",
+    "ci_step": true,
+    "invariant": "No surviving mutant in the diff's changed files",
+    "red_proof": "tests/test_diff_cover_mutmut_gate.py",
+    "min_work_units": 0,
+    "work_units": "changed Python source files mutated and tested",
+    "work_units_note": "0 when there is no diff (trunk check), actual file count on a feature branch"
+  },
+  {
     "id": "validate-board",
     "optional": true,
     "name": "Fleet board validation",

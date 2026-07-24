@@ -54,6 +54,12 @@ jobs:
           PYTEST_DEBUG_TEMPROOT: ${{ runner.temp }}
         run: pytest -q -n auto
 
+      - name: diff-cover gate (every new line must be exercised)
+        run: python3 tools/diff_cover_gate.py
+
+      - name: mutmut gate (diff-scoped mutation testing)
+        run: python3 tools/mutmut_diff_gate.py
+
       - name: render review-log (verify all fragments are readable)
         # docs/REVIEW-LOG.md is gitignored (generated); --check would always fail on a
         # fresh CI checkout. Run in generate mode to prove all fragments are valid.

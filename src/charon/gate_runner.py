@@ -52,6 +52,8 @@ CHECKS: list[tuple[list[str], str]] = [
     (["python3", "tools/check_no_vacuous.py"], "no-vacuous"),
     (["python3", "tools/check_fail_loud.py"], "fail-loud"),
     (["python3", "-m", "pytest", "-q"], "pytest"),
+    (["python3", "tools/diff_cover_gate.py"], "diff-cover"),
+    (["python3", "tools/mutmut_diff_gate.py"], "mutmut"),
     # docs/REVIEW-LOG.md is gitignored (generated artifact from the per-ticket
     # fragments in docs/review-log/). Running in generate mode is idempotent
     # (deterministic render of the SoT fragments) and is what .github/workflows/ci.yml

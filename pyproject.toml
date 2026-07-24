@@ -28,7 +28,7 @@ service = ["fastapi>=0.110", "uvicorn>=0.29", "pydantic>=2"]
 # when the live wire-in lands (accepting the ~218MB + native deps ADR-0017 calls out).
 # httpx ships with litellm and backs `no_redirect_client()`.
 router = ["litellm>=1.93"]
-dev = ["pytest>=8", "pytest-xdist>=3.8", "ruff>=0.4", "mypy>=1.9", "pip-audit>=2.7", "httpx>=0.27"]
+dev = ["pytest>=8", "pytest-xdist>=3.8", "ruff>=0.4", "mypy>=1.9", "pip-audit>=2.7", "httpx>=0.27", "diff-cover>=9", "mutmut>=3.6"]
 # BUILD-time only — never installed into the privileged gateway path (ADR-0005 D5)
 packaging = ["pyinstaller>=6.0"]
 
@@ -41,6 +41,9 @@ Repository = "https://github.com/SLOP-Platform/charon"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/charon"]
+
+[tool.mutmut]
+source_paths = ["src"]
 
 [tool.ruff]
 line-length = 100
