@@ -1,7 +1,7 @@
 repo: charon-private
 tier: strong
 difficulty: 3
-priority: 1
+priority: 0
 work_class: rig-meta
 branch: feat/reconcile-gate-wired
 owns: fleet/checks/reconcile-gate-wired.sh, fleet/tests/reconcile-gate-wired.test.sh
@@ -13,6 +13,14 @@ source: fleet/state/UNIFIED-RECONCILIATION-GATE-DESIGN.md §1.3 (design PR #178,
 work_class_note: rig-meta — the wired-but-never-run / built-but-inert meta-gate (the literal
   GATE-GAP-LEDGER row on tools/check_catalog_case_quant.py). Rig integrity, no product feature.
 note: |
+  PRIORITY BUMPED 1->0 (2026-07-23, P0 mint wave): fleet/state/META-TOOL-WIRED-AND-WORKING.md's
+  adopt-first verdict names landing this stranded detector (branch feat/reconcile-gate-wired,
+  commit d603494, "detector, no wire") the SINGLE HIGHEST-LEVERAGE action in the whole
+  built-but-not-wired class — the meta-tool that detects built-but-inert code is ITSELF
+  built-but-inert. No duplicate ticket was minted for "land it" (KSF-VENDOR-GATES, this same
+  wave, depends on this ticket conceptually per that doc's adoption-plan step order, not via a
+  hard owns-overlap depends_on since the files are disjoint) — this IS that ticket, priority-
+  aligned instead of forked. [[detection-ticketed-never-built]]
   §1.3 — the gate-declared-vs-actually-wired reconciler. desired-source = every gate/check/rule
   declared in fleet/checks/*.sh + *.py, tools/check_*.py + *.sh (cross-repo product suite),
   RULE-REGISTRY.tsv rows with status ∈ {ACTIVE,ENFORCED}, and EVAL-REGISTRY.md rows with
