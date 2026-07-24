@@ -1,0 +1,13 @@
+# Charon KSF manifest — gate registry for coverage_ssot and other KSF meta-gates.
+# The gates listed here are the mechanized gates that coverage_ssot expects to
+# find implementations for in tools/_vendor/ksf_gates/.
+# Charon has no KSF module.toml registrations, so modules.list is empty.
+
+[gates]
+list = [
+  "coverage_ssot",
+  "wiring_alignment",
+  "redproof",
+  "no_vacuous",
+  "fail_loud",
+]
