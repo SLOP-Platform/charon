@@ -227,6 +227,30 @@ for t, d in tickets.items():
             red.append(f"difficulty-invalid: {t} difficulty '{diff_raw}' "
                        f"is not a valid integer 1-5")
 
+# 2f. TIER DRIFT: declared `tier:` vs the rule-derived tier (work->tier classifier,
+# fleet/capability/tier_classify.py). Root cause of tier drift was that `tier` was
+# free text, hand-set, validated for NOTHING — so an author's wrong guess routed real
+# work/spend onto a wrong-capability model (assign.py filters eligible models by the
+# ticket's declared tier). This re-derives tier from signals already validated on every
+# ticket (work_class/difficulty/owns) and flags mismatches: WARN by default, RED for the
+# configurable set in fleet/state/tier-drift-red.txt (rc 2). REUSE the classifier — the
+# rule table lives in ONE place, consumed here and by the gateway routing path.
+try:
+    _td = subprocess.run(
+        ["python3", os.path.join(fleet, "capability", "tier_classify.py"), "drift"],
+        capture_output=True, text=True, timeout=20
+    )
+    for _line in _td.stdout.splitlines():
+        _line = _line.strip()
+        if _line.startswith("RED "):
+            red.append(_line[4:].strip())
+        elif _line.startswith("WARN "):
+            warn.append(_line[5:].strip())
+    if _td.returncode not in (0, 2):
+        red.append(f"tier-drift-check-failed: tier_classify.py drift exited {_td.returncode} — {_td.stderr.strip()[:200]}")
+except Exception as e:
+    red.append(f"tier-drift-check-failed: could not run tier_classify.py — {e}")
+
 # 4. owns partition. A collision is only a LAUNCH RISK if >=2 of the owners are
 # not-done (could still run concurrently). Done/done or done/live pairs already
 # sequenced by merge order -> historical, reported INFO not RED.
