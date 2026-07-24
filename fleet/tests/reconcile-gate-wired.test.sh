@@ -140,6 +140,22 @@ out_d="$(RCW_FLEET="$ROOT" \
                 || bad "(d) product-repo absent -> non-zero (got exit 0 — UNVERIFIED treated as GREEN)"
 has "$out_d" "UNVERIFIED" "(d) output contains UNVERIFIED"
 
+# ---- (e) SELF-WIRING: this gate must not be its own R-G (the ticket's founding complaint:
+# "detector, no wire"). Runs against the REAL fleet/preflight.sh, not a fixture -- reverting
+# the preflight.sh wiring line (or the RECONCILE_GATE_WIRED_CHECK var) flips this RED. ----
+echo ""
+echo "=== (e) reconcile-gate-wired.sh is wired into fleet/preflight.sh (not self-inert) ==="
+grep -q "reconcile_gate_wired_gate" "$SRC/preflight.sh" \
+  && ok "(e) preflight.sh calls reconcile_gate_wired_gate in the scan chain" \
+  || bad "(e) preflight.sh does NOT call reconcile_gate_wired_gate (gate reverted to inert)"
+grep -q "checks/reconcile-gate-wired.sh" "$SRC/preflight.sh" \
+  && ok "(e) preflight.sh references checks/reconcile-gate-wired.sh" \
+  || bad "(e) preflight.sh does NOT reference checks/reconcile-gate-wired.sh"
+out_e="$(RCW_FLEET="$SRC" bash "$GATE" 2>&1)"
+printf '%s\n' "$out_e" | grep -q "R-G.*reconcile-gate-wired\.sh" \
+  && bad "(e) reconcile-gate-wired.sh appears in its OWN live R-G report (self-inert, gate reverted)" \
+  || ok "(e) reconcile-gate-wired.sh does NOT appear in its own live R-G report"
+
 echo ""
 echo "--- $PASS passed, $FAIL failed ---"
 [ "$FAIL" -eq 0 ] || exit 1

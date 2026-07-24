@@ -21,7 +21,7 @@ TAB=$'\t'
 FOREMAN_VERDICT_LINES=""
 
 VALID_SEV="P0 P1 P2"
-VALID_AREA="bridge board ci gate routing billing packaging other"
+VALID_AREA="bridge board ci gate routing billing packaging other rig-meta"
 
 die(){ echo "error: $*" >&2; exit 1; }
 in_set(){ local x="$1"; shift; for e in "$@"; do [ "$x" = "$e" ] && return 0; done; return 1; }
@@ -781,6 +781,49 @@ graphify_freshness_gate(){
   fi
 }
 
+# --- reconcile_gate_wired_gate: MECHANIZES §1.3 (UNIFIED-RECONCILIATION-GATE-DESIGN.md, PR #178)
+# — the built-but-inert META-gate. Runs checks/reconcile-gate-wired.sh EVERY preflight (identical
+# machinery to board_gate / coverage_gate / graphify_freshness_gate): it cross-references every
+# declared check (fleet/checks/*.sh|*.py, product tools/check_*.py|*.sh, RULE-REGISTRY mechanized
+# rows, EVAL-REGISTRY ADOPT rows) against the actual firing layers (this file, land.sh,
+# validate_board.sh, hooks/session-start.sh, foreman-cadence.sh, rig+product CI workflows,
+# transitively through dispatchers like rig-ci-scope.sh) and REDS on R-G (declared but never
+# fired — built-but-inert) or R-H (fired but never declared — unregistered runner). This wiring
+# is itself the fix for the meta-gate's own founding complaint: before this line existed,
+# reconcile-gate-wired.sh appeared in its OWN R-G report (the detector was built-but-inert).
+# NOTE (honest seam, RECONCILE-GATE-WIRED ticket): at wiring time this rig carries a KNOWN
+# pre-existing R-G backlog (checks declared but not yet wired into any firing layer) that
+# predates this gate and is NOT this ticket's owns:. Closing each of those is RECONCILE-WIRING's
+# tracked scope (depends_on this ticket); this tracked red points there, it does not hide it.
+RECONCILE_GATE_WIRED_RED_ID="reconcile-gate-wired-gap"
+RECONCILE_GATE_WIRED_CHECK="$HERE/checks/reconcile-gate-wired.sh"
+_reconcile_gate_wired_red_status(){ awk -F"$TAB" -v id="$RECONCILE_GATE_WIRED_RED_ID" '$1==id{print $7; exit}' "$TSV"; }
+_reconcile_gate_wired_red_ensure_open(){
+  local st; st="$(_reconcile_gate_wired_red_status)"
+  if [ -z "$st" ]; then
+    cmd_add "$RECONCILE_GATE_WIRED_RED_ID" P1 rig-meta \
+      "reconcile-gate-wired meta-gate RED: a declared check is built-but-inert (R-G, never fired from any real firing layer) or a snippet is firing but unregistered (R-H). Run: bash fleet/checks/reconcile-gate-wired.sh — the pre-existing backlog is RECONCILE-WIRING's tracked scope; a NEW regression here is this branch's to fix." \
+      "bash $RECONCILE_GATE_WIRED_CHECK" >/dev/null 2>&1 || true
+  elif [ "$st" = closed ]; then
+    local tmp; tmp="$(mktemp)"
+    awk -F"$TAB" -v OFS="$TAB" -v id="$RECONCILE_GATE_WIRED_RED_ID" \
+      '/^#/{print;next} $1==id{$7="open";$8=""} {print}' "$TSV" > "$tmp" && mv "$tmp" "$TSV"
+  fi
+}
+reconcile_gate_wired_gate(){
+  [ -f "$RECONCILE_GATE_WIRED_CHECK" ] || { echo "reconcile_gate_wired_gate: reconcile-gate-wired.sh not found at $RECONCILE_GATE_WIRED_CHECK"; return 0; }
+  local out rc; out="$(bash "$RECONCILE_GATE_WIRED_CHECK" 2>&1)"; rc=$?
+  if [ $rc -eq 0 ]; then
+    echo "reconcile_gate_wired_gate: $(printf '%s\n' "$out" | grep -m1 -E 'VERDICT:' | sed 's/^ *//')"
+    [ "$(_reconcile_gate_wired_red_status)" = open ] && \
+      cmd_close "$RECONCILE_GATE_WIRED_RED_ID" --override "auto: reconcile-gate-wired GREEN" >/dev/null 2>&1 || true
+  else
+    _reconcile_gate_wired_red_ensure_open
+    echo "reconcile_gate_wired_gate: RECONCILE-GATE-WIRED META-GATE RED — AUTO-REGISTERED tracked red '$RECONCILE_GATE_WIRED_RED_ID' (see: bash fleet/checks/reconcile-gate-wired.sh)"
+    printf '%s\n' "$out" | grep -E '^  R-[GH] ' | sed 's/^ */    /'
+  fi
+}
+
 # --- startup_budget_gate: MECHANIZES §13 startup context budget (MANAGER-OPERATING-RULES.md).
 # Tracked startup artifact files with per-file byte budgets. A file exceeding its budget
 # AUTO-REGISTERS a blocking P1 red 'startup-budget-exceeded' that self-closes when all files
@@ -875,7 +918,7 @@ startup_budget_selftest(){
 # functions above are exposed with NO side effects.
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 case "${1:-scan}" in
-  scan|"") run_sync_checkouts; bash "$HERE/reconcile-merged.sh"; board_gate; executor_gate; coverage_gate; handoff_gate; done_merge_gate; hold_reason_gate; detect_needs_push; startup_budget_gate; graphify_freshness_gate; bash "$HERE/retire-done.sh"; cmd_scan; scan_rc=$?; cmd_detect; foreman_advisory; show_operator_actions; exit $scan_rc ;;
+  scan|"") run_sync_checkouts; bash "$HERE/reconcile-merged.sh"; board_gate; executor_gate; coverage_gate; handoff_gate; done_merge_gate; hold_reason_gate; detect_needs_push; startup_budget_gate; graphify_freshness_gate; reconcile_gate_wired_gate; bash "$HERE/retire-done.sh"; cmd_scan; scan_rc=$?; cmd_detect; foreman_advisory; show_operator_actions; exit $scan_rc ;;
   add)     shift; cmd_add "$@" ;;
   close)   shift; cmd_close "$@" ;;
   list)    shift; cmd_list "$@" ;;
