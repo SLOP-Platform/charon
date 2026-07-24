@@ -52,6 +52,13 @@ export CHARON_TIER_MODELS="$TIERS"
 CLEAN_STATUS="$D/status-clean.json"
 printf '{"pools":{},"balance":{},"cooldown_seconds":{}}\n' > "$CLEAN_STATUS"
 export CHARON_GATEWAY_STATUS_FILE="$CLEAN_STATUS"
+# COST-CAP (money-path guardrail): the resolver ledgers cap decisions to the provider-exhaustion
+# ledger. Point it at a THROWAWAY file so this test never appends to the live ledger. NOTE these
+# tests deliberately read the REAL fleet/state/TIER-CANON.md ceiling (no CHARON_TIER_CANON override)
+# — case 6a below is what proves the documented DETENTION carve-out end-to-end: an all-HARD-detained
+# `strong` band still escalates to `frontier`, ABOVE the `SPILL_UP_COST_CEILING = strong` cap,
+# because safety escalation is not cost-bounded.
+export CHARON_EXHAUST_LEDGER="$D/exhaust-ledger.tsv"
 
 # tier chain contains M (fabricator), N (clean), ADV (advisory), and a clean tail.
 printf '# fixture tier-models\nfrontier\tM,N,ADV,kimi-k2.6\n' > "$TIERS"
