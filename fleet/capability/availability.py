@@ -19,16 +19,39 @@ demonstrate differentiation — see the build report for the honest breakdown.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import urllib.request
 
 PROXY_PATH = "/home/stack/.config/opencode/session-bridge/proxy.py"
 FREE_STATUSES = ("pending", "done")
 BUSY_STATUSES = ("in-progress", "blocked")
 
+# CRIPPLE #2 (FLEET-DEMAND-DRIVEN-ROUTING): the availability vocabulary now
+# carries a proactive-exclusion status, "capped", DISTINCT from session-bridge
+# "busy". "busy" = a droid session is already running that model right now
+# (transient, contention). "capped" = the gateway's OWN park/cooldown/balance
+# state says every provider that can serve this model is parked (funding drain
+# / free-tier window closed), drained, or in litellm cooldown — so a call would
+# burn the full request timeout (~1800s) before failing over to nothing. Both
+# are UNAVAILABLE for assignment; assign.py excludes either (see UNAVAILABLE
+# below and assign.py's exclusion branch). "unknown" still passes through — we
+# only exclude a model we can POSITIVELY prove is contended or capped.
+CAPPED = "capped"
+
+# The gateway's read-only status panel (drain-and-park + litellm cooldown +
+# balance) is the SINGLE SOURCE for capped/parked/over-quota state — the same
+# /charon/status snapshot fleet/failover-canary.sh already consults. We REUSE
+# it here rather than hand-rolling a second availability tracker (per the
+# no-stiff-single-provider / adopt-don't-hand-roll rig doctrine).
+GATEWAY_URL_ENV = "CHARON_GATEWAY_URL"
+GATEWAY_URL_DEFAULT = "http://10.0.1.60:8080"
+GATEWAY_TOKEN_ENVS = ("CHARON_GATEWAY_TOKEN", "CHARON_API_KEY", "OPENAI_API_KEY")
+
 
 class AvailabilityProvider:
     def status(self, model: str) -> str:
-        """Returns 'free' | 'busy' | 'unknown'."""
+        """Returns 'free' | 'busy' | 'capped' | 'unknown'."""
         raise NotImplementedError
 
     def note(self) -> str:
@@ -103,3 +126,96 @@ class SessionBridgeAvailability(AvailabilityProvider):
             return f"session-bridge unreachable ({self._error}) — treating all models as availability=unknown"
         return (f"{len(self._sessions or [])} live session(s) on board (repo={self.repo}); "
                 f"model status resolved by best-effort name/ticket substring match")
+
+
+def _strip_gateway_prefix(model: str) -> str:
+    """`charon/glm-5.2` -> `glm-5.2`. The rig hands the gateway `charon/<id>`
+    but /charon/status keys its `pools` on the bare model id, so normalize
+    before the lookup (idempotent for an already-bare id)."""
+    return model.split("/", 1)[1] if model.startswith("charon/") else model
+
+
+class GatewayStatusAvailability(AvailabilityProvider):
+    """CRIPPLE #2 fix — proactively resolve capped/parked/over-quota models
+    from the gateway's OWN state, so assign() never picks a model whose only
+    providers are parked/drained/cooled (which would burn the full request
+    timeout before failing over).
+
+    Data source is the gateway's read-only /charon/status snapshot — the SAME
+    endpoint fleet/failover-canary.sh consults — which unifies (a) drain-and-park
+    balance state (`balance[provider].parked / .drained`), (b) litellm-router
+    cooldown (`cooldown_seconds[provider]`), and (c) the model->provider chain
+    (`pools[model]`). We do NOT hand-roll a new tracker; we read the gateway's
+    published state (reuse, per rig doctrine).
+
+    Resolution, per model id:
+      * unknown provider chain (model not in `pools`) -> 'unknown' (never wrongly
+        excluded — same fail-open stance SessionBridgeAvailability takes).
+      * at least ONE provider in the chain is live (not parked/drained/cooled)
+        -> 'free'.
+      * EVERY provider in the chain is parked OR drained OR in cooldown
+        -> 'capped' (proactively excluded by assign()).
+
+    Advisory + fail-open: any error (gateway unreachable, no token, bad shape)
+    yields 'unknown' for every model and a diagnostic note() — this can never
+    make assign() worse than the pre-fix pass-through behavior."""
+
+    def __init__(self, url: str | None = None, token: str | None = None, timeout: float = 8.0):
+        self.url = (url or os.environ.get(GATEWAY_URL_ENV) or GATEWAY_URL_DEFAULT).rstrip("/")
+        self.token = token or next((os.environ[e] for e in GATEWAY_TOKEN_ENVS if os.environ.get(e)), None)
+        self.timeout = timeout
+        self._snapshot: dict | None = None
+        self._error: str | None = None
+        # provider label -> True when parked/drained/cooled (unavailable NOW)
+        self._provider_down: dict[str, bool] = {}
+        self._pools: dict[str, list[str]] = {}
+
+    def _load(self) -> None:
+        if self._snapshot is not None or self._error is not None:
+            return
+        req = urllib.request.Request(f"{self.url}/charon/status")
+        req.add_header("Accept", "application/json")
+        if self.token:
+            req.add_header("Authorization", f"Bearer {self.token}")
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                self._snapshot = json.loads(resp.read().decode("utf-8"))
+        except Exception as e:  # gateway down / 401 / bad shape
+            self._snapshot = {}
+            self._error = str(e)
+            return
+        snap = self._snapshot or {}
+        self._pools = {k: list(v) for k, v in (snap.get("pools") or {}).items()}
+        cooldown = snap.get("cooldown_seconds") or {}
+        balance = snap.get("balance") or {}
+        labels: set[str] = set(cooldown) | set(balance)
+        for chain in self._pools.values():
+            labels.update(chain)
+        for label in labels:
+            b = balance.get(label) or {}
+            cooled = float(cooldown.get(label) or 0.0) > 0.0
+            self._provider_down[label] = bool(
+                b.get("parked") or b.get("drained") or cooled
+            )
+
+    def status(self, model: str) -> str:
+        self._load()
+        if self._error is not None:
+            return "unknown"
+        chain = self._pools.get(_strip_gateway_prefix(model))
+        if not chain:
+            return "unknown"  # model unknown to the gateway pool config — fail open
+        # capped only when EVERY provider that can serve this model is down.
+        if all(self._provider_down.get(p, False) for p in chain):
+            return CAPPED
+        return "free"
+
+    def note(self) -> str:
+        self._load()
+        if self._error:
+            return (f"gateway /charon/status unreachable ({self._error}) at {self.url} — "
+                    f"treating all models as availability=unknown (no proactive capped-exclusion)")
+        down = sorted(p for p, d in self._provider_down.items() if d)
+        return (f"gateway {self.url}: {len(self._pools)} pooled model(s), "
+                f"{len(down)} provider(s) parked/drained/cooled"
+                + (f" ({', '.join(down)})" if down else ""))

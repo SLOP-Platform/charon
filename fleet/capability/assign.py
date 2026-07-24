@@ -11,9 +11,13 @@ Ranking, deterministic and explainable:
   1. D&S gate: a ticket with unmet depends_on is REFUSED, never assigned.
   2. Grade every candidate model at the ticket's work_class (generalist
      fallback if the model has no direct data for that class).
-  3. Filter by cost-tier (if the ticket declares one) and by availability
-     (session-bridge: exclude only models resolved as 'busy'; 'unknown'
-     passes through — see availability.py's documented gap).
+  3. Filter by cost-tier (if the ticket declares one) and by availability.
+     A model is excluded when it is positively UNAVAILABLE: 'busy' (a droid
+     is already running it, per session-bridge) OR 'capped' (the gateway's
+     own park/cooldown/balance state says every provider that can serve it is
+     parked/drained/cooled — CRIPPLE #2 fix, GatewayStatusAvailability, so a
+     capped model is dropped BEFORE it can burn a full request timeout).
+     'unknown' still passes through (fail-open — exclude only proven-unavailable).
   4. Sort eligible candidates by score desc, then mean_bench_score desc,
      then mean_cost_usd asc, then mean_time_s asc, then model id (stable).
   5. Pick #1; the rationale names the runner-up and any top-ranked-but-
@@ -55,8 +59,21 @@ from grades import (  # noqa: E402
     get_tier_hint, resolve_tier_alias,
 )
 from availability import (  # noqa: E402
-    AvailabilityProvider, SessionBridgeAvailability, StaticAvailability,
+    CAPPED, AvailabilityProvider, GatewayStatusAvailability,
+    SessionBridgeAvailability, StaticAvailability,
 )
+
+# CRIPPLE #2 (FLEET-DEMAND-DRIVEN-ROUTING): the availability states that mean
+# "do NOT assign this model" — a positively-proven contended ('busy') or
+# capped/parked/over-quota ('capped') model. 'unknown' is deliberately NOT here
+# (fail-open: we exclude only what we can prove is unavailable). Each maps to
+# the human reason surfaced in the rationale so an excluded top pick is never a
+# black box.
+UNAVAILABLE_REASONS: dict[str, str] = {
+    "busy": "unavailable (session-bridge: busy)",
+    CAPPED: "unavailable (gateway: capped — all providers parked/drained/cooled; "
+            "proactively excluded before the request timeout)",
+}
 
 FLEET_DIR = Path(__file__).resolve().parent.parent
 BOARD_DIR = FLEET_DIR / "board"
@@ -317,8 +334,11 @@ def assign(
                         f"ticket requires {req_tier})")
         elif req_tier and tier_hint is not None and tier_hint != req_tier:
             excluded = f"tier mismatch (model={tier_hint}, ticket requires {req_tier})"
-        elif avail == "busy":
-            excluded = "unavailable (session-bridge: busy)"
+        elif avail in UNAVAILABLE_REASONS:
+            # CRIPPLE #2: proactively drop a contended ('busy') OR capped/parked/
+            # over-quota ('capped') model BEFORE it can be picked and burn a full
+            # request timeout. 'unknown' still passes through (fail-open).
+            excluded = UNAVAILABLE_REASONS[avail]
         ranked.append(Candidate(m, g, tier_hint, avail, excluded))
 
     ranked.sort(key=_sort_key)
@@ -421,6 +441,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--tsv", default=None, help="override model-scorecard.tsv path (mainly for tests)")
     ap.add_argument("--live-availability", action="store_true",
                      help="query the live session-bridge for availability (default: unknown for all, since MVP has no live model-tagged sessions to differentiate on — see build report)")
+    # CRIPPLE #2 (FLEET-DEMAND-DRIVEN-ROUTING): consult the gateway's /charon/status
+    # park/cooldown/balance state and PROACTIVELY exclude any model whose every
+    # provider is parked/drained/cooled ('capped'), before it can burn a request
+    # timeout. Advisory + fail-open (gateway unreachable -> unknown for all, no
+    # exclusion). CHARON_GATEWAY_URL / CHARON_GATEWAY_TOKEN env override the target.
+    ap.add_argument("--gateway-availability", action="store_true",
+                     help="proactively exclude gateway-capped models (all providers parked/drained/cooled) "
+                          "using /charon/status; fail-open if the gateway is unreachable")
     # S4 (Gap A rig facet): fleet-droid.sh's tier dispatcher consumer seam. It already owns a
     # vetted, gateway-proven model set per tier (fleet/tier-models.tsv); it must never let a
     # real-outcome recommendation introduce a DIFFERENT, unlisted model id into a gateway call.
@@ -472,7 +500,12 @@ def main(argv: list[str] | None = None) -> int:
 
     grades = ScorecardGradesProvider(args.tsv) if args.tsv else ScorecardGradesProvider()
     availability: AvailabilityProvider
-    availability = SessionBridgeAvailability() if args.live_availability else StaticAvailability()
+    if args.gateway_availability:
+        availability = GatewayStatusAvailability()
+    elif args.live_availability:
+        availability = SessionBridgeAvailability()
+    else:
+        availability = StaticAvailability()
 
     candidate_models = None
     if args.candidates:
