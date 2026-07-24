@@ -251,33 +251,94 @@ PBFIX
   fi
   rm -rf "$C"
 
-  # ── (D) concurrent claims never return the same name ───────────────────
-  echo "== (D) concurrent-claim safety =="
+  # ── (D) REAL parallel-process race — atomic claim excludes concurrent winners ───────────
+  # The old (D) ran two SEQUENTIAL invocations (n1=$(...); n2=$(...)) — that never exercises the
+  # O_EXCL claim under contention, it just proves the second call sees the first's stub on disk.
+  # This forks N>=5 claimers with `&`, `wait`s, then asserts every claimed name is DISTINCT: if
+  # two processes ever won the same name the atomic claim_stub is broken. Independent of git
+  # rename config: CLAIM_JEDI_GIT_REPO points at a repo that HAS a commit but ZERO handoff files,
+  # so the git-history exclusion is empty regardless of diff.renames — the exclusion set is purely
+  # the live-tree stubs and the race is entirely on claim_stub's O_EXCL.
+  echo "== (D) concurrent-claim safety (REAL parallel race) =="
   local CD; CD="$(mktemp -d)"
+  # A minimal repo with one commit but no SESSION-HANDOFF-*.md — git log succeeds (exits 0) and
+  # returns nothing, so the history half contributes no exclusions and cannot skew the race.
+  ( cd "$CD" && git init --quiet && git config user.email t@t && git config user.name t \
+      && : > seed && git add seed && git commit --quiet -m seed ) >/dev/null 2>&1
   cat > "$CD/pool.txt" <<'CPOOL'
 aayla-secura
 ahsoka-tano
 cal-kestis
 obi-wan-kenobi
+ki-adi-mundi
+kit-fisto
+plo-koon
 CPOOL
 
-  local n1 n2
-  n1="$( CLAIM_JEDI_POOL="$CD/pool.txt" \
-         CLAIM_JEDI_STUB_DIR="$CD" \
-         CLAIM_JEDI_GIT_REPO="$D/git" \
-         bash "$S" 2>/dev/null )" || n1=""
-  n2="$( CLAIM_JEDI_POOL="$CD/pool.txt" \
-         CLAIM_JEDI_STUB_DIR="$CD" \
-         CLAIM_JEDI_GIT_REPO="$D/git" \
-         bash "$S" 2>/dev/null )" || n2=""
-  if [ -n "$n1" ] && [ -n "$n2" ] && [ "$n1" != "$n2" ]; then
-    ok "D1 consecutive claims got different names ($n1, $n2)"
-  elif [ "$n1" = "$n2" ] && [ -n "$n1" ]; then
-    bad "D1 SAME name '$n1' returned twice (stub-claim race)"
+  local RACE_N=6 i
+  mkdir -p "$CD/out"
+  for i in $(seq 1 "$RACE_N"); do
+    ( CLAIM_JEDI_POOL="$CD/pool.txt" \
+      CLAIM_JEDI_STUB_DIR="$CD" \
+      CLAIM_JEDI_GIT_REPO="$CD" \
+      bash "$S" > "$CD/out/claim.$i" 2>/dev/null || true ) &
+  done
+  wait
+
+  local d_total d_distinct
+  d_total="$(cat "$CD"/out/claim.* 2>/dev/null | grep -c . || true)"
+  d_distinct="$(cat "$CD"/out/claim.* 2>/dev/null | grep . | sort -u | wc -l | tr -d ' ')"
+  if [ "${d_total:-0}" -lt 5 ]; then
+    bad "D1 only $d_total/$RACE_N parallel claimers produced a name — race not meaningfully exercised"
+  elif [ "$d_total" -eq "$d_distinct" ]; then
+    ok "D1 $d_total parallel claimers each got a DISTINCT name (distinct=$d_distinct) — atomic claim held under real contention"
   else
-    ok "D1 claims ok (${n1:-empty} / ${n2:-empty})"
+    bad "D1 DUPLICATE name across parallel claimers (total=$d_total distinct=$d_distinct) — claim_stub O_EXCL is NOT atomic"
   fi
-  rm -rf "$CD"
+
+  # ── (D2) fail-on-revert control: a NON-atomic claimer (no O_EXCL) DOES collide ──────────
+  # Proves the race above is a genuine exclusion test — remove noclobber and the same parallel
+  # race hands the SAME name to multiple processes. The variant reads the (empty) exclusion set,
+  # sleeps to guarantee the pick overlaps, then writes WITHOUT noclobber. All N pick the single
+  # pool name and all "succeed" -> a duplicate MUST appear. If it does not, the race window is
+  # too small to be a real test and D1's green would be meaningless.
+  cat > "$CD/claim-nonatomic.sh" <<'NOEXCL'
+#!/usr/bin/env bash
+set -uo pipefail
+POOL="$1"; STUB_DIR="$2"
+# live-tree exclusion only (mirrors the real allocator minus git-history)
+excl="$(mktemp)"
+for f in "$STUB_DIR"/SESSION-HANDOFF-*.md; do
+  [ -e "$f" ] || continue
+  n="${f##*/SESSION-HANDOFF-}"; printf '%s\n' "${n%.md}"
+done | sort -u > "$excl"
+while IFS= read -r name; do
+  [ -n "$name" ] || continue
+  grep -qxF "$name" "$excl" 2>/dev/null && continue
+  sleep 0.2                                   # widen the window: all racers pick the same name
+  printf '# claim-marker %s\n' "$name" > "$STUB_DIR/SESSION-HANDOFF-$name.md"  # NO noclobber
+  rm -f "$excl"; printf '%s\n' "$name"; exit 0
+done < "$POOL"
+rm -f "$excl"; exit 1
+NOEXCL
+  chmod +x "$CD/claim-nonatomic.sh"
+
+  local NA; NA="$(mktemp -d)"
+  printf 'aayla-secura\n' > "$NA/pool.txt"    # single name: every racer contends for it
+  mkdir -p "$NA/out"
+  for i in $(seq 1 "$RACE_N"); do
+    ( bash "$CD/claim-nonatomic.sh" "$NA/pool.txt" "$NA" > "$NA/out/claim.$i" 2>/dev/null || true ) &
+  done
+  wait
+  local na_total na_distinct
+  na_total="$(cat "$NA"/out/claim.* 2>/dev/null | grep -c . || true)"
+  na_distinct="$(cat "$NA"/out/claim.* 2>/dev/null | grep . | sort -u | wc -l | tr -d ' ')"
+  if [ "${na_total:-0}" -gt "${na_distinct:-0}" ]; then
+    ok "D2 non-atomic claimer COLLIDES under the same race (total=$na_total distinct=$na_distinct) — proves O_EXCL in claim_stub is load-bearing"
+  else
+    bad "D2 non-atomic claimer did NOT collide (total=$na_total distinct=$na_distinct) — race window too small; D1's exclusion claim is unproven"
+  fi
+  rm -rf "$NA" "$CD"
 
   rm -rf "$D"
   echo
