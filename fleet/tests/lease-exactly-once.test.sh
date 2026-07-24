@@ -59,7 +59,7 @@ faktory_live(){
 # build an isolated sandbox fleet holding the wrapper + resolved deps + temp state.
 mk_sandbox(){
   local d; d="$(mktemp -d)"
-  mkdir -p "$d/fleet/state/enqueued" "$d/fleet/state/leases" "$d/fleet/board" \
+  mkdir -p "$d/fleet/state/enqueued" "$d/fleet/state/claims" "$d/fleet/board" \
            "$d/fleet/hooks" "$d/fleet/faktory"
   cp "$SRC/lease-enqueue.sh" "$d/fleet/lease-enqueue.sh"
   [ -n "$WORK_LEASE" ] && cp "$WORK_LEASE" "$d/fleet/work-lease.sh"
@@ -97,13 +97,13 @@ else
   r1="$(WORK_LEASE_SH="$F/work-lease.sh" bash "$F/lease-enqueue.sh" "$T" --worktree "$w1" --session s1 --reserve-only 2>&1)"; rc1=$?
   # session 2 tries to reserve the SAME ticket → must be REFUSED (rc3).
   r2="$(WORK_LEASE_SH="$F/work-lease.sh" bash "$F/lease-enqueue.sh" "$T" --worktree "$w2" --session s2 --reserve-only 2>&1)"; rc2=$?
-  nlease="$(ls "$F/state/leases" 2>/dev/null | wc -l | tr -d ' ')"
+  nlease="$(ls "$F/state/claims" 2>/dev/null | wc -l | tr -d ' ')"
   if [ "$rc1" -eq 0 ] && [ "$rc2" -eq 3 ] && [ "$nlease" = "1" ]; then
     ok "a active: s1 reserves (rc0), s2 refused (rc3), exactly 1 lease"
   else bad "a active: rc1=$rc1 rc2=$rc2 leases=$nlease ($r2)"; fi
   # REVERT: neuter reserve_lease → s2 no longer refused → protection gone → RED.
   revert_reserve > "$F/lease-enqueue.sh"
-  rm -f "$F/state/leases/"*  # fresh
+  rm -f "$F/state/claims/"*  # fresh
   WORK_LEASE_SH="$F/work-lease.sh" bash "$F/lease-enqueue.sh" "$T" --worktree "$w1" --session s1 --reserve-only >/dev/null 2>&1
   WORK_LEASE_SH="$F/work-lease.sh" bash "$F/lease-enqueue.sh" "$T" --worktree "$w2" --session s2 --reserve-only >/dev/null 2>&1; rcR=$?
   if [ "$rcR" -ne 3 ]; then ok "a fail-on-revert: neutered reserve stops refusing (rc=$rcR)"; else bad "a fail-on-revert: still refused after revert"; fi
