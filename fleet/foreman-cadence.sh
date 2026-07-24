@@ -101,6 +101,13 @@ cmd_cadence(){
   printf '%s' "$now" > "$CADENCE_MARKER"
   say "--- foreman cadence (interval=${interval_minutes}m) ---"
   _run_foreman "cadence"
+  # WIRE-GRAPHIFY-FRESHNESS: this is the REAL fired timer entrypoint (cron/systemd ->
+  # `foreman-cadence.sh cadence`, per RECONCILE-* tickets' own assumption at :87-104).
+  # A sibling `graphify` subcommand that nothing calls would be the exact
+  # built-but-inert bug this ticket exists to fix — so call it from here too.
+  # Independently interval-gated (its own marker file), so it never runs more often
+  # than GRAPHIFY_CADENCE_INTERVAL regardless of the foreman interval above.
+  cmd_graphify_cadence
 }
 
 # --- graphify cadence: keep the code map fresh on a timer backstop ------------------
