@@ -108,6 +108,49 @@ cmd_cadence(){
   # Independently interval-gated (its own marker file), so it never runs more often
   # than GRAPHIFY_CADENCE_INTERVAL regardless of the foreman interval above.
   cmd_graphify_cadence
+
+  # WIRE-SERVICE-WATCHDOG (SERVICE-LIVENESS-WATCHDOG): the fired timer entrypoint. Same
+  # rationale as graphify — a watchdog that nothing calls on a cadence is the built-but-inert
+  # bug this ticket exists to close. Independently interval-gated (own marker).
+  cmd_watchdog_cadence
+}
+
+# --- watchdog cadence: keep monit config in sync + relaunch a dead monit + surface -----
+# The ACTING leg of SERVICE-LIVENESS-WATCHDOG on a timer backstop:
+#   1. re-render monit.d/*.conf from the registry (a new/edited service row takes effect), and
+#      `monit reload` if monit is installed (so monit picks up the render).
+#   2. monit-selfwatch: relaunch monit if it died/hung (who-watches-monit).
+#   3. discover-services: evaluate registered alive+freshness + unregistered discovery, surfacing
+#      any DEAD/STALE/uncovered service to the issue-board (write-if-present).
+# Interval-gated with its own marker so it is independent of the foreman interval.
+WATCHDOG_CADENCE_MARKER="$STATE_DIR/.watchdog-cadence-ts"
+
+cmd_watchdog_cadence(){
+  local interval_minutes="${WATCHDOG_CADENCE_INTERVAL:-15}"
+  case "${1:-}" in --interval-minutes) interval_minutes="$2"; shift 2;; esac
+  _ensure_state_dir
+  local now last_ts
+  now="$(date +%s)"
+  if [ -f "$WATCHDOG_CADENCE_MARKER" ]; then
+    last_ts="$(cat "$WATCHDOG_CADENCE_MARKER" 2>/dev/null || echo 0)"
+    local elapsed=$(( now - last_ts ))
+    local interval_seconds=$(( interval_minutes * 60 ))
+    if [ "$elapsed" -lt "$interval_seconds" ]; then
+      say "watchdog cadence: skipped ($elapsed s since last run, interval=${interval_minutes}m)"
+      return 0
+    fi
+  fi
+  printf '%s' "$now" > "$WATCHDOG_CADENCE_MARKER"
+  say "--- watchdog cadence (interval=${interval_minutes}m) ---"
+  local wdir="$FLEET/watchdog"
+  [ -d "$wdir" ] || { say "watchdog cadence: $wdir not found"; return 0; }
+  say "watchdog cadence: re-rendering monit config from registry..."
+  bash "$wdir/generate-monit-config.sh" 2>&1 || true
+  if command -v monit >/dev/null 2>&1; then bash -c 'monit reload' >/dev/null 2>&1 || true; fi
+  say "watchdog cadence: self-watch (relaunch monit if dead)..."
+  bash "$wdir/monit-selfwatch.sh" 2>&1 || true
+  say "watchdog cadence: evaluating services (alive + freshness + discovery)..."
+  bash "$wdir/discover-services.sh" 2>&1 || true
 }
 
 # --- graphify cadence: keep the code map fresh on a timer backstop ------------------
@@ -147,6 +190,7 @@ case "${1:-help}" in
   handoff)       shift; cmd_handoff "$@" ;;
   cadence)       shift; cmd_cadence "$@" ;;
   graphify)      shift; cmd_graphify_cadence "$@" ;;
+  watchdog)      shift; cmd_watchdog_cadence "$@" ;;
   help|--help|-h)
     say "Usage: bash foreman-cadence.sh <subcommand> [args]"
     say ""
@@ -156,6 +200,7 @@ case "${1:-help}" in
     say "  handoff                    Emit tier picture for handoff markdown"
     say "  cadence [--interval-min N] Scheduled backstop with interval gate"
     say "  graphify [--interval-min N] Code-map freshness cadence backstop"
+    say "  watchdog [--interval-min N] Service-liveness watchdog cadence (render+selfwatch+eval)"
     say ""
     say "Env: FOREMAN_FLEET=<dir>     Override fleet root (test seam)"
     say "     FOREMAN_CADENCE_INTERVAL  Minutes between cadence runs (default 30)"

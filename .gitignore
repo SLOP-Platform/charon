@@ -22,6 +22,10 @@ fleet/state/*
 # ...except the config-drift source registry (CONFIG-SOURCES ticket) — local + gateway,
 # durable; config-drift.sh reads this to detect provider siloing.
 !fleet/state/CONFIG-SOURCES.tsv
+# ...except the service-liveness registry (SERVICE-LIVENESS-WATCHDOG) — the declarative SSOT of
+# every supervised service. fleet/watchdog/ renders monit config + evaluates liveness FROM it;
+# it is version-controlled config, NOT ephemeral runtime state, so it must survive the blanket ignore.
+!fleet/state/service-registry.tsv
 # ...except the BENCH-PROVISIONAL-SCORING design of record (#20 — operator-led
 # deep-dive 2026-07-16). Durable design artifact, sibling to PATH-C-DOGFOOD-EVAL
 # / EVAL-TAXONOMY / EVAL-PIPELINE-DESIGN / S8-GRACEFUL-DEGRADE-DESIGN above;
