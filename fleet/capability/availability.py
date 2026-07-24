@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import urllib.request
 
 PROXY_PATH = "/home/stack/.config/opencode/session-bridge/proxy.py"
@@ -47,6 +48,12 @@ CAPPED = "capped"
 GATEWAY_URL_ENV = "CHARON_GATEWAY_URL"
 GATEWAY_URL_DEFAULT = "http://10.0.1.60:8080"
 GATEWAY_TOKEN_ENVS = ("CHARON_GATEWAY_TOKEN", "CHARON_API_KEY", "OPENAI_API_KEY")
+# Test/cache seam: when set, read the /charon/status snapshot from this JSON file
+# instead of the network. Lets the dispatcher's capped-filter (fleet-droid.sh) and
+# its tests drive capped state deterministically with ZERO network dependency —
+# and lets an operator feed a cached snapshot. Same fail-open shape as the HTTP
+# path: a missing/bad file yields _error -> every model 'unknown' (kept, never spilled).
+GATEWAY_STATUS_FILE_ENV = "CHARON_GATEWAY_STATUS_FILE"
 
 
 class AvailabilityProvider:
@@ -173,17 +180,27 @@ class GatewayStatusAvailability(AvailabilityProvider):
     def _load(self) -> None:
         if self._snapshot is not None or self._error is not None:
             return
-        req = urllib.request.Request(f"{self.url}/charon/status")
-        req.add_header("Accept", "application/json")
-        if self.token:
-            req.add_header("Authorization", f"Bearer {self.token}")
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                self._snapshot = json.loads(resp.read().decode("utf-8"))
-        except Exception as e:  # gateway down / 401 / bad shape
-            self._snapshot = {}
-            self._error = str(e)
-            return
+        status_file = os.environ.get(GATEWAY_STATUS_FILE_ENV)
+        if status_file:  # test/cache seam — read the snapshot from a file, no network
+            try:
+                with open(status_file, "r", encoding="utf-8") as fh:
+                    self._snapshot = json.loads(fh.read())
+            except Exception as e:  # missing / unreadable / bad shape -> fail open
+                self._snapshot = {}
+                self._error = str(e)
+                return
+        else:
+            req = urllib.request.Request(f"{self.url}/charon/status")
+            req.add_header("Accept", "application/json")
+            if self.token:
+                req.add_header("Authorization", f"Bearer {self.token}")
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    self._snapshot = json.loads(resp.read().decode("utf-8"))
+            except Exception as e:  # gateway down / 401 / bad shape
+                self._snapshot = {}
+                self._error = str(e)
+                return
         snap = self._snapshot or {}
         self._pools = {k: list(v) for k, v in (snap.get("pools") or {}).items()}
         cooldown = snap.get("cooldown_seconds") or {}
@@ -219,3 +236,36 @@ class GatewayStatusAvailability(AvailabilityProvider):
         return (f"gateway {self.url}: {len(self._pools)} pooled model(s), "
                 f"{len(down)} provider(s) parked/drained/cooled"
                 + (f" ({', '.join(down)})" if down else ""))
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI seam for the dispatcher's CAPPED-filter step (CRIPPLE #2/#3).
+
+      availability.py filter-capped MODEL [MODEL ...]
+
+    Instantiates GatewayStatusAvailability ONCE (a single /charon/status read —
+    or the CHARON_GATEWAY_STATUS_FILE snapshot in tests) and prints, one per
+    line, the models that are NOT gateway-capped, order preserved. Exit 0 when
+    at least one survives; exit 7 when EVERY model is capped (the tier-exhausted
+    signal fleet-droid.sh's resolver spills up on). Fail-open: an unreachable
+    gateway / bad snapshot makes every model 'unknown' -> all KEPT, exit 0 (we
+    never escalate to a paid tier merely because the status endpoint is down)."""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "filter-capped":
+        models = [m for m in argv[1:] if m]
+        prov = GatewayStatusAvailability()
+        kept = [m for m in models if prov.status(m) != CAPPED]
+        for m in kept:
+            print(m)
+        note = prov.note()
+        if note:
+            print(note, file=sys.stderr)
+        if not models:
+            return 0  # nothing to filter -> not an "all-capped" signal
+        return 0 if kept else 7
+    print("usage: availability.py filter-capped MODEL [MODEL ...]", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -46,6 +46,12 @@ LED="$D/model-scorecard.tsv"           # FIXTURE ledger — never the live one
 TIERS="$D/tier-models.tsv"             # FIXTURE tier chain
 export CHARON_SCORECARD_TSV="$LED"
 export CHARON_TIER_MODELS="$TIERS"
+# HERMETIC: the resolve hook now runs a gateway CAPPED-filter (CRIPPLE #2). Point it at an empty
+# /charon/status snapshot (nothing capped) so these DETENTION tests never touch the live gateway —
+# every model reads 'unknown' -> kept, isolating detention behavior from real capped state.
+CLEAN_STATUS="$D/status-clean.json"
+printf '{"pools":{},"balance":{},"cooldown_seconds":{}}\n' > "$CLEAN_STATUS"
+export CHARON_GATEWAY_STATUS_FILE="$CLEAN_STATUS"
 
 # tier chain contains M (fabricator), N (clean), ADV (advisory), and a clean tail.
 printf '# fixture tier-models\nfrontier\tM,N,ADV,kimi-k2.6\n' > "$TIERS"
@@ -97,10 +103,21 @@ eq "4b ADV stays in the money-path chain (advisory != excluded)" "$(in_chain "$m
 echo "== (5) PAROLE — 2 consecutive MERGE after fabrication restores eligibility [bonus] =="
 eq "5a check PAR money-path exits 0 (paroled)" "$(check_rc PAR money-path)" "0"
 
-echo "== (6) FAIL-LOUD — a wholly HARD-detained chain makes resolve exit 7 [bonus] =="
-# strong tier = M,BADD, both fabricators on money-path -> whole chain detained
+echo "== (6) SPILL-UP + FAIL-LOUD — a wholly HARD-detained band escalates up the cost ladder;"
+echo "       fail-loud (exit 7) only when the WHOLE ladder up to frontier is unrunnable [CRIPPLE #3] =="
+# strong tier = M,BADD, both fabricators on money-path -> whole strong chain HARD-detained. Under
+# CRIPPLE #3 the dispatcher no longer stalls here: it SPILLS UP to the next cost band (frontier),
+# whose money-path chain (M,N,ADV,kimi-k2.6 minus HARD-detained M; ADV kept as advisory) IS runnable
+# — better a costlier band does the work than backlog on an all-detained cheap band.
 MP2="$D/ticket-money2.md"; printf 'tier: strong\nwork_class: money-path\n' > "$MP2"
-eq "6a resolve exits 7 when every model is HARD-detained" "$(resolve_rc strong "$MP2")" "7"
+eq "6a spill-up: all-detained strong escalates to frontier's runnable money-path chain" \
+   "$(resolve_chain strong "$MP2")" "N,ADV,kimi-k2.6"
+# FAIL-LOUD is preserved at LADDER EXHAUSTION: when the TOP band (frontier) is itself wholly
+# HARD-detained, spill-up has nowhere higher to go -> resolve exits 7 (never a silent detained run).
+LT="$D/tier-top-detained.tsv"; printf 'frontier\tM,BADD\n' > "$LT"
+MP3="$D/ticket-money3.md";      printf 'tier: frontier\nwork_class: money-path\n' > "$MP3"
+eq "6b fail-loud: top band wholly HARD-detained + no higher band -> exit 7 (ladder exhausted)" \
+   "$(CHARON_TIER_MODELS="$LT" resolve_rc frontier "$MP3")" "7"
 
 echo "-----"
 echo "detention tests: $PASS passed, $FAIL failed"
