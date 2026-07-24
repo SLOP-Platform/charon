@@ -105,4 +105,26 @@ CATEGORY_PRESETS_DATA: dict[str, dict] = {
         "note": "Perplexity (domain resolves, /models may 404; "
                 "endpoint varies; if using, check strip_v1 setting).",
     },
+    "github_models": {
+        "base_url": "https://models.inference.ai.azure.com",
+        "key_env": "GITHUB_TOKEN",
+        "strip_v1": False,
+        "note": "GitHub Models (Azure-hosted inference for GitHub-issued "
+                "tokens; OpenAI-compatible chat). Base verified live.",
+    },
+    "featherless": {
+        "base_url": "https://api.featherless.ai/v1",
+        "key_env": "FEATHERLESS_API_KEY",
+        "note": "Featherless.ai — OpenAI-compatible. Free tier carries a "
+                "32K session-context cap; surfaced via max_context (operator "
+                "can override per-model). Base verified live.",
+        "max_context": 32768,
+    },
+    "ollama_cloud": {
+        "base_url": "https://ollama.com/v1",
+        "key_env": "OLLAMA_API_KEY",
+        "note": "Ollama.com hosted cloud (free/turbo tier) — DISTINCT from "
+                "the LOCAL 'ollama' preset in local.py (localhost:11434). "
+                "OpenAI-compatible; key is required even on free tier.",
+    },
 }
