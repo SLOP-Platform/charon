@@ -7,7 +7,8 @@ name: ci
 # heavy.yml on a schedule/dispatch; the GHCR publish lives in release.yml.
 # ADR-0002 §4: the gate carries the host-import boundary check, version
 # consistency, lint, type, and the full test suite ([service] extra so the
-# web/dashboard tests run too).
+# web/dashboard tests run too; [router] extra so the litellm commodity-plane
+# money-path tests RUN instead of importorskip-skipping).
 on:
   push:
     branches: [master, main]
@@ -31,8 +32,12 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: install (dev + service)
-        run: pip install -e '.[dev,service]'
+      - name: install (dev + service + router)
+        # [router] pulls litellm so the commodity-plane money-path tests
+        # (streaming relay, park/cooldown, metering bridge) actually RUN in CI
+        # instead of pytest.importorskip-skipping. litellm stays an OPTIONAL
+        # extra (not a core runtime dep) until GW-CUTOVER; CI just installs it.
+        run: pip install -e '.[dev,service,router]'
 
       - name: charon gate (lint, type, boundary, version, gate-registry)
         run: python3 -m charon.cli gate
