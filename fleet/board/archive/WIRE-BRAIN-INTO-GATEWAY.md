@@ -172,3 +172,5 @@ verdict-note: |
   / imported" — a standalone install's ledger never fills from its own requests. That is not a
   blocker, but it must be said plainly or the fresh-install differentiator is inert exactly where the
   north-star user meets it.
+
+PRUNED 2026-07-24 (operator-approved, review-grounded): superseded by GATEWAY-GRADE-ORDER-MVP which hooks the overlay into the adopted litellm.Router, not the hand-rolled brain_router/forwarder this draft assumed.

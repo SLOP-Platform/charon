@@ -150,3 +150,5 @@ ds: |
     routing once WIRE goes live, so adversarial review of the admission gate is warranted.
 
   wave: DRAFT — un-park after operator confirms decomposition + the product file paths. repo: charon (product).
+
+PRUNED 2026-07-24 (operator-approved, review-grounded): superseded by GATEWAY-GRADE-ORDER-MVP (live) + grades_import landed 270726f (#186). Ticket note itself says do-not-build.

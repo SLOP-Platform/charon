@@ -74,3 +74,5 @@ ds: |
   path — adversarial review REQUIRED, with the single invariant "UI-open must not open
   /v1/*" as the thing to try hardest to break.
   wave: gateway usability. repo: charon (public product — keep product-neutral, no rig refs).
+
+PRUNED 2026-07-24 (operator-approved, review-grounded): /charon/login session-cookie browser-auth already ships (console_router.py render_login); lan_open_ui added a key-exfil hole. Abandoned by its own note.
