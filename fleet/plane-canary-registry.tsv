@@ -1,0 +1,11 @@
+# plane	canary_script	dogfood_test	wired_in	owner_ticket
+data/serving	fleet/flow-canary.sh	fleet/tests/flow-canary.test.sh	ci,preflight	FLOW-CANARY
+failover	fleet/failover-canary.sh	fleet/tests/failover-canary.test.sh	ci,preflight	FAILOVER-CANARY
+egress-key	fleet/checks/egress-key-canary.sh	fleet/tests/egress-key-canary.test.sh	ci,preflight	EGRESS-KEY-CANARY
+review	fleet/checks/reconcile-review-gate.sh	fleet/tests/review-dispensation-canary.test.sh	preflight	REVIEW-DISPENSATION-CANARY
+lifecycle	fleet/checks/gate-parity.sh	fleet/tests/ticket-lifecycle-canary.test.sh	preflight,ci	TICKET-LIFECYCLE-CANARY
+landing	fleet/checks/substrate-first-gate.sh	fleet/tests/substrate-first-gate.test.sh	ci	LANDING-GATE-REGISTER
+balance	fleet/balance-canary.sh	fleet/tests/balance-canary.test.sh	preflight	BALANCE-CANARY
+config-ssot	fleet/checks/config-ssot-gate.sh	fleet/tests/config-ssot-gate.test.sh	preflight	CONFIG-SSOT-CANARY-REGISTER
+map-freshness	fleet/checks/graphify-freshness.sh	fleet/tests/test_graphify_freshness.sh	preflight,land	WIRE-GRAPHIFY-FRESHNESS
+reconciliation	fleet/checks/reconcile-gate-wired.sh	fleet/tests/reconcile-gate-wired.test.sh	preflight,timer	UNIFIED-RECONCILIATION-GATE
