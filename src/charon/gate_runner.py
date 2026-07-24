@@ -22,6 +22,7 @@ twice reported "all checks passed" for work that did not happen:
 """
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -31,6 +32,13 @@ from pathlib import Path
 # stays importable regardless of CWD.
 _WORK_UNITS_RE = re.compile(r"^\s*WORK-UNITS:\s*(-?\d+)\s*$", re.MULTILINE)
 _PYTEST_COLLECTED_RE = re.compile(r"(\d+) (?:passed|failed|error)")
+
+# Reentrancy marker. The contract lives in tools/gate_contract.py (where gate
+# AUTHORS look); the name is duplicated here rather than imported because
+# src/charon must not depend on the repo's tools/ directory — the same reason
+# _WORK_UNITS_RE above is duplicated. tests/test_gate_reentrancy.py pins the two
+# spellings together so they cannot drift apart silently.
+GATE_ACTIVE_ENV = "CHARON_GATE_ACTIVE"
 
 CHECKS: list[tuple[list[str], str]] = [
     (["ruff", "check", "src", "tests"], "ruff"),
@@ -139,6 +147,32 @@ def _work_unit_minimums(gates: list[dict]) -> dict[str, tuple[int, str]]:
         )
         mins[script if script else gid] = (minimum, gid)
     return mins
+
+
+def _spawns_the_test_suite(cmd: list[str]) -> bool:
+    """True for the CHECKS entry that runs the test suite itself."""
+    return "pytest" in cmd
+
+
+def _child_env(cmd: list[str]) -> dict[str, str] | None:
+    """Environment for a CHECKS entry, or None to inherit this process's.
+
+    Only the entry that RUNS the test suite is marked ``CHARON_GATE_ACTIVE``,
+    and the marking is deliberately that narrow. The suite runs every declared
+    gate as a subprocess (tests/test_gate_contract.py), so anything the suite
+    spawns must know a suite is already in flight above it — otherwise a gate
+    that runs pytest recurses without bound.
+
+    Gate SCRIPTS are spawned unmarked on purpose. A gate invoked directly by
+    this runner is at the top of its own chain: it should do its real work,
+    including running a suite if that is its job. Marking every check here
+    would instead let a stray/exported CHARON_GATE_ACTIVE quietly hollow out
+    such a gate, which is the fake-green this guard exists to avoid. See the
+    contract note in tools/gate_contract.py.
+    """
+    if not _spawns_the_test_suite(cmd):
+        return None
+    return {**os.environ, GATE_ACTIVE_ENV: "1"}
 
 
 def _check_key(cmd: list[str]) -> str | None:
@@ -260,7 +294,7 @@ def run_gate() -> int:
 
     for cmd, label in CHECKS:
         print(f"  [{label}] ", end="", flush=True)
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, env=_child_env(cmd))
         if result.returncode != 0:
             print(f"FAILED (exit {result.returncode})")
             if result.stderr:

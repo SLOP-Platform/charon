@@ -25,7 +25,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tools.gate_contract import parse_work_units  # noqa: E402
+from tools.gate_contract import (  # noqa: E402
+    child_env_marked_active,
+    nested_suite_suppressed,
+    parse_work_units,
+)
 
 from charon import gate_runner  # noqa: E402
 
@@ -127,6 +131,26 @@ def test_registry_rejects_min_work_units_zero_without_a_written_reason(
     assert _registry_exit(zero_with_note, monkeypatch, tmp_path) == 0
 
 
+#: Wall-clock ceiling for one gate subprocess. Finite on purpose: this suite is
+#: one half of the gate<->suite cycle the reentrancy guard exists to break, so a
+#: gate that hangs (or recurses despite the guard) must be killed, not waited on.
+GATE_SUBPROCESS_TIMEOUT = 600
+
+
+def gate_subprocess_env() -> dict[str, str]:
+    """Environment for spawning a declared gate from INSIDE the test suite.
+
+    This function is one of the two places the reentrancy marker originates
+    (the other is ``charon.gate_runner.run_gate``). A pytest process is running
+    right now, and this suite spawns every declared gate; a gate that then runs
+    the test suite would close the loop
+    ``pytest -> test_gate_contract -> gate -> pytest -> ...``. Marking the child
+    lets such a gate see that the suite is already in flight and suppress just
+    that nested spawn. See tools/gate_contract.py for the full contract.
+    """
+    return child_env_marked_active()
+
+
 @pytest.mark.parametrize(
     "gate",
     [pytest.param(g, id=str(g.get("id"))) for g in _declared_gates()
@@ -140,7 +164,20 @@ def test_declared_gate_emits_a_count_at_or_above_its_minimum(gate: dict) -> None
     args = [sys.executable, script]
     if script.endswith("check_decisions.py"):
         args.append("--check")
-    proc = subprocess.run(args, cwd=REPO_ROOT, capture_output=True, text=True)
+    proc = subprocess.run(args, cwd=REPO_ROOT, capture_output=True, text=True,
+                          env=gate_subprocess_env(),
+                          timeout=GATE_SUBPROCESS_TIMEOUT)
+    if nested_suite_suppressed(proc.stdout):
+        # This suite SET the marker, so it is the one party entitled to accept a
+        # suppressed response: the gate declined to spawn a second copy of the
+        # very suite that is running it. It still had to say so out loud. Note
+        # that gate_runner does NOT set the marker for gate scripts, so the same
+        # gate under `charon gate` runs its suite for real — suppression here is
+        # not a way for a gate to skip its work everywhere.
+        assert proc.returncode == 0, (
+            f"{gate['id']} suppressed its nested suite but exited "
+            f"{proc.returncode}")
+        return
     observed = parse_work_units(proc.stdout)
     assert observed is not None, (
         f"{gate['id']} exited {proc.returncode} without emitting WORK-UNITS — "
