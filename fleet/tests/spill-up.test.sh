@@ -36,6 +36,21 @@
 #       ledger row — observable, never a silent hole. fleet/tests/test_detention.sh case 6a covers
 #       the same carve-out from the detention side (both run against the REAL TIER-CANON ceiling).
 #
+# CAPPED-FILTER FAIL-OPEN DEFECT (money path) — cases (f)(f2)(f3). capped_filter_chain used to
+# swallow availability.py's stderr and map EVERY error to "keep all, exit 0", so a dispatcher
+# without a gateway token (the live gateway answers 401) had the whole capped-exclusion no-op
+# undetectably. These cases pin the fail-CLOSED replacement:
+#   (f)  an unreadable snapshot DETAINS (exit 7, no chain) + `CAPPED-FILTER-UNAVAILABLE:` line +
+#        `capped-filter-unavailable` ledger row, and STILL detains with the ceiling raised to
+#        frontier — proving it is the capped-filter failing closed, not the cost cap. Restoring
+#        the old `2>/dev/null` + fail-open keep-all makes f1/f2 FAIL (chain 'eco1,eco2', exit 0).
+#   (f2) ERROR vs EMPTY at the CLI seam: unreadable = exit 8 with EMPTY stdout, positively
+#        all-capped = exit 7, healthy-nothing-capped = exit 0 with survivors. Collapsing 8 back
+#        into 0/7 makes fe1/fe4 FAIL. This is the non-vacuity guard on the whole fix: a zero-item
+#        result caused by an error is distinguishable from every legitimate zero-item result.
+#   (f3) the LIVE-SHAPED path: a local stdlib HTTP stand-in that answers 401 like the real gateway
+#        (with every token env cleared) over the REAL HTTP code path — no status-file seam.
+#
 # Run:  bash fleet/tests/spill-up.test.sh   (exit 0 = all pass)
 set -uo pipefail
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -143,9 +158,85 @@ CHARON_GATEWAY_STATUS_FILE="$D/snap-eco-capped.json" \
   python3 "$SRC/capability/availability.py" filter-capped eco1 eco2 >/dev/null 2>&1; rc=$?
 check "e2 filter-capped exits 7 when EVERY model is capped" "$rc" "7"
 
-echo "== (f) fail-OPEN: unreadable snapshot -> models 'unknown' -> KEPT, no spurious spill =="
-out="$(run_resolve economy "$D/does-not-exist.json")"
-check "f1 gateway-status unavailable keeps the requested band (never spends up on a down endpoint)" "$out" "eco1,eco2"
+echo "== (f) FAIL-CLOSED: an UNREADABLE gateway snapshot is NOT 'nothing capped'. The capped-"
+echo "       exclusion did not run, so the band's chain is not trusted and no spill is taken off"
+echo "       an error -> DETAIN (exit 7), loud greppable line + ledger row =="
+rm -f "$LEDGER"
+out="$(run_resolve economy "$D/does-not-exist.json")"; rc=$?
+check "f1 unreadable gateway status DETAINS (exit 7), never a silent keep-all" "$rc" "7"
+check "f2 unreadable gateway status hands back NO chain" "$out" ""
+check "f3 the failure is LOUD and greppable" "$(saw_stderr 'CAPPED-FILTER-UNAVAILABLE')" "yes"
+check "f4 the failure is ledgered like cost-cap-config-invalid" "$(led_row 'capped-filter-unavailable')" "yes"
+check "f5 the underlying availability error is SURFACED, not swallowed" \
+      "$(saw_stderr 'CANNOT READ gateway /charon/status')" "yes"
+# ...and the detain is the UNAVAILABLE path, not the cost cap: with the ceiling raised to
+# 'frontier' (every spill permitted) it STILL detains and still never escalates.
+rm -f "$LEDGER"
+out="$(run_resolve economy "$D/does-not-exist.json" "$D/canon-ceiling-frontier.md")"; rc=$?
+check "f6 ceiling=frontier: still detains (no spill-up bought with an error)" "$rc" "7"
+check "f7 ceiling=frontier: still no chain" "$out" ""
+check "f8 ceiling=frontier: attributed to the capped-filter, not the cost cap" \
+      "$(led_row 'capped-filter-unavailable')" "yes"
+
+echo "== (f2) ERROR vs EMPTY at the CLI seam: a zero-survivor result caused by an ERROR must never"
+echo "        read the same as 'the gateway says nothing is capped' or 'the gateway says all capped' =="
+err_out="$(CHARON_GATEWAY_STATUS_FILE="$D/does-not-exist.json" \
+           python3 "$SRC/capability/availability.py" filter-capped eco1 str1 2>"$D/cli-err.txt")"
+err_rc=$?
+allcap_out="$(CHARON_GATEWAY_STATUS_FILE="$D/snap-all-capped.json" \
+           python3 "$SRC/capability/availability.py" filter-capped eco1 eco2 2>/dev/null)"
+allcap_rc=$?
+clean_out="$(CHARON_GATEWAY_STATUS_FILE="$D/snap-clean.json" \
+           python3 "$SRC/capability/availability.py" filter-capped eco1 str1 2>/dev/null)"
+clean_rc=$?
+check "fe1 unreadable snapshot exits 8 (UNAVAILABLE), a code of its own" "$err_rc" "8"
+check "fe2 unreadable snapshot prints NO survivors (cannot be read as 'all un-capped')" "$err_out" ""
+check "fe3 unreadable snapshot explains itself on stderr" \
+      "$(if grep -q -- 'CANNOT READ' "$D/cli-err.txt" 2>/dev/null; then echo yes; else echo no; fi)" "yes"
+check "fe4 POSITIVELY all-capped is a DIFFERENT code (7), not 8" "$allcap_rc" "7"
+check "fe5 all-capped also prints no survivors — so rc alone separates it from the error" "$allcap_out" ""
+check "fe6 healthy snapshot with nothing capped exits 0 and keeps everything" "$clean_rc" "0"
+check "fe7 healthy 'nothing capped' is distinguishable from the error by BOTH rc and stdout" \
+      "$clean_out" "$(printf 'eco1\nstr1')"
+
+echo "== (f3) LIVE-SHAPED AUTH FAILURE: a local stand-in gateway that answers 401 exactly like the"
+echo "        real one ('missing or invalid bearer token') -> the dispatcher DETAINS, loudly =="
+cat > "$D/gw401.py" <<'PY'
+import http.server, socketserver, sys, threading
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b'{"detail":"missing or invalid bearer token"}'
+        self.send_response(401); self.send_header("Content-Type","application/json")
+        self.send_header("Content-Length", str(len(body))); self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *a): pass
+srv = socketserver.TCPServer(("127.0.0.1", 0), H)
+print(srv.server_address[1], flush=True)
+srv.serve_forever()
+PY
+python3 "$D/gw401.py" > "$D/gw401.port" 2>/dev/null &
+GW_PID=$!
+trap 'kill "$GW_PID" 2>/dev/null; rm -rf "$D"' EXIT
+GW_PORT=""
+for _ in $(seq 1 50); do GW_PORT="$(head -n1 "$D/gw401.port" 2>/dev/null || true)"; [ -n "$GW_PORT" ] && break; sleep 0.1; done
+if [ -z "$GW_PORT" ]; then
+  bad "f9 local 401 stand-in gateway failed to start"
+  bad "f10 local 401 stand-in gateway failed to start"
+  bad "f11 local 401 stand-in gateway failed to start"
+else
+  rm -f "$LEDGER"
+  # NOTE: no CHARON_GATEWAY_STATUS_FILE here — this exercises the real HTTP path. Every token env
+  # availability.py honors is cleared, reproducing "dispatcher runs without a gateway token".
+  out="$(env -u CHARON_GATEWAY_TOKEN -u CHARON_API_KEY -u OPENAI_API_KEY -u CHARON_GATEWAY_STATUS_FILE \
+         CHARON_GATEWAY_URL="http://127.0.0.1:$GW_PORT" \
+         CHARON_TIER_MODELS="$D/tier-models.tsv" CHARON_SCORECARD_TSV="$D/scorecard-empty.tsv" \
+         CHARON_EXHAUST_LEDGER="$LEDGER" CHARON_TIER_CANON="$REAL_CANON" \
+         bash "$SRC/fleet-droid.sh" resolve economy "$D/ticket.md" 2>"$D/stderr.txt")"
+  rc=$?
+  check "f9 401 (no bearer token) DETAINS the dispatch, exit 7" "$rc" "7"
+  check "f10 401 hands back NO chain — the un-vetted band is never offered" "$out" ""
+  check "f11 401 is ledgered as capped-filter-unavailable" "$(led_row 'capped-filter-unavailable')" "yes"
+fi
 
 echo "== (g) COST CAP: economy+strong capped, frontier LIVE, ceiling='strong' (the REAL SSOT)"
 echo "       -> the resolver REFUSES to spill into frontier: DETAIN (exit 7), loud line + ledger row =="
@@ -210,7 +301,7 @@ echo
 echo "--- $PASS passed, $FAIL failed ---"
 # NON-VACUITY GUARD: a run that silently skipped cases (a bad fixture, an early `return`, a rename)
 # must read RED, not "0 failed". Bump this when adding/removing a check.
-EXPECTED_CHECKS=38
+EXPECTED_CHECKS=55
 if [ "$((PASS+FAIL))" -ne "$EXPECTED_CHECKS" ]; then
   echo "FAIL: VACUOUS RUN — executed $((PASS+FAIL)) checks, expected $EXPECTED_CHECKS" >&2
   exit 1

@@ -55,6 +55,21 @@ GATEWAY_TOKEN_ENVS = ("CHARON_GATEWAY_TOKEN", "CHARON_API_KEY", "OPENAI_API_KEY"
 # path: a missing/bad file yields _error -> every model 'unknown' (kept, never spilled).
 GATEWAY_STATUS_FILE_ENV = "CHARON_GATEWAY_STATUS_FILE"
 
+# `filter-capped` CLI exit codes. These are a CONTRACT with fleet-droid.sh's
+# capped_filter_chain — the two "nothing survived"-shaped outcomes MUST be
+# distinguishable, because they demand OPPOSITE decisions:
+#   7  ALL-CAPPED   — a POSITIVE, trusted snapshot says every candidate is capped.
+#                     Caller may spill up a cost band (a real exhaustion signal).
+#   8  UNAVAILABLE  — we could not READ the snapshot at all (gateway down, 401 /
+#                     missing token, unparseable body/file). We know NOTHING about
+#                     capped state. Caller must NOT treat this as "nothing capped"
+#                     and must NOT spill up (that would spend money off an error).
+# Before this, an unreadable snapshot returned 0 with every model KEPT — byte-for-byte
+# identical to a healthy gateway reporting nothing capped, so the whole capped-exclusion
+# could no-op undetectably. Conflating those two IS the defect.
+EXIT_ALL_CAPPED = 7
+EXIT_STATUS_UNAVAILABLE = 8
+
 
 class AvailabilityProvider:
     def status(self, model: str) -> str:
@@ -63,6 +78,13 @@ class AvailabilityProvider:
 
     def note(self) -> str:
         return ""
+
+    def error(self) -> str | None:
+        """Non-None when this provider could not read its data source at all, i.e.
+        every status() it returned is 'unknown' by IGNORANCE, not by observation.
+        Callers that must fail CLOSED check this instead of inferring health from
+        an all-'unknown' result (which is indistinguishable from all-free)."""
+        return None
 
 
 class StaticAvailability(AvailabilityProvider):
@@ -163,9 +185,12 @@ class GatewayStatusAvailability(AvailabilityProvider):
       * EVERY provider in the chain is parked OR drained OR in cooldown
         -> 'capped' (proactively excluded by assign()).
 
-    Advisory + fail-open: any error (gateway unreachable, no token, bad shape)
-    yields 'unknown' for every model and a diagnostic note() — this can never
-    make assign() worse than the pre-fix pass-through behavior."""
+    Advisory + fail-open AT THE status() LEVEL: any error (gateway unreachable,
+    no token, bad shape) yields 'unknown' for every model and a diagnostic
+    note() — this can never make assign()'s re-ORDERING worse than the pre-fix
+    pass-through behavior. Callers that make SPENDING decisions must not read
+    that all-'unknown' result as health: they check error() and fail CLOSED
+    (see main()'s filter-capped, exit EXIT_STATUS_UNAVAILABLE)."""
 
     def __init__(self, url: str | None = None, token: str | None = None, timeout: float = 8.0):
         self.url = (url or os.environ.get(GATEWAY_URL_ENV) or GATEWAY_URL_DEFAULT).rstrip("/")
@@ -227,6 +252,13 @@ class GatewayStatusAvailability(AvailabilityProvider):
             return CAPPED
         return "free"
 
+    def error(self) -> str | None:
+        """The reach/auth/parse failure that made this snapshot unreadable, or None.
+        Distinguishes 'the gateway told us nothing is capped' from 'we never got to
+        ask' — the two used to be indistinguishable from the outside."""
+        self._load()
+        return self._error
+
     def note(self) -> str:
         self._load()
         if self._error:
@@ -245,24 +277,43 @@ def main(argv: list[str] | None = None) -> int:
 
     Instantiates GatewayStatusAvailability ONCE (a single /charon/status read —
     or the CHARON_GATEWAY_STATUS_FILE snapshot in tests) and prints, one per
-    line, the models that are NOT gateway-capped, order preserved. Exit 0 when
-    at least one survives; exit 7 when EVERY model is capped (the tier-exhausted
-    signal fleet-droid.sh's resolver spills up on). Fail-open: an unreachable
-    gateway / bad snapshot makes every model 'unknown' -> all KEPT, exit 0 (we
-    never escalate to a paid tier merely because the status endpoint is down)."""
+    line, the models that are NOT gateway-capped, order preserved.
+
+    Exit codes (the contract fleet-droid.sh's capped_filter_chain reads):
+      0  filtered against a snapshot we actually READ; stdout = survivors.
+      7  EXIT_ALL_CAPPED — snapshot read, and EVERY candidate is capped (the real
+         tier-exhausted signal the resolver may spill up on).
+      8  EXIT_STATUS_UNAVAILABLE — the snapshot could NOT be read (gateway down,
+         401/missing bearer token, unparseable body/file). stdout is deliberately
+         EMPTY and the reason goes to stderr: we have no capped knowledge, so we
+         emit no chain that could be mistaken for a filtered one. NOT fail-open —
+         see the module note on EXIT_ALL_CAPPED/EXIT_STATUS_UNAVAILABLE.
+      2  usage.
+
+    (This CLI is the MONEY-PATH seam. assign.py's in-process use of
+    GatewayStatusAvailability stays advisory/fail-open on purpose: it only
+    re-ORDERS a chain the resolver already vetted, it cannot spend anything.)"""
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "filter-capped":
         models = [m for m in argv[1:] if m]
+        if not models:
+            return 0  # nothing to filter -> not an "all-capped" signal, no gateway read
         prov = GatewayStatusAvailability()
+        err = prov.error()
+        if err is not None:
+            # LOUD + FAIL-CLOSED. Never print survivors here: an all-KEPT list off an
+            # unreadable snapshot is exactly the silent no-op this exit code exists to end.
+            print(f"availability: CANNOT READ gateway /charon/status ({err}) — capped-exclusion "
+                  f"did NOT run; refusing to report {len(models)} model(s) as un-capped",
+                  file=sys.stderr)
+            return EXIT_STATUS_UNAVAILABLE
         kept = [m for m in models if prov.status(m) != CAPPED]
         for m in kept:
             print(m)
         note = prov.note()
         if note:
             print(note, file=sys.stderr)
-        if not models:
-            return 0  # nothing to filter -> not an "all-capped" signal
-        return 0 if kept else 7
+        return 0 if kept else EXIT_ALL_CAPPED
     print("usage: availability.py filter-capped MODEL [MODEL ...]", file=sys.stderr)
     return 2
 

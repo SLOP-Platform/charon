@@ -218,20 +218,45 @@ exhaust_led(){
 
 # capped_filter_chain: drop gateway-CAPPED models (every provider that can serve the id is
 # parked/drained/cooled per /charon/status — CRIPPLE #2's GatewayStatusAvailability) from a chain.
-# Prints the surviving comma chain on stdout; returns 7 when EVERY model is capped (tier exhausted
-# -> caller SPILLS UP). Fail-OPEN: if the gateway is unreachable / status unavailable, every model
-# reads 'unknown' and is KEPT (rc 0) — we never escalate to a paid tier merely because the status
-# endpoint is down. Reuses the capability/availability.py `filter-capped` CLI (ONE snapshot read).
+# Prints the surviving comma chain on stdout. Return contract, mirroring availability.py's
+# EXIT_ALL_CAPPED / EXIT_STATUS_UNAVAILABLE:
+#   0  filtered against a snapshot we actually READ; stdout = survivors.
+#   7  every model is POSITIVELY capped (tier exhausted -> caller may SPILL UP).
+#   8  the capped-exclusion COULD NOT RUN (gateway unreachable / 401 / no bearer token /
+#      unparseable snapshot / python3 or availability.py missing). We know nothing about capped
+#      state -> caller must DETAIN, never spill and never treat this as "nothing capped".
+#
+# FAIL-OPEN DEFECT, FIXED HERE (money path). This used to swallow stderr (`2>/dev/null`) and map
+# every non-7 error to "keep all, rc 0" — byte-for-byte identical to a healthy gateway reporting
+# nothing capped. A dispatcher running without a gateway token (the live gateway answers 401
+# "missing or invalid bearer token" unauthenticated) therefore had the ENTIRE capped-exclusion
+# silently no-op: it filtered nothing, spent against parked/drained providers, and surfaced
+# nothing. stderr is now PASSED THROUGH (the real error is visible) and an unreadable snapshot is
+# its own return code, so "nothing capped" and "could not ask" can never be confused again.
+#
+# The missing-prerequisite case (no python3 / no availability.py) is the SAME class — the filter
+# does not run — so it takes the same rc 8 path rather than a quiet pass-through: a rig that cannot
+# evaluate caps must stop loudly, not spend blind.
 capped_filter_chain(){
   local py="$FLEET/capability/availability.py"
-  { [ -f "$py" ] && command -v python3 >/dev/null 2>&1; } || { ( IFS=','; echo "$*" ); return 0; }
+  if ! { [ -f "$py" ] && command -v python3 >/dev/null 2>&1; }; then
+    echo "[fleet-droid] capped-filter PREREQUISITE MISSING (python3 and/or $py) — gateway capped-exclusion cannot run." >&2
+    return 8
+  fi
   local out rc
-  set +e; out="$(python3 "$py" filter-capped "$@" 2>/dev/null)"; rc=$?; set -e
+  # stderr is NOT redirected: availability.py's diagnostic (and any traceback) must reach the
+  # operator/log. Only stdout is captured.
+  set +e; out="$(python3 "$py" filter-capped "$@")"; rc=$?; set -e
   [ "$rc" -eq 7 ] && return 7                       # positively ALL-capped -> exhausted
-  [ "$rc" -ne 0 ] && { ( IFS=','; echo "$*" ); return 0; }   # any other error -> fail-open keep all
+  if [ "$rc" -ne 0 ]; then                          # 8 (unreadable snapshot) or any unexpected rc
+    [ "$rc" -eq 8 ] || echo "[fleet-droid] capped-filter exited unexpectedly (rc=$rc) — treating as UNAVAILABLE (see stderr above)." >&2
+    return 8
+  fi
   local kept=() m
   while IFS= read -r m; do [ -n "$m" ] && kept+=("$m"); done <<<"$out"
-  [ "${#kept[@]}" -gt 0 ] || { ( IFS=','; echo "$*" ); return 0; }
+  # rc 0 with an empty survivor list breaks the CLI contract (all-capped is rc 7) -> unavailable,
+  # NOT a silent keep-all.
+  [ "${#kept[@]}" -gt 0 ] || { echo "[fleet-droid] capped-filter returned rc 0 with NO models — contract violation, treating as UNAVAILABLE." >&2; return 8; }
   ( IFS=','; echo "${kept[*]}" )
 }
 
@@ -295,9 +320,30 @@ resolve_runnable_chain(){
       local -a rmodels=(); IFS=',' read -r -a rmodels <<<"$reordered" || true
       if det="$(detention_filter_chain "$wc" "${rmodels[@]}")"; then
         local -a dmodels=(); IFS=',' read -r -a dmodels <<<"$det" || true
-        if capf="$(capped_filter_chain "${dmodels[@]}")"; then
+        local caprc=0
+        capf="$(capped_filter_chain "${dmodels[@]}")" || caprc=$?
+        if [ "$caprc" -eq 0 ]; then
           [ -n "$spilled" ] && echo "[fleet-droid] SPILL-UP: cost band '$start' had NO runnable model (all detained/capped); escalated to '$cur' (cost ceiling '$ceiling') — a paid model does the work rather than backlogging for cheap." >&2
           echo "$capf"; return 0
+        elif [ "$caprc" -eq 8 ]; then
+          # CAPPED-FILTER UNAVAILABLE -> DETAIN (return 7), the SAME choice the cost cap makes on an
+          # invalid ceiling, and for the same reason. We cannot see capped state, so:
+          #   * we cannot hand back this band's chain — it may be wholly parked/drained/cooled, and
+          #     "keep everything" was precisely the old silent no-op (spend against dead providers);
+          #   * we must NOT spill up either — an unreadable snapshot is not evidence of exhaustion,
+          #     and escalating on it is a cost-band jump bought with an ERROR (the overspend the
+          #     cap exists to refuse). So the ladder stops here; no costlier band is offered.
+          # DETAIN, not hard-fail the dispatch: the work is valid and the fault is transient
+          # (gateway restart / token not exported). Returning 7 releases the ticket back to the
+          # board still claimable, so it retries once the gateway is readable again. It cannot
+          # silently overspend (no model is handed to the work client at all) and it cannot
+          # silently backlog: the real error is on stderr (no longer swallowed), the greppable
+          # `CAPPED-FILTER-UNAVAILABLE:` line prints, a `capped-filter-unavailable` row lands in the
+          # provider-exhaustion ledger, and the caller burns one loop-guard attempt so a persistent
+          # outage QUARANTINES the ticket and surfaces it to the operator.
+          echo "[fleet-droid] CAPPED-FILTER-UNAVAILABLE: could not read gateway capped state for cost band '$cur' (see the availability error above — commonly a 401/missing CHARON_GATEWAY_TOKEN, or the gateway being down). FAILING CLOSED: gateway capped-exclusion did NOT run, so this band's chain is NOT trusted and is NOT handed over, and NO cost spill-up is taken off an error. DETAINING '$start' work: the ticket is released and stays claimable, retried when gateway status is readable again. Export a gateway token / restore $(printf '%s' "${CHARON_GATEWAY_URL:-http://10.0.1.60:8080}") to re-enable." >&2
+          exhaust_led "band:$cur" "capped-filter-unavailable" "work_class=$wc start=$start ceiling=$ceiling: /charon/status unreadable (auth/reach) — capped-exclusion did not run; DETAINED (fail closed, no spill-up)"
+          return 7
         fi
         echo "[fleet-droid] cost band '$cur': ALL models gateway-CAPPED (every provider parked/drained/cooled) — spilling up." >&2
         reason="capped"
