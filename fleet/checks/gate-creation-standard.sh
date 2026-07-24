@@ -11,16 +11,29 @@
 # it does NOT mint per-instance checker scripts; a new gate's own red-proof test IS its
 # evidence.
 #
+# WHO IS AUDITED (META-GATE-CALLSITE-ENUM, 2026-07-24): the audited population used to be a
+# DIRECTORY GLOB (`"$CHECKS_DIR"/*.sh|*.py`), so PLACEMENT WAS THE EXEMPTION — enforcement
+# logic inlined in validate_board.sh / preflight.sh, a top-level fleet/*.sh, or a CI step was
+# exempt with no override record and no signal. §B now enumerates by CALL SITE: the union of
+# (a) fleet/checks/* and (b) every script INVOKED BY the rig's enforcement entrypoints
+# (ENTRYPOINTS below). An inline enforcement block in validate_board.sh therefore pulls
+# validate_board.sh ITSELF into the audited set. Exemptions are explicit NAMED lists that may
+# only shrink, never an accident of where a file was put.
+#
 # What it enforces (each item names the GATE-CREATION-STANDARD.md item + ledger class):
 #   * S1 RED-PROOFED  — every NON-grandfathered gates.json entry has a red_proof file that
-#                       EXISTS; every NON-grandfathered fleet/checks/* has a companion test
-#                       in fleet/tests/ carrying a red-proof/fail-on-revert marker.
+#                       EXISTS; every NON-grandfathered audited script (fleet/checks/* OR a
+#                       call-site member) has a companion test in fleet/tests/ carrying a
+#                       red-proof/fail-on-revert marker.
 #   * S2 NON-VACUOUS  — gates.json must be a non-empty registry; the ledger must have >0
-#                       data rows (a gate that passes on zero items proves nothing).
-#   * S3 UN-GAMED     — the baseline gate-id set and baseline fleet/checks set cannot
-#                       silently shrink; the ledger row count cannot drop below its floor
-#                       (append-only). Grandfather lists are EXPLICIT and frozen.
-#   * S5 FAIL-LOUD    — every fleet/checks/*.sh carries `set -...uo pipefail` (fail-quiet-
+#                       data rows; the CALL-SITE set must resolve to >0 paths (a gate that
+#                       passes on zero items examined proves nothing).
+#   * S3 UN-GAMED     — the baseline gate-id set, the baseline fleet/checks set and the
+#                       call-site set cannot silently shrink (CALLSITE_MIN floor, and every
+#                       named entrypoint must exist); the ledger row count cannot drop below
+#                       its floor (append-only). Grandfather lists are EXPLICIT and frozen,
+#                       and a grandfathered name that no longer exists is itself a RED.
+#   * S5 FAIL-LOUD    — every audited *.sh carries `set -...uo pipefail` (fail-quiet-
 #                       pipe-mask class: validate_board's historic green-on-double-claim).
 #   * S10 TRACEABILITY— every ledger root_class appears in GATE-CREATION-STANDARD.md.
 #
@@ -41,8 +54,10 @@
 # Env seams (isolated self-test overrides; defaults are the real fleet/product):
 #   GCS_FLEET GCS_PRODUCT_REPO GCS_GATES_JSON GCS_CHECKS_DIR GCS_TESTS_DIR GCS_LEDGER
 #   GCS_STANDARD GCS_VALIDATE_BOARD GCS_LEDGER_MIN
+#   GCS_REPO_ROOT GCS_ENTRYPOINTS GCS_CALLSITE_MIN
 #   GCS_BASELINE_GATE_IDS GCS_GRANDFATHER_NO_REDPROOF GCS_BASELINE_CHECKS
-#   GCS_GRANDFATHER_NO_TEST GCS_GRANDFATHER_NO_SETLINE   (space/comma-separated lists)
+#   GCS_GRANDFATHER_NO_TEST GCS_GRANDFATHER_NO_SETLINE
+#   GCS_GRANDFATHER_CALLSITE_NO_TEST                     (space/comma-separated lists)
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"      # fleet/ (script in fleet/checks/)
@@ -56,6 +71,15 @@ STANDARD="${GCS_STANDARD:-$FLEET/GATE-CREATION-STANDARD.md}"
 VALIDATE_BOARD="${GCS_VALIDATE_BOARD:-$FLEET/validate_board.sh}"
 LEDGER_MIN="${GCS_LEDGER_MIN:-8}"
 
+# ---- call-site enumeration seams (§B0) ----
+# ENUM_ROOT is the repo root the entrypoint patterns are relative to (fleet/ lives under it).
+ENUM_ROOT="${GCS_REPO_ROOT:-$(cd "$FLEET/.." 2>/dev/null && pwd)}"
+# ENTRYPOINTS: the FROZEN list of enforcement entrypoints whose invocations define membership.
+# A pattern that matches NO file on disk is a RED (S3 UN-GAMED) — the node-set cannot shrink
+# by an entrypoint quietly disappearing or being renamed.
+ENTRYPOINTS="${GCS_ENTRYPOINTS-fleet/preflight.sh fleet/gate.sh fleet/land.sh fleet/land-push.sh fleet/validate_board.sh fleet/foreman.sh fleet/hooks/* fleet/watchdog/*.sh .github/workflows/*.yml}"
+# CALLSITE_MIN: append-only floor, seeded 2026-07-24 from the MEASURED derived-set size (36).
+CALLSITE_MIN="${GCS_CALLSITE_MIN:-36}"
 # ---- frozen baselines + grandfather lists (S3 UN-GAMED: explicit, append-forbidden). ----
 # Pre-standard gates are NAMED; anything new must arrive red-proofed. Removing a baseline
 # member is itself a RED (the node-set cannot silently shrink).
@@ -64,7 +88,16 @@ GRANDFATHER_NO_REDPROOF="${GCS_GRANDFATHER_NO_REDPROOF:-version-check ruff-lint 
 BASELINE_CHECKS="${GCS_BASELINE_CHECKS:-base-integrity.sh bridge-health.py config-ssot-gate.sh gpt55-primary.sh no-anthropic-in-sg.sh no-claude-executor.sh parallelizability-gate.sh rule-sync.sh gate-creation-standard.sh}"
 GRANDFATHER_NO_TEST="${GCS_GRANDFATHER_NO_TEST:-bridge-health.py gpt55-primary.sh no-anthropic-in-sg.sh no-claude-executor.sh}"
 GRANDFATHER_NO_SETLINE="${GCS_GRANDFATHER_NO_SETLINE:-gpt55-primary.sh}"
-
+# Call-site members that pre-date this enumerator and carry NO companion test at all. This
+# list is the POINT of META-GATE-CALLSITE-ENUM: these were exempt by PLACEMENT (invisible,
+# unrecorded, unbounded); they are now exempt by NAME (visible, recorded, bounded). Measured
+# 2026-07-24 by execution. APPEND IS FORBIDDEN — the list may only SHRINK; a name that no
+# longer exists on disk is a RED (stale exemption).
+# DELIBERATELY NOT EXEMPTED: fleet/validate_board.sh — it is the TRIGGER INSTANCE of this
+# class (the tier-drift enforcement block inlined into it, commit 0a759a8). Exempting the
+# very escape this enumerator exists to close would re-hide it; it stays RED until it carries
+# a red-proofed companion test.
+GRANDFATHER_CALLSITE_NO_TEST="${GCS_GRANDFATHER_CALLSITE_NO_TEST-fleet/_lib.sh fleet/access-check.sh fleet/autonomous.sh fleet/capability/grades.py fleet/cg-drift.sh fleet/dark-work-check.sh fleet/handoff-check.sh fleet/land-needs-push.sh fleet/pending.sh fleet/project-audit.sh fleet/push-verify.sh fleet/reap-orphans.sh fleet/release.sh fleet/repo-registry.sh fleet/watchdog/discover-services.sh fleet/watchdog/generate-monit-config.sh fleet/watchdog/monit-selfwatch.sh fleet/watchdog/watchdog-lib.sh fleet/wci-contention.sh}"
 REDS=()
 red(){ REDS+=("$1"); }
 in_list(){ # in_list <needle> <space/comma list>
@@ -145,7 +178,79 @@ PY
   )
 fi
 
-# ===================== B. fleet checks (fleet/checks/*) =====================
+# ============ B0. CALL-SITE enumeration (who is audited is decided by INVOCATION) ==========
+# The audited population is derived from what the frozen enforcement entrypoints actually
+# INVOKE, not from where a file happens to live. A mention inside a comment is not an
+# invocation; the rig's own test suite is excluded (tests are the PROOFS, not the gates —
+# their reachability is META-GATE-REDPROOF-REACHABLE, leg ii).
+CALLSITE=()
+while IFS=$'\t' read -r kind payload; do
+  case "$kind" in
+    RED)  [ -n "$payload" ] && red "$payload" ;;
+    PATH) [ -n "$payload" ] && CALLSITE+=("$payload") ;;
+  esac
+done < <(
+  GCS_ENTRYPOINTS_RESOLVED="$ENTRYPOINTS" \
+  python3 - "$ENUM_ROOT" "$FLEET" "$TESTS_DIR" <<'PY'
+import glob, os, re, sys
+root, fleet, tests_dir = sys.argv[1], sys.argv[2], sys.argv[3]
+patterns = os.environ["GCS_ENTRYPOINTS_RESOLVED"].replace(",", " ").split()
+eps = []
+for pat in patterns:
+    hits = sorted(p for p in glob.glob(os.path.join(root, pat)) if os.path.isfile(p))
+    if not hits:
+        print("RED\tentrypoint-missing: enforcement entrypoint '%s' matches no file under %s "
+              "(S3 UN-GAMED — the call-site node-set cannot shrink by an entrypoint quietly "
+              "vanishing or being renamed)" % (pat, root))
+    eps += hits
+# index every candidate script under fleet/, EXCLUDING the test suite
+idx = {}
+tests_dir = os.path.normpath(tests_dir)
+for dp, dn, fn in os.walk(fleet):
+    if dp == tests_dir or dp.startswith(tests_dir + os.sep) or "__pycache__" in dp:
+        continue
+    for f in sorted(fn):
+        if f.endswith((".sh", ".py")):
+            idx.setdefault(f, os.path.join(dp, f))
+TOK = re.compile(r"[A-Za-z0-9_.${}/\\-]*\.(?:sh|py)")
+out = set()
+for e in eps:
+    try:
+        lines = open(e, errors="replace").read().splitlines()
+    except OSError as ex:
+        print("RED\tentrypoint-unreadable: %s — %s (S5 FAIL-LOUD — an unreadable entrypoint is "
+              "RED, not a silent skip)" % (e, ex))
+        continue
+    for line in lines:
+        if line.lstrip().startswith("#"):
+            continue        # a mention in a comment is not an invocation
+        for m in TOK.finditer(line):
+            b = os.path.basename(m.group(0))
+            if "*" in b or b.endswith(".test.sh") or b.startswith("test_"):
+                continue
+            p = idx.get(b)
+            if p:
+                out.add(os.path.relpath(p, root))
+for p in sorted(out):
+    print("PATH\t" + p)
+PY
+)
+# S2 NON-VACUOUS / S3 UN-GAMED on the derived set itself: a run that examined ZERO call sites
+# must NEVER be green, and the set may not silently shrink below its measured floor.
+if [ "${#CALLSITE[@]}" -eq 0 ]; then
+  red "callsite-enum-vacuous: the enforcement-entrypoint scan of $ENUM_ROOT resolved ZERO invoked scripts (S2 NON-VACUOUS — a meta-gate that examined nothing proves nothing; check GCS_ENTRYPOINTS/GCS_REPO_ROOT)"
+elif [ "${#CALLSITE[@]}" -lt "$CALLSITE_MIN" ]; then
+  red "callsite-set-shrunk: call-site set has ${#CALLSITE[@]} paths, floor is $CALLSITE_MIN (S3 UN-GAMED — the audited population is append-only; enforcement cannot be removed from the entrypoints to escape the audit)"
+fi
+# Frozen exemptions must stay REAL: a grandfathered name that no longer exists is a stale
+# exemption, and stale exemptions are how a shrink-only list silently grows.
+for g in ${GRANDFATHER_CALLSITE_NO_TEST//,/ }; do
+  [ -e "$ENUM_ROOT/$g" ] || red "stale-exemption: GRANDFATHER_CALLSITE_NO_TEST names '$g' which no longer exists under $ENUM_ROOT (S3 UN-GAMED — remove it from the frozen list; the list may only SHRINK)"
+done
+
+# ===================== B. audited gates (fleet/checks/* UNION the call sites) ===============
+AUDIT=()            # "<origin>|<display>|<abs path>"
+CHECK_NAMES=""
 if [ ! -d "$CHECKS_DIR" ]; then
   red "checks-dir-missing: $CHECKS_DIR not found (S2 NON-VACUOUS)"
 else
@@ -154,35 +259,63 @@ else
   done
   for f in "$CHECKS_DIR"/*.sh "$CHECKS_DIR"/*.py; do
     [ -e "$f" ] || continue
-    name="$(basename "$f")"
-    # S5 FAIL-LOUD (shell checks): must fail loud — set -uo pipefail (validate_board's
-    # historic pipe-mask green-on-double-claim is the ledger class this closes).
-    case "$name" in
-      *.sh)
-        if ! in_list "$name" "$GRANDFATHER_NO_SETLINE" && \
-           ! grep -qE '^[[:space:]]*set[[:space:]]+-[A-Za-z]*u[A-Za-z]*o[[:space:]]+pipefail' "$f"; then
-          red "fail-quiet: $name lacks 'set -...uo pipefail' (S5 FAIL-LOUD — fail-quiet-pipe-mask class)"
-        fi
-        ;;
-    esac
-    # S1 RED-PROOFED: companion test in fleet/tests/ with a red-proof/fail-on-revert marker.
-    in_list "$name" "$GRANDFATHER_NO_TEST" && continue
-    cstem="$(norm "$name")"
-    companion=""
-    for t in "$TESTS_DIR"/*.sh "$TESTS_DIR"/*.py; do
-      [ -e "$t" ] || continue
-      tstem="$(norm "$t")"
-      if [ "$tstem" = "$cstem" ] || [ "$tstem" = "${cstem%gate}" ] || { [ -n "$cstem" ] && case "$tstem" in *"$cstem"*) true;; *) false;; esac; }; then
-        companion="$t"; break
-      fi
-    done
-    if [ -z "$companion" ]; then
-      red "no-red-proof-test: $name has no companion test in $TESTS_DIR (S1 RED-PROOFED — a gate that has never been seen RED proves nothing green)"
-    elif ! grep -qiE 'red-proof|fail-on-revert' "$companion"; then
-      red "no-red-proof-marker: $(basename "$companion") covers $name but carries no red-proof/fail-on-revert case marker (S1 RED-PROOFED — the test must demonstrate the RED path, not just the green one)"
-    fi
+    CHECK_NAMES="$CHECK_NAMES $(basename "$f")"
+    AUDIT+=("checks|$(basename "$f")|$f")
   done
 fi
+for rel in ${CALLSITE[@]+"${CALLSITE[@]}"}; do
+  abs="$ENUM_ROOT/$rel"
+  [ -e "$abs" ] || continue
+  in_list "$(basename "$abs")" "$CHECK_NAMES" && continue   # already audited as a fleet check
+  AUDIT+=("callsite|$rel|$abs")
+done
+
+# companion-test stems, computed ONCE (the matcher itself is unchanged: norm + in_list).
+TEST_PATHS=(); TEST_STEMS=()
+for t in "$TESTS_DIR"/*.sh "$TESTS_DIR"/*.py; do
+  [ -e "$t" ] || continue
+  TEST_PATHS+=("$t"); TEST_STEMS+=("$(norm "$t")")
+done
+
+for entry in ${AUDIT[@]+"${AUDIT[@]}"}; do
+  origin="${entry%%|*}"; rest="${entry#*|}"; disp="${rest%%|*}"; f="${rest#*|}"
+  name="$(basename "$f")"
+  # S5 FAIL-LOUD (shell): must fail loud — set -uo pipefail (validate_board's historic
+  # pipe-mask green-on-double-claim is the ledger class this closes).
+  case "$name" in
+    *.sh)
+      if ! in_list "$name" "$GRANDFATHER_NO_SETLINE" && \
+         ! grep -qE '^[[:space:]]*set[[:space:]]+-[A-Za-z]*u[A-Za-z]*o[[:space:]]+pipefail' "$f"; then
+        red "fail-quiet: $disp lacks 'set -...uo pipefail' (S5 FAIL-LOUD — fail-quiet-pipe-mask class)"
+      fi
+      ;;
+  esac
+  # S1 RED-PROOFED: companion test in fleet/tests/ with a red-proof/fail-on-revert marker.
+  if [ "$origin" = "checks" ]; then
+    in_list "$name" "$GRANDFATHER_NO_TEST" && continue
+  else
+    in_list "$disp" "$GRANDFATHER_CALLSITE_NO_TEST" && continue
+  fi
+  cstem="$(norm "$name")"
+  companion=""
+  i=0
+  while [ "$i" -lt "${#TEST_PATHS[@]}" ]; do
+    tstem="${TEST_STEMS[$i]}"
+    if [ "$tstem" = "$cstem" ] || [ "$tstem" = "${cstem%gate}" ] || { [ -n "$cstem" ] && case "$tstem" in *"$cstem"*) true;; *) false;; esac; }; then
+      companion="${TEST_PATHS[$i]}"; break
+    fi
+    i=$((i+1))
+  done
+  if [ -z "$companion" ]; then
+    if [ "$origin" = "checks" ]; then
+      red "no-red-proof-test: $name has no companion test in $TESTS_DIR (S1 RED-PROOFED — a gate that has never been seen RED proves nothing green)"
+    else
+      red "unaudited-callsite: $disp is invoked by an enforcement entrypoint but has no companion test in $TESTS_DIR and no named exemption (S1 RED-PROOFED — enforcement is audited by CALL SITE now; placing it outside fleet/checks/ is no longer an exemption)"
+    fi
+  elif ! grep -qiE 'red-proof|fail-on-revert' "$companion"; then
+    red "no-red-proof-marker: $(basename "$companion") covers $disp but carries no red-proof/fail-on-revert case marker (S1 RED-PROOFED — the test must demonstrate the RED path, not just the green one)"
+  fi
+done
 
 # ===================== C. the ledger (fleet/state/GATE-GAP-LEDGER.tsv) =====================
 if [ ! -f "$LEDGER" ]; then
