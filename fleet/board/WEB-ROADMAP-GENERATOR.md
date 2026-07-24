@@ -1,4 +1,4 @@
-tier: economy
+tier: strong
 difficulty: 3
 work_class: rig-meta
 branch: feat/web-roadmap-generator

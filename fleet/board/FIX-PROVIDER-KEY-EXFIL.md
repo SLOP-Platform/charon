@@ -1,5 +1,5 @@
 repo: charon
-tier: strong
+tier: frontier
 difficulty: 2
 work_class: bugfix
 branch: fix/provider-key-exfil

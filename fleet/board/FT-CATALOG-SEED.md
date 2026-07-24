@@ -1,5 +1,5 @@
 repo: charon
-tier: economy
+tier: frontier
 priority: 0
 difficulty: 2
 work_class: greenfield-feature

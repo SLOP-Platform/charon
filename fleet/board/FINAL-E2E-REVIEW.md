@@ -1,4 +1,4 @@
-tier: frontier
+tier: strong
 difficulty: 3
 work_class: ci-infra
 branch: audit/final-e2e-review

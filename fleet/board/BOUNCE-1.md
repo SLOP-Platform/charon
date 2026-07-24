@@ -1,5 +1,5 @@
 repo: charon-private
-tier: strong
+tier: frontier
 difficulty: 4
 priority: 0
 work_class: tests

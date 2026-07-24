@@ -1,5 +1,5 @@
 repo: charon
-tier: economy
+tier: strong
 difficulty: 1
 work_class: bugfix
 priority: 2

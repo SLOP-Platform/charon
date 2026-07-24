@@ -1,5 +1,5 @@
 repo: charon-private
-tier: economy
+tier: strong
 difficulty: 3
 work_class: rig-meta
 branch: feat/fn-memory-retire-adopt

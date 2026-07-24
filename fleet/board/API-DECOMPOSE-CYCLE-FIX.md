@@ -1,5 +1,5 @@
 repo: charon
-tier: economy
+tier: strong
 difficulty: 2
 work_class: refactor
 branch: feat/api-decompose-cycle-fix

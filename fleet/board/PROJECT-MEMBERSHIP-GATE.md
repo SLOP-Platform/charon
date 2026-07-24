@@ -1,4 +1,4 @@
-tier: economy
+tier: strong
 difficulty: 2
 work_class: rig-meta
 branch: feat/project-membership-gate

@@ -1,4 +1,4 @@
-tier: frontier
+tier: strong
 priority: 3
 difficulty: 4
 work_class: ci-infra
