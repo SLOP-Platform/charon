@@ -23,10 +23,11 @@
 # registries (e.g. tier-models.tsv) are seeded here so they are findable; extra rows are fine.
 #
 # name	purpose	path	schema	owner	conformance_gate
-service-registry	fleet services + their liveness watchdog contract	fleet/state/service-registry.tsv	service|check_cmd|owner|cadence	SERVICE-LIVENESS-WATCHDOG	fleet/checks/service-liveness.sh
+service-registry	fleet services + their liveness watchdog contract	fleet/state/service-registry.tsv	name|kind|alive_probe|freshness_probe|ttl|restart_cmd|owner	SERVICE-LIVENESS-WATCHDOG	fleet/watchdog/discover-services.sh
 tier-models	per-tier GATEWAY model failover chain for the off-Claude executor	fleet/tier-models.tsv	tier|model|order|notes	TIER-MODELS	fleet/checks/config-ssot-gate.sh
 plane-canary	plane -> canary-script + dogfood-test wiring map	fleet/plane-canary-registry.tsv	plane|canary_script|dogfood_test|wired_in|owner_ticket	PLANE-CANARY-WIRE	fleet/tests/plane-canary.test.sh
 rule-registry	one row per enforceable MANAGER-OPERATING-RULES rule (coverage meta-gate)	fleet/state/RULE-REGISTRY.tsv	rule_id|surface|enforcer|test	RULE-COVERAGE	fleet/checks/rule-coverage.sh
 rule-sync-register	bidirectional rule-coverage audit across slop/ksf/charon	fleet/state/RULE-SYNC-REGISTER.tsv	rule_id|slop|ksf|charon	RULE-SYNC	fleet/checks/rule-sync.sh
 config-sources	SSOT registry of config sources reconciled by config-drift	fleet/state/CONFIG-SOURCES.tsv	sid|kind|read_cmd_template|note	CONFIG-SSOT	fleet/checks/config-ssot-gate.sh
 jedi-name-pool	session-name pool (no-reuse allocator draws from here)	fleet/state/jedi-name-pool.txt	name	HANDOFF-NAME-ALLOCATOR	fleet/tests/claim-jedi-name.test.sh
+lens-registry	durable store of the session lenses (goal + linked tickets + status)	fleet/state/lens-registry.tsv	lens|goal|linked_tickets|status|why	LENS-REGISTRY-AND-REPORT	-
