@@ -162,7 +162,12 @@ class TestDiffCoverGate:
         _git(diff_cover_fixture, "add", "-A")
         _git(diff_cover_fixture, "commit", "-m", "add subtract with test")
 
-        _run_gate("diff_cover_gate.py", diff_cover_fixture, "master")
+        # Non-vacuous guard: the covered state MUST be GREEN first, so the
+        # post-revert RED proves a real state flip (not a permanently-RED gate).
+        green = _run_gate("diff_cover_gate.py", diff_cover_fixture, "master")
+        assert green.returncode == 0, (
+            f"pre-revert state should GREEN\nstdout: {green.stdout}\nstderr: {green.stderr}"
+        )
 
         test_file.write_text(
             "import sys; sys.path.insert(0, 'src')\n"
@@ -239,7 +244,13 @@ class TestMutmutGate:
         )
         _git(mutmut_fixture, "add", "-A")
         _git(mutmut_fixture, "commit", "-m", "add divide with strong test")
-        _run_gate("mutmut_diff_gate.py", mutmut_fixture, "master")
+
+        # Non-vacuous guard: the strong-test state MUST be GREEN first, so the
+        # post-revert RED proves a real state flip (not a permanently-RED gate).
+        green = _run_gate("mutmut_diff_gate.py", mutmut_fixture, "master")
+        assert green.returncode == 0, (
+            f"pre-revert state should GREEN\nstdout: {green.stdout}\nstderr: {green.stderr}"
+        )
 
         (tests_dir / "test_newcalc.py").write_text(
             "import sys; sys.path.insert(0, 'src')\n"
