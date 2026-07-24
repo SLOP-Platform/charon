@@ -81,3 +81,6 @@ fleet/provider-exhaustion-ledger.tsv
 fleet/model-scorecard.tsv
 # ...and the reachability audit (REACHABILITY-GATE analysis; referenced by handoffs).
 !fleet/state/REACHABILITY-AUDIT.md
+
+# regenerable code map (rebuilt by the wired graphify-freshness gate) — do not track (matches product)
+graphify-out/
