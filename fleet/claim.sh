@@ -12,6 +12,14 @@ if [ "${1:-}" = "--dry-run" ]; then DRY_RUN=true; shift; fi
 TIER="${1:?usage: claim.sh [--dry-run] <tier> <droid> [both|own-only]}"; DROID="${2:?usage: claim.sh [--dry-run] <tier> <droid> [both|own-only]}"
 MODE="${3:-both}"
 case "$MODE" in both|own-only) ;; *) echo "usage: claim.sh [--dry-run] <tier> <droid> [both|own-only]" >&2; exit 2;; esac
+# POOL PAUSE (operator control): a present fleet/state/POOL-PAUSED file halts ALL claiming so the
+# free-claiming pool idles (droids get NONE and wait) — used to stop collisions while the manager
+# clears a class of work. Remove the file to resume. Pins are halted too (fail-safe: no work escapes).
+if [ -f "$STATE/POOL-PAUSED" ]; then
+  echo "NONE"
+  echo "claim.sh: POOL-PAUSED set ($STATE/POOL-PAUSED) — pool halted; rm it to resume." >&2
+  exit 1
+fi
 # CLAIM_ONLY (env) = HARD PIN: if set, this claim considers ONLY the named ticket id (case-insensitive)
 # and nothing else — the deterministic "pin a droid to a named ticket" mechanism the free-claim
 # ladder lacks. All other filters (tier/deps/parked/submitted/claimed/done) still apply, so a pinned
