@@ -207,6 +207,9 @@ while [ $# -gt 0 ]; do case "$1" in
   *) usage;;
 esac; done
 [ -n "$TIER" ] || usage
+# WORK-LEASE auto-wire: ensure the commit-boundary hooks are installed (idempotent; never blocks
+# launch). A fresh checkout is thus NOT inert — the gate fires without a manual `install` step.
+bash "$FLEET/work-lease.sh" ensure >/dev/null 2>&1 || true
 # Export the hard-pin to claim.sh (empty = normal free-claim). See --only above.
 export CLAIM_ONLY="$ONLY_TICKET"
 # OFF-CLAUDE tier resolution: turn the tier arg into a GATEWAY model FAILOVER CHAIN (charon/<id>),
@@ -408,6 +411,10 @@ while true; do
       || echo "[$DROID] LOOP-GUARD: $id quarantined (repeated worktree-create failures)."
     continue
   fi
+  # WORK-LEASE: claim.sh already acquired the atomic lease (state/claims/$id) at DISPATCH — that
+  # is the double-claim gate. Now that the isolated worktree exists, BIND the lease to it so the
+  # commit-time hook can verify the worktree match. Non-fatal (the claim IS the lease regardless).
+  bash "$FLEET/work-lease.sh" bind "$id" "$wt" "$DROID" >/dev/null 2>&1 || true
   # Snapshot the main checkout so the post-session leak detector can spot NEW stray work in it.
   main_before="$(git -C "$REPO" status --porcelain 2>/dev/null)"
   # LAUNCHER NOTE wins over JOIN-PROMPT step 1: the worktree already exists and is the CWD.

@@ -27,6 +27,11 @@ PRODUCT="${SESSION_START_PRODUCT:-/home/stack/code/charon}"
 PRIV="${SESSION_START_PRIV:-/home/stack/charon-private}"
 SYNC_SH="${SESSION_START_SYNC_SH:-$FLEET/sync-checkouts.sh}"
 
+# WORK-LEASE auto-wire (gates-must-actually-run): install the commit-boundary hooks idempotently
+# on every session boot, so the work-lease gate is never inert on a fresh checkout and needs no
+# manual `work-lease.sh install`. Never blocks boot (swallow all errors).
+bash "$FLEET/work-lease.sh" ensure 2>/dev/null || true
+
 echo "== session-start: syncing local checkouts (FF-only, dirty-safe) =="
 if [ -f "$SYNC_SH" ]; then
   bash "$SYNC_SH" 2>&1

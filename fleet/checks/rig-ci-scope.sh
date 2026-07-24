@@ -54,6 +54,11 @@ CI_SUITES=(
                             # the real claim.sh. The single canary a revert to "alphabetical
                             # first" or a drop of the revdep field fails. ~2s.
   rig-ci.test.sh            # this gate's own fail-on-revert tests
+  work-lease.test.sh        # hermetic: real work-lease.sh/claim.sh/_lib.sh copied into a temp
+                            # FLEET + REAL git worktrees under mktemp -d, no network. Red-proofs
+                            # the DISPATCH double-claim gate, the single (claims) store shared
+                            # with claim.sh, the un-leased / main-checkout / fail-closed commit
+                            # refusals, and stale-lease reclaim. ~2s.
   substrate-first-gate.test.sh # hermetic: throwaway board + fixture EVAL-REGISTRY under mktemp -d,
                             # no network. Red-proofs the creation-time build-vs-adopt gate on all
                             # its detection paths (requirement / anti-reframe diagnostic /

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# pre-commit hook — Work-Lease gate: refuse un-leased worktree commits.
+set -euo pipefail
+FLEET="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd 2>/dev/null)"
+exec bash "$FLEET/work-lease.sh" pre-commit
