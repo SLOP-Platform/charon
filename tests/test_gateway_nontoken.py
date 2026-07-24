@@ -66,3 +66,50 @@ def test_extract_helper_reads_top_level_and_usage() -> None:
     assert _extract_non_token_cost({"usage": {"total_cost": 0.9}}) == 0.9
     assert _extract_non_token_cost({"model": "m"}) is None
     assert _extract_non_token_cost(None) is None
+
+
+def test_energy_kwh_not_booked_as_usd_without_rate(monkeypatch) -> None:
+    """MONEY BUG (METER-KWH-USD-FIX): ``energy_kwh`` is a PHYSICAL energy
+    quantity (kilowatt-hours), NOT dollars. With no configured $/kWh price it
+    must NOT be booked as USD. The old code put ``energy_kwh`` in the USD field
+    list, so 5.0 kWh billed $5.00 (1 kWh == $1). Reverting the fix turns this
+    RED: the ledger would show 5.0 instead of 0.0."""
+    monkeypatch.delenv("CHARON_ENERGY_USD_PER_KWH", raising=False)
+    body = {"model": "neuralwatt/energy-model", "energy_kwh": 5.0}
+
+    # Helper must not turn kWh into dollars 1:1.
+    assert _extract_non_token_cost(body) is None
+    assert _extract_non_token_cost(body) != 5.0
+
+    # ...and the live production path meters nothing rather than mis-charging.
+    p = _NonTokenAwareProxy()
+    obs = p.observe(
+        "neuralwatt/energy-model", 200, body=body, provider="neuralwatt")
+    assert obs.usage is None
+    assert p.cumulative_usage().cost_usd == 0.0
+
+
+def test_energy_kwh_converted_via_configured_rate(monkeypatch) -> None:
+    """When a real $/kWh price is configured, kWh is converted to USD — proving
+    the field is metered by PRICE, not booked 1:1. 5.0 kWh @ $0.12/kWh = $0.60,
+    which is not the raw 5.0 the buggy path produced."""
+    monkeypatch.setenv("CHARON_ENERGY_USD_PER_KWH", "0.12")
+    body = {"model": "neuralwatt/energy-model", "energy_kwh": 5.0}
+
+    assert _extract_non_token_cost(body) == 0.6
+
+    p = _NonTokenAwareProxy()
+    obs = p.observe(
+        "neuralwatt/energy-model", 200, body=body, provider="neuralwatt")
+    assert obs.usage is not None
+    assert obs.usage.cost_usd == 0.6
+    assert obs.cost_source == "provider"
+    assert p.cumulative_usage().cost_usd == 0.6
+
+
+def test_usd_field_wins_over_kwh(monkeypatch) -> None:
+    """If a provider reports both a genuine USD amount and raw kWh, the USD
+    amount is authoritative (kWh is not double-counted)."""
+    monkeypatch.setenv("CHARON_ENERGY_USD_PER_KWH", "0.12")
+    body = {"model": "m", "energy_cost": 0.037, "energy_kwh": 5.0}
+    assert _extract_non_token_cost(body) == 0.037

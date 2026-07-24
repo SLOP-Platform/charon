@@ -364,17 +364,71 @@ def _check_failover_safety(cfg: GatewayConfig) -> None:
 
 # ── non-token cost extraction (GATEWAY-NONTOKEN-METERING) ──────────────
 
-_NON_TOKEN_COST_FIELDS = ("total_cost", "energy_cost", "energy_kwh", "total_cost_usd")
+# These are genuine USD amounts — book them 1:1 as dollars. ``energy_kwh`` is
+# DELIBERATELY excluded: it is a PHYSICAL ENERGY quantity (kilowatt-hours), not
+# dollars. Booking it here would charge $1 per kWh (money bug). kWh is converted
+# to USD separately via a configured $/kWh rate — see ``_energy_kwh_usd``.
+_NON_TOKEN_COST_FIELDS = ("total_cost", "energy_cost", "total_cost_usd")
+
+# Operator-configured energy price. A provider that reports only raw
+# ``energy_kwh`` can be metered in USD only once this is set; absent it we do
+# NOT guess a price (that is what mis-charged kWh as USD 1:1).
+_ENERGY_USD_PER_KWH_ENV = "CHARON_ENERGY_USD_PER_KWH"
+
+
+def _energy_usd_per_kwh() -> float | None:
+    """Return the configured energy price in USD per kWh, or None if unset /
+    non-positive / unparseable. None means: do not book kWh as USD at all."""
+    raw = os.environ.get(_ENERGY_USD_PER_KWH_ENV)
+    if raw is None:
+        return None
+    try:
+        rate = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return rate if rate > 0 else None
+
+
+def _energy_kwh_usd(body: dict) -> float | None:
+    """Convert a provider-reported ``energy_kwh`` figure to USD using the
+    configured $/kWh rate.
+
+    Looks at the response top level and the ``usage`` sub-object. Returns None
+    (i.e. DO NOT book anything) when no kWh figure is present OR when no price
+    is configured — the fix for the 1:1 kWh→USD mis-charge is to skip rather
+    than treat kilowatt-hours as dollars."""
+    rate = _energy_usd_per_kwh()
+    usage = body.get("usage")
+    containers = [body, usage if isinstance(usage, dict) else None]
+    for container in containers:
+        if not isinstance(container, dict):
+            continue
+        val = container.get("energy_kwh")
+        if val is None:
+            continue
+        try:
+            kwh = float(val)
+        except (TypeError, ValueError):
+            continue
+        if kwh <= 0:
+            continue
+        if rate is None:
+            # kWh reported but no $/kWh configured: skip, never mis-charge.
+            return None
+        return kwh * rate
+    return None
 
 
 def _extract_non_token_cost(body: dict | None) -> float | None:
-    """Extract non-token cost from a provider response body.
+    """Extract non-token cost from a provider response body, in USD.
 
-    Checks fields that non-token billing providers use (e.g., NeuralWatt's
-    energy cost fields) at both the response top level and the usage sub-object.
-    Returns the parsed cost in USD, or None if no non-token cost field found.
-    Extensible to additional non-token billing shapes by adding field names
-    to ``_NON_TOKEN_COST_FIELDS``."""
+    First checks fields that non-token billing providers report already in
+    dollars (e.g., NeuralWatt's ``energy_cost``) at both the response top level
+    and the ``usage`` sub-object. If none is present, falls back to a raw
+    ``energy_kwh`` figure converted to USD via the configured $/kWh rate.
+    Returns the cost in USD, or None if nothing bookable was found.
+    Extensible to additional USD-denominated shapes by adding field names to
+    ``_NON_TOKEN_COST_FIELDS`` (do NOT add non-USD units there)."""
     if not isinstance(body, dict):
         return None
 
@@ -400,7 +454,9 @@ def _extract_non_token_cost(body: dict | None) -> float | None:
                 except (TypeError, ValueError):
                     pass
 
-    return None
+    # No direct USD amount. A provider may instead report raw energy in kWh —
+    # convert via the configured $/kWh rate (never book kWh as USD 1:1).
+    return _energy_kwh_usd(body)
 
 
 class _NonTokenAwareProxy(GatewayProxy):
