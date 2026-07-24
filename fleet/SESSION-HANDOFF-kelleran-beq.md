@@ -172,6 +172,15 @@ e0dfd15 docs/adr 0020 accept verify only (#185)
 > key/critical/money/security code gets adversarial review reviewer!=builder; the manager RESERVES a
 > ticket (claim marker) before a manager-sub build (3 dual-build collisions this session — [[sg-never-deadlocks]]).
 
+0. **🔴 RED LINE — CLAIM INTEGRITY (operator, 2026-07-24, #1 priority).** No path may let a ticket be
+   re-claimed / double-claimed. It kept happening all session (SUBSTRATE, gate-parity, wire-graphify,
+   FAKTORY-TRIAL, KSF) — manager-sub builds bypass claim markers; done-but-not-retired stays claimable;
+   pool restart re-offers done work. **FIRST ACTION: work CLAIM-INTEGRITY-TOOL-ADOPT (P0)** — adopt-first
+   eval of a mechanized exactly-once/lease-with-ack claim (Faktory reserve/ack, Temporal, DB advisory
+   locks) vs our owned tools (claim.sh flock, WORK-LEASE-GATE, POOL-PAUSED), close EVERY re-claim path.
+   [[claim-integrity-no-reclaim-red-line]]. POOL IS RE-PAUSED — do NOT restart it until this is mechanized
+   (or at minimum until done-tickets are retired), else the redo-churn recurs.
+
 1. **GROUND, don't rebuild.** The wave is mostly BUILT+REVIEWED; most remaining work is LAND, not build.
    ⚠️ BEFORE restarting the pool (POOL-PAUSED is currently SET), RETIRE the done manager-sub tickets or the
    pool REDOES them (observed): FAKTORY-TRIAL + MERGE-QUEUE-EVAL are DONE evals (verdicts in scratchpad);
