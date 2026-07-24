@@ -190,6 +190,31 @@ cmd_heartbeat() {
 }
 
 # -------------------------------------------------------- commit-boundary checks
+# repo_guard <hook> [args...] — run the REPO'S OWN tracked hook (tools/hooks/<hook>) FIRST and
+# abort the commit on any non-zero exit.
+#
+# WHY (do not "simplify" this away): only ONE hook per name can be active in .git/hooks, so
+# installing the work-lease symlink there DISPLACES whatever the repo shipped. The product repo
+# (/home/stack/code/charon) is PUBLIC and ships its own public-clean guard at
+# tools/hooks/pre-commit which blocks internal IPs / home paths / rig names / hex secrets from
+# entering a commit. Chain, never replace.
+#
+# ORDERING IS A SECURITY PROPERTY: the repo guard runs FIRST and its non-zero returns
+# immediately, so a later leg (the lease check) can never mask a leak by returning 0. It is also
+# placed BEFORE the WORK_LEASE_BYPASS early-return on purpose — bypassing the LEASE must not
+# bypass the repo's own guard.
+repo_guard() {
+  local hook="$1"; shift
+  local top; top="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
+  [ -n "$top" ] || return 0
+  local h="$top/tools/hooks/$hook"
+  [ -x "$h" ] || return 0
+  # Re-entrancy guard: if a repo ever points its tracked hook back at this gate, do not recurse.
+  [ "$(readlink -f "$h" 2>/dev/null)" != "$(readlink -f "$FLEET/hooks/$hook" 2>/dev/null)" ] || return 0
+  ( cd "$top" && "$h" "$@" ) || return $?
+  return 0
+}
+
 is_sanctioned_msg() {
   local msgf="$1"; [ -f "$msgf" ] || return 1
   local l; l="$(head -1 "$msgf" 2>/dev/null || true)"
@@ -201,6 +226,7 @@ is_sanctioned_msg() {
 # sanctioned work surface -> REFUSE loudly (the old `|| return 0` passed unmapped branches
 # SILENTLY, exactly the escape this gate exists to close).
 cmd_pre_commit() {
+  repo_guard pre-commit "$@" || return $?   # public-clean & friends — FIRST, and not bypassable
   [ -z "${WORK_LEASE_BYPASS:-}" ] || return 0
   git rev-parse --git-dir >/dev/null 2>&1 || return 0
   is_worktree || return 0
@@ -224,6 +250,7 @@ EOM
 }
 
 cmd_commit_msg() {
+  repo_guard commit-msg "$@" || return $?   # repo's own commit-msg guard, if it ships one
   [ -z "${WORK_LEASE_BYPASS:-}" ] || return 0
   git rev-parse --git-dir >/dev/null 2>&1 || return 0
   if ! is_worktree; then
@@ -241,6 +268,28 @@ EOM
 }
 
 # -------------------------------------------------------- installation
+# _link_src — the fleet/ dir the installed hook symlinks must RESOLVE TO: always the rig's MAIN
+# checkout, NEVER a linked worktree.
+#
+# WHY: .git/hooks is shared by the main checkout AND every linked worktree, but `ensure` is fired
+# from whatever checkout booted (session-start.sh and fleet-droid.sh both derive FLEET from their
+# own location). Linking to "$FLEET/hooks/..." therefore pointed BOTH repos' hooks into whichever
+# WORKTREE happened to run ensure last — and the shim resolves its FLEET from the symlink target,
+# so the gate then consulted that worktree's fleet/ (its board, its state/claims). Two failures
+# followed: false NO-LEASE refusals, and reaping that worktree silently breaks commits in EVERY
+# repo (a dangling hook symlink is not executable, so git skips it without a word — which would
+# also silently disable the product's public-clean guard).
+# `git rev-parse --git-common-dir` always names the MAIN checkout's .git, so its parent is the
+# main worktree root: a stable target that outlives any worktree.
+_link_src() {
+  local gcd root
+  gcd="$(git -C "$FLEET" rev-parse --git-common-dir 2>/dev/null)" || { printf '%s' "$FLEET"; return 0; }
+  [ -n "$gcd" ] || { printf '%s' "$FLEET"; return 0; }
+  case "$gcd" in /*) :;; *) gcd="$FLEET/$gcd";; esac
+  root="$(cd "$gcd/.." 2>/dev/null && pwd)" || { printf '%s' "$FLEET"; return 0; }
+  if [ -d "$root/fleet/hooks" ]; then printf '%s' "$root/fleet"; else printf '%s' "$FLEET"; fi
+}
+
 _hook_targets() {
   # Hooks live in the COMMON git dir (git-common-dir), so ONE install covers the main checkout
   # AND every linked worktree. Resolve it for both the rig repo and the product repo when present.
@@ -255,13 +304,13 @@ _hook_targets() {
 }
 
 cmd_install() {
-  local hd
+  local hd src; src="$(_link_src)"
   while IFS= read -r hd; do
     [ -n "$hd" ] || continue
     mkdir -p "$hd"
     for hook in pre-commit commit-msg; do
-      ln -sf "$FLEET/hooks/$hook" "$hd/$hook"
-      echo "  $hd/$hook -> $FLEET/hooks/$hook"
+      ln -sf "$src/hooks/$hook" "$hd/$hook"
+      echo "  $hd/$hook -> $src/hooks/$hook"
     done
   done < <(_hook_targets)
   echo "work-lease hooks installed"
@@ -272,13 +321,13 @@ cmd_install() {
 # so the gate is NEVER inert on a fresh checkout — with no manual install step. Never fails a
 # session boot: any error is swallowed (the caller invokes it with `|| true`).
 cmd_ensure() {
-  local hd changed=0
+  local hd changed=0 src; src="$(_link_src)"
   while IFS= read -r hd; do
     [ -n "$hd" ] || continue
     mkdir -p "$hd" 2>/dev/null || continue
     for hook in pre-commit commit-msg; do
-      if [ "$(readlink "$hd/$hook" 2>/dev/null)" != "$FLEET/hooks/$hook" ]; then
-        ln -sf "$FLEET/hooks/$hook" "$hd/$hook" 2>/dev/null && changed=1
+      if [ "$(readlink "$hd/$hook" 2>/dev/null)" != "$src/hooks/$hook" ]; then
+        ln -sf "$src/hooks/$hook" "$hd/$hook" 2>/dev/null && changed=1
       fi
     done
   done < <(_hook_targets)
@@ -287,12 +336,12 @@ cmd_ensure() {
 }
 
 cmd_uninstall() {
-  local hd
+  local hd src; src="$(_link_src)"
   while IFS= read -r hd; do
     [ -n "$hd" ] || continue
     for hook in pre-commit commit-msg; do
       local t="$hd/$hook"
-      if [ -L "$t" ] && [ "$(readlink "$t")" = "$FLEET/hooks/$hook" ]; then
+      if [ -L "$t" ] && [ "$(readlink "$t")" = "$src/hooks/$hook" ]; then
         rm -f "$t"; echo "  removed $t"
       fi
     done
