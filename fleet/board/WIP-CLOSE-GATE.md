@@ -1,5 +1,6 @@
 repo: charon-private
 tier: strong
+priority: 3
 difficulty: 3
 work_class: rig-meta
 branch: feat/wip-close-gate
