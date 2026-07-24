@@ -1,0 +1,36 @@
+# service-registry.tsv — the DECLARATIVE single source of every key service the fleet
+# supervises. generate-monit-config.sh renders monit.d/*.conf FROM this file (never hand-edit
+# monit config); discover-services.sh evaluates it (monit-independent) and fails-closed on any
+# running critical service NOT listed here. Adding a row here == that service is monitored on the
+# next render + evaluation. See fleet/board/SERVICE-LIVENESS-WATCHDOG.md and fleet/watchdog/.
+#
+# ROOT INCIDENT this closes: the OOB grader-daemon (sole writer of model-scorecard.tsv) died on a
+# reboot with NO supervisor and never restarted, silently killing grade->route for 9 days. A HUNG
+# service that produces nothing must alarm exactly like a DEAD one -> hence the freshness columns.
+#
+# COLUMNS (TAB-separated, exactly 7). Grammar lives in fleet/watchdog/watchdog-lib.sh:
+#   name             stable id (monit-safe)
+#   kind             process | host | socket | file (informational; the probe strings are canonical)
+#   alive_probe      pgrep:<ere> | pidfile:<path> | tcp:<host>:<port> | unixsock:<path> | program:<cmd> | none
+#   freshness_probe  file:<path> | none      (a HUNG-but-alive service is caught here)
+#   freshness_ttl_s  integer seconds; freshness_probe mtime must be within this window (0 when none)
+#   restart_cmd      command monit runs to restart it (seed values — operator confirms per box)
+#   owner            who owns the service
+#
+# SEED NOTES (confirm on the live box, then adjust):
+#   grader-daemon  process is fleet/benchmark/grader-daemon.py (runs as unix user bench-grader).
+#                  freshness = the live scorecard mtime (fleet/model-scorecard.tsv on the MAIN
+#                  checkout ~/charon-private). TTL 5400s (~3 write-cycles slack) catches a dead
+#                  grader (the 9-day incident) without false-alarming a normal ~30-min write gap.
+#   session-bridge process is ~/.config/opencode/session-bridge/proxy.py. freshness is `none` for
+#                  now: the sqlite is WAL-mode and the -wal mtime is a NOISY signal (checkpoint
+#                  truncation + low write traffic false-alarm a HEALTHY bridge). TODO: replace with
+#                  a real lease/heartbeat-row freshness probe once one is exposed as a file/endpoint.
+#   gateway-4lom   remote on 4-LOM (10.0.1.60:8080); restart is an ssh into that host.
+#   roci-tunnel    the coordinator socket; existence == the SSH tunnel is up.
+#
+# name	kind	alive_probe	freshness_probe	freshness_ttl_s	restart_cmd	owner
+grader-daemon	process	pgrep:grader-daemon\.py	file:~/charon-private/fleet/model-scorecard.tsv	5400	systemctl restart bench-grader-daemon	bench-grader
+session-bridge	process	pgrep:session-bridge/proxy\.py	none	0	systemctl --user restart session-bridge	fleet
+gateway-4lom	host	tcp:10.0.1.60:8080	none	0	ssh 4-LOM sudo systemctl restart charon-gateway	fleet
+roci-tunnel	socket	unixsock:~/.charon/coordinator-charon.sock	none	0	fleet/bridge-reconnect.sh	fleet

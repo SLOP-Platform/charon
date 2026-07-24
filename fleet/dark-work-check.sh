@@ -2,6 +2,12 @@
 # dark-work-check.sh — MECHANIZED VISIBILITY for the fleet's two chronic "dark work" strands
 # (tickets NO-DARK-WORK; pairs with F19 bridge-unregister-trap + F38 handoff-mechanize).
 #
+# FOLDED INTO THE SERVICE-WATCHDOG (SERVICE-LIVENESS-WATCHDOG): this script is the DARK-WORK leg
+# of the fleet service-watchdog. fleet/watchdog/discover-services.sh runs it as one of its legs and
+# the watchdog cadence (foreman-cadence.sh watchdog) fires it on a timer, so all liveness/visibility
+# — service alive+freshness, unregistered-service discovery, AND dark-session/stranded-job — run
+# under one supervisor. It remains independently runnable (same CLI/exit contract as before).
+#
 # WHY: background/detached work goes UNSEEN and its result STRANDS. (1) VISIBILITY — a session
 # can run "dark" (a live opencode/claude session was found never registered on the session-bridge,
 # invisible to coordination). (2) PICKUP — a launched job reports by writing a log the manager must
