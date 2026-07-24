@@ -1,9 +1,10 @@
 repo: charon
 tier: strong
-difficulty: 4
-work_class: security
+difficulty: 2
+work_class: bugfix
 branch: fix/provider-key-exfil
 parked: true
+priority: 3
 note: |
   DRAFT — CONFIRMED provider-API-key exfiltration, 3 bypasses found across 2 fix rounds
   (2026-07-19). Pre-existing on master. Partial fix on branch fix/provider-key-exfil
@@ -69,3 +70,6 @@ blast_radius_note: |
   shared env-var name), so validation and send read the SAME per-provider secret and the
   indirection disappears entirely. Check callers of os.environ[key_env] / apply_to_env /
   set_secret for blast radius before choosing. Prefer removing the indirection over guarding it.
+
+REVIEW-RESCOPE 2026-07-24 (operator-approved): live exfil vector CLOSED on master — db62c61(#181)+d944a26 egress allowlist; gateway.py:562 assert_base_allowed rejects a provider pointed at a non-preset base. No longer P0. Rescope to defense-in-depth: root-cause removal of the key_env setdefault-indirection (Option B).
+Keep PARKED; trigger: after GW-CUTOVER-LIVE-WIRE settles the gateway.py money path (avoids live collision with METER/cutover). Live exfil vector already CLOSED on master; this is defense-in-depth only.

@@ -120,3 +120,5 @@ ds: |
 
   wave: DRAFT — un-park after the operator sequences the FT-WIRE-QUOTA / CG-LAN-OPEN-UI collision.
     repo: charon (product). FIRST in the gateway-MVP sequence.
+
+PRUNED 2026-07-24 (operator-approved, review-grounded): decomposed — first slice landed 7e16e4a, children GW-BRIDGE-1/2 on master (1828e98,a5f24c4), 3(#189)/4/CUTOVER live on board. Provenance-only; CLAIM those, not this.

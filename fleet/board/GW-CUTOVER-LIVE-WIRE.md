@@ -68,3 +68,5 @@ ds: |
     LOC it deletes. A regression degrades EVERY request. Adversarial review by default
     [[adversarial-review-default-for-droid-prs]] + never-strand + the full original accept set on the
     live path. wave: gateway-adopt decomposition, CUTOVER (last). repo: charon.
+
+SEQUENCE-ENDORSED 2026-07-24 (operator-approved): shortest path to live cutover = GW-BRIDGE-3(#189 MERGED 8895452) + GW-BRIDGE-4(#192, fix in flight) -> GW-CUTOVER-LIVE-WIRE (flip live route to litellm.Router, delete ~650-750 LOC) -> unblocks GATEWAY-GRADE-ORDER-MVP (the differentiator; currently INERT: get_grade called nowhere). All 4 bridge legs genuinely required (dep chain verified).

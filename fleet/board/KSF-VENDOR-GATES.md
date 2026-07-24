@@ -1,4 +1,4 @@
-repo: charon-private
+repo: charon
 tier: strong
 difficulty: 4
 priority: 0

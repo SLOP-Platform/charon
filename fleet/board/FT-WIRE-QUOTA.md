@@ -49,3 +49,5 @@ accept: |
   rpd=2 and a paid fallback, the 3rd request in a day ROUTES TO THE PAID leg (proactive skip, not a 402);
   reset the day → free leg is used again; a free leg with NO paid fallback at ceiling is KEPT (sole-viable),
   logged. Revert the should_skip wiring → the 3rd request still hits the free leg → test fails.
+
+REVIEW-RESCOPE 2026-07-24 (operator-approved): prior "folded into GATEWAY-LITELLM-ADOPT" is STALE (that ticket pruned). Need is REAL+UNMET — engine+config landed (ff5479f/#133) but QuotaTracker is INERT (no should_skip caller). Rescope: wire quota activation onto the litellm.Router path (NOT the forwarder.py cutover deletes). Trigger: after GW-CUTOVER-LIVE-WIRE lands.
