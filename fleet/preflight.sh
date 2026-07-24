@@ -744,6 +744,43 @@ show_operator_actions(){
   return 0
 }
 
+# --- graphify_freshness_gate: MECHANIZES the graphify-map-freshness contract (WIRE-GRAPHIFY-FRESHNESS).
+# Runs checks/graphify-freshness.sh check EVERY preflight so a stale code map — the root cause of
+# the cere-junda handoff reinvention (3-day-stale product graph, absent rig graph) — BLOCKS
+# the session. The tracked red auto-registers on RED and self-closes on GREEN, identical
+# machinery to board_gate / executor_gate / coverage_gate.
+GRAPHIFY_FRESHNESS_RED_ID="graphify-freshness-stale"
+GRAPHIFY_FRESHNESS_CHECK="$HERE/checks/graphify-freshness.sh"
+_graphify_freshness_red_status(){ awk -F"$TAB" -v id="$GRAPHIFY_FRESHNESS_RED_ID" '$1==id{print $7; exit}' "$TSV"; }
+_graphify_freshness_red_ensure_open(){
+  local st; st="$(_graphify_freshness_red_status)"
+  if [ -z "$st" ]; then
+    cmd_add "$GRAPHIFY_FRESHNESS_RED_ID" P1 gate \
+      "graphify code map is STALE — a stale map causes reuse-check to MISS existing tools -> reinvention. Run: bash fleet/checks/graphify-freshness.sh update" \
+      "bash '$GRAPHIFY_FRESHNESS_CHECK' gate >/dev/null 2>&1" >/dev/null 2>&1 || true
+  elif [ "$st" = closed ]; then
+    local tmp; tmp="$(mktemp)"
+    awk -F"$TAB" -v OFS="$TAB" -v id="$GRAPHIFY_FRESHNESS_RED_ID" \
+      '/^#/{print;next} $1==id{$7="open";$8=""} {print}' "$TSV" > "$tmp" && mv "$tmp" "$TSV"
+  fi
+}
+_graphify_freshness_red_close_if_open(){
+  [ "$(_graphify_freshness_red_status)" = open ] && \
+    cmd_close "$GRAPHIFY_FRESHNESS_RED_ID" --override "auto: graphify-freshness gate GREEN" >/dev/null 2>&1 || true
+}
+graphify_freshness_gate(){
+  [ -f "$GRAPHIFY_FRESHNESS_CHECK" ] || { echo "graphify_freshness_gate: graphify-freshness.sh not found at $GRAPHIFY_FRESHNESS_CHECK"; return 0; }
+  local out rc; out="$(bash "$GRAPHIFY_FRESHNESS_CHECK" gate 2>&1)"; rc=$?
+  if [ "$rc" -eq 0 ]; then
+    echo "graphify_freshness_gate: $(printf '%s\n' "$out" | grep -m1 'GREEN' || echo GREEN)"
+    _graphify_freshness_red_close_if_open
+  else
+    _graphify_freshness_red_ensure_open
+    echo "graphify_freshness_gate: GRAPH CODE MAP STALE — AUTO-REGISTERED tracked red '$GRAPHIFY_FRESHNESS_RED_ID' (blocks preflight until the map is refreshed: bash fleet/checks/graphify-freshness.sh update)"
+    printf '%s\n' "$out" | grep -E '^  \[.*\].*(STALE|ABSENT)' | head -6 | sed 's/^ */    /'
+  fi
+}
+
 # --- startup_budget_gate: MECHANIZES §13 startup context budget (MANAGER-OPERATING-RULES.md).
 # Tracked startup artifact files with per-file byte budgets. A file exceeding its budget
 # AUTO-REGISTERS a blocking P1 red 'startup-budget-exceeded' that self-closes when all files
@@ -838,7 +875,7 @@ startup_budget_selftest(){
 # functions above are exposed with NO side effects.
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 case "${1:-scan}" in
-  scan|"") run_sync_checkouts; bash "$HERE/reconcile-merged.sh"; board_gate; executor_gate; coverage_gate; handoff_gate; done_merge_gate; hold_reason_gate; detect_needs_push; startup_budget_gate; bash "$HERE/retire-done.sh"; cmd_scan; scan_rc=$?; cmd_detect; foreman_advisory; show_operator_actions; exit $scan_rc ;;
+  scan|"") run_sync_checkouts; bash "$HERE/reconcile-merged.sh"; board_gate; executor_gate; coverage_gate; handoff_gate; done_merge_gate; hold_reason_gate; detect_needs_push; startup_budget_gate; graphify_freshness_gate; bash "$HERE/retire-done.sh"; cmd_scan; scan_rc=$?; cmd_detect; foreman_advisory; show_operator_actions; exit $scan_rc ;;
   add)     shift; cmd_add "$@" ;;
   close)   shift; cmd_close "$@" ;;
   list)    shift; cmd_list "$@" ;;
