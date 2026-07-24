@@ -26,11 +26,13 @@ evidence link — all RED. Nothing in this file may exit 0 on "I could not tell"
 
 ============================ REENTRANCY [[fleet-selfcheck-forkbomb-class]] ======
 This module invokes NO gate, no preflight, no land script, no gh. The only subprocess it
-runs is `git` (read-only: rev-parse / merge-base / diff), which cannot re-trigger CI.
+runs is `git` (read-only: rev-parse / merge-base / diff / ls-tree / show / check-ignore),
+which cannot re-trigger CI.
 """
 
 from __future__ import annotations
 
+import fnmatch
 import os
 import re
 import subprocess
@@ -96,7 +98,16 @@ def read_frontmatter(path: str) -> dict:
         raise TicketError(f"ticket file is unreadable ({exc.strerror}) — cannot verify (fail-closed)")
     except UnicodeDecodeError as exc:
         raise TicketError(f"ticket file is not valid UTF-8 ({exc}) — cannot verify (fail-closed)")
+    return parse_frontmatter(raw)
 
+
+def parse_frontmatter(raw: str) -> dict:
+    """Parse ticket frontmatter from already-read TEXT. Same rules as read_frontmatter.
+
+    Split out so the base-ref owns resolution can feed content that came from
+    `git show <base>:fleet/board/<ticket>.md` through the SAME parser instead of
+    hand-rolling a second frontmatter/owns reader.
+    """
     text = raw.replace("\r\n", "\n").replace("\r", "\n")
     head = []
     for line in text.split("\n"):
@@ -324,6 +335,17 @@ def diff_range(root: str) -> tuple[str, str] | None:
     return ((mb or b).strip(), h.strip())
 
 
+def _base_ref_tip(root: str) -> str | None:
+    """The commit RIG_CI_BASE points at (the PR base TIP, e.g. origin/master) — not the
+    merge-base. Base-ref owns are resolved here so a ticket landed after an old fork point
+    is still seen. None when RIG_CI_BASE is unset or does not resolve to a commit."""
+    base = os.environ.get("RIG_CI_BASE")
+    if not base:
+        return None
+    b = _git(root, "rev-parse", "--verify", "--quiet", base + "^{commit}")
+    return b.strip() if b else None
+
+
 def registry_rows_added_in_range(root: str, rel_registry: str) -> set[str]:
     """The registry row TEXT added between base..head, for the S3 same-PR provenance check."""
     rng = diff_range(root)
@@ -341,6 +363,73 @@ def changed_files(root: str) -> list[str] | None:
         return None
     out = _git(root, "diff", "--name-only", f"{rng[0]}..{rng[1]}")
     return [f for f in (out or "").split("\n") if f.strip()]
+
+
+def base_board_owns(root: str) -> tuple[list[str], bool]:
+    """Every `owns:` path declared by a LIVE board ticket ON THE BASE REF.
+
+    Returns (owns_entries, resolved). `resolved` is False when the base board cannot be
+    read at all (no diff range, git ls-tree/show failing) — the caller must FAIL CLOSED
+    (treat every touched code file as unowned => RED) rather than silently pass.
+
+    The base board is resolved at the BASE-REF TIP (RIG_CI_BASE, i.e. origin/master) — NOT the
+    merge-base fork point. A ticket minted+landed SEPARATELY (the real fleet workflow) may land
+    on master AFTER a branch forked, so it is present at the base tip but absent at the fork
+    point; resolving at the tip is what lets a legitimately-ticketed, separately-minted feature
+    be recognised. (The DIFF that decides WHICH files changed is still merge-base..head, so only
+    the PR's own changes are judged.) Content comes from `git show <base>:<path>` and goes
+    through the SAME parse_frontmatter/_owns_entries readers the rest of this gate uses — no
+    second owns-parser.
+    """
+    base = _base_ref_tip(root)
+    if not base:
+        return [], False  # no resolvable base => cannot prove ownership => fail closed
+    listing = _git(root, "ls-tree", "-r", "--name-only", base, "fleet/board/")
+    if listing is None:
+        return [], False  # base board unreadable => fail closed
+    entries: list[str] = []
+    for path in listing.split("\n"):
+        path = path.strip()
+        if not path.endswith(".md") or not path.startswith("fleet/board/"):
+            continue
+        if "/archive/" in path:
+            continue  # retired/done tickets are not LIVE owners
+        content = _git(root, "show", f"{base}:{path}")
+        if content is None:
+            return [], False  # a listed ticket we cannot read => fail closed
+        try:
+            fm = parse_frontmatter(content)
+        except TicketError:
+            continue  # an unparseable base ticket grants no ownership (it is not a live owner)
+        if is_parked(fm):
+            continue  # parked = staged, not a live owner
+        for entry in _owns_entries(field(fm, "owns")):
+            if " " in entry or "\t" in entry or entry.startswith("("):
+                continue  # prose / descriptive owns, not a real path
+            entries.append(entry)
+    return entries, True
+
+
+def _path_owned(path: str, owns_entries: list[str]) -> bool:
+    """True when a changed file `path` is covered by any base-ref `owns:` entry.
+
+    Matches an exact path, a directory prefix (`fleet/checks/` covers everything under it),
+    or a glob (`fleet/checks/*.py`) — the same shapes validate_board.sh treats as owns paths.
+    """
+    p = path.strip().lstrip("./")
+    for raw in owns_entries:
+        e = raw.strip().lstrip("./")
+        if not e:
+            continue
+        if p == e:
+            return True
+        if e.endswith("/") and p.startswith(e):
+            return True
+        if any(ch in e for ch in "*?[") and (fnmatch.fnmatch(p, e) or fnmatch.fnmatch(p, e.rstrip("/") + "/*")):
+            return True
+        if p.startswith(e.rstrip("/") + "/"):
+            return True  # `owns: fleet/checks` (dir, no trailing slash) covers files beneath it
+    return False
 
 
 # --------------------------------------------------------------- reason substance
@@ -735,11 +824,16 @@ def cmd_retrofit(gate: Gate, board: str) -> int:
 
 
 def cmd_pr_has_ticket(gate: Gate) -> int:
-    """S6 (partial): a change that touches CODE must carry a board ticket in the same range.
+    """S6 (partial): a change that touches CODE must be OWNED by a board ticket.
 
-    This is the ONLY diff-aware assertion here, and it is deliberately narrow. It closes
-    "land code with no ticket at all" — the cheapest S6 variant, where the gate simply never
-    ran. It does NOT close "the ticket names a tool then hand-rolls anyway"; correlating a
+    A touched code file is SATISFIED when it is covered by an EXISTING board ticket's `owns:`
+    resolved against the BASE ref (the real fleet workflow mints+lands the ticket SEPARATELY,
+    then a droid builds ONLY code on its own branch — so the code-only PR diff legitimately
+    touches no board/*.md), OR when a board/*.md ticket is minted in the SAME diff (the
+    ticket-and-code-together shape, back-compat). Code owned by NO live ticket STILL REDs —
+    the ratchet holds. FAIL CLOSED: if the base board owns cannot be resolved, RED.
+
+    It does NOT close "the ticket names a tool then hand-rolls anyway"; correlating a
     named tool to an actual dependency/import is a separate, larger mechanism. Stated as an
     open limit in the header rather than papered over.
     NOT a duplicate of the live WORK-GATE-UNIVERSAL ticket: that one specs decompose-sizing
@@ -754,13 +848,33 @@ def cmd_pr_has_ticket(gate: Gate) -> int:
     if not code:
         print("  INFO substrate: pr-has-ticket: change touches no code — nothing to associate")
         return 0
+
+    # Resolve every owns: path declared by a LIVE ticket on the BASE ref. FAIL CLOSED if the
+    # base board is unreadable — an unresolvable base is "assume unowned", never a silent pass.
+    owns_entries, resolved = base_board_owns(gate.root)
+    if not resolved:
+        print("  RED  substrate: pr-has-ticket: could not resolve the BASE-ref board owns "
+              "(base ref unreadable) — cannot prove these code files are ticketed, so RED "
+              "(fail-closed).")
+        return 1
+
+    unowned = [f for f in code if not _path_owned(f, owns_entries)]
+    if not unowned:
+        print(f"  INFO substrate: pr-has-ticket: {len(code)} code file(s) all covered by an "
+              "EXISTING base-ref board ticket's owns:")
+        return 0
+
+    # Some touched code file is owned by no base-ref ticket. A board/*.md minted in THIS diff
+    # is still accepted (ticket-and-code-together) — preserves the pre-mint-separately flow.
     tickets = [f for f in files if f.startswith("fleet/board/") and f.endswith(".md")]
     if tickets:
         print(f"  INFO substrate: pr-has-ticket: {len(code)} code file(s) associated with "
-              f"{len(tickets)} board ticket(s)")
+              f"{len(tickets)} board ticket(s) minted in this change")
         return 0
-    print("  RED  substrate: this change touches CODE "
-          f"({', '.join(code[:4])}{'...' if len(code) > 4 else ''}) but changes NO fleet/board/*.md ticket.\n"
+
+    print("  RED  substrate: this change touches CODE owned by NO live board ticket "
+          f"({', '.join(unowned[:4])}{'...' if len(unowned) > 4 else ''}) — no base-ref ticket "
+          "`owns:` covers these files and no fleet/board/*.md ticket is minted in this diff.\n"
           "       Code with no ticket is code the substrate-first question was never asked about "
           "[[adopt-substrate-build-only-novel-slice]].\n"
           "       Add or update the board ticket that owns these files.")
