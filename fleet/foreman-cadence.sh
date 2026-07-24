@@ -103,11 +103,43 @@ cmd_cadence(){
   _run_foreman "cadence"
 }
 
+# --- graphify cadence: keep the code map fresh on a timer backstop ------------------
+# Runs checks/graphify-freshness.sh update + check as a cadence backstop so a map that
+# goes stale between triggers (post-land, SessionStart) gets caught and refreshed.
+# Interval-gated the same way as foreman's own cadence subcommand.
+GRAPHIFY_CADENCE_MARKER="$STATE_DIR/.graphify-cadence-ts"
+
+cmd_graphify_cadence(){
+  local interval_minutes="${GRAPHIFY_CADENCE_INTERVAL:-30}"
+  case "${1:-}" in --interval-minutes) interval_minutes="$2"; shift 2;; esac
+  _ensure_state_dir
+  local now last_ts
+  now="$(date +%s)"
+  if [ -f "$GRAPHIFY_CADENCE_MARKER" ]; then
+    last_ts="$(cat "$GRAPHIFY_CADENCE_MARKER" 2>/dev/null || echo 0)"
+    local elapsed=$(( now - last_ts ))
+    local interval_seconds=$(( interval_minutes * 60 ))
+    if [ "$elapsed" -lt "$interval_seconds" ]; then
+      say "graphify cadence: skipped ($elapsed s since last run, interval=${interval_minutes}m)"
+      return 0
+    fi
+  fi
+  printf '%s' "$now" > "$GRAPHIFY_CADENCE_MARKER"
+  say "--- graphify cadence (interval=${interval_minutes}m) ---"
+  local gf="$FLEET/checks/graphify-freshness.sh"
+  [ -f "$gf" ] || { say "graphify cadence: graphify-freshness.sh not found at $gf"; return 0; }
+  say "graphify cadence: refreshing code maps via $gf update..."
+  bash "$gf" update 2>&1 || true
+  say "graphify cadence: re-checking freshness..."
+  bash "$gf" check 2>&1 || true
+}
+
 case "${1:-help}" in
   session-start) shift; cmd_session_start "$@" ;;
   post-land)     shift; cmd_post_land "$@" ;;
   handoff)       shift; cmd_handoff "$@" ;;
   cadence)       shift; cmd_cadence "$@" ;;
+  graphify)      shift; cmd_graphify_cadence "$@" ;;
   help|--help|-h)
     say "Usage: bash foreman-cadence.sh <subcommand> [args]"
     say ""
@@ -116,6 +148,7 @@ case "${1:-help}" in
     say "  post-land                  Refresh tier picture after a land/merge"
     say "  handoff                    Emit tier picture for handoff markdown"
     say "  cadence [--interval-min N] Scheduled backstop with interval gate"
+    say "  graphify [--interval-min N] Code-map freshness cadence backstop"
     say ""
     say "Env: FOREMAN_FLEET=<dir>     Override fleet root (test seam)"
     say "     FOREMAN_CADENCE_INTERVAL  Minutes between cadence runs (default 30)"

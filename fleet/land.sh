@@ -415,6 +415,14 @@ if [ "$_land_state" != "MERGED" ]; then
   exit 7
 fi
 
+# 6.5 post-land graphify refresh: keep the code map current after every land.
+# Mechanized auto-refresh on the post-land trigger — a stale map is a reinvention
+# risk (WIRE-GRAPHIFY-FRESHNESS, see checks/graphify-freshness.sh).
+GRAPHIFY_FRESHNESS_SH="$FLEET/checks/graphify-freshness.sh"
+if [ -f "$GRAPHIFY_FRESHNESS_SH" ]; then
+  bash "$GRAPHIFY_FRESHNESS_SH" update 2>&1 | sed 's/^/land: [graphify] /' || true
+fi
+
 # 7. sync local base to origin — DIRTY-SAFE (LAND-SH-SAFE-SYNC). FF-only; never reset --hard /
 # clean over uncommitted or untracked work. See safe_sync_base() above for the full contract.
 # W0b FIX 1: the rc was previously DISCARDED (this script runs -uo pipefail, no -e), so a refusal

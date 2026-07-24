@@ -472,11 +472,27 @@ PY
   return "$rc"
 }
 
+# --- public: gate (preflight gate subcommand — one-line check with machine-readable verdict) ---
+# Runs `check` against the default repos. Exit 0 = all graphs fresh (GREEN), 1 = stale/absent (RED).
+# Outputs a summary line suitable for the preflight scan-chain to parse.
+cmd_gate(){
+  local out rc=0
+  out="$(cmd_check 2>&1)" || rc=$?
+  printf '%s\n' "$out"
+  if [ "$rc" -eq 0 ]; then
+    echo "graphify-freshness-gate: GREEN — every tracked code map is fresh."
+  else
+    echo "graphify-freshness-gate: RED — one or more code maps are stale/absent. Run: $0 update"
+  fi
+  return "$rc"
+}
+
 # --- dispatch ---------------------------------------------------------------------
 case "${1:-}" in
   check)        shift; cmd_check "$@" ;;
   update)       shift; cmd_update "$@" ;;
   reuse-check)  shift; cmd_reuse_check "${1:-}" ;;
+  gate)         shift; cmd_gate "$@" ;;
   summary)      cmd_summary ;;
   paths)        cmd_paths ;;
   -h|--help|help|"")

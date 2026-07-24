@@ -94,6 +94,15 @@ else
   echo "session-start: >>> STALE repo(s) detected above — do NOT trust a handoff until reconciled. <<<"
 fi
 
+# SessionStart graphify refresh: keep the code map fresh on every session boot.
+# Mechanized auto-refresh — a stale map is a reinvention risk (WIRE-GRAPHIFY-FRESHNESS
+# contract, checks/graphify-freshness.sh).
+GRAPHIFY_FRESHNESS_SH="$FLEET/checks/graphify-freshness.sh"
+if [ -f "$GRAPHIFY_FRESHNESS_SH" ]; then
+  echo "session-start: refreshing graphify code maps..."
+  bash "$GRAPHIFY_FRESHNESS_SH" update 2>&1 || true
+fi
+
 # This is a SessionStart hook: never block session boot on repo drift. The banner above is
 # the signal; the operator/session reconciles. (settings.json also wraps the call in `|| true`.)
 exit 0
