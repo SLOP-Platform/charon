@@ -10,9 +10,10 @@ entrypoints (``pyproject.toml`` ``[project.scripts]`` + ``__main__`` guards),
 and flags any public top-level function/class with ZERO production callers
 that isn't otherwise registered or annotated ``@inert_by_design`` — exactly
 the "built but never wired in" bug class a hand-rolled audit previously found
-(``tool_repair.py``, ``capability/actuals.py::ActualsLedger``,
-``pricing_limits_checker.py``, ``engine/reconcile.py`` + ``board.set_cert()``)
-before this gate existed.
+(``tool_repair.py``, ``pricing_limits_checker.py``, ``engine/reconcile.py`` +
+``board.set_cert()``, and the per-tier ``charon.cache.format_stats`` /
+``charon.engine.reconcile.FindingKind`` symbols the gate now tracks as
+detector false positives) before this gate existed.
 
 Scope: Charon's product source (``src/charon``). Charon has no KSF
 ``module.toml`` module registrations, so the detector's "registered module"

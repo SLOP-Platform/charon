@@ -29,9 +29,10 @@ and eventually falls below ``epsilon``).
 
 Every constant in this module (``fixed_overhead``, ``exec_rate``, ``epsilon``,
 worker capacities) is a SANE SEEDED DEFAULT, explicitly flagged below as
-needing calibration from the actuals ledger (``capability.actuals``,
-``wall_clock_ms``) once enough real runs exist — never treated as ground
-truth (ties to ``benchmark-not-a-valid-ranker``: real outcomes over guesses).
+needing calibration against accumulated real-run data (no dedicated ledger
+module reads from this layer — it stays network/clock-free, callers feed
+calibrated values via kwargs or env). Never treated as ground truth (ties
+to ``benchmark-not-a-valid-ranker``: real outcomes over guesses).
 Defaults are overridable via function args or environment variables (never a
 hardcoded dev-box path — REACHABILITY-GATE).
 """
@@ -87,7 +88,7 @@ class Overhead:
     """Per-chunk fixed overhead, paid IN PARALLEL across concurrently
     running chunks (it does not compound with ``N`` — see design ยง1/ยง2).
     Seed defaults (minutes): setup=2, review=2, merge=1 (total 5). TODO:
-    calibrate from the actuals ledger once enough rows exist."""
+    calibrate against accumulated real-run data when enough rows exist."""
 
     o_setup: float = 2.0
     o_review: float = 2.0

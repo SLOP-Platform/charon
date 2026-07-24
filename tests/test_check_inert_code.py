@@ -12,10 +12,17 @@ Two layers, mirroring tests/test_check_arch.py's shape:
 
 Plus a clean-codebase assertion: the real repo, as tracked today via
 tools/inert-code-disposition.json, must pass.
+
+Plus a CAPABILITY-ACTUALS-DEADREF-CLEANUP fail-on-revert: no reference to
+the deleted `charon.capability.actuals` module's symbols (the
+``ActualsLedger`` / ``ActualRow`` types, or the ``capability.actuals``
+dotted name) survives in any of the three files that ticket owned. Revert
+any one of the three cleanups and this test fails on the next pytest run.
 """
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import tools.check_inert_code as M
@@ -154,3 +161,50 @@ class TestCleanCodebase:
             f"new dead symbol(s) not tracked in {M.DISPOSITION_PATH.name}: {undisposed}"
         )
         assert passed is True
+
+
+class TestActualsDeadrefFailOnRevert:
+    """CAPABILITY-ACTUALS-DEADREF-CLEANUP contract: no reference to the
+    DELETED ``charon.capability.actuals`` module's symbols survives in the
+    three files that ticket owned. The deleted module
+    (``src/charon/capability/actuals.py`` — ``ActualsLedger`` /
+    ``ActualRow``) is gone from origin/master; every stale pointer that
+    named it must stay gone. Revert any one of the three cleanups and this
+    test fails on the next pytest run."""
+
+    _REPO_ROOT = Path(__file__).resolve().parent.parent
+    _OWNED_FILES = (
+        _REPO_ROOT / "src" / "charon" / "decompose_sizing.py",
+        _REPO_ROOT / "tools" / "check_inert_code.py",
+        _REPO_ROOT / "tools" / "inert-code-disposition.json",
+    )
+    _DEADREF_RE = re.compile(r"capability\.actuals|ActualsLedger|ActualRow")
+
+    def _scan(self) -> dict[Path, list[tuple[int, str]]]:
+        hits: dict[Path, list[tuple[int, str]]] = {}
+        for path in self._OWNED_FILES:
+            text = path.read_text(encoding="utf-8")
+            for lineno, line in enumerate(text.splitlines(), start=1):
+                if self._DEADREF_RE.search(line):
+                    hits.setdefault(path, []).append((lineno, line))
+        return hits
+
+    def test_no_actuals_deadref_in_three_owned_files(self) -> None:
+        hits = self._scan()
+        assert not hits, (
+            "CAPABILITY-ACTUALS-DEADREF-CLEANUP fail-on-revert: stale reference "
+            "to the deleted charon.capability.actuals module survived in:\n"
+            + "\n".join(
+                f"  {p.relative_to(self._REPO_ROOT)}:{ln}: {line.strip()}"
+                for p, items in hits.items()
+                for ln, line in items
+            )
+        )
+
+    def test_owned_files_exist(self) -> None:
+        """Belt-and-suspenders: the three files this contract pins must
+        still exist on disk; if a rename/refactor happens, the grep above
+        would silently pass against an empty result. This forces a loud
+        failure so the contract is updated alongside the refactor."""
+        for path in self._OWNED_FILES:
+            assert path.exists(), f"owned file vanished: {path}"
