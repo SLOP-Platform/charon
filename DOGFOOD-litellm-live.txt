@@ -4,7 +4,7 @@ litellm==1.93.0  (library-only Router; no proxy/FastAPI/Prisma stack)
 ================================================================================
 
 [1] LIVE SERVE through litellm.Router (constructed ONCE) + base-bound key
-[92m00:36:20 - LiteLLM:WARNING[0m: utils.py:2730 - register_model: model=4ed9c43f6e16b64b6fe21984c281a74e78451f470a03517f0edf0079960ff80c not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m00:36:20 - LiteLLM:WARNING[0m: utils.py:2730 - register_model: model=<REDACTED-64-HEX-MODEL-ID> not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
 [92m00:36:20 - LiteLLM:WARNING[0m: utils.py:2730 - register_model: model=openai/ma not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
     Router built once: 1 deployment(s); cooldown_time=45.0
     served: object='chat.completion' content='pong' usage_present=True
