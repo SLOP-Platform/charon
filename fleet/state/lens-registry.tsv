@@ -1,0 +1,7 @@
+lens	goal	linked_tickets	status	why
+broker-demand-routing	route droid work to the cheapest AVAILABLE right-tier model; escalate up when free is capped	FLEET-DEMAND-DRIVEN-ROUTING;tier-models.tsv	active	grader restored (ledger live); cripple #2 built+reviewed-clean; #3 spill-up building
+service-liveness-watchdog	nothing critical dies or goes stale unsupervised (adopt Monit)	SERVICE-LIVENESS-WATCHDOG	active	built 0f7d84c; review=LAND-WITH-NITS; restart_cmds are broken -> MUST fix before `monit enable --now`
+session-bridge	every session registers + heartbeats; bridge daemon supervised (no dark work)	DROID-BRIDGE-REGISTER;F47;F19	active	name-allocator landed (#223); register-wiring built-not-yet; bridge daemon DOWN (reboot casualty)
+registry-meta-catalog	one auto-discovered INDEX of all registries; never a god-file	REGISTRY-META-CATALOG;KS29	active	built 918f5dd; needs review+land (serialize the foreman-cadence.sh edit)
+tier-classification-and-router	stop tier drift (85% default-to-strong); mechanize work->tier	FLEET-DEMAND-DRIVEN-ROUTING;work-tier-router-TBD	active	rubric+balance review running; verdict = build classifier -> emit a LiteLLM tier-tag
+parked-triage	retire/un-park the stale parks; keep the park list honest	parked-trigger-audit	active	audit done: A=19 stale (mostly retire) / B=12 correct / C=14 no-trigger

@@ -88,3 +88,4 @@ fleet/model-scorecard.tsv
 
 # regenerable code map (rebuilt by the wired graphify-freshness gate) — do not track (matches product)
 graphify-out/
+!fleet/state/lens-registry.tsv
