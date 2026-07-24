@@ -5,6 +5,9 @@ priority: 0
 work_class: rig-meta
 branch: fix/substrate-first-owns-base-ref
 owns: fleet/checks/substrate_first_gate.py, fleet/tests/substrate_first_gate.test.sh
+serial_justified: The gate logic and its fail-on-revert test are one inseparable invariant — a RATCHET
+  gate change must ship with the fixture proving it still REDs genuinely-unowned code and now GREENs
+  base-ref-owned code; splitting would land a ratchet change with no proof it still bites.
 depends_on:
 source: 2026-07-23 — systemic CI-RED across the ENTIRE feature-PR queue (#204/205/207/208/210/211/214/215/…); root-caused live from rig-ci run 30044035629
 note: |
