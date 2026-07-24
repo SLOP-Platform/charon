@@ -14,7 +14,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 
-import litellm
+import pytest
 
 from charon.balance import BalanceTracker
 from charon.litellm_plane.park_cooldown import (
@@ -276,6 +276,7 @@ def test_router_cooled_provider_is_excluded():
     FAIL-ON-REVERT: if cooldown state is not read from the public
     ``router.cooldown_cache.get_active_cooldowns()``, a cooled deployment
     stays selectable — the two exclusion sets disagree."""
+    litellm = pytest.importorskip("litellm")
     bt = _bt(providers={"acme": 5.0, "beta": 3.0})
 
     ml = [
@@ -318,6 +319,7 @@ def test_router_cooldown_expired_does_not_exclude():
 
     FAIL-ON-REVERT: if expired cooldowns are still excluded, a recovered
     provider never re-enters the set."""
+    litellm = pytest.importorskip("litellm")
     ml = [
         {
             "model_name": "m1",
@@ -345,6 +347,7 @@ def test_router_cooldown_expired_does_not_exclude():
 
 def test_router_not_cooled_provider_ignored():
     """A deployment never added to the cooldown cache is NOT excluded."""
+    litellm = pytest.importorskip("litellm")
     ml = [
         {
             "model_name": "m1",
