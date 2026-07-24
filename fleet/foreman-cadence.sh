@@ -113,6 +113,10 @@ cmd_cadence(){
   # rationale as graphify — a watchdog that nothing calls on a cadence is the built-but-inert
   # bug this ticket exists to close. Independently interval-gated (own marker).
   cmd_watchdog_cadence
+  # REGISTRY-META-CATALOG: fire the registry discovery leg on the same cadence backstop.
+  # A meta-catalog nobody reconciles just recreates the "can't find our registries" problem
+  # it exists to solve — so the fail-closed disk->catalog discovery must actually RUN.
+  cmd_registry_discovery
 }
 
 # --- watchdog cadence: keep monit config in sync + relaunch a dead monit + surface -----
@@ -153,6 +157,34 @@ cmd_watchdog_cadence(){
   bash "$wdir/discover-services.sh" 2>&1 || true
 }
 
+# --- registry discovery cadence: keep the registry META-CATALOG honest --------------
+# Runs checks/discover-registries.sh so a registry that lands on disk but nobody catalogued
+# is caught (fail-closed) rather than silently drifting. Interval-gated like the others.
+REGISTRY_DISCOVERY_CADENCE_MARKER="$STATE_DIR/.registry-discovery-cadence-ts"
+
+cmd_registry_discovery(){
+  local interval_minutes="${REGISTRY_DISCOVERY_CADENCE_INTERVAL:-30}"
+  case "${1:-}" in --interval-minutes) interval_minutes="$2"; shift 2;; esac
+  _ensure_state_dir
+  local now last_ts
+  now="$(date +%s)"
+  if [ -f "$REGISTRY_DISCOVERY_CADENCE_MARKER" ]; then
+    last_ts="$(cat "$REGISTRY_DISCOVERY_CADENCE_MARKER" 2>/dev/null || echo 0)"
+    local elapsed=$(( now - last_ts ))
+    local interval_seconds=$(( interval_minutes * 60 ))
+    if [ "$elapsed" -lt "$interval_seconds" ]; then
+      say "registry discovery cadence: skipped ($elapsed s since last run, interval=${interval_minutes}m)"
+      return 0
+    fi
+  fi
+  printf '%s' "$now" > "$REGISTRY_DISCOVERY_CADENCE_MARKER"
+  say "--- registry discovery cadence (interval=${interval_minutes}m) ---"
+  local rd="$FLEET/checks/discover-registries.sh"
+  [ -f "$rd" ] || { say "registry discovery cadence: discover-registries.sh not found at $rd"; return 0; }
+  # Report-only from the cadence backstop (surface RED loudly; the manager/preflight acts).
+  REGISTRY_CATALOG_FLEET="$FLEET" bash "$rd" 2>&1 || say "registry discovery cadence: RED — a registry on disk is not in the catalog (see above)"
+}
+
 # --- graphify cadence: keep the code map fresh on a timer backstop ------------------
 # Runs checks/graphify-freshness.sh update + check as a cadence backstop so a map that
 # goes stale between triggers (post-land, SessionStart) gets caught and refreshed.
@@ -191,6 +223,7 @@ case "${1:-help}" in
   cadence)       shift; cmd_cadence "$@" ;;
   graphify)      shift; cmd_graphify_cadence "$@" ;;
   watchdog)      shift; cmd_watchdog_cadence "$@" ;;
+  registry-discovery) shift; cmd_registry_discovery "$@" ;;
   help|--help|-h)
     say "Usage: bash foreman-cadence.sh <subcommand> [args]"
     say ""
@@ -201,6 +234,7 @@ case "${1:-help}" in
     say "  cadence [--interval-min N] Scheduled backstop with interval gate"
     say "  graphify [--interval-min N] Code-map freshness cadence backstop"
     say "  watchdog [--interval-min N] Service-liveness watchdog cadence (render+selfwatch+eval)"
+    say "  registry-discovery [--interval-min N] Registry meta-catalog discovery backstop"
     say ""
     say "Env: FOREMAN_FLEET=<dir>     Override fleet root (test seam)"
     say "     FOREMAN_CADENCE_INTERVAL  Minutes between cadence runs (default 30)"
