@@ -5,8 +5,19 @@ work_class: money-path
 priority: 0
 branch: feat/gw-cutover-live-wire
 parked: false
-depends_on: GW-BRIDGE-1-DOWNGRADE-REHOST, GW-BRIDGE-2-METERING-SPEND, GW-BRIDGE-3-STREAMING-SSE, GW-BRIDGE-4-PARK-COOLDOWN
+depends_on: GW-BRIDGE-1-DOWNGRADE-REHOST, GW-BRIDGE-2-METERING-SPEND, GW-BRIDGE-3-STREAMING-SSE, GW-BRIDGE-4-PARK-COOLDOWN, LITELLM-ORDER-PRECALL
 dep-kind: build
+real-dep: |
+  LITELLM-ORDER-PRECALL — added 2026-07-24, LANDING-ORDER dep, zero owns overlap
+  [[disjoint-owns-not-no-dependency]]. This cutover puts litellm.Router on the LIVE money path. Until
+  LITELLM-ORDER-PRECALL lands, `litellm_params["order"]` is UNBOUND — the funding-class chain order is
+  computed and then discarded, so the Router round-robins across the chain (measured 97/95/108 over 300
+  real completions instead of 300/0/0), and `enable_pre_call_checks` is off so the recorded
+  max_input_tokens is dead config. Cutting over in that state ships a money regression dressed as a
+  migration, which is why this ticket was STOPped (064d197 "stop(GW-CUTOVER-LIVE-WIRE): do NOT cut over
+  — land the guards, not the wire-in"). That blocker is now BUILT at 4b9d401 and needs only landing.
+  Files are disjoint (this owns forwarder.py/proxy_server.py/pyproject.toml/its test; that owns
+  litellm_plane/litellm_router.py + its e2e test) — the edge is sequencing, not contention.
 note: |
   THE CUTOVER (highest blast-radius step of the gateway-adopt decomposition). Only claimable after ALL
   four additive bridges (GW-BRIDGE-1..4) have landed their re-hosted policy on the Router path. Replaces

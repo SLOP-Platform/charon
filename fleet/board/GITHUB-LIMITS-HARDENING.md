@@ -2,6 +2,14 @@ repo: charon-private
 tier: strong
 difficulty: 3
 work_class: rig-meta
+priority: 2
+priority-why: |
+  P:2 (assigned 2026-07-24; the field was ABSENT until then) — the P:2 band is "standalone,
+  biggest blast-radius", and this is the largest such piece on the board: 4 tickets list it in
+  depends_on (the highest reverse-dep count among the unprioritised set) and it owns the widest
+  seam (gh-cache.sh + done.sh + large-file-guard + land pacing). NOT P:0/P:1: it is PROACTIVE
+  hardening against limits we have not hit, not operator-escalated or attached-CG work, and a 39th
+  P:0 on a 38-P:0 board is no priority at all.
 branch: feat/github-limits-hardening
 owns: fleet/gh-cache.sh, fleet/done.sh, fleet/checks/large-file-guard.sh, fleet/tests/test_github_limits.sh
 serial_justified: One cohesive proactive-hardening pass against GitHub's limits (search-API + large-file + land pacing) sharing the gh-cache seam; splitting fragments the batching contract.

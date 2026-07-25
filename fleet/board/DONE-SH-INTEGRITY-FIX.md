@@ -1,5 +1,5 @@
 repo: charon-private
-tier: economy
+tier: strong
 priority: 2
 difficulty: 2
 work_class: rig-meta
@@ -44,10 +44,29 @@ accept: |
   match X's branch/id -> closes normally. Revert the tightening -> the false-close test goes RED.
   (b) a fixture rig ticket with empty ``repo:`` -> done.sh resolves REPO_SLUG to the rig repo
   (charon-private), not the product default. Revert the default -> test goes RED.
+  NON-VACUOUS: a fixture run that examined ZERO candidate PRs must REFUSE, never close — a matcher
+  that proves nothing must not read as proof.
+  RUNNER-REACHABLE: the red-proof must be EXECUTED by a real runner (fleet/gate.sh's
+  ``fleet/tests/*.test.sh`` glob or rig-ci-scope.sh CI_SUITES) — a proof no runner runs is not
+  evidence, and a ``test_*.sh`` name is matched by NEITHER runner.
   ``charon.cli gate`` / rig gate stays GREEN.
 scope: |
   Data-integrity fix on the ONE mechanism that marks board work done and unblocks dependents. A
   false-close (a) silently hides real unmerged work from the board; a wrong-repo check (b) blocks
   a REAL close. Rig-only, no product change. Sequence behind GITHUB-LIMITS-HARDENING (same file).
-ds: Now — rig-only; high-value (prevents future false-closes / false-refusals like the two hit
-  this session).
+ds: |
+  ## Dependencies & sequence
+  RESTORED 2026-07-24. A bundling pass had ABSORBED this ticket into MARKER-PROOF-MECHANIZE as its
+  "LAYER 0". That was reverted: bundling means GROUP AT ONE PRIORITY IN ONE WAVE, not fuse two
+  tickets into one serial branch. The pair is grouped in ROADMAP.tsv (project FLEET, wave
+  `done-marker-integrity`, both `priority: 2`) and stays TWO tickets so two agents can work it.
+  [[decomposed-by-design-not-reactive]] [[optimize-execution-wallclock-tokens]]
+  depends_on: GITHUB-LIMITS-HARDENING and VERIFY-MERGED-REPO-AWARE — both REAL, both shared
+  single-owners of fleet/done.sh; see the real-dep: lines. Rebase onto their merges; never co-write
+  the file from a parallel branch.
+  DOWNSTREAM: MARKER-PROOF-MECHANIZE `depends_on:` THIS ticket — it also owns fleet/done.sh, and
+  requiring proof before the matcher is trustworthy would only harden a matcher that still names the
+  WRONG PR. That edge is a genuine sequencing constraint, which is exactly why it is expressed as an
+  EDGE and not as a merge of the two tickets.
+  WAVE: rig-only; high-value now (prevents future false-closes / false-refusals like the two hit
+  2026-07-15). CONCURRENCY-SAFETY: sole live owner of fleet/done.sh once its two deps land.

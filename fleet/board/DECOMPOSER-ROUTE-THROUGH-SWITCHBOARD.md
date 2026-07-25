@@ -2,6 +2,7 @@ repo: charon
 tier: strong
 difficulty: 3
 work_class: money-path
+priority: 1
 branch: feat/decomposer-route-through-switchboard
 owns: src/charon/decompose_planner.py
 depends_on:

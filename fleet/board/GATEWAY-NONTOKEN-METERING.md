@@ -1,6 +1,12 @@
 tier: strong
 difficulty: 2
 work_class: money-path
+priority: 1
+priority-why: |
+  P:1 (assigned 2026-07-24; the field was ABSENT until then) — P:1 is "attached CG work, not huge,
+  not over-dependent", which this is verbatim: money-path correctness in the LIVE gateway's cost
+  meter (src/charon/gateway.py, one owned file), difficulty 2, one dep. NOT P:0 (not
+  operator-escalated); NOT P:2 (it is attached to the CG, not a standalone blast-radius piece).
 branch: feat/gateway-nontoken-metering
 repo: charon
 parent: PRICING-LIMITS-CHECKER

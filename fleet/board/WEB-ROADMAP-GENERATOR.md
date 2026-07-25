@@ -1,6 +1,7 @@
-tier: strong
+tier: economy
 difficulty: 3
 work_class: rig-meta
+priority: 3
 branch: feat/web-roadmap-generator
 depends_on:
 owns: /home/stack/charon-private/fleet/roadmap-html.sh, /home/stack/charon-private/fleet/end-session.sh

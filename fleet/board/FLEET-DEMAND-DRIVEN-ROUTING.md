@@ -1,3 +1,4 @@
+priority: 0
 repo: charon-private
 tier: frontier
 difficulty: 4

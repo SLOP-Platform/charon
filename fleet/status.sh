@@ -15,6 +15,15 @@ age_of(){ [ -e "$1" ] || { echo "-"; return; }; local m s; m=$(date -r "$1" +%s 
 
 printf '\n  CHARON-FLEET STATUS @ %s\n' "$(date -u +%FT%TZ)"
 
+# --- KEY SERVICES: delegate liveness to the service-watchdog (do NOT re-implement it here).
+# SERVICE-LIVENESS-WATCHDOG owns the registry + probes; status.sh just surfaces its verdict.
+WATCHDOG="$FLEET/watchdog/discover-services.sh"
+if [ -x "$WATCHDOG" ]; then
+  printf '\n  KEY SERVICES (registry-driven; fleet/watchdog/)\n'
+  bash "$WATCHDOG" --health --no-dark 2>/dev/null | grep -vE '^-- ' | sed 's/^/  /' \
+    || printf '  (watchdog error — run: fleet/watchdog/discover-services.sh)\n'
+fi
+
 # --- DROIDS: live launcher tabs (one per `fleet-droid.sh <tier>`) ---
 printf '\n  DROIDS (live tabs)        %-7s %-9s %s\n' TIER UPTIME 'WORKING-ON'
 ndroid=0

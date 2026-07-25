@@ -1,7 +1,8 @@
 repo: charon-private
-tier: economy
+tier: strong
 difficulty: 2
 work_class: rig-meta
+priority: 2
 branch: feat/assign-dispatch-pick-fix
 owns: fleet/capability/assign.py
 depends_on:

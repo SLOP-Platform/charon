@@ -700,6 +700,23 @@ detect_config_drift(){
   bash "$script" --advisory 2>&1 | grep -E '^(== |  WARN:|  [a-z0-9].*<< DRIFT|DRIFT:|UNREACHABLE:|  NOTE:|  only-in-)' || true
 }
 
+# --- detect_service_watchdog: SERVICE-LIVENESS-WATCHDOG detection leg on every preflight. Runs the
+# monit-independent registry evaluator (alive + freshness) + the unregistered-service discovery leg,
+# so a DEAD or HUNG money-path service (the 9-day-stale-grader incident) surfaces at session start
+# instead of by tripping over the symptom. ADVISORY here (`|| true`): report-only, never blocks a
+# session on a pre-existing dead service (recovery = monit / operator). The config-render drift check
+# also runs so a registry edit that was never re-rendered is caught.
+detect_service_watchdog(){
+  local wd="$HERE/watchdog/discover-services.sh"
+  [ -x "$wd" ] || { echo "service-watchdog: discover-services.sh not found/executable at $wd"; return 0; }
+  echo "-- service-watchdog (liveness + freshness + discovery) --"
+  bash "$wd" --quiet || true
+  local gen="$HERE/watchdog/generate-monit-config.sh"
+  [ -x "$gen" ] && { bash "$gen" --check >/dev/null 2>&1 || echo "service-watchdog: monit.d DRIFT — registry changed but config not re-rendered (run: fleet/watchdog/generate-monit-config.sh)"; }
+  local sw="$HERE/watchdog/monit-selfwatch.sh"
+  [ -x "$sw" ] && { bash "$sw" --check >/dev/null 2>&1 || echo "service-watchdog: monit self-watch reports monit NOT healthy or NOT installed (run: fleet/watchdog/monit-selfwatch.sh)"; }
+}
+
 cmd_detect(){
   local full=0
   case "${1:-}" in --full) full=1;; esac
@@ -714,6 +731,7 @@ cmd_detect(){
   detect_cg_drift
   detect_gateway_token_drift
   detect_config_drift
+  detect_service_watchdog
   echo "--- end detectors ---"
   bash "$HERE/access-check.sh" || true
   return 0

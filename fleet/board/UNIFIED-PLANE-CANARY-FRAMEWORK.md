@@ -1,6 +1,6 @@
 repo: charon-private
-tier: economy
-priority: 9
+tier: strong
+priority: 5
 difficulty: 1
 work_class: rig-meta
 branch: feat/unified-plane-canary-framework

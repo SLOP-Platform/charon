@@ -3,12 +3,33 @@
 #
 # Two surfaces, one test:
 #
-#   1. DRIFT — walk the LIVE board, assert every `priority:` value is an integer 0..5
-#      (or the field is absent). Drift back to `priority: HIGH` / `priority: P2` /
+#   1. DRIFT — walk the LIVE board, assert every live ticket carries a `priority:` whose
+#      value is an integer 0..5. Drift back to `priority: HIGH` / `priority: P2` /
 #      `priority: 7` / `priority: -1` — any of the three old nomenclatures (HIGH/MEDIUM/
 #      P2), any value outside the 0..5 band, or a non-integer — and this goes RED. The
 #      band table itself is in fleet/state/PRIORITY-LADDER.md; this test only asserts
 #      the SHAPE of the value, not the operator-set semantics of each band.
+#
+#      ABSENCE IS ALSO RED (2026-07-24). Until this date an ABSENT `priority:` passed
+#      silently: the gate caught an explicitly INVALID value (`priority: 9`) but never a
+#      MISSING one. Consequence found on the live board that day: 27 tickets carried no
+#      priority at all — including GITHUB-LIMITS-HARDENING (blocking FOUR tickets and
+#      item ② in the landing queue), SYNC-SCHEDULE and GATEWAY-NONTOKEN-METERING (two
+#      each). Three blockers sat unprioritised and INVISIBLE to every priority-ordered
+#      view because "unset" was implicit-by-absence. Implicit-by-absence is the hole;
+#      the field is now REQUIRED and the only escape is an EXPLICIT exemption (below).
+#
+#      EXEMPTION (the one legitimate "unset", recorded not silent): a PARKED ticket.
+#      Parked = not claimable at all (claim.sh skips it), so there is nothing for a
+#      priority to order; forcing a band on held work would be noise. Parked is decided
+#      by THE canonical predicate — is_parked() in _lib.sh (the `parked:` field) OR a
+#      `note:` containing PARKED — the same rule claim.sh and validate_board.sh use, so
+#      this exemption cannot drift away from what "parked" means everywhere else. A
+#      parked ticket MAY still carry a priority; it just is not required to. Nothing
+#      else is exempt: submitted/claimed tickets are live (GITHUB-LIMITS-HARDENING was
+#      SUBMITTED, which is exactly how it stayed invisible).
+#
+#      NON-VACUOUS: examining ZERO tickets is RED, never a silent pass.
 #
 #   2. LADDER — run the LIVE claim.sh against a synthetic board that is hand-built to
 #      exercise every rung of the selection ladder, and assert the output ORDER. This
@@ -28,22 +49,41 @@ fails=0
 ok(){  printf '  ok   %s\n' "$1"; }
 bad(){ printf '  FAIL %s\n' "$1"; fails=$((fails+1)); }
 
-# ─── 1. DRIFT: every live `priority:` value is int 0..5 OR absent ──────────────────────
+# ─── 1. DRIFT: every LIVE ticket carries `priority:` = int 0..5; absence is RED ────────
 # Archived tickets are exempt — they have a snapshot of the old format that the rig
 # is not retroactively rewriting (would touch the R0 history, no value). The validator
 # asserts the CONTRACT going forward, not a retroactive clean.
-printf '1. DRIFT — live board priority values are int 0..5 or absent\n'
+printf '1. DRIFT — every live ticket has priority: int 0..5 (absent = RED unless PARKED)\n'
 priority_field() { awk '/^priority:[[:space:]]*/{sub(/^priority:[[:space:]]*/,""); print; exit}' "$1"; }
-n_ok=0; n_abs=0; n_red=0
+
+# THE canonical parked predicate — reused, never re-implemented. _lib.sh's is_parked()
+# reads the `parked:` field; claim.sh + validate_board.sh additionally park on a `note:`
+# containing PARKED (prose parks are real: PRICE-REFRESHER is parked that way). Mirror
+# BOTH so this exemption means exactly what "parked" means to the claim loop.
+FLEET="$SRC"; source "$SRC/_lib.sh"
+note_block(){ awk '
+  /^note:/{inn=1; sub(/^note:[[:space:]]*\|?[[:space:]]*/,""); if(length($0))print; next}
+  inn && /^[A-Za-z_][A-Za-z0-9_-]*:/{inn=0}
+  inn{print}' "$1"; }
+ticket_is_parked(){ is_parked "$1" || note_block "$1" | grep -q 'PARKED'; }
+
+n_ok=0; n_exempt=0; n_red=0; n_seen=0
 for f in "$SRC"/board/*.md; do
   [ -f "$f" ] || continue
   base="$(basename "$f" .md)"
+  n_seen=$((n_seen+1))
   # .md.parked files are not "live" (they're staged, not claimable), but the file GLOB
-  # above already excluded them. A board/<id>.md whose content is parked-by-note is
-  # still LIVE for the validator (parked: is orthogonal to priority:).
+  # above already excluded them.
   raw="$(priority_field "$f")"
   if [ -z "$raw" ]; then
-    n_abs=$((n_abs+1))
+    # ABSENT. Legitimate ONLY for a parked (non-claimable) ticket — the single EXPLICIT,
+    # recorded exemption. Everything else is a ticket nobody can order: RED.
+    if ticket_is_parked "$f"; then
+      n_exempt=$((n_exempt+1))
+    else
+      bad "missing: $base has NO priority: field and is NOT parked — every live ticket must declare a band 0..5 (PRIORITY-LADDER.md)"
+      n_red=$((n_red+1))
+    fi
     continue
   fi
   # integer 0..5 — first token, no leading sign beyond the optional minus
@@ -54,13 +94,17 @@ for f in "$SRC"/board/*.md; do
     n_red=$((n_red+1))
   fi
 done
+# NON-VACUOUS: a glob that matched nothing (moved board, wrong SRC, renamed dir) must NOT
+# read as "clean". Zero tickets examined is a broken gate, not a pass.
+[ "$n_seen" -gt 0 ] \
+  && ok "non-vacuous: examined $n_seen live board ticket(s)" \
+  || bad "VACUOUS: examined 0 tickets under $SRC/board — the gate is not looking at anything"
 [ "$n_red" -eq 0 ] \
-  && ok "live board clean (n_ok=$n_ok integer 0..5; n_abs=$n_abs absent) — no drift back to HIGH/MEDIUM/P2/etc." \
-  || bad "drift: $n_red ticket(s) carry a non-canonical priority value"
+  && ok "live board clean (n_ok=$n_ok integer 0..5; n_exempt=$n_exempt parked-and-unset) — no missing field, no drift back to HIGH/MEDIUM/P2/etc." \
+  || bad "drift: $n_red ticket(s) carry a missing or non-canonical priority value"
 
-# Also assert: a non-integer priority string in the BAND-2 region would have been HIGH
-# in the old scheme. Belt-and-suspenders: synthesize one and check the validator catches
-# it (not just the live board, which may be empty by chance).
+# Red-proof the DETECTOR itself against synthetic fixtures, so the surface above cannot
+# silently rot into a no-op on a board that happens to be clean.
 TMPDRIFT="$(mktemp -d)"; trap 'rm -rf "$TMPDRIFT"' EXIT
 mkdir -p "$TMPDRIFT/board" "$TMPDRIFT/state"
 cp "$SRC/claim.sh" "$SRC/_lib.sh" "$TMPDRIFT/"
@@ -70,6 +114,40 @@ if [[ "$out" =~ ^-?[0-9]+$ ]] && [ "$out" -ge 0 ] && [ "$out" -le 5 ]; then
   bad "drift: priority_field() allowed 'HIGH' through — drift detector is broken"
 else
   ok "drift: priority_field() correctly flags 'HIGH' as non-canonical"
+fi
+
+# (1a) ABSENT + NOT parked -> must be detected as missing. This is THE case that was
+#      silently passing before 2026-07-24 (27 live tickets, 3 of them blockers).
+printf 'tier: strong\ndifficulty: 3\nbranch: feat/y\ndepends_on:\nowns: y.py\n' > "$TMPDRIFT/board/ABSENT-LIVE.md"
+if [ -z "$(priority_field "$TMPDRIFT/board/ABSENT-LIVE.md")" ] && ! ticket_is_parked "$TMPDRIFT/board/ABSENT-LIVE.md"; then
+  ok "missing: an unparked ticket with NO priority: field is detected as RED (the pre-2026-07-24 silent pass)"
+else
+  bad "missing: unparked ABSENT-LIVE was NOT flagged — absence has gone silent again"
+fi
+
+# (1b) ABSENT + parked-by-FIELD -> exempt (explicit, recorded — not implicit-by-absence).
+printf 'tier: strong\ndifficulty: 3\nbranch: feat/z\nparked: operator hold\ndepends_on:\nowns: z.py\n' > "$TMPDRIFT/board/ABSENT-PARKED-FIELD.md"
+if ticket_is_parked "$TMPDRIFT/board/ABSENT-PARKED-FIELD.md"; then
+  ok "exemption: a parked-by-field ticket may leave priority: unset (not claimable -> nothing to order)"
+else
+  bad "exemption: parked-by-field ticket was not recognised as parked — the exemption predicate drifted from _lib.sh"
+fi
+
+# (1c) ABSENT + parked-by-NOTE prose -> also exempt (claim.sh parks on note:~/PARKED/).
+printf 'tier: strong\ndifficulty: 3\nbranch: feat/w\ndepends_on:\nowns: w.py\nnote: |\n  PARKED pending operator decision.\n' > "$TMPDRIFT/board/ABSENT-PARKED-NOTE.md"
+if ticket_is_parked "$TMPDRIFT/board/ABSENT-PARKED-NOTE.md"; then
+  ok "exemption: a prose-PARKED (note:) ticket may leave priority: unset — mirrors claim.sh's park rule"
+else
+  bad "exemption: prose-PARKED ticket was not recognised as parked — drifted from claim.sh's note:~/PARKED/ rule"
+fi
+
+# (1d) a ticket that is NOT parked and DOES carry a band must not be flagged by either arm.
+printf 'tier: strong\ndifficulty: 3\nbranch: feat/v\ndepends_on:\nowns: v.py\npriority: 3\n' > "$TMPDRIFT/board/PRESENT-LIVE.md"
+pv="$(priority_field "$TMPDRIFT/board/PRESENT-LIVE.md")"
+if [ "$pv" = "3" ] && ! ticket_is_parked "$TMPDRIFT/board/PRESENT-LIVE.md"; then
+  ok "restore: a live ticket WITH priority: 3 passes both the missing-field and the value-shape arms"
+else
+  bad "restore: live ticket with priority: 3 mis-parsed (got '$pv') — false positive"
 fi
 rm -rf "$TMPDRIFT"
 

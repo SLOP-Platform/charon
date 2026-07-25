@@ -312,6 +312,22 @@ cmd_suites(){ printf '%s\n' "${CI_SUITES[@]}"; }
 
 cmd_tests(){
   local s rc
+  # REENTRANCY GUARD (RIG-REDS 2026-07-24, [[fleet-selfcheck-forkbomb-class]]).
+  # `cmd_tests` runs fleet/tests/rig-ci.test.sh, and rig-ci.test.sh runs
+  # fleet/checks/rig-ci-scope.sh — a self-referential edge of exactly the class
+  # that produced the ~18,900-proc handoff<->gate fork bomb. It was the LAST
+  # unguarded cycle in the fleet: fleet/checks/selfcheck-cycle.sh reported
+  # `rig-ci-scope -> rig-ci.test -> rig-ci-scope` as UNGUARDED, which is why
+  # selfcheck-cycle.test.sh (1c/1d) was red. Today the inner call happens to use
+  # `syntax`/`board` against a temp COPY, but `run_scope` honours $RIG_CI_SCRIPT,
+  # so nothing structurally stops a future edit from re-entering `tests` here.
+  # Same shape as gate.sh's CHARON_GATE_ACTIVE: the outer run exports the flag,
+  # any nested run short-circuits. Exported so it survives the `bash` below.
+  if [ -n "${RIG_CI_TESTS_ACTIVE:-}" ]; then
+    echo "rig-ci-scope: already inside a suite run (RIG_CI_TESTS_ACTIVE) — skipping nested re-entry" >&2
+    return 0
+  fi
+  export RIG_CI_TESTS_ACTIVE=1
   for s in "${CI_SUITES[@]}"; do
     if [ ! -f "$ROOT/fleet/tests/$s" ]; then
       red "allowlisted suite missing: fleet/tests/$s"

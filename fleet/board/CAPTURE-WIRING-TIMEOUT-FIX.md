@@ -1,7 +1,8 @@
 repo: charon-private
-tier: economy
+tier: strong
 difficulty: 2
 work_class: rig-meta
+priority: 4
 branch: feat/capture-wiring-timeout-fix
 owns: fleet/charon-run.sh
 depends_on: SALVAGE-STASH-CHARON-RUN

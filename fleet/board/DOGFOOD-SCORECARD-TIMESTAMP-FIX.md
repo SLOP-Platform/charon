@@ -1,5 +1,5 @@
 repo: charon-private
-tier: economy
+tier: strong
 difficulty: 1
 priority: 1
 work_class: rig-meta

@@ -125,11 +125,27 @@ echo "== (f) HIGH #2: drifted PR on a file owned by >1 ticket -> NEITHER auto-cl
     printf 'feat/g5\t%s\tsrc/g5.py\t305\n' "$SHA"   # archived ticket
     printf 'feat/g6\t%s\tsrc/g6.py\t306\n' "$SHA"   # already done -> idempotent skip
   } > "$g/perf.tsv"
+  # BUDGET ON CPU, NOT WALL-CLOCK (RIG-REDS 2026-07-24). This used to time the run with
+  # `date +%s%N` and compare wall-clock against 5000ms. Wall-clock on a shared box measures
+  # SCHEDULER QUEUEING, not the re-scan this case exists to catch: standalone on an idle box
+  # the fixture ran in 2.4-2.7s, but under fleet/gate.sh's parallel runner it measured
+  # 5.2s / 6.7s / 7.7s at load average 9-11 and reported "re-scan regression?" for code that
+  # had not changed. That is a false red, and the standing rule is to root-cause slowness
+  # rather than waive it by raising the budget — so measure the WORK instead of the wait.
+  # `times`' second line is the CHILDREN's user+sys CPU, which the box's load does not
+  # inflate: the same fixture costs ~1.0s CPU whether the load average is 0 or 11, while the
+  # O(PRs x files) re-scan this guards against multiplies the 200-file walk by the PR count
+  # and shows up in CPU immediately. The wall bound is kept only as a HANG backstop, at a
+  # value no amount of ordinary contention can reach.
   _t0=$(date +%s%N)
-  DONE_CHARON_REPO="$P" RECONCILE_REPO_SLUG="x/y" RECONCILE_MERGED_SRC="$g/perf.tsv" \
-      bash "$g/reconcile-merged.sh" >/dev/null 2>&1
+  ( DONE_CHARON_REPO="$P" RECONCILE_REPO_SLUG="x/y" RECONCILE_MERGED_SRC="$g/perf.tsv" \
+        bash "$g/reconcile-merged.sh" >/dev/null 2>&1
+    times ) > "$g/times.txt" 2>&1
   _t1=$(date +%s%N)
   _ms=$(( ( _t1 - _t0 ) / 1000000 ))
+  # children user+sys, e.g. "0m0.724s 0m0.273s" -> milliseconds
+  _cpu_ms="$(awk 'NR==2{n=0; for(i=1;i<=NF;i++){split($i,a,"m"); sub(/s$/,"",a[2]); n+=(a[1]*60+a[2])*1000} printf "%d", n}' "$g/times.txt")"
+  [ -n "$_cpu_ms" ] || _cpu_ms=-1
   # correctness: G1..G5 closed, G6 still has its original done marker (untouched), nothing else
   closed=0
   for _id in G1 G2 G3 G4 G5; do
@@ -139,11 +155,24 @@ echo "== (f) HIGH #2: drifted PR on a file owned by >1 ticket -> NEITHER auto-cl
                     || bad "g closed only $closed/5 mergeable tickets (expected 5)"
   [ -e "$g/state/done/G6" ] && ok "g G6 done marker preserved (idempotent on already-closed branch)" \
                             || bad "g G6 done marker missing"
-  # perf: 5s is a generous bound for the test (even on a slow CI host the index+5 done.sh <1s;
-  # the old per-PR re-scan would have made this >30s on a 200-file fixture). 5s catches a
-  # regression that re-introduces the O(PRs×files) re-scan while still tolerating slow CI.
-  [ "$_ms" -lt 5000 ] && ok "g perf: 200-file board+archive + 6 PRs reconciled in ${_ms}ms (<5000ms)" \
-                       || bad "g perf: took ${_ms}ms (>=5000ms) — re-scan regression?"
+  # CPU budget, MEASURED not guessed (RIG-REDS 2026-07-24). The old 5000ms WALL bound was
+  # also VACUOUS for the regression it claims to catch: re-introducing the per-PR
+  # board+archive re-scan in ticket_for_pr and re-running this fixture produced ~4.0s wall
+  # — under 5000ms, i.e. the case would have stayed GREEN through the exact regression it
+  # exists to detect, while going RED on an idle-vs-loaded box. Both halves were wrong.
+  # Measured separation on this fixture (3 samples each, same box):
+  #   indexed (correct)      1197 / 1219 / 1327 ms CPU
+  #   per-PR re-scan (bug)   2503 / 2529 / 2621 ms CPU
+  # 1900ms sits between them with ~43% headroom over the worst clean sample and rejects the
+  # regressed floor by 600ms. A parse failure (_cpu_ms=-1) is a RED, not a silent pass.
+  if [ "$_cpu_ms" -ge 0 ] && [ "$_cpu_ms" -lt 1900 ]; then
+    ok "g perf: 200-file board+archive + 6 PRs reconciled in ${_cpu_ms}ms CPU (<1900ms; wall ${_ms}ms)"
+  else
+    bad "g perf: took ${_cpu_ms}ms CPU (>=1900ms, or unparsed) — re-scan regression? (wall ${_ms}ms)"
+  fi
+  # HANG backstop only — deliberately far above any contention this box can produce.
+  [ "$_ms" -lt 60000 ] && ok "g perf: run completed well inside the hang backstop (${_ms}ms < 60000ms)" \
+                        || bad "g perf: wall ${_ms}ms >= 60000ms — the run is HUNG, not merely contended"
 
   # (h) done-marker branch short-circuit: a PR whose branch ALREADY has a done marker is skipped
   # without ever invoking done.sh. We verify by giving an INVALID sha so done.sh would refuse if

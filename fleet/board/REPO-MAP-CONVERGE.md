@@ -4,7 +4,11 @@ priority: 2
 difficulty: 3
 work_class: refactor
 branch: feat/repo-map-converge
-depends_on: VERIFY-MERGED-REPO-AWARE, REPO-FIELD-REQUIRED, REPO-DECL-CENTRAL, SYNC-SCHEDULE, GH-SEAM-CHOKEPOINT
+depends_on: VERIFY-MERGED-REPO-AWARE, REPO-FIELD-REQUIRED, REPO-DECL-CENTRAL, SYNC-SCHEDULE, GH-SEAM-CHOKEPOINT, TIER-BALANCE
+real-dep: TIER-BALANCE — shares fleet/validate_board.sh. That branch (feat/tier-classifier @ f1f162c)
+  is BUILT and reviewed and adds the "2f" tier-drift block to the same file this ticket rewrites.
+  Sequenced after it (not in parallel) so the convergence edits land on top of the drift gate rather
+  than clobbering it. Added 2026-07-24 by the board repair that ticketed that branch.
 real-dep: VERIFY-MERGED-REPO-AWARE — that branch establishes fleet/_lib.sh as the SINGLE HOME of the
   repo->path/slug map. Converging the remaining copies onto a home that does not exist yet is
   impossible; this ticket deletes copies and points them at that home. Disjoint owns by design (that

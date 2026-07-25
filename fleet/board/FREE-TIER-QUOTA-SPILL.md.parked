@@ -1,3 +1,4 @@
+priority: 0
 tier: strong
 difficulty: 3  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
 work_class: money-path
