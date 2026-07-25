@@ -40,7 +40,7 @@ scope: |
 ds: |
   ## Dependencies & sequence
   - depends_on: (none) — this is the FOUNDATION; it builds first.
-  - consumed by: DISCOVERY-NORMALIZE (writes candidate rows via INVENTORY-TABLE-SHARE), R17/
+  - consumed by: DISCOVERY-PIPELINE (writes candidate rows via INVENTORY-TABLE-SHARE), R17/
     PRICING-LIMITS-CHECK-SH (drift columns), SINGLE-LEG-AUTOSWAP (reads per-model coverage).
   - reuse: FREE-TIER-LIMITS.tsv column schema; charon.proxy._normalize_model_id for key identity.
   - concurrency: disjoint new files (fleet/inventory-table.sh + its TSV) — no other live ticket owns them.

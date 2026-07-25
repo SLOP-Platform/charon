@@ -5,7 +5,12 @@ priority: 0
 work_class: rig-meta
 branch: feat/handoff-gate-nonbypassable
 owns: fleet/land.sh, fleet/checks/rig-ci-scope.sh
-depends_on: RECONCILE-WIRING
+depends_on: RECONCILE-WIRING, TIER-BALANCE
+real-dep: TIER-BALANCE — shares fleet/checks/rig-ci-scope.sh. That branch (feat/tier-classifier @
+  f1f162c) is BUILT and registers the tier-drift suite in CI_SUITES; this ticket appends the
+  public-product CI backstop to the same list. Sequenced after it so the two CI_SUITES edits
+  compose instead of clobbering. Costs no schedule time — this ticket was already blocked on
+  RECONCILE-WIRING. Added 2026-07-24 by the board repair that ticketed that branch.
 real-dep: RECONCILE-WIRING shared fleet/land.sh GATE_PARTS surface — merge-order so the conditional
   handoff-check.sh wiring COMPOSES with (does not clobber) the reconciler wiring RECONCILE-WIRING adds
   to land.sh. rig-ci-scope.sh half (public-product CI backstop) is independent.
