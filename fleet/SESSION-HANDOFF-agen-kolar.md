@@ -27,12 +27,48 @@ Read and fully follow /home/stack/charon-private/fleet/SESSION-HANDOFF-agen-kola
      `fork: Resource temporarily unavailable` → the gate was **non-deterministic** (9 vs 10 reds on an
      unchanged tree). Also killed a **real unguarded fork-bomb cycle** in `rig-ci-scope`.
 
-2. **Then LAND, in this order** (fewest lands → most unblocked):
+2. **Mechanize "built but no caller" from the code map** — operator-designated #2.
+   Requirement, verbatim: *"mechanized, fully wired in, anti-stale, with loud notices."*
+   A ticket was being created at session end — **REUSE-CHECK FIRST**: `INERT-INSTANCE-DETECT`,
+   `INERT-WIRING-ENFORCEMENT-DURABLE`, `WIRE-GRAPHIFY-FRESHNESS` and product
+   `tools/check_inert_code.py` may already cover it. Extend one rather than create a fourth —
+   a duplicate ticket for "find what we already built and forgot" is self-refuting.
+   - **Why it is #2:** every built-but-unused thing found this session was found by a human
+     asking, never by a tool — `decompose_effort.py` (ignored by the tier classifier),
+     `budget-derive.py` (p95×1.5, tested, ZERO callers, its `budgets.tsv` absent),
+     `plane-canary.sh` (0 callers), `stale-check.sh` (0 callers), `litellm_params["order"]`
+     (computed then discarded), 33 never-run tests, 21 unlanded branches.
+     Graphify was refreshed and current all day. **Nothing ever queried it for "no caller."**
+   - Must-haves: wired on SessionStart + post-land triggers (note `foreman-cadence.sh`'s own
+     `cadence` leg has NO cron/systemd caller — wiring only there recreates the bug one level up);
+     stale graph reads UNKNOWN/RED never last-known-good; loud where a session will see it
+     (`handoff.sh:383` and every SessionStart hook in `settings.json` are `|| true`, so loudness
+     rides on TEXT not exit code); fail-closed; zero nodes examined = RED; and it MUST distinguish
+     genuinely-inert from legitimately-uncalled (entrypoints/CLI/plugin hooks) with explicit
+     recorded exemptions — a detector that screams about every `__main__` gets switched off in a day.
+   - Reuse the WCI auto-ticket emitter (`fleet/wci-contention.sh`, `300e9a4`) — it is already
+     idempotent, board-valid and self-closing; it needs a generalized `emit --source <x> --key <k>` seam.
+
+3. **Finish the board regroup — operator-designated #3. UNRESOLVED, not done.**
+
+4. **Fix the work-lease CLAIMS-STORE SPLIT — operator-designated #4.**
+   `fix/work-lease-worktree-resolve` (`5d951e8`, pushed) is **explicitly PARTIAL**: it fixes
+   `_link_src` only and does NOT satisfy its own first accept criterion. A lease acquired from
+   inside a worktree still writes to the WORKTREE's `fleet/state/claims` while the hook reads the
+   MAIN checkout's — the cause of every lease refusal this session.
+   **`feat/branch-ticket-map-gate` (`b784de1`, pushed) closes it properly**: `_state_root()` resolves
+   the store from `git rev-parse --git-common-dir`, plus a `work-lease.sh guard-branch` wired into
+   `fleet-droid.sh:375` so an unmapped branch is refused at DISPATCH, before any work happens.
+   Land that; do not re-derive it. It still needs a ticket carrying
+   `branch: feat/branch-ticket-map-gate`. Note: `feat/work-lease-gate` is **already merged into
+   master** (stale, 98 behind) — delete it, there is nothing to land there.
+
+5. **Then LAND, in this order** (fewest lands → most unblocked):
    ① #207 + #211 + #222 (RECONCILE trio; `RECONCILE-WIRING` alone gates 4 more)
    ② `feat/github-limits-hardening` ③ #208 REPO-FIELD-REQUIRED
    ④ `feat/meta-gate-callsite-enum` ⑤ `feat/sync-schedule` ⑥ #205 INVENTORY-TABLE
 
-3. **Finish the board regroup — INTERRUPTED mid-flight.**
+### Detail on #3 — the board regroup (INTERRUPTED mid-flight)
    A sub misread "bundle" and MERGED 9 tickets into 3. **Operator clarified: bundle = GROUP by
    lens/project at the same priority, keeping tickets SEPARATE so agents work in PARALLEL.**
    Merging into fat serial tickets defeats the wall-clock goal.
