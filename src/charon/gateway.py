@@ -316,8 +316,15 @@ def _build_balance_tracker(
 def _module_inst(name: str, state_dir: str | Path | None = None) -> Any:
     """Return a Smart Routing module instance — always active with defaults.
 
-    Reads ``<name>.json`` for operator overrides. Only returns None for
-    cost-multiplying features (speculative, consensus) that need explicit opt-in.
+    Reads ``<name>.json`` for operator overrides. ``opt_in`` specs return None
+    unless their config file says ``{"enabled": true}``.
+
+    WARNING (INERT-INSTANCE-DETECT, 2026-07-24): the ``speculative`` and
+    ``consensus`` opt-in switches do NOT turn on any request-path behaviour.
+    Setting ``{"enabled": true}`` constructs the module and stores it on the
+    server; nothing ever invokes it. Same for ``session_affinity``'s ``ttl``:
+    it is read here, but no request is ever pinned. Do not read these knobs as
+    features an operator can enable — they are scheduled for retirement.
 
     F29: the body is a loop over ``_MODULE_SPECS`` — the single source of truth.
     Adding a new module = one spec row + one module file, editing ZERO god-files.

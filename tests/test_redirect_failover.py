@@ -7,6 +7,11 @@ redirect coverage for any of them, so their safety rested entirely on a gate tha
 a reviewer then defeated. This file gives each of the four a LIVE 302 test with a
 real attacker socket.
 
+Correction (INERT-INSTANCE-DETECT, 2026-07-24): only ``routing_proxy`` and
+``adapters/review`` are live egress paths. ``speculative_execution`` and
+``observability`` are instance-inert — constructed by the gateway, never
+invoked — so their tests here prove a property of code that has never run.
+
 Every test here carries a POSITIVE CONTROL asserting the credential was actually
 in flight. Without it, "the attacker saw no Authorization header" passes just as
 happily when the request was never made at all — which is exactly how the round-5

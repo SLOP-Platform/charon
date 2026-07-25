@@ -166,6 +166,18 @@ nothing in reach to steal.
 four key-bearing send sites:** `routing_proxy.py`, `speculative_execution.py`,
 `adapters/review.py`, `observability.py`.
 
+> **Correction (2026-07-24, INERT-INSTANCE-DETECT).** Only **two** of those four
+> are live egress paths: `routing_proxy.py` and `adapters/review.py`. The other
+> two — `speculative_execution.py` and `observability.py` — are *instance-inert*:
+> the gateway constructs them and stores them on the server object, but nothing
+> ever calls `execute()` or `export()`, so neither has ever sent a byte, with or
+> without a key. Read this list as **"send sites in the source"**, not as
+> "outbound paths this deployment takes"; do not audit key handling by assuming
+> a listed module runs. The correction does not weaken the ADR's argument — it
+> strengthens it: the round-4 enumeration was not merely incomplete, it was also
+> *wrong about which entries were real*, which is exactly why the fix is to
+> change the quantifier (§3) rather than to keep enumerating.
+
 Round 5's own reviewer then found that round 5's gate — the thing meant to make
 further misses impossible — was itself evadable, and demonstrated it with executed
 code.

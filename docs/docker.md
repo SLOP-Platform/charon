@@ -114,7 +114,7 @@ editing `.env` and restarting.
 Do **not**, however, mount the config volume `:ro`. By default the config dir is
 also the state dir, and several components create and persist files there while
 the gateway is *running* — the quality scorer, the balance tracker's auto-park
-state, virtual keys, and the policy router. A read-only mount therefore starts
+state, and the policy router. A read-only mount therefore starts
 cleanly and then silently loses auto-park state and quality scores, or errors
 mid-request. If you want the config genuinely read-only, point state elsewhere
 with `--state-dir` and mount only that directory read-write.
