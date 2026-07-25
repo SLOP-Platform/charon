@@ -1,7 +1,7 @@
 repo: charon-private
 tier: strong
 difficulty: 2
-priority: 1
+priority: 0
 work_class: rig-meta
 branch: fix/handoff-gotcha-verifiable
 depends_on:
@@ -10,6 +10,11 @@ source: 2026-07-24 session audit of the live handoff (fleet/SESSION-HANDOFF-adi-
   found a FALSE behavioural claim about fleet/land.sh that had propagated by copy through the
   handoff chain and was actively suppressing working tooling.
 priority-why: |
+  RAISED 1 -> 0 on 2026-07-24 — KEYSTONE: it is the single remaining rig gate red, and while the gate
+  is red `land.sh` refuses, so it alone gates the entire landing queue (~21 built-and-pushed branches,
+  ~34 of ~40 blocked board edges).
+  SUPERSEDED (original P:1 rationale, kept as the record — its "does not gate the landing queue" claim
+  was true only while RIG-REDS-DISPOSITION's other reds were still open; this is now the last one):
   P:1 (attached CG work, not the keystone). This is attached to the live handoff-accuracy CG
   (HANDOFF-GATE-NONBYPASSABLE P:0 / RECONCILE-HANDOFF-FRESHNESS) — same file family, same failure
   class — and the code is already BUILT, so it costs the board one commit. It is NOT P:0 because it

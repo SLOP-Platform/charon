@@ -5,8 +5,9 @@ work_class: rig-meta
 branch: feat/droid-lifecycle-reap
 owns: fleet/fleet-droid.sh, fleet/reap-orphans.sh, fleet/tests/test_droid_reap.sh, fleet/foreman.sh
 serial_justified: One cohesive droid-lifecycle safety change — the cleanup path + its out-of-band reaper + the shared preserve-committed-work guard all touch the same claim/worktree invariant; splitting orphans the contract.
-depends_on: FLEET-DEMAND-DRIVEN-ROUTING
+depends_on: FLEET-DEMAND-DRIVEN-ROUTING, TICKET-MAP-GATE
 real-dep: both edit fleet/fleet-droid.sh (FLEET-DEMAND rewrites 131 lines of the claim/resolve path); LIFECYCLE-REAP must sequence onto FLEET-DEMAND's LANDED version to avoid clobbering it.
+real-dep: TICKET-MAP-GATE also edits fleet/fleet-droid.sh (a ten-line guard-branch anchor at :375, before p0_worktree_setup at :408) and is ALREADY BUILT+PUSHED at b784de1; merge order = built work anchors first, so LIFECYCLE-REAP sequences onto its LANDED version rather than clobbering the dispatch-time lease gate. Added 2026-07-24 with TICKET-MAP-GATE's boarding.
 dep-kind: build
 work_class_note: lifecycle-safety + data-safety; treat as money-adjacent (a bad reaper deletes work).
 note: |

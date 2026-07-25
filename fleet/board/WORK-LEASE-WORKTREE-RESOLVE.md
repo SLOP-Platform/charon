@@ -6,8 +6,14 @@ work_class: rig-meta
 branch: fix/work-lease-worktree-resolve
 owns: fleet/work-lease.sh, fleet/hooks/pre-commit, fleet/hooks/commit-msg, fleet/tests/work-lease.test.sh
 serial_justified: ONE path-resolution contract — work-lease.sh's store derivation and the two hook shims that exec it must agree on the SAME claims dir by construction; changing one without the others reproduces the split-store defect being fixed. The `holds` arg guard is a two-line change on the same file. Not splittable into collision-free chunks.
-depends_on:
-dep-kind:
+depends_on: TICKET-MAP-GATE
+dep-kind: build
+real-dep: TICKET-MAP-GATE — added 2026-07-24. It OWNS fleet/work-lease.sh + fleet/tests/work-lease.test.sh
+  too, and it is the ticket that actually lands the `_state_root()` git-common-dir store+lock resolution
+  (BUILT+PUSHED, b784de1, 25/25 red-proofed). This ticket's own branch fix/work-lease-worktree-resolve
+  @ 5d951e8 is PARTIAL — it fixes `_link_src` ONLY and fails its own first accept criterion — so it must
+  NOT be marked done. What remains here after TICKET-MAP-GATE lands is the hooks/pre-commit +
+  hooks/commit-msg half, which composes on top of the landed store fix.
 priority_justification: P:2 (PRIORITY-LADDER "standalone, biggest blast-radius") — this defect is
   why the commit-boundary lease gate has degraded to ADVISORY-BY-BYPASS: it fires a false NO-LEASE
   on every correctly-leased worktree commit, so authors reach for WORK_LEASE_BYPASS=1. THREE
