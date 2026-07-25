@@ -10,10 +10,19 @@ Thank you for your interest in contributing!
    pip install -e '.[dev,service]'
    ```
 3. Install the public-clean pre-commit hook (one time — this is a **public**
-   repo, so the hook blocks a commit that would stage personal/internal info):
+   repo, so the hook blocks a commit that would stage personal/internal info).
+   Link it into your hooks directory, which leaves any other hooks you have
+   installed alone:
    ```
-   git config core.hooksPath tools/hooks
+   ln -sf ../../tools/hooks/pre-commit .git/hooks/pre-commit
    ```
+   Do **not** use `git config core.hooksPath tools/hooks` unless `.git/hooks`
+   is empty: `core.hooksPath` replaces the hooks directory wholesale, so it
+   silently disables every hook already installed there — and, in the other
+   direction, anything that later writes `.git/hooks/pre-commit` would silently
+   displace this guard. If you need several pre-commit checks, chain them from a
+   single dispatcher hook and run this one **first**, aborting on its non-zero
+   exit — a later check returning 0 must never be able to mask a leak.
 4. Run the gate locally before pushing:
    ```
    PYTHONPATH=src python3 -m pytest -q
