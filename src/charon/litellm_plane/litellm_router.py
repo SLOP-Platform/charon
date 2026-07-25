@@ -24,8 +24,12 @@ MUST enforce the SAME egress controls the live money-path enforces at
      :func:`no_redirect_client` pins ``follow_redirects=False`` for explicit wiring.
   5. **SG-never-Anthropic** (`providers.is_anthropic_route`) — any Anthropic
      model/provider/base is dropped from the ``model_list`` and can never be selected.
-  6. **drain-then-park + funding-class order** — preserved as a PRE-ordering of each chain
-     (`routing_policy.order_chain_by_funding_class` + parked exclusion) before assembly.
+  6. **drain-then-park + funding-class order** — each chain is PRE-ordered
+     (`routing_policy.order_chain_by_funding_class` + parked exclusion) before assembly, and
+     that rank is then made BINDING on litellm via per-deployment ``litellm_params['order']``
+     (see :func:`_deployment`). The pre-ordering alone is not enough: litellm's default
+     ``simple-shuffle`` picks uniformly at random among a model group, so without ``order`` the
+     computed funding-class chain is discarded and a paid leg can be dialed ahead of a free one.
 
 ``litellm`` is imported lazily (inside :func:`make_router` / :func:`no_redirect_client`) so
 this module imports cleanly with or without litellm installed — the pure-Python builder and
@@ -120,7 +124,7 @@ def _screen_base(base: str | None, agent_model: str) -> str:
 
 
 def _deployment(
-    route: UpstreamRoute, agent_model: str, base: str, key: str | None
+    route: UpstreamRoute, agent_model: str, base: str, key: str | None, order: int
 ) -> dict[str, Any]:
     """One ``model_list`` entry (a litellm "deployment"). ``model_name`` is the agent-facing
     id — several deployments sharing one ``model_name`` are what gives litellm intra-model
@@ -128,13 +132,26 @@ def _deployment(
 
     ``api_base`` is set to *base* — the exact value :func:`_screen_base` validated — so the
     guarded value and the dialed value are the same object (the CVE-2024-6587 lesson made
-    structural)."""
+    structural).
+
+    ``order`` is this leg's 1-based rank in the chain, and it is the whole reason the chain
+    order SURVIVES into litellm (control 6). Without it litellm's ``simple-shuffle`` picks
+    uniformly at random among the deployments sharing ``model_name``, so the funding-class /
+    drain-then-park order computed by :func:`_preorder_chain` would be computed and then
+    thrown away. litellm consumes it in two places, both of which we rely on:
+      * selection — ``utils._get_order_filtered_deployments`` narrows the healthy set to the
+        LOWEST order group before any strategy runs, so leg 1 is deterministic;
+      * failover — the router's order-based fallback walks the remaining order levels in
+        ascending sequence, i.e. the chain's own next leg, not a random survivor.
+    """
     upstream_model = getattr(route, "upstream_model", None) or agent_model
     params: dict[str, Any] = {
         # openai/ prefix => litellm speaks the OpenAI-compatible wire to api_base.
         "model": f"openai/{upstream_model}",
         "api_base": base,
         "api_key": key,
+        # Control 6, made EFFECTIVE: 1-based chain rank litellm actually routes on.
+        "order": order,
     }
     max_context = getattr(route, "max_context", None)
     entry: dict[str, Any] = {"model_name": agent_model, "litellm_params": params}
@@ -149,14 +166,20 @@ def build_model_list(
     key_resolver: KeyResolver = secrets.get_provider_key,
 ) -> list[dict[str, Any]]:
     """Map ``{agent_model: [route, ...]}`` to a litellm ``model_list``, enforcing the
-    build-time controls. Route ORDER is preserved (cold-start / static-fallback equivalence:
-    with no grades and no live signal, the litellm candidate order equals today's chain order).
+    build-time controls. Route ORDER is preserved AND made binding: each surviving leg carries
+    ``litellm_params['order']`` = its 1-based rank, so the chain order litellm routes on is the
+    chain order Charon computed (cold-start / static-fallback equivalence: with no grades and no
+    live signal, the litellm candidate order equals today's chain order).
+
+    The rank counts only ADMITTED legs, so it stays contiguous 1..N after a control drops one
+    (e.g. an Anthropic leg): a chain's surviving head is always ``order=1``, never a hole.
 
     Raises :class:`AdoptError` (SSRF) or ``egress.EgressPolicyError`` (off-allowlist base)
     before an unsafe/off-preset base can enter the Router.
     """
     model_list: list[dict[str, Any]] = []
     for agent_model, chain in chains_by_model.items():
+        rank = 0
         for route in chain:
             # Controls 2 + 3: SSRF refusal, then the fail-closed preset egress allowlist.
             base = _screen_base(getattr(route, "upstream_base", None), agent_model)
@@ -165,7 +188,8 @@ def build_model_list(
                 continue
             # Control 1: base-bound key.
             key = resolve_route_key(route, key_resolver=key_resolver)
-            model_list.append(_deployment(route, agent_model, base, key))
+            rank += 1
+            model_list.append(_deployment(route, agent_model, base, key, rank))
     return model_list
 
 
@@ -354,6 +378,19 @@ def make_router(
     ``allowed_fails`` / ``num_retries`` ← the retry-once + cool-after-N behavior;
     ``retry_after`` ← the default cooldown. All preserved controls are enforced by
     :func:`build_model_list` / :func:`routes_by_model` before the Router is built.
+
+    ``enable_pre_call_checks=True`` is REQUIRED, not a tuning knob: it is the switch that makes
+    the ``model_info['max_input_tokens']`` written by :func:`_deployment` (from the route's
+    ``max_context``) actually filter. Left at litellm's ``False`` default that field is dead
+    config — litellm skips ``Router._pre_call_checks`` entirely and will happily route a
+    4000-token prompt to a 100-token leg, which the upstream then rejects (a spent request and
+    a user-visible failure Charon already had the data to avoid). With it on, a leg whose
+    context cannot hold the prompt is dropped from the healthy set BEFORE selection, and if no
+    leg fits litellm fails loud with a context-window error rather than dialing a doomed one.
+
+    Note the two interact in the right order: the context filter runs first, then the ``order``
+    narrowing — so an over-long prompt falls through to the next leg that can actually hold it
+    instead of being pinned to an order=1 leg that cannot.
     """
     from litellm import Router  # lazy: adopting the library, not standing up its proxy
 
@@ -367,4 +404,6 @@ def make_router(
         num_retries=num_retries,
         retry_after=int(cooldown),
         set_verbose=False,
+        # U2: activates the max_input_tokens context filter (_deployment/model_info).
+        enable_pre_call_checks=True,
     )
