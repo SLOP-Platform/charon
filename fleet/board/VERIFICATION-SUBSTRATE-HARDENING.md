@@ -21,11 +21,22 @@ source: |
   things being measured on the wrong thing so it doesn't go on habit? We need a deep investigation
   into how to stop fake greens. We also keep using search patterns that don't work (grep) and
   ref-citing errors, almost landing broken code. We need to be better."
-open_questions: |
-  Q1 (OPERATOR): how strict? A verification gate that makes ordinary work painful WILL be
-  disabled, and then we are worse off than now. Where is the line between enforced and advisory?
-  Q2 (OPERATOR): scope — rig only, or product too? The product repo has its own gate stack
-  (tools/gates.json, gate_runner.py) with the same failure class (see reachability-gate below).
+decisions: |
+  Q1 ANSWERED (operator, 2026-07-25): **"logically strict without becoming a problem."**
+  Interpretation to build to: strict where a wrong answer is SILENT and CONSEQUENTIAL (a gate that
+  cannot fail, a search whose zero-hits reads as absence, an exit code masked away, a claim about
+  code with no ref) — because those are precisely the cases a human cannot catch by reading. NOT
+  strict where it merely adds ceremony to work that already fails loudly. Design rule: every
+  enforcement point must justify itself against a REAL instance from the corpus; if it cannot cite
+  one, it is ceremony and must be cut. A gate people route around is worse than no gate — this rig
+  has already produced five `WORK_LEASE_BYPASS` uses in one day for exactly that reason.
+  Q2 ANSWERED (operator, 2026-07-25): **investigate BOTH rig and product.**
+  The product carries the same class independently: `reachability-gate` in
+  `/home/stack/code/charon/tools/gates.json` names an enforcer that exists NOWHERE, and
+  `optional:true` converts that into a SKIP reporting OK rc=0. Product gate stack is
+  `tools/gates.json` + `src/charon/gate_runner.py` + `tests/test_gate_contract.py`. Note the
+  product is PUBLIC — the mechanism must not leak rig paths into it, and a rig detector reaching
+  into the product repo is itself the boundary-leak class (already ruled on 2026-07-24).
 note: |
   ## THE CLASS
   Every instance below is the same shape: **A CHECK RAN AND DID NOT CHECK WHAT ITS READER

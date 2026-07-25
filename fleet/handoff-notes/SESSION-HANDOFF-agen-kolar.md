@@ -76,9 +76,26 @@ the pairs that are NOT. Two routes:
   lands FIRST, the chain drains, THEN the extraction. Decomposing first would clobber 5 branches, and
   extracting nine fail-OPEN blocks before the helper exists means fixing them nine times.
 
-**Recommendation:** narrow fix now to unblock landing, root fix as the sequenced follow-on — but that
-is an operator call, since the narrow fix is exactly the "patch the instance, leave the class" move
-this session kept flagging.
+**OPERATOR DECISION (2026-07-25): FIX IT AT ROOT. The narrow dep-ordering patch is REJECTED.**
+Do the approved `preflight.sh` decomposition, respecting the sequencing above (`_gate_run` first,
+chain drains, then extraction). My narrow-first recommendation was overruled, correctly — it was the
+patch-the-instance move this session spent the day flagging.
+
+**AND FIX HOW IT SURFACED — this is the second half of the work, not optional.**
+The RED stood for an entire session while **8 PRs were landed around it**, on the check that IS the
+rig merge gate, and **nothing told anyone.** It was found by accident while validating an unrelated
+ticket. So the question the fix must answer is not only *"why was preflight.sh contended"* but:
+
+- **What should have surfaced a RED merge gate, and why didn't it?** `land.sh` runs `validate_board.sh`
+  and refuses on red — so either it was not actually refusing, or every land in the session ran a
+  path that skipped it. **Establish which by execution.** (Note the landing sub reported `rc=8`
+  base-sync refusals on all five of its lands — check whether an `rc=8` path masks the gate verdict.)
+- Is there any periodic/boot check that reports board health? `foreman.sh` runs at boot and did not
+  flag it; `preflight.sh` has a board leg. Determine why neither surfaced a blocking RED.
+- This is the SAME class as the P0 ticket below (a check ran and did not check what its reader
+  believed) — so record it as an instance in that corpus rather than treating it as a one-off.
+
+**A defect that no mechanism surfaces is two defects: the defect, and the blindness.** Fix both.
 
 ---
 
