@@ -24,6 +24,30 @@ source: 2026-07-24 board audit — branch feat/branch-ticket-map-gate is COMMITT
   with an active claim marker (fleet/state/claims/TICKET-MAP-GATE, session agen-kolar) but NO board
   ticket; validate_board.sh red'd `orphan-marker: state/claims/TICKET-MAP-GATE matches no board ticket`.
   This ticket DESCRIBES work that is already built; it does not propose new design.
+motivating-evidence: |
+  ### FOUR REAL INSTANCES IN ONE DAY (2026-07-24) — the case for landing this is concrete, not theoretical.
+  Four branches needed `WORK_LEASE_BYPASS=1` to commit PURELY because no board ticket mapped them. The
+  bypass is not misuse: the work was real and finished, and the lease gate refuses at COMMIT — the point
+  at which the only options left are "bypass" or "throw the work away". That is the defect this ticket
+  moves to DISPATCH.
+    1. `fix/litellm-order-precall` @ 4b9d401 (PRODUCT) — VERIFIED. Committed with the bypass; money-path
+       chain-order + pre-call-checks fix, 300 real completions of evidence. Now boarded as
+       LITELLM-ORDER-PRECALL, created after the fact solely to make the branch landable.
+    2. `fix/ruff-security-rules` @ f4605c3 (PRODUCT) — VERIFIED. The ticket (RUFF-SECURITY-RULES) was
+       requested AHEAD of the commit precisely to avoid a fifth bypass; the sub committed before the
+       ticket existed anyway. 32 files, security ratchet.
+    3. `feat/branch-ticket-map-gate` @ b784de1 — THIS TICKET'S OWN BRANCH. Committed and pushed with an
+       active claim marker and NO board ticket; validate_board.sh red'd
+       `orphan-marker: state/claims/TICKET-MAP-GATE matches no board ticket` (see source:). The gate
+       that fixes the class was itself an instance of the class.
+    4. A fourth branch is reported by the coordinator but I did NOT verify it by name — RECORDED AS
+       UNCONFIRMED rather than guessed [[confirm-dont-trust-documentation]]. Three verified instances
+       already make the case; do not let the unnamed fourth become a fact by repetition.
+  WHY THIS IS THE RIGHT FIX AND NOT "remember to make a ticket first": every one of these was a
+  competent operator doing real work. A rule that four separate sessions broke in one day is not a
+  discipline problem, it is a mechanism gap [[detection-ticketed-never-built]]. `guard-branch` at
+  fleet-droid.sh:375 refuses an unmapped branch at DISPATCH, when the cost of complying is "write the
+  ticket", instead of at commit, when the cost is "bypass or lose the work".
 note: |
   STATE: work is COMPLETE and COMMITTED in the worktree /home/stack/charon-private-wt/TICKET-MAP-GATE
   on branch feat/branch-ticket-map-gate @ b784de1 (3 files, +215/-9), pushed. This ticket exists so the
