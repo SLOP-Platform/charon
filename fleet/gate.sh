@@ -39,11 +39,28 @@ fi
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-# Launch every test file concurrently (each is fixture-isolated via mktemp -d).
-# Exit code + combined output are captured per-test so the reporting loop below
-# can print results in the SAME order as the old sequential loop.
+# BOUNDED CONCURRENCY (RIG-REDS 2026-07-24). This loop used to launch ALL of the
+# fleet's test files at once — 77 of them on a 16-core box, each of which forks
+# git/python/mktemp subprocesses of its own. That unbounded fan-out was itself a
+# defect, not just a slow choice:
+#   * `fork: retry: Resource temporarily unavailable` was observed inside
+#     selfcheck-cycle.test.sh under the gate (that test lowers RLIMIT_NPROC to 256
+#     as a fork-bomb backstop — a PER-USER limit, so an overloaded box starves it).
+#   * reconcile-merged.test.sh's 5000ms wall-clock budget measured the BOX'S LOAD
+#     rather than the code: 2.4-2.7s standalone vs 6.7-7.7s under the fan-out.
+#   * rule-coverage.test.sh passed 3/3 standalone and failed under the fan-out.
+# All three read as product reds and burned sub-sessions chasing phantom defects.
+# Cap in-flight tests at the core count (override with CHARON_GATE_JOBS). Ordering,
+# per-test capture and PASS/FAIL semantics below are unchanged — this only limits
+# how many run at once.
+JOBS="${CHARON_GATE_JOBS:-$(nproc 2>/dev/null || echo 4)}"
+case "$JOBS" in ''|*[!0-9]*|0) JOBS=4 ;; esac
 pids=()
 for test_file in "${tests[@]}"; do
+  # Block until a slot frees up. `wait -n` returns when ANY child exits; the child
+  # bodies below never fail (rc is captured, not propagated), so `|| true` here is
+  # not masking a test failure — it only absorbs `wait -n`'s "no children" rc.
+  while [ "$(jobs -rp | wc -l)" -ge "$JOBS" ]; do wait -n || true; done
   test_name="$(basename "$test_file")"
   ( rc=0; bash "$test_file" >"$WORK/$test_name.out" 2>&1 || rc=$?
     echo "$rc" >"$WORK/$test_name.rc" ) &
@@ -73,8 +90,18 @@ for pid in "${pids[@]}"; do wait "$pid" || true; done
 
 for test_file in "${tests[@]}"; do
   test_name="$(basename "$test_file")"
-  rc="$(cat "$WORK/$test_name.rc")"
-  test_out="$(cat "$WORK/$test_name.out")"
+  # FAIL-LOUD (RIG-REDS 2026-07-24): a child that was killed outright (OOM, RLIMIT)
+  # never writes its .rc, and under `set -e` the bare `cat` aborted the whole gate
+  # mid-report — a partial listing with a nonzero exit that read like a crash rather
+  # than naming the test. Missing .rc is now an explicit RED for that test.
+  if [ -f "$WORK/$test_name.rc" ]; then
+    rc="$(cat "$WORK/$test_name.rc")"
+  else
+    rc="killed (no exit status recorded — child died before writing .rc)"
+  fi
+  test_out="$(cat "$WORK/$test_name.out" 2>/dev/null || true)"
+  case "$rc" in ''|*[!0-9]*) FAIL=$((FAIL+1)); printf 'test: FAIL %s (%s)\n' "$test_name" "$rc"
+    [ -n "$test_out" ] && printf '%s\n' "$test_out"; continue ;; esac
   if [ "$rc" -eq 0 ]; then
     PASS=$((PASS+1))
     printf 'test: PASS %s\n' "$test_name"
