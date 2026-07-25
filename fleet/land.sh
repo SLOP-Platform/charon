@@ -297,6 +297,30 @@ if [ -z "$GATE" ]; then
     GATE_PARTS+=("PYTHONPATH=$REPO python3 -m ksf.cli --repo-root $REPO gate && PYTHONPATH=$REPO python3 -m ksf.cli --repo-root $REPO verify-self")
   elif [ -f "$REPO/fleet/validate_board.sh" ]; then
     GATE_PARTS+=("bash $REPO/fleet/validate_board.sh $REPO/fleet")
+    # LAND-GATE-RIG-SUITE — the RIG's merge gate ran validate_board.sh and NOTHING ELSE.
+    # validate_board.sh is a BOARD-STRUCTURE check: it reads fleet/board/*.md and says nothing at
+    # all about whether the rig's own code works. fleet/gate.sh (the canonical fleet suite,
+    # 78 files) was NEVER invoked on a rig land. Proven live on PR #264: land.sh ran exactly one
+    # command, printed "GREEN board structurally valid", and merged onto a master carrying 8 RED
+    # tests. So rig merges were not test-gated at all, contrary to MANAGER-OPERATING-RULES §8
+    # ("Merge gate = the FULL CI gate ... NEVER pytest-alone").
+    #
+    # THE FLIP — `LAND_RIG_TESTS=1` is the SINGLE switch that arms this; default 0 = DISABLED.
+    #   arm it:  LAND_RIG_TESTS=1 bash fleet/land.sh <branch> /home/stack/charon-private
+    # SHIPPED DISABLED ON PURPOSE: master currently carries 8 failing suites (verified
+    # 2026-07-24: `bash fleet/gate.sh` -> "summary: 70 passed, 8 failed", rc=1, 1m44s wall).
+    # Arming it now would refuse EVERY rig land until those 8 are green, so the flip is left OFF
+    # and flipping it is a deliberate, separate act — NOT a silent behaviour change on merge.
+    #
+    # HONESTY: this is a CONVENTION, not ENFORCEMENT. It only binds callers who go through
+    # land.sh; `gh pr merge` / the web UI defeat it entirely. The durable fix is forge-native
+    # branch protection with a required status check — see
+    # fleet/state/GATE-FORGE-PROTECTION-agen-kolar.md, to be folded into FORGE-PRIMARY-GITEA
+    # (GitHub cannot do it here: branch-protection API returns 403 "Upgrade to GitHub Pro or make
+    # this repository public" on this private/free-plan repo; Gitea can, free and self-hosted).
+    if [ "${LAND_RIG_TESTS:-0}" = "1" ] && [ -f "$REPO/fleet/gate.sh" ]; then
+      GATE_PARTS+=("bash $REPO/fleet/gate.sh")
+    fi
   elif [ -d "$REPO/tests" ]; then
     GATE_PARTS+=("python3 -m pytest -q")
   fi
