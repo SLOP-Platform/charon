@@ -6,6 +6,15 @@ work_class: rig-meta
 branch: fix/DROID-CLIENT-PREFLIGHT-PATH
 owns: fleet/charon-run.sh, fleet/fleet-droid.sh, fleet/env-registry.sh, fleet/droid-bridge.sh,
   fleet/tests/charon-run-client-preflight.test.sh, fleet/tests/droid-bridge.test.sh
+serial_justified: |
+  The four owned surfaces are ONE causal chain for a SINGLE observed failure, not four independent
+  jobs. charon-run.sh derives the PATH and classifies the exit code; env-registry.sh:bearer_token()
+  is the one canonical token derivation that fix consumes; fleet-droid.sh exports the token
+  unconditionally (a set-if-unset export is a NO-OP because availability.py:197 PREFERS the env var)
+  and is where the preflight gate fires; droid-bridge.sh is the idle path the same launcher blocks
+  on. Split across four droids, each sub-ticket would half-fix the launcher and none could prove the
+  end-to-end assertion the tests actually make. Moot in practice: the work is ALREADY BUILT and
+  pushed at 8f0a4e5 — this ticket is retroactive, so there is no launch left to parallelise.
 priority_justification: |
   P:0 — operator-escalated and CG-active: every droid launched from a NON-INTERACTIVE shell dies
   rc=127 (`opencode` off PATH) and the launcher misreports it as model exhaustion, while
@@ -33,6 +42,16 @@ note: |
      deaths) as model BLOCKs. Fix suppresses the scorecard BLOCK for infra faults.
   Plus the OPERATOR-REQUESTED idle push droid (`--push` / `--push-only`, fleet-droid.sh:558-559)
   and the F4 fix: a missing `work_class` no longer bypasses detention / capped-exclusion / cost-cap.
+defect-found-at-land: |
+  FOUND AND FIXED DURING THE LAND, 2026-07-24 — the headline preflight was BROKEN as pushed.
+  `derive_gateway_token()` held its results in `local derived` / `local env_tok`, but the pre-claim
+  gateway preflight ~700 lines later reports on `_derived_tok`. Under `set -u` that line died with
+  "fleet-droid.sh: line 707: _derived_tok: unbound variable" and the droid exited 1 — i.e. the
+  stand-down that exists to REPLACE an opaque crash was itself an opaque crash, and the distinct
+  exit 5 never fired. `fleet/tests/charon-run-client-preflight.test.sh` caught it: 77 passed /
+  10 failed (J1-J5, K1, M5, N1-N2, O3). Fixed by publishing `_derived_tok` / `_env_tok` as globals
+  (they are `unset` immediately after the preflight). Suite now 87 passed / 0 failed. RED-PROOF is
+  the observed prior state: with the locals restored the same 10 assertions fail again.
 accept: |
   - fleet/tests/charon-run-client-preflight.test.sh green (new, 475 lines, on the branch).
   - fleet/tests/droid-bridge.test.sh green (new, 338 lines). Last run 41 passed / 1 failed, where

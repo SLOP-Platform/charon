@@ -68,13 +68,19 @@ unset _b _missing
 #
 # Defined this early so BOTH entry paths get it: the `resolve` dev/test hook (which consults
 # the gateway through availability.py) and the main pre-claim preflight. Idempotent.
+# The two results are published as GLOBALS (_derived_tok / _env_tok), deliberately not locals: the
+# pre-claim gateway preflight further down reports WHICH token it used and whether one could be
+# derived at all, and with `set -u` in force a local would make that reporting line die with
+# "_derived_tok: unbound variable" (rc 1) instead of the loud, distinct exit 5 — turning the whole
+# stand-down into the opaque crash this preflight exists to replace. Both names are `unset` right
+# after the preflight so nothing downstream reads a stale token out of the environment.
 derive_gateway_token(){
-  local derived="" env_tok="${CHARON_GATEWAY_TOKEN:-}"
+  _derived_tok="" _env_tok="${CHARON_GATEWAY_TOKEN:-}"
   if [ -r "$FLEET/env-registry.sh" ]; then
-    derived="$( . "$FLEET/env-registry.sh" >/dev/null 2>&1 && bearer_token 2>/dev/null || true )"
+    _derived_tok="$( . "$FLEET/env-registry.sh" >/dev/null 2>&1 && bearer_token 2>/dev/null || true )"
   fi
-  [ -n "$derived" ] || return 0
-  if [ -n "$env_tok" ] && [ "$env_tok" != "$derived" ]; then
+  [ -n "$_derived_tok" ] || return 0
+  if [ -n "$_env_tok" ] && [ "$_env_tok" != "$_derived_tok" ]; then
     {
       echo "[fleet-droid] WARN: gateway-token-drift — CHARON_GATEWAY_TOKEN from the shell differs from"
       echo "[fleet-droid]   the token in ${CHARON_OPENCODE_CONFIG:-$HOME/.config/opencode/opencode.json}"
@@ -86,7 +92,7 @@ derive_gateway_token(){
   # Export so EVERY downstream reader picks it up — capability/availability.py, assign.py's
   # --gateway-availability probe, and any child that reads the ambient env — without each of
   # them needing to learn how to derive it.
-  export CHARON_GATEWAY_TOKEN="$derived"
+  export CHARON_GATEWAY_TOKEN="$_derived_tok"
 }
 CHARON="/home/stack/code/charon"   # DEFAULT product repo (a ticket's `repo:` field overrides per-ticket)
 # OFF-CLAUDE WORK CLIENT (SWAPPABLE). The droid's actual work runs THROUGH THE CHARON GATEWAY, not
