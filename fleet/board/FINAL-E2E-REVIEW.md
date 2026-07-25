@@ -1,6 +1,6 @@
 tier: frontier
 difficulty: 3
-work_class: ci-infra
+work_class: design-review
 priority: 5
 branch: audit/final-e2e-review
 repo: charon-private

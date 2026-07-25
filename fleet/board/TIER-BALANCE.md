@@ -6,8 +6,60 @@ work_class: rig-meta
 branch: feat/tier-classifier
 commit: f1f162c
 worktree: /home/stack/charon-private-wt/TIER-BALANCE
-owns: fleet/capability/tier_classify.py, fleet/capability/tests/test_tier_classify.py, fleet/tests/tier-drift.test.sh, fleet/state/tier-drift-red.txt, fleet/validate_board.sh, fleet/checks/rig-ci-scope.sh, .gitignore
+owns: fleet/capability/tier_classify.py, fleet/capability/effort.py, fleet/capability/tests/test_tier_classify.py, fleet/tests/tier-drift.test.sh, fleet/state/tier-drift-red.txt, fleet/validate_board.sh, fleet/checks/rig-ci-scope.sh, .gitignore
+commit-note: fleet/capability/effort.py added to owns: 2026-07-24 — a NEW file created by c8c1f13
+  (the decompose_effort adoption) that was missing from the declared surface. An owned-but-undeclared
+  file is invisible to the collision check, which is how two writers meet on it [[harmless-cruft-bites]].
+design-rationale: |
+  ### RECORDED 2026-07-24 so a future session does not "simplify" these into defects.
+
+  (R1) THE EFFORT SCORER IS PORTED, NOT IMPORTED — AND THAT IS DELIBERATE.
+  `fleet/tests/tier-drift.test.sh` runs in the RIG's GitHub CI on a charon-private-ONLY checkout,
+  where `/home/stack/code/charon` DOES NOT EXIST. Importing the product module there would make a
+  MERGE-BLOCKING preflight unrunnable — the gate would fail for absence-of-repo, not for drift. The
+  obvious "fix", an import-with-fallback, is WORSE: it would derive DIFFERENT TIERS ON DIFFERENT
+  HOSTS (product tree present -> imported scorer; absent -> fallback), i.e. a gate whose verdict
+  depends on which box ran it. That is a silent-divergence defect, not a convenience.
+  HOW DRIFT IS PINNED INSTEAD: assert the 5 constants LITERALLY, plus a cross-repo diff WHEN the
+  product tree resolves. The literal assertions run everywhere; the diff adds real coupling wherever
+  it can. DO NOT replace this with an import [[fix-root-cause-never-workaround]].
+
+  (R2) THE PROMOTION BAND IS THE PRODUCT'S **HARD 16.0**, NOT THE ADVISORY **SOFT 10.0**.
+  SOFT would promote 65 of 104 tickets — reproducing the very over-promotion this ticket exists to
+  end, just with a new proxy in place of the old breadth heuristic. A threshold that promotes ~63% of
+  the board is not a threshold.
+
+  (R3) F5'S FLOOR IS STRUCTURAL: `EFFORT_DIFFICULTY_FLOOR=3`. Breadth ALONE can therefore NEVER
+  promote a ticket — which is exactly the F5 defect that `FT-CATALOG-SEED` exhibited (difficulty 2,
+  effort 7.45, promoted on breadth only). The floor is the fix; do not soften it to make a specific
+  ticket pass.
 serial_justified: ALREADY BUILT as one commit (feat/tier-classifier @ f1f162c) — the classifier, its drift gate in validate_board.sh, its runner registration in rig-ci-scope.sh and its red-list are ONE contract: splitting them ships a gate with no classifier (or a classifier no runner executes), which is the exact non-enforcement the first review rejected. Remaining work is re-review + land, not a build that could fan out.
+outstanding-reds: |
+  ### 9 HARD-FAIL DRIFTS REMAIN ON THE LIVE BOARD — UNRESOLVED, AND THIS TICKET CANNOT LAND OVER THEM.
+  Ran `tier_classify.py drift` (from c8c1f13) against the LIVE board 2026-07-24. FOUR were fixed on
+  master that day — FT-CATALOG-SEED (economy->strong), PRICE-REFRESHER (strong->frontier), and the
+  two F11 work_class corrections (FINAL-E2E-REVIEW, MODEL-PREFLIGHT -> design-review). NINE remain
+  RED, and `drift` exits 3 while any do:
+      BOUNCE-1                  strong  -> frontier  security-critical path (ratchet)
+      FIX-PROVIDER-KEY-EXFIL    strong  -> frontier  security-critical path (ratchet)
+      FT-LIMITS-GROQ-RECONCILE  economy -> strong    money floor (d2 effort 7.3)
+      FT-WIRE-QUOTA             strong  -> frontier  money+ (livefwd=1 d4 effort 12.6)
+      GATEWAY-GRADE-ORDER-MVP   strong  -> frontier  money+ (livefwd=0 d5 effort 13.6)
+      GW-CUTOVER-LIVE-WIRE      strong  -> frontier  money+ (livefwd=1 d5 effort 13.6)
+      ORDER-A-COST-PRIMARY-LAND strong  -> frontier  money+ (livefwd=1 d3 effort 10.75)
+      ROUTER-LEDGER-DECAY       economy -> strong    money floor (d3 effort 10.3)
+      WIRE-GRADING-PRIOR-LIVE   strong  -> frontier  money+ (livefwd=1 d3 effort 10.3)
+  DELIBERATELY NOT APPLIED HERE. Every one is a PROMOTION, seven of them to frontier — the most
+  expensive tier — on money-path and security-critical tickets. That is a real recurring SPEND
+  decision, not board hygiene, and it belongs to the operator [[no-workhorse-finalized]]
+  [[adversarial-review-must-not-silently-override-operator]]. Applying nine tier promotions to make a
+  gate green would be the gate driving the spend rather than the reverse.
+  SEQUENCING CONSEQUENCE — read this before landing: gate 2f is NOT on master today (master's
+  validate_board.sh has no tier check at all, and validate_board is GREEN, rc=0). It arrives WITH this
+  branch. So these nine block NOTHING right now, and nothing is currently blocked on them — but the
+  moment this branch lands, `validate_board.sh` (which land.sh runs as the rig's merge gate) goes RED
+  and rig landing stops for everyone. DISPOSITION THE NINE FIRST — re-tier, or add a recorded
+  exemption — and only then land.
 owns_data: fleet/board/*.md — the branch also rewrites the `tier:` FIELD ONLY on 36 board tickets
   (data edit, no logic). Declared here rather than in owns: so it does not register as a code-surface
   collision against every other live ticket; a rebase re-applies it with `tier_classify.py board-retier`.
