@@ -48,12 +48,21 @@ for m in "${DONE_MARKERS[@]}"; do
     continue
   fi
   if [ -f "$BOARD/$id.md" ]; then
-    if git -C "$FLEET" mv "board/$id.md" "board/archive/$id.md" 2>/dev/null; then :; else
-      mv "$BOARD/$id.md" "$ARCHIVE/$id.md"; fi
-    n=$((n+1)); echo "  retired: $id -> board/archive/"
+    # PLAIN FILESYSTEM mv — deliberately NOT `git mv` (BOARD-WRITE-LOCK, 2026-07-24).
+    # `git mv` STAGED the rename into the SHARED main-checkout index and left it sitting there for
+    # an arbitrary time. retire-done.sh runs from done.sh AND from preflight.sh, i.e. constantly,
+    # under whichever lane happens to be closing a ticket. The next lane to run a bare `git commit`
+    # (which takes the WHOLE index, not just its own `git add`ed paths) swept that staged rename
+    # into an unrelated commit — that is exactly how a lane's rename was lost on 2026-07-24.
+    # An UNSTAGED rename cannot be swept by a bare `git commit`, and the archive move is then
+    # committed deliberately through the locked, pathspec-limited choke point (board-lock.sh).
+    mv "$BOARD/$id.md" "$ARCHIVE/$id.md"
+    n=$((n+1)); echo "  retired: $id -> board/archive/ (UNSTAGED — commit via board-lock.sh)"
   fi
 done
 if [ "$n" -gt 0 ]; then echo "retire-done: archived $n done ticket(s) off the active board"
+  echo "retire-done: the archive moves are UNSTAGED. Commit them through the board lock:"
+  echo "  bash $FLEET/board-lock.sh commit --session <you> -m 'board-hygiene: retire done tickets' -- fleet/board"
 else echo "retire-done: clean (no done ticket left on the active board)"; fi
 
 # WORKTREE CLEANUP (guarded, #3): a done ticket's PR is merged, so its `charon-fleet-<id>`
