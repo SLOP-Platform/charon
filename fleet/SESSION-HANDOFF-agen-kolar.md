@@ -15,9 +15,22 @@ Read and fully follow /home/stack/charon-private/fleet/SESSION-HANDOFF-agen-kola
 0. **`bash fleet/pending.sh list`** — your operator decision list, persists across sessions,
    labels never reused. 8 open (S,T,U,V,W,Y,Z). Read it before anything else.
 
-1. **Finish the last gate red — you are ONE check from unblocking the whole board.**
-   The keystone all session: `land.sh` runs the full gate and **refuses on red**, so 21
-   built-and-pushed branches cannot merge and ~34 of ~40 blocked board edges wait on them.
+1. **Finish the last gate red.**
+   ⚠️ **CORRECTION — a false premise ran through most of this session.** I claimed repeatedly that
+   the rig gate reds BLOCK every `land.sh` and were therefore the keystone gating 21 branches.
+   **That is FALSE for the rig repo.** `fleet/land.sh:298` auto-detects and runs
+   `bash $REPO/fleet/validate_board.sh $REPO/fleet` — a board STRUCTURAL check — **not**
+   `fleet/gate.sh`. `validate_board` has been GREEN throughout, so rig landing was never blocked
+   by the reds. Anything in this file or in `pending.sh` implying otherwise is wrong; trust this note.
+
+   🔴 **The real finding underneath it is worse, and needs a ticket:** rig merges are **NOT
+   TEST-GATED AT ALL.** `land.sh` never runs the rig test suite, so a rig branch can merge with
+   any number of failing tests. `MANAGER-OPERATING-RULES.md` §8 mandates the FULL gate as the merge
+   gate; the rig path does not honour it. Decide whether `land.sh`'s auto-detect should select
+   `gate.sh` for the rig without breaking the product path.
+
+   The reds are still REAL defects worth closing (7 were fixed this session, `f65c5f2`) — they were
+   simply never the landing blocker.
    **Reds went 10 → 1 this session** (`fix/rig-reds-disposition` @ `f65c5f2`, pushed).
    - Remaining: **`handoff-mechanize`** — owned by `fix/handoff-gotcha-verifiable`, whose work is
      finished and STAGED in `/home/stack/charon-private-wt/HANDOFF-GOTCHA` but uncommitted because
