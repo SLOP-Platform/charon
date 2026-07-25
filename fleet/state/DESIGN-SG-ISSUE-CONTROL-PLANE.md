@@ -1,639 +1,298 @@
-# SG-ISSUE-CONTROL-PLANE — design of record (2026-07-24, manager-authored, operator-approved)
+# DESIGN — SG ISSUE CONTROL PLANE (DISCOVER → SURFACE LOUDLY → SELF-HEAL)
 
-> Deliverable for `SG-ISSUE-CONTROL-PLANE` (P:0, DESIGN umbrella). DESIGN ONLY — spawns 3
-> one-lens build-slice tickets on operator approval; nothing here is built yet. THE universal
-> DISCOVER → SURFACE → SELF-HEAL control plane for the droid fleet: auto-discover every
-> recurring failure CLASS, SURFACE them LOUDLY so none is ever silently normalized, and
-> (gated, per-class) AUTO-LAUNCH the fix to the SG droid tab.
-> Supersedes/absorbs UNIFIED-PLANE-CANARY-FRAMEWORK, gate-test-health-on-master, loud-failure-monitor.
-> Tags: `[[reviews-use-our-own-tools]]` `[[gates-must-actually-run]]` `[[anti-accretion-KS20]]`
-> `[[decomposed-by-design-not-reactive]]`.
+**Status:** DESIGN + ADOPT-EVAL only (operator: "FIRST investigate this type of framework"). No product/rig code.
+**Date:** 2026-07-24. **Owner:** SG-ISSUE-CONTROL-PLANE (design). Supersedes the narrower `DESIGN-SG-UNIFIED-FRAMEWORK.md` (removed — this widens it from plane-canaries to *every failure class*).
+**Revision 2 (2026-07-24, post-review).** Revision 1 of this path was a 639-line document that silently REPLACED this one; it was reviewed **DO-NOT-LAND** (`fleet/state/reviews/SG-ISSUE-CONTROL-PLANE-REVIEW-agen-kolar.md`, F1–F13). Operator remedy: **FOLD, don't fork.** This revision is the original provenance-backed document as the BASE, with only the branch's genuinely-new-and-correct content folded in. Where the two conflicted, this document won unless the branch carried evidence — every such adjudication is recorded in §11. A verbatim backup of the pre-fold base is `fleet/state/DESIGN-SG-ISSUE-CONTROL-PLANE.BACKUP-agen-kolar.md`; the discarded 639-line revision is recoverable at `8838670`.
+Claim tags: **[V]** = verified (file:line I read, or a doc I fetched) · **[I]** = inferred.
 
-## 0. The shape of the problem — why a control plane, not a script
+**Citation discipline (new, from F11).** `fleet/preflight.sh` line numbers are NOT stable: the scan dispatch is `:878` at `8838670` and `:896` on master — both verified this session. **[V]** Every reference below therefore names the **symbol** (`cmd_scan`, `cmd_detect`, `board_gate`, `done_merge_gate`, `run_check`); line numbers are given only for files whose content is settled, and any builder must re-derive them. The review's F11 "wrong line number" finding is re-classified as **version skew, not a wrong reference** — but the fix is the same and is adopted: cite symbols.
 
-The fleet today has detectors that FIND issues and a board that TRACKS work, but the
-gap between them is the operator's entire burden:
+---
 
-| What the fleet HAS | What the fleet DOESN'T have | Real incident (this repo) |
-|---|---|---|
-| 10+ detectors firing on preflight (detect_untracked_drift, detect_secret_scan, detect_repo_drift, detect_claim_loop, detect_wci_contention, detect_inflight_landscape, detect_stranded_work, detect_cg_drift, detect_gateway_token_drift, detect_config_drift) | A unified ISSUE BOARD that aggregates every detector's output into ONE visible surface the manager/supervisor/operator checks at SessionStart | The operator ran `preflight.sh` every session, scanning 10+ detector blocks, mentally re-deriving "what matters" each time |
-| plane-canary.sh + plane-canary-registry.tsv (10 declared planes, wired+passing+proven) | A DISCOVERY leg that walks graphify's relations graph and finds CLASSES of failure not yet in any registry — the unregistered-inert, unregistered-stale, unregistered-quarantined | The FINAL-E2E-REVIEW phantom class: a plane declared-but-unwired; nobody noticed the gap until a false-green silenced the check |
-| UNIFIED-RECONCILIATION-GATE (board↔PR, owns-tracked, gate-wired, review-gate) | An AUTO-HEAL leg that (gated, per-class) LAUNCHES a droid to fix a detected issue instead of just printing RED | A stranded-work finding stays on the detector block for days; the operator must manually convert it to a ticket |
-| lease-enqueue.sh + claim.sh + fleet-droid.sh (SG droid dispatch) | A SELF-HEAL RULE ENGINE that matches issue-class → fix-ticket-template → gated autonomous launch | The operator is the rule engine |
+## 0. PREMISE CORRECTION — the problem is UN-ACTIONED findings, not MISSING detection
 
-The cure is **one closed-loop event-driven auto-remediation control plane**: sensors discover
-failure classes → an issue-board surfaces them LOUDLY at SessionStart → (gated, per-class)
-self-heal rules auto-launch the fix to the SG droid tab. Same substrate, three legs,
-one live loop.
+The discarded revision's founding claim was that the fleet lacks a discover+surface leg. **That is false, and running our own tool proves it** ([[reviews-use-our-own-tools]], [[confirm-dont-trust-documentation]]).
 
-**Folding scope (per this design's recommendation):** the DISCOVER + SURFACE legs fold INTO
-the existing UNIFIED-RECONCILIATION-GATE axis, not a second reconciler. The preflight scan
-dispatch already runs reconciliation checks; the issue board is a SURFACE of what those
-checks + detectors produce. The self-heal leg is the new axis.
-
-**ADOPT THE PATTERN, NOT THE TOOL.** The architecture is **StackStorm sensor → rule → action**
-(sensors emit events, rules match class → template, actions launch work) + **ArgoCD opt-in
-self-heal** (auto-remediation is gated, never automatic for high-blast classes) + **Kubernetes
-level-triggered** (every check re-runs on cadence; state is re-proven, not assumed) +
-**Backstage/Dagster facts → checks → scorecard/freshness** (the issue board is a
-scorecard of fleet health). All four are ADOPTED AS PATTERNS, not as tools — every one
-is service-shaped (K8s API server, ArgoCD controller, StackStorm event bus, Backstage
-catalog) and wrong for a solo bash/python fleet. The **algorithm** is adopted; the
-**infrastructure** is bash+python on ~0 infrastructure.
-
-## 1. Architecture — the closed loop
+`bash fleet/plane-canary.sh reconcile` — run this session in the worktree — returns **8 of 10 planes RED, fail-closed**: **[V]**
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    SG-ISSUE-CONTROL-PLANE                        │
-│                                                                   │
-│  ┌──────────┐     ┌──────────────┐     ┌──────────────────────┐  │
-│  │ DISCOVER │────>│   SURFACE    │────>│     SELF-HEAL        │  │
-│  │  (KS29   │     │  (issue-     │     │  (rule-engine +      │  │
-│  │  discov- │     │   board)     │     │   gated launch)      │  │
-│  │  ery leg)│     │              │     │                      │  │
-│  └────┬─────┘     └──────┬───────┘     └──────────┬───────────┘  │
-│       │                  │                        │               │
-│  ┌────▼──────────────────▼────────────────────────▼───────────┐  │
-│  │                SHARED SUBSTRATE                             │  │
-│  │  • graphify relations graph  (code/component topology)      │  │
-│  │  • issue-class registry      (KS20 data rows, not scripts)  │  │
-│  │  • heal-template registry    (issue-class → fix template)   │  │
-│  │  • UNIFIED-RECONCILIATION-GATE (the existing axis)          │  │
-│  │  • plane-canary framework    (the existing canary suite)    │  │
-│  │  • lease-enqueue + review-pool (droid dispatch + review)    │  │
-│  └─────────────────────────────────────────────────────────────┘  │
-│                                                                   │
-│  FIRING LAYER: preflight (session start + gate) + cadence timer   │
-└─────────────────────────────────────────────────────────────────┘
+RED data/serving (unwired) · RED failover (unwired) · RED egress-key (proofless)
+RED review (proofless) · RED lifecycle (proofless) · GREEN landing
+RED balance (unwired) · RED config-ssot (proofless) · GREEN map-freshness
+RED reconciliation (proofless — reconcile-gate-wired.sh + .test.sh absent on disk)
 ```
 
-**Level-triggered, not edge-triggered.** Every check re-runs on cadence (the same shape
-as `fleet/checks/reconcile-timer.sh` in UNIFIED-RECONCILIATION-GATE §3.1). Issues are
-re-proven on every tick — a cleared issue auto-closes; a re-emergent issue re-opens.
-The board is always a **current** picture, not a ledger of past events.
+Those are precisely the `inert/not-wired` and `quarantined-good` classes the discarded revision called its novel slices. The incumbent discover+surface leg **works and is already shouting**; nobody closes its findings.
 
-**The loop, per cadence tick:**
-1. **DISCOVER:** walk graphify's relations graph + the issue-class registry + the
-   existing detector suite. For every registered failure class, run its discovery
-   algorithm primitive (set-diff, graph-reach, staleness-probe, subset-membership,
-   content-hash — the KS29 vocabulary from UNIFIED-RECONCILIATION-GATE §4.3). Produce
-   a flat list of `(class, instance, severity, evidence)` tuples.
-2. **SURFACE:** upsert every instance into the issue-board (`fleet/state/issue-board.tsv`).
-   Closed issues whose evidence matches the last RED snapshot stay closed. NEW or
-   re-emergent issues open. The board is rendered LOUDLY at SessionStart (preflight)
-   with a per-class summary the operator can NOT miss.
-3. **SELF-HEAL:** for every OPEN issue of a class with a registered heal-template AND
-   a gating policy that permits auto-launch, compute eligibility (blast-tier of the
-   fix ≤ droid tier threshold, heal-template adheres to conventional-commit,
-   reviewer != builder). If eligible, lease-enqueue the fix to the SG droid tab.
-   Record the launch in the issue-board row (`heal_launched_at`, `heal_ticket`).
-   The launched droid's `done.sh` + review-log are the proof of remediation;
-   the next cadence tick closes the issue iff the evidence is gone.
+**Consequence for this design — binding:** a fourth detection layer over a third one that is RED and ignored does not cure normalization-of-deviance; it adds a surface to ignore. **Any slice this design authorises must be justified against "un-actioned", not "missing."** The measured gap is small and different: ~6 advisory detectors in `cmd_detect` have no `check_cmd` and no auto-register call, so their findings can never become blocking reds. That is rows plus small functions in an existing file — §3.
 
-**Why level-triggered (K8s control-loop pattern):** an edge-triggered architecture
-("when a failure happens, fire an event") requires a durable event bus and misses
-pre-existing issues forever. A level-triggered architecture re-proves state every
-tick — an issue that existed before the plane was built is caught on the first run.
-This is the same pattern UNIFIED-RECONCILIATION-GATE uses (§3.1 timer) and the same
-posture plane-canary.sh takes (reconcile leg re-proves every declared plane is
-wired+passing+proven on demand).
+---
 
-## 2. The seven failure classes (DISCOVER)
+## 1. VERDICT
 
-Every class has the same five fields from the UNIFIED-RECONCILIATION-GATE substrate
-(§1): **name**, **desired-source**, **actual-source**, **drift-algorithm**, **RED
-condition**. Plus a **heal-template** (optional — not every class is auto-healable).
+**Architecture class:** a **closed-loop, event-driven auto-remediation control plane** — the *"IFTTT for Ops"* / Kubernetes-operator shape: **sensors detect → a rule/policy engine decides → gated actions remediate**, running **level-triggered on a cadence** over a **software-catalog + relations-graph** substrate. The four best-in-class exemplars each own one facet:
 
-### 2.1 `inert/not-wired` — built-but-never-invoked
+- **StackStorm** = the canonical closed-loop shape. **[V]** Its own tagline is *"IFTTT for Ops … event-driven automation for auto-remediation"*; architecture = **Sensors** (watch/emit) → **Triggers** (event repr, incl. generic *timers*) → **Rules** (map trigger→action) → **Actions/Workflows** (remediate), + **ChatOps** notification (github.com/stackstorm/st2; medium "Fighting Alert Fatigue"). This is *exactly* discover→surface→self-heal.
+- **ArgoCD self-heal + prune** = the **GATED** self-heal + drift model. **[V]** `selfHeal: true` "continuously monitors the cluster for drift and automatically corrects it … reverts to match Git"; `prune: true` removes resources no longer in Git; self-heal is **opt-in per-app**, and the reconcile runs on an **interval** (`timeout.reconciliation` default 120s + jitter) — level-triggered, not event-only (argo-cd.readthedocs.io auto_sync; oneuptime argocd-self-heal-policy).
+- **Kubernetes operator / controller** = the detect→reconcile→self-heal loop, **level-triggered**: "always asks *is the world in the state I want?* regardless of how many events fired"; idempotent reconcile; drift corrected on the next tick even with no event (deepwiki kubebuilder 5.2; oneuptime operator-reconciliation-loop). **[V]**
+- **Backstage Tech-Insights/Soundcheck + Dagster asset-checks** = the *facts→checks→scorecard* catalog that makes health *scored and un-stale-able*. **[V]** Tech-Insights: *Facts* (per-entity data) → *Checks* (rules) → *Scorecards* (roadie.io). Soundcheck: changing a check's rule **auto-deletes stale results**; collection runs on a **cadence** (backstage.spotify.com). Dagster: an asset is **stale** if code/upstream changed since last materialization; freshness policies + Declarative Automation drive re-runs with **controllable blast radius** (docs.dagster.io; dagster.io 1-1).
 
-- **desired-source:** every detector/gate/canary declared in the registries:
-  - `fleet/checks/*.sh` + `fleet/checks/*.py` (the rig check suite)
-  - `tools/check_*.py` (the product check suite)
-  - RULE-REGISTRY.tsv rows with `status ∈ {ACTIVE, ENFORCED}`
-  - EVAL-REGISTRY.md rows with `verdict = ADOPT` and non-empty `enforced_in`
-  - plane-canary-registry.tsv rows (every declared plane)
-  - RECONCILER-REGISTRY.tsv rows (every declared reconciler)
-  - issue-class registry rows (this plane dogfoods itself — see §6)
-- **actual-source:** the set of paths actually executed by a real firing layer:
-  - preflight.sh scan dispatch (the existing chain at `preflight.sh:878`)
-  - land.sh pre-conditions
-  - foreman-cadence.sh timer ticks
-  - hooks/session-start.sh
-  - .github/workflows/*.yml (product CI)
-- **drift-algorithm:** `graph-reachability` (KS29 leg) — declared nodes MUST be
-  reachable from the firing-layer root set. Walk the call graph from every firing-
-  layer entry point; any declared node with indegree 0 from the firing set is inert.
-- **RED condition:** any declared check/detector/canary with no reachable invocation
-  path → RED with a "wire this into `<firing layer>` at `<location>`" instruction.
-  **This is the exact class GATE-GAP-LEDGER tracks** (e.g., `check_catalog_case_quant.py`
-  shipped wired-into-zero gates). The issue-board entry for this class is a
-  consolidation of the GATE-GAP-LEDGER into the unified surface.
-- **heal-template:** `fix/wire-inert-<id>` — add the invocation line to the correct
-  firing layer. **GATED: NEVER auto-launch.** Wiring the privileged control plane is
-  hot-path work; the heuristic for WHERE to wire it is operator judgment, not a
-  script. Surface-only.
+**RECOMMENDED SHAPE — adopt the PATTERN, build on OUR substrate; do NOT adopt any tool; do NOT fork a second board.**
 
-### 2.2 `failing/RED` — check-failing-on-master
+> **Treat our EXISTING detectors as StackStorm-style *sensors*; make every sensor's verdict land in the board we ALREADY have (`fleet/reds.tsv`, driven by `fleet/preflight.sh`) with a mandatory `check_cmd`; and — for failure-classes on a safe allowlist — fire a *gated action* that mints a remediation ticket and hands it to the SG executor via `lease-enqueue.sh` → `review-pool.sh`. The reconcile runs level-triggered on `foreman-cadence.sh`. ~85% of this is WIRING assets we already own; the only genuinely-new slice is the verdict→action RULE layer, plus the KS29 discovery primitive.**
 
-- **desired-source:** every check in the gate suite that should return GREEN on
-  master.
-- **actual-source:** the last-run exit code of each check (from `fleet/state/` run
-  logs, or from a live re-run on the current cadence tick).
-- **drift-algorithm:** `exit-code-check` — re-run each check against the current
-  tree; any non-zero exit is RED.
-- **RED condition:** a check on master returns non-zero → the check is RED.
-  This is the `board-validator-red` class (preflight.sh auto-registers
-  `board-validator-red` in reds.tsv when validate_board.sh goes RED). The
-  issue-board generalizes this: every check produces its own row, not just
-  the board-validator umbrella.
-- **heal-template:** variable — per-check, the fix is different. A `tooling`
-  class fix (e.g., a lint rule triggered by a new file) may be auto-launchable;
-  a `hot-path` fix (e.g., a routing regression) is gated-operator-only.
+**How the 3 legs map (each = an owned-or-adopted mechanism):**
 
-### 2.3 `stale/drift` — drift-between-desired-and-actual
-
-- **desired-source:** the declared desired state in every registry (config-manifest.tsv,
-  SSOT sources, graphify stamps, plane-canary lastrun records, done markers,
-  review markers).
-- **actual-source:** the observed state (live config diffs, graphify-out/graph.json's
-  `graph_built_at_commit` vs HEAD, plane-canary-lastrun.tsv timestamps, git log
-  merge SHAs vs done.sh records).
-- **drift-algorithm:** `staleness-probe-TTL` + `set-diff/bidirectional` (KS29 legs).
-  For time-sensitive state: current time - `last_updated_ts` > `max_staleness_s` →
-  STALE. For set-membership state: (desired_set, actual_set) → set-diff → any
-  asymmetric element is DRIFT.
-- **RED condition:** any STALE or DRIFT pair. The existing detectors cover subsets:
-  - `detect_config_drift` → config SSOT drift (config-drift.sh --advisory)
-  - `graphify_freshness_gate` → code-map staleness (graphify-freshness.sh check)
-  - `detect_repo_drift` → unpushed/dirty tracked files
-  - `detect_gateway_token_drift` → env-vs-opencode.json token staleness
-  - UNIFIED-RECONCILIATION-GATE §1.1 (board↔PR drift), §1.2 (owns-tracked drift),
-    §1.3 (gate-wired drift), §2.1 (review-gate drift)
-  The issue-board consolidates all drift detectors into ONE surface.
-- **heal-template:** `fix/drift-<class>` — auto-refresh stale state (run
-  `graphify update`, run `config-sync.sh`, run `reconcile-merged.sh`). For
-  non-destructive refresh (graphify, config-sync): SAFE to auto-launch. For
-  destructive (auto-close a ticket): gated.
-
-### 2.4 `quarantined-good` — false-green canary
-
-- **desired-source:** every declared plane-canary row + every gate check MUST produce
-  a provable RED when the thing they guard fails (fail-on-revert).
-- **actual-source:** the dogfood_test for each canary/check — the fail-on-revert
-  test that seeds a failure and proves the check catches it. A canary whose
-  dogfood_test passes (the check guards the breach) is proven. A canary whose
-  dogfood_test fails was never proven, or a regression broke the fail-on-revert.
-- **drift-algorithm:** `boolean-probe` — run the fail-on-revert dogfood. If it
-  exits 0, the canary is proven. If it exits non-zero, the canary is quarantined-
-  good (the guard is broken, so the GREEN the canary currently shows is unreliable).
-- **RED condition:** any canary whose dogfood_test exits non-zero, or whose
-  dogfood_test was never run (no row in plane-canary-lastrun.tsv), or whose
-  dogfood_test is missing/blank. This is the `proofless canary` class from
-  plane-canary.sh's `_reconcile_row` — generalized to the issue board.
-- **heal-template:** `fix/quarantine-<plane>` — investigate WHY the dogfood fails
-  and fix the canary or the dogfood. **GATED: NEVER auto-launch.** A false-green
-  canary means the guard is blind; fixing it requires understanding WHAT it should
-  have caught. Operator judgment only.
-
-### 2.5 `junk-commit` — unreviewed-merge / wrong-branch / creation-masquerading-as-completion
-
-- **desired-source:** the merge discipline:
-  - Every `≥hot-path` merge carries a review marker (BLAST-TIER Consumer A)
-  - Every merge's branch matches a ticket's `branch:` (UNIFIED-RECONCILIATION-GATE §1.1)
-  - Every merge's files are owned by exactly ONE ticket (the AMBIGUOUS ladder)
-  - Every merge's branch was created from origin/master (no merge-from-stale-base)
-  - No direct push to master bypasses land.sh
-- **actual-source:** `git log` + `gh pr list --state merged` + `done.sh` records +
-  `reviewed/<id>` markers.
-- **drift-algorithm:** `subset-membership` + `content-hash/checksum` (KS29 legs).
-  The creation-PR guard (`reconcile-merged.sh:194-222`): a merged PR that adds the
-  ticket's `fleet/board/<id>.md` but delivers NONE of its `owns:` is a creation, not
-  a completion.
-- **RED condition:** the AMBIGUOUS ladder's R-A, R-B, R-C conditions (UNIFIED-
-  RECONCILIATION-GATE §1.1) + the review-gate's R-J, R-K, R-L (§2.1) + the
-  `land.sh` `git -C` bypass seam (§3.3). The issue-board row for this class
-  is the consolidation of ALL merge-discipline violations across all reconcilers.
-- **heal-template:** `fix/junk-<kind>` — close the false-done ticket (R-A, safe),
-  flag operator PR for ticketing (R-B, needs operator), warn stale branch (R-C,
-  advisory only). **Safe auto-launch: R-A only** (auto-close a proven-done ticket
-  with `done.sh --merged-sha`).
-
-### 2.6 `done-but-unmerged` — work-landed-but-not-recorded-as-done
-
-- **desired-source:** every ticket marked `done` in the board's status column.
-- **actual-source:** GitHub PRs merged whose head branch matches a ticket's
-  `branch:` AND whose merge SHA is recorded in `done.sh` / `fleet/state/done/`.
-- **drift-algorithm:** `set-diff/bidirectional` over `(done-ticket-set, merged-PR-set)`.
-  The inverse of R-A (§1.1): a ticket is DONE (board says so) but no merged PR
-  exists for its branch → false-done. AND: a PR is merged but the board ticket
-  is NOT done → merged-but-not-retired (R-A). Both are the same set-diff, opposite
-  direction.
-- **RED condition:**
-  - **S-A:** a board ticket whose `status` says done/in-review but whose `branch:`
-    has NO merged PR → false-done (the ticket claims done but no evidence).
-  - **S-B:** a merged PR whose files touch a ticket's `owns:` but the ticket is NOT
-    done → the merging happened without a ticket (or the wrong ticket was marked).
-- **heal-template:** `fix/unmerged-done-<id>` — mark the ticket done if the evidence
-  proves it (merged PR exists for its branch). **Safe to auto-launch** for S-A
-  when the merged PR evidence is deterministic.
-
-### 2.7 `un-registered component` — fleet-component-with-no-registry-row
-
-- **desired-source:** every fleet component MUST have a row in at least ONE registry
-  (plane-canary-registry.tsv, RULE-REGISTRY.tsv, RECONCILER-REGISTRY.tsv, EVAL-REGISTRY.md,
-  config-manifest.tsv, or the issue-class registry itself).
-- **actual-source:** walk the fleet file tree (`fleet/*.sh`, `fleet/checks/*`,
-  `fleet/state/*.md`, `fleet/hooks/*`, `fleet/tests/*`) + graphify's component graph.
-  For each component, check registry membership.
-- **drift-algorithm:** `set-diff` over `(registry-entries, fleet-files)`. The
-  `graph-reachability` primitive from §2.1 already catches inert components;
-  this catches components that are WIRED but UN-DECLARED — the inverse class.
-- **RED condition:** any fleet file that is load-bearing (invoked from a firing
-  layer) but has no registry row → un-registered. AND: any registry row that
-  names a file absent on disk → ghost entry. The pair together cover the full
-  registry coverage axis.
-- **heal-template:** `fix/register-<component>` — add a registry row for the
-  component. **Safe to auto-launch for tooling-tier components** (a script
-  that runs on preflight is tooling; auto-registering it is safe).
-
-## 3. The SURFACE — issue-board as the single pane of glass
-
-### 3.1 Issue-board schema
-
-One git-tracked tsv: `fleet/state/issue-board.tsv`.
-
-```
-class          instance_id           severity  status    first_seen            last_seen             evidence_summary    heal_template    heal_launched_at  heal_ticket
-inert          check-gate-parity     P1        open      2026-07-23T14:00:00Z  2026-07-24T08:00:00Z  unreachable from preflight; declared in RULE-REGISTRY row 17  fix/wire-inert-gate-parity  —  —
-failing        validate-board        P0        open      2026-07-24T06:00:00Z  2026-07-24T08:00:00Z  exit=1: cycle `next` status on 3 tickets  —  —  —
-stale          graphify-map          P1        open      2026-07-23T18:00:00Z  2026-07-24T08:00:00Z  graph_built_at_commit=abc1234, HEAD=def5678 (7 code files changed)  fix/drift-graphify-refresh  2026-07-24T08:01:00Z  SG-FIX-graphify-stale
-quarantined    egress-key-canary     P0        open      2026-07-23T20:00:00Z  2026-07-24T08:00:00Z  dogfood test egress-key-canary.test.sh exit=2; canary unproven  —  —  —
-junk-commit    feat/unsafe-merge     P0        open      2026-07-24T01:00:00Z  2026-07-24T08:00:00Z  PR #456 merged without review marker; blast_tier=hot-path  —  —  —
-done-unmerged  WORKLOOP-FIX-3        P2        open      2026-07-24T07:00:00Z  2026-07-24T08:00:00Z  board says done; branch feat/wl-fix-3 has no merged PR  fix/unmerged-done-WORKLOOP-FIX-3  —  —
-unregistered   fleet/checks/selfcheck-cycle.sh  P2  open  2026-07-24T08:00:00Z  2026-07-24T08:00:00Z  invoked from preflight:878, not in any registry  fix/register-selfcheck-cycle  —  —
-```
-
-**Status lifecycle:** `open` → (evidence re-proven RED) → stays `open`. Evidence
-GREEN on a cadence tick → `auto-closed`. Operator can `defer` an issue with a
-human note (a `deferred_until` + `defer_reason` pair — the issue re-opens
-after the deferral expires so it can't be silently forgotten). `auto-closed`
-issues that re-emerge are `re-opened`.
-
-### 3.2 Surface at SessionStart (loud, unmissable)
-
-The issue-board is rendered as the FIRST block of preflight output, after the
-header and BEFORE the tracked-reds scan. Shape (from existing patterns in
-plane-canary.sh's reconcile output + preflight.sh's reds table):
-
-```
-════════════════════════════════════════════════════════════
- ISSUE BOARD — 7 open issues across 7 classes
- (auto-closed: 3 since last cadence tick; deferred: 1)
- Registry: fleet/state/issue-board.tsv
-════════════════════════════════════════════════════════════
- P0  failing          validate-board           board-validator RED (3 tickets with cycle `next`)
- P0  quarantined      egress-key-canary        dogfood broken — untrusted GREEN
- P0  junk-commit      feat/unsafe-merge        PR #456: no review marker (hot-path)
- P1  inert            check-gate-parity        declared in RULE-REGISTRY, unreachable from preflight
- P1  stale            graphify-map             code map stale (7 file changes since last stamp)
- P2  done-unmerged    WORKLOOP-FIX-3           board done, no merged PR
- P2  unregistered     selfcheck-cycle.sh       wired in preflight, not in any registry
-────────────────────────────────────────────────────────────
- SELF-HEAL launched this tick (1):
-   stale/graphify-map → ticket SG-FIX-graphify-stale (droid queued)
-────────────────────────────────────────────────────────────
- AUTO-ACTION PENDING (operator must decide — 3):
-   junk-commit/feat/unsafe-merge → review the merged PR then adjudicate
-   quarantined/egress-key-canary → fix the dogfood or retire the canary
-   inert/check-gate-parity → wire into preflight or remove from registry
-════════════════════════════════════════════════════════════
-```
-
-The operator can NOT miss this block — it renders before the reds table and
-the gate verdict, and a non-empty open-issue count is a preflight WARN (never
-a BLOCK for surface-only issues, but a tracked-red for P0 classes).
-
-### 3.3 The board as the reconciliation axis convergence point
-
-The issue-board is the destination for ALL the following sources:
-
-| source | class(es) surfaced |
-|---|---|
-| preflight detectors (10+) | failing, stale (partial), junk-commit (partial) |
-| UNIFIED-RECONCILIATION-GATE (3 reconcilers + review-gate) | stale (board↔PR, owns-tracked, gate-wired), junk-commit (review-gate) |
-| plane-canary.sh reconcile leg | quarantined (proofless/unwired canary), inert (declared-but-unwired plane) |
-| KS29 discovery leg (graphify walk) | inert (node reachability from graph entry points), unregistered (file vs registry set-diff), stale (graph stamp vs HEAD) |
-| config-drift.sh, cg-drift.sh, gateway-token-drift | stale (config / CG / token drift) |
-| stranded-work.sh, claim-loop, wci-contention | failing (detector findings) |
-
-The board is ONE tsv; every source writes to it via a shared `issue-board-upsert`
-primitive. No source opens its own side-channel; the board is the single pane of
-glass.
-
-## 4. The SELF-HEAL — gated auto-remediation
-
-### 4.1 Heal-template registry
-
-One git-tracked tsv: `fleet/state/heal-templates.tsv`.
-
-```
-class          heal_template_id              template_ticket        auto_launch_gate          max_blast_tier  reviewer_must_not_be
-stale          fix/drift-graphify-refresh    — (built-in command)   ALWAYS (safe refresh)     doc (0)         —
-stale          fix/drift-config-sync         — (built-in command)   ALWAYS (safe refresh)     doc (0)         —
-done-unmerged  fix/unmerged-done-<id>        FLEET-BOARD/fix-done   after_N_green_ticks=2     tooling (1)     builder
-failing        — (per-check, variable)       —                      NEVER (per §5 gating)    —               —
-inert          — (wiring, needs judgment)    —                      NEVER (per §5 gating)    —               —
-quarantined    — (investigation, needs judgment)  —                 NEVER (per §5 gating)    —               —
-junk-commit    fix/junk-auto-close-<id>      FLEET-BOARD/fix-close  after_N_green_ticks=3     tooling (1)     builder
-unregistered   fix/register-<component>      FLEET-BOARD/fix-register  after_N_green_ticks=1  tooling (1)     builder
-```
-
-**Fields:**
-- `class` — the failure class from §2
-- `heal_template_id` — a kebab-case id; when a heal is launched, the id
-  is used to look up the fix template OR a built-in command path
-- `template_ticket` — a `FLEET-BOARD/<id>` ticket (from `fleet/board/`) that
-  contains the fix brief for the class. The droid reads this brief to understand
-  what to fix. `— (built-in command)` means the fix is a single bash invocation
-  (`graphify-freshness.sh update`, `config-sync.sh`) — no droid needed.
-- `auto_launch_gate` — `ALWAYS` (safe, non-destructive refresh), `after_N_green_ticks=N`
-  (the issue must persist for N consecutive green cadence ticks before auto-launch;
-  prevents flapping), or `NEVER` (operator must launch manually — the heal-template
-  is a documentation shortcut, not an auto-action)
-- `max_blast_tier` — the highest blast-tier a droid executing this heal is
-  permitted to touch. A `doc (0)` template touches only registry rows; a
-  `tooling (1)` template may write fleet scripts.
-- `reviewer_must_not_be` — `builder` (the reviewing droid must NOT be the same
-  as the fixing droid — reusing BLAST-TIER Consumer A's independence rule) or
-  `—` (no review constraint for built-in commands).
-
-### 4.2 Auto-launch eligibility
-
-On each cadence tick, for every OPEN issue of a class with a registered
-heal-template:
-
-1. **Gate: `auto_launch_gate`.** If `NEVER` → skip. If `after_N_green_ticks=N` →
-   check the issue's consecutive-ticks-since-first-seen ≥ N. If not enough ticks →
-   skip.
-2. **Gate: heal already launched.** If the issue's `heal_launched_at` is non-empty
-   AND the launched ticket is still open → skip (don't double-launch). If the
-   launched ticket is done AND the issue is still open → the heal didn't fix it;
-   flag as "heal-failed" and escalate (don't auto-retry).
-3. **Gate: blast-tier gating.** If the template has `max_blast_tier ≥ hot-path` →
-   operator approval required (the auto-launch gate is treated as `NEVER` for
-   hot-path+ templates). This is the ArgoCD opt-in self-heal pattern: auto-heal
-   is opt-in per class; high-blast classes are opt-in-by-operator.
-4. **Gate: review.** If `reviewer_must_not_be = builder` → a review-pool claim
-   with `reviewer != builder` must be satisfied before the heal can launch.
-   The launch itself queues the fix AND the review as paired items.
-5. **Launch:** call `lease-enqueue.sh <ticket-id> --session <session> --` with
-   the fix brief. Record `heal_launched_at=<ts>` and `heal_ticket=<id>` in the
-   issue-board row.
-
-### 4.3 Built-in heal commands (no droid)
-
-Some heal templates are single bash invocations:
-
-```
-class          heal_template_id              command
-stale          fix/drift-graphify-refresh    fleet/checks/graphify-freshness.sh update
-stale          fix/drift-config-sync         fleet/config-sync.sh
-```
-
-These run inline on the cadence tick; no droid is dispatched. The command's
-exit code determines success; a failure escalates the issue to "heal-failed"
-and triggers a P0 surface.
-
-### 4.4 Self-heal circuit breaker
-
-Reuse `ReviewerCircuitBreaker` from `src/charon/failover.py:73-142` (the same
-breaker BLAST-TIER-ENFORCEMENT reuses for the review doom-loop). Per-class,
-fingerprinted: `(class, instance_id, heuristic_id)`. If the SAME heal for the
-SAME issue fails ≥3 times → the breaker TRIPS → the issue is marked
-`heal-breaker-tripped` and the operator is alerted LOUDLY at SessionStart.
-
-The fingerprint heuristic prevents the breaker from tripping on a genuinely
-new issue of the same class (different `instance_id`) or a different heal
-strategy (different `heal_template_id`).
-
-## 5. Gating — what the plane MUST NOT auto-launch
-
-Per `[[gates-must-actually-run]]`: a self-heal that incorrectly fixes a non-bug is
-worse than no self-heal at all. The following classes are **SURFACE-ONLY, NEVER
-AUTO-HEAL** in v1:
-
-| class | reason NEVER auto-heal |
-|---|---|
-| `inert/not-wired` | Wiring a check into the control plane's own firing layer is hot-path work — where the invocation goes is operator judgment. A wrong wiring can suppress a real RED. |
-| `failing/RED` | A failing check's root cause is unknown — the fix could be anything from a lint rule to a routing regression. Auto-launching a fix without understanding the cause is a denial-of-service on the droid pool. |
-| `quarantined-good` | A false-green canary means the guard is blind. Fixing it requires understanding WHAT it should have caught — that is adversarial reasoning, not a template. |
-| `junk-commit` (review-gate sub-class) | The review-gate's R-K/R-L conditions (mismatched review SHA, doom-loop) are operator-adjudicated. Auto-closing a review-gate RED is the REVIEWER-DOGFOOD failure class. |
-
-Safe-to-auto-heal classes in v1:
-
-| class | safe because |
-|---|---|
-| `stale` (graphify, config-sync) | The fix is a single idempotent refresh command. Non-destructive. |
-| `done-but-unmerged` (S-A) | The fix is `done.sh --merged-sha` — idempotent, deterministic, non-destructive. |
-| `unregistered` (tooling-tier) | The fix is appending a row to a registry tsv — a mechanical data entry. The registry's own drift test catches mistakes. |
-
-**Expansion to more classes is by appending rows to heal-templates.tsv** (KS20
-anti-accretion) — never by adding a new script per class.
-
-## 6. Build decomposition — the 3 slices (one-lens tickets, spawned on approval)
-
-The work is the 3 build-slice tickets. Sequence is ordered by dependency;
-parallelism within the slices is the builder's choice.
-
-| # | ticket id | lens | one-liner |
+| leg | pattern from | OWNED mechanism today | what is actually new |
 |---|---|---|---|
-| 1 | `ISSUE-BOARD-SURFACE` | SURFACE (do first — operator's #1 pain) | The issue-board (`fleet/state/issue-board.tsv`) + the `issue-board-upsert` primitive + the SessionStart surface block in preflight (`fleet/checks/issue-board-surface.sh`). Aggregates ALL existing detector output (the 10+ detectors in `cmd_detect` + the UNIFIED-RECONCILIATION-GATE reconcilers + plane-canary.sh reconcile leg) into ONE tsv + ONE loud preflight block. The board self-closes issues when evidence goes GREEN; re-opens on re-emergent RED. The operator sees ONE block instead of scanning 10+ detector sections. **Blocks the other two slices** — the DISCOVERY leg writes TO the issue-board; the SELF-HEAL leg reads FROM it. |
-| 2 | `KS29-DISCOVERY-LEG` | DISCOVER (highest-risk new build) | The KS29 algorithm-primitive framework that walks graphify's relations graph + the issue-class registry to discover failure classes NOT yet caught by existing detectors. Implements the 7 class-discovery algorithms from §2 as composable primitives (`set-diff/bidirectional`, `graph-reachability`, `staleness-probe-TTL`, `subset-membership`, `content-hash/checksum`, `exit-code-check`, `boolean-probe`) in `fleet/checks/discover-issues.sh`. Each primitive is data-configured via the issue-class registry (`fleet/state/issue-class-registry.tsv`), not hard-coded — KS20 anti-accretion. Dogfoods itself: the issue-class registry MUST be self-registered. **Depends on #1 (ISSUE-BOARD-SURFACE)** for the write target; parallel after #1 lands. |
-| 3 | `ISSUE-SELF-HEAL-RULES` | SELF-HEAL (gated, last) | The heal-template registry (`fleet/state/heal-templates.tsv`) + the auto-launch eligibility engine in `fleet/checks/self-heal-engine.sh` + the built-in command executor + the `ReviewerCircuitBreaker` integration for the heal-breaker. Composes lease-enqueue.sh (already built) for droid dispatch and review-pool.sh (already built) for reviewer≠builder enforcement. Gated per §5 — safe classes only; the gate itself is a registry row, not hard-coded. **Depends on #1 (reads the issue-board) and #2 (discovers issues that may need healing)**. |
+| **1. DISCOVER** | StackStorm *sensors* / K8s *observe* / Tech-Insights *facts* | 6 detectors already exist (table §2) + graphify relations | a **detector registry** (KS29) so a new failure-class = 1 row, and the **discovery leg** that finds *un-registered* components. **⚠ BARRED pending §6 step 3 preconditions.** |
+| **2. SURFACE** | Tech-Insights *scorecard* / Soundcheck *historical status* / ChatOps | `reds.tsv` + `preflight.sh` (`cmd_scan` re-proof table; `board_gate`/`executor_gate`/`handoff_gate`/`detect_needs_push`/`done_merge_gate` auto-register+self-close, implemented **5×**) + `session-start.sh` loud STALE banners + `foreman-cadence.sh` | **NOT a new board.** Give the ~6 advisory `cmd_detect` detectors a `check_cmd` + an auto-register call, and add ONE aggregate SessionStart line. See §3. |
+| **3. SELF-HEAL** | StackStorm *rules→actions* / ArgoCD *gated selfHeal+prune* | `lease-enqueue.sh` (exactly-once enqueue) + `claim.sh` (selector) + `review-pool.sh` (reviewer≠builder, fail-closed) + `loop-guard.sh` (anti-fork-bomb quarantine) | the **rule layer**: verdict→safe? →mint remediation ticket→enqueue; gated by a per-class **safe/unsafe allowlist**. **The only genuinely-new slice.** |
 
-### 6.1 What each slice owns (file-disjoint — no collision)
+**Adopt-vs-extend call:** EXTEND owned substrate; PATTERN-only. **[V]** StackStorm is a Python+RabbitMQ+MongoDB service with 160 integration packs; ArgoCD is a k8s controller; Backstage/Soundcheck a React+Postgres platform; Dagster a daemon — all *service-shaped* for org-scale fleets, catastrophic integration cost for a solo bash/python fleet. `plane-canary.sh:14-24` **[V]** already records the tool-eval verdict rejecting Checkly/Grafana-SM/Sensu/blackbox_exporter for this exact semantics. We already own the sensors, the board and the actuator; we lack only the *rule engine* — precisely StackStorm's cheap-to-replicate glue, not its heavy runtime.
 
-| slice | owns |
-|---|---|
-| ISSUE-BOARD-SURFACE | NEW `fleet/state/issue-board.tsv` (schema + initial empty board), NEW `fleet/checks/issue-board-surface.sh` (the surface block + upsert primitive), MODIFY `fleet/preflight.sh` (insert the surface block at the start of `cmd_scan`, before the tracked-reds table). |
-| KS29-DISCOVERY-LEG | NEW `fleet/state/issue-class-registry.tsv` (the 7 classes as data rows), NEW `fleet/checks/discover-issues.sh` (the walk + primitives), NEW `fleet/tests/discover-issues.test.sh` (fail-on-revert for each primitive). |
-| ISSUE-SELF-HEAL-RULES | NEW `fleet/state/heal-templates.tsv` (the safe-class heal templates), NEW `fleet/checks/self-heal-engine.sh` (the eligibility engine + command executor), MODIFY `fleet/preflight.sh` (wire the self-heal engine into the cadence dispatch), NEW `fleet/tests/self-heal-engine.test.sh` (fail-on-revert — prove the breaker trips on repeated failure, prove SAFE classes auto-launch, prove NEVER classes do not). |
+**THE SINGLE MOST IMPORTANT ADOPT DECISION:** adopt **StackStorm's sensor→rule→action SHAPE with ArgoCD's per-app opt-in self-heal gating** — i.e. **remediation is opt-in per failure-class, never global-blind**, and every auto-launched fix is **routed through `review-pool.sh` (reviewer≠builder, fail-closed BOUNCE) + the work-lease commit gate, NEVER direct-to-master.** This is what turns "detectors we already have" into a safe closed loop without importing a platform.
 
-### 6.2 Shared integration (wiring the loop)
+**BIGGEST ADOPT-VS-HANDROLL RISK:** the self-heal leg must not become the very failure it fixes. Three named hazards: (a) **[V]** `--commit-dirty` sweeps concurrent WIP to master bypassing review ([[commit-dirty-sweeps-subagent-wip]]) — so auto-launched fixes MUST go through review-pool, never a launcher auto-commit; (b) **[V]** KS29's **discovery leg is DESIGNED-not-BUILT / FIX-REQUIRED** (`REGISTRY-CANDIDATES.md:58-59`) — so the "un-registered new component" detector is **fake-green until KS29 discovery ships**; (c) **NEW** — a second board with a weaker close policy is itself a normalization engine (§3, F2). All three are gating, not cosmetic.
 
-After all 3 slices land, a 4th wiring commit (on the last ticket to land, or a
-follow-up) connects them into the live loop:
+---
 
-```
-preflight.sh / foreman-cadence.sh tick:
-  1. discover-issues.sh           (KS29-DISCOVERY-LEG: read registries, walk graphify, produce issue tuples)
-  2. issue-board-surface.sh upsert  (ISSUE-BOARD-SURFACE: write tuples into issue-board.tsv)
-  3. issue-board-surface.sh render  (ISSUE-BOARD-SURFACE: print the loud SessionStart block)
-  4. self-heal-engine.sh evaluate   (ISSUE-SELF-HEAL-RULES: read issue-board, match heal-templates, gate, launch)
-```
+## 2. LEG 1 — DISCOVER: every recurring failure CLASS, as StackStorm-style sensors
 
-The preflight.scan dispatch already runs `reconcile-merged.sh` → `board_gate` →
-... → `foreman_advisory` at `preflight.sh:878`. The new blocks insert into this
-chain:
-- (1+2) → between `reconcile-merged.sh` and `board_gate` (the UNIFIED-
-  RECONCILIATION-GATE's DISCOVER write happens here too)
-- (3) → the FIRST block of preflight output (after the header, before reds)
-- (4) → after the detectors block, before `foreman_advisory`
+A **detector = a sensor**: a script that emits a per-issue verdict `{class, entity, severity, evidence, check_cmd, safe_to_auto_fix}`. We already own one per major class — the control plane *registers and unions* them (KS29 detector-registry row), it does not rebuild them:
 
-**The cadence timer** (`foreman-cadence.sh` or `fleet/checks/reconcile-timer.sh`)
-runs the same (1+2+4) on a timer tick, without the human-facing render (3).
-SessionStart runs (1+2+3+4) — full discover + surface render + heal evaluation.
-
-## 7. Adopt-first posture — pattern, not product
-
-Every pattern this plane composes is ADOPTED FROM a proven system, NOT hand-rolled
-from scratch. The hand-roll is the thin bash/python glue — not the algorithm.
-
-| pattern | adopted from | how the plane uses it | why not the tool itself |
+| failure CLASS (operator's list) | OWNED detector (the sensor) | evidence | build status |
 |---|---|---|---|
-| sensor → rule → action (event-driven auto-remediation) | StackStorm | The DISCOVER leg is the sensor; the issue-class registry is the rule; the SELF-HEAL engine is the action. | StackStorm is a full event-bus + workflow engine (MongoDB, RabbitMQ, st2api, st2actionrunner) — service-shaped overkill for a solo bash fleet. |
-| opt-in self-heal (auto-remediation is gated, per-class) | ArgoCD (syncPolicy.automated.selfHeal) | The heal-template registry's `auto_launch_gate` + blast-tier gate is ArgoCD's "sync windows + automated selfHeal" pattern — opt-in, per-class, with manual override. | ArgoCD is a Kubernetes controller — depends on a K8s API server and etcd. The plane runs on a single Linux box with bash + python. |
-| level-triggered control loop (desired → observe → diff → act) | Kubernetes controller pattern | Every cadence tick re-proves state; issues auto-close when evidence is GREEN; re-open when it returns RED. Never assumes "the last event was the last change." | K8s controllers depend on the API server's watch + list + informer pattern. The plane's "watch" is a timer + a git log diff. |
-| facts → checks → scorecard → freshness | Backstage (Software Catalog) / Dagster (asset freshness) | The issue-board is a scorecard; each row is a check; graphify's graph is the catalog; staleness-probe-TTL is Dagster's asset-freshness policy. | Backstage is a React+Node web app with a Postgres catalog. Dagster is a Python orchestrator with a web UI. The plane's "scorecard" is a tsv rendered in a preflight block. |
+| built-but-not-wired / **inert** code | `tools/check_inert_code.py` — AST call-graph reachability from real entrypoints; 0-caller public symbol not in `inert-code-disposition.json` ⇒ RED "caught on the same push"; **green-without-hiding** (disposition = wire/delete/keep-why) | **[V]** header read | BUILT (product side) |
+| declared-gate-not-wired / **unwired canary** | `plane-canary.sh reconcile` — proofless (dogfood last rc≠0) / unwired (firing layer doesn't invoke) / uncovered, all fail-closed | **[V]** `plane-canary.sh:168-227`; run this session → 8/10 RED | BUILT + LIVE + **un-actioned** |
+| gate-declared-vs-actually-wired (**reconciler**) | `fleet/checks/reconcile-gate-wired.sh` — desired = `fleet/checks/*.sh|*.py`, `tools/check_*.py|*.sh`, `RULE-REGISTRY.tsv` status ∈ {ACTIVE,ENFORCED}, `EVAL-REGISTRY.md` verdict=ADOPT + non-empty `enforced_in`; actual = the firing layers | **[V]** `RECONCILE-GATE-WIRED.md` note + `owns:` | **WRITTEN, UNLANDED** — commit `d603494` on `feat/reconcile-gate-wired`; both files verified ABSENT on disk. **Do not rebuild it (F3).** |
+| **stale/drift: test-fixture-vs-code, config-vs-reality, deployed-vs-source** (the board-correctness incident) | `graphify-freshness.sh` (map vs HEAD, self-desync-proof filter) + KS24/KS29 drift legs (content-hash / set-diff / subset-conformance / graph-reachability / staleness-TTL) as designed in `UNIFIED-RECONCILIATION-GATE-DESIGN.md` | **[V]** `graphify-freshness.sh:38-44,230-243`; `UNIFIED-RECONCILIATION-GATE-DESIGN.md:50-58` | BUILT; `graphify_freshness_gate` already auto-registers `graphify-freshness-stale` **with a `check_cmd`** **[V]** |
+| **done-but-unmerged / merged-but-not-retired** | `reconcile-merged.sh` — maps merged PR→ticket by verified-merge / `owns`-overlap (not bare branch-name), auto-`done` with `--merged-sha` proof; surfaced by `done_merge_gate`, which already auto-registers `done-unmerged-<id>` and self-closes on `verify-merged.sh` | **[V]** header read + `done_merge_gate` read | **BUILT — a live row exists in `fleet/reds.tsv` now. Duplicating it is F2.** |
+| **stale claims** (dead lease) | `reconcile-stale-claims.sh` | **[V]** file present | BUILT |
+| **quarantined-but-good tickets** (loop-guard spin) | `loop-guard.sh` — N zero-commit re-claims ⇒ durable `state/loop-guard/<id>` quarantine + stderr escalation; `clear` re-admits | **[V]** header read (record/quarantine/clear) | BUILT |
+| **junk launcher auto-commits** (`--commit-dirty`) | *GAP — no detector; memory-hazard only* | **[V]** [[commit-dirty-sweeps-subagent-wip]] | **GAP** |
+| **un-registered new component** | KS29 **discovery** leg over graphify: enumerate load-bearing code-nodes (canary/gate/test/pool/catalog/grader) with firing-layer edges but no registry row ⇒ RED | **[V]** `ROADMAP.tsv:KS29`; **⚠ unbuilt** `REGISTRY-CANDIDATES.md:58-59` | **⚠ UNBUILT — fake-green until KS29 discovery ships.** Flag retained; the discarded revision dropped it. |
+| **failing/RED tests+gates** | `preflight.sh` `board_gate` (auto-registers `board-validator-red`, self-closes on GREEN) + CI allowlist + `plane-canary run` | **[V]** `board_gate` read | **BUILT — duplicating it is F2.** |
 
-**The core novel slice — the ~15% that is genuinely new build:**
-1. The `issue-board-upsert` primitive that unions all detector output into ONE
-   surface (the SURFACE slice). The detectors exist; the union doesn't.
-2. The `graph-reachability` walk of graphify's relations graph to find inert
-   components (the DISCOVERY slice's novel primitive). Graphify exists; the
-   reachability-from-firing-layer walk doesn't.
-3. The `heal-eligibility` engine that gates auto-launch based on class, blast-tier,
-   and prior-heal success (the SELF-HEAL slice). Lease-enqueue exists; the
-   gating + circuit-breaker doesn't.
+**Per-class contract (folded from the discarded revision, corrected).** The 5-field shape it introduced — **name / desired-source / actual-source / drift-algorithm / RED condition** — is genuinely useful and is ADOPTED as the registry row contract, with **two mandatory additions this design imposes**: a **`check_cmd`** and a **`min_scanned`** floor (§5). Its class *list* is not adopted wholesale: `failing/RED` (its §2.2) is `board_gate` and `done-but-unmerged` (its §2.6) is `done_merge_gate` — both already built, so they are **registry rows pointing at the existing gate**, never new code.
 
-Everything else (~85%) is composing already-owned pieces: the 10+ detectors, the
-UNIFIED-RECONCILIATION-GATE, plane-canary.sh, graphify, lease-enqueue.sh,
-review-pool.sh, preflight.sh's scan dispatch.
+**Awareness / relations backbone = graphify.** `graph.json` is networkx node-link with **9786 typed `links`** (`relation`=defines/calls/imports, `source`/`target`/`confidence`/`source_file`) over 7471 nodes; fleet bash fully extracted (130 canary nodes confirmed live). **[V]** (read the graph directly). Entity-level `dependsOn` (Backstage shape) = transitive reachability between two entities' anchor node-sets — the primitive `reconcile-gate-wired.sh` already uses (`RECONCILE-GATE-WIRED.md:35` **[V]**). This is how detectors become *aware of each other*: a fix to component A can be scoped to A's graph-neighborhood.
 
-## 8. fail-on-revert — who-tests-the-tester
+**Registry (KS29) unifies them:** one `fleet/detector-registry.tsv` (generalize `fleet/plane-canary-registry.tsv` **[V]** — which lives at `fleet/`, **not** `fleet/state/`) with columns `class, sensor_script, graph_anchor, cadence, severity, check_cmd, min_scanned, safe_to_auto_fix, remediation_recipe, owner_ticket`. Adding a new failure-class = one row (KS20 anti-accretion), and the KS29 **discovery gate** makes an *un-catalogued* load-bearing detector itself RED — mechanizing the 12-gap hand-survey (`plane-canary-gap-survey.md:25-43` **[V]**).
 
-Every leg of the plane MUST carry a fail-on-revert dogfood. The plane is a
-meta-checker — a false-green plane is worse than no plane at all.
+**Sources that do NOT exist — fail-closed, not silently skipped.** `RECONCILER-REGISTRY.tsv` was cited as a desired-source by the discarded revision; `find` over the tree confirms **it does not exist**. **[V]** Per §5(a) an absent desired-source is RED, never an empty set. `GATE-GAP-LEDGER` is `fleet/state/GATE-GAP-LEDGER.tsv` (`.tsv`, not `.md`) **[V]**.
 
-| plane leg | fail-on-revert test | what it proves |
-|---|---|---|
-| issue-board upsert | `fleet/tests/issue-board-surface.test.sh` | Remove the upsert from preflight → a seeded RED detector finding does NOT appear on the issue-board → the test goes RED. |
-| discover-issues primitives | `fleet/tests/discover-issues.test.sh` | Remove the `graph-reachability` walk → a seeded inert component (a script in `fleet/checks/` with no preflight invocation) is NOT discovered → RED. |
-| self-heal eligibility | `fleet/tests/self-heal-engine.test.sh` | Remove the `NEVER` gate → a seeded `inert` class issue is auto-launched (when it must NOT be) → RED. Remove the `ALWAYS` gate → a seeded `stale` class issue is NOT auto-launched → RED. |
+---
 
-**The plane's own plane-canary row** (dogfooding the very framework it implements):
+## 3. LEG 2 — SURFACE LOUDLY: EXTEND `reds.tsv`; do not fork a second board
 
-```
-plane              canary_script                      dogfood_test                              wired_in     owner_ticket
-sg-issue-control   fleet/checks/issue-board-surface.sh  fleet/tests/issue-board-surface.test.sh  preflight,timer  SG-ISSUE-CONTROL-PLANE
-```
+Revision 1 said "generalize the incumbent registry." The discarded revision forked `fleet/state/issue-board.tsv` instead. **The incumbent ruling stands, and the review supplied decisive evidence for it (F2).**
 
-The plane's own row is in plane-canary-registry.tsv — the plane-canary reconcile
-leg catches if the plane itself is unwired/proofless. A canary of the canary.
+**`fleet/reds.tsv` + `fleet/preflight.sh` ALREADY IS the unified issue board, and it is stronger than the proposed replacement:** **[V]**
 
-## 9. OPEN SEAMS — flagged, not faked-closed
+- `preflight.sh:1-8` header — *"REDS REGISTRY driver … Every known red lives in reds.tsv and is RE-VERIFIED deterministically here. THE KEY RULE: a red closes ONLY on a passing check_cmd or an explicit RECORDED override — never by assertion."*
+- `cmd_scan` re-runs **every** open red's `check_cmd` each session via `run_check` and prints the table — that IS the SessionStart surface. It is *stricter* than the fork proposed: a NOW-GREEN row prints `ready to close`; **closure is an explicit `close` subcommand, never automatic**.
+- The schema is already `id · opened · sev · area · description · check_cmd · status · closed_by` — the `check_cmd` column the fork lacked **already exists**, and `cmd_add` even rejects embedded tabs in it.
+- The **auto-register-a-detector-finding-as-a-self-closing-blocking-red** pattern is implemented **five times**: `board_gate`, `executor_gate`, `handoff_gate`, `detect_needs_push`, `done_merge_gate` — each `cmd_add`s with a `check_cmd`, re-opens a closed row on regression, and self-closes only via `cmd_close --override "auto: … GREEN"`.
+- `cmd_detect` is explicitly labelled *"ACTIVE DETECTORS (unregistered risk not yet in reds.tsv)"* — i.e. **the union target is reds.tsv by design**, and the advisory detectors are the known, named backlog.
 
-### 9.1 The graphify dependency for reachability
+**Therefore the SURFACE work is:**
 
-The `graph-reachability` primitive in the DISCOVERY leg depends on graphify
-having a complete call graph (bash + Python extractors). The rig's graphify
-BASH extractor (graphify/extractors/bash.py) is proven (6,198 fleet functions
-extracted). The product's Python graphify extractor depends on the product
-tree being graphified — that is `graphify update <product>` and is already
-wired as a cadence tick (`foreman-cadence.sh cmd_graphify_cadence`). The
-reachability walk is as complete as graphify's graph.
+1. **Promote the ~6 advisory detectors.** `cmd_detect` currently calls `detect_untracked_drift, detect_secret_scan, detect_repo_drift, detect_claim_loop, detect_wci_contention, detect_inflight_landscape, detect_stranded_work, detect_cg_drift, detect_gateway_token_drift, detect_config_drift` **[V]**. Each that is deterministically re-provable gets a `check_cmd` + a ~10-line auto-register/self-close pair modelled on `board_gate`. Re-measure the exact set at build time; do not hardcode this list.
+2. **Add ONE aggregate line, not a second table.** The one genuinely-good surfacing idea in the discarded revision is the *loud aggregate header* — adopted, reduced to a single line rendered by the existing `cmd_scan` block and echoed by `session-start.sh` (which already prints loud STALE banners and calls `graphify-freshness.sh`, `session-start.sh:99,104-112` **[V]**): `ISSUE-BOARD: N open reds across M areas — oldest X days — Y advisory findings unpromoted`.
+3. **Age escalation on the existing `opened` column.** `reds.tsv` already stores `opened`; the Soundcheck *historical status* analog is a derived age, not a new column. A red that sits normalized for N days escalates its printed severity. **[I]**
+4. **Level-triggered refresh** — wired into `foreman-cadence.sh` (which already fans a report to `session-start / post-land / handoff / cadence` triggers, `foreman-cadence.sh:1-20` **[V]**) so the surface refreshes on a timer, not only on an edge (the K8s/ArgoCD interval guarantee).
 
-**Mitigation:** the DISCOVERY leg runs `graphify-freshness.sh check` as a
-pre-condition. A stale graph produces its own issue-board row (class `stale`),
-and the reachability walk warns "graph stale — inert detection is incomplete"
-rather than silently missing inert components.
+**If a second board is ever genuinely required**, that case must be argued adversarially against `preflight.sh:1-8`'s close policy, in writing, before any build. It is not argued here because the evidence runs the other way.
 
-### 9.2 The review-pool dependency for reviewer≠builder
+**Anti-normalization guarantee (structural):** a red carries `opened`; the surfacer escalates by age and the SessionStart line always prints the count. Combined with plane-canary's *proofless=RED* (a detector whose own dogfood rots goes red loudly `plane-canary.sh:189-193` **[V]**), a red can neither hide (surfaced every tick) nor rot silently (the detector-of-detectors is itself a catalogued sensor). **[I]**
 
-The SELF-HEAL engine's `reviewer_must_not_be = builder` constraint depends on
-review-pool.sh having a live reviewer queue. If the review pool is empty (no
-available reviewer), the heal CANNOT launch. The issue stays open with
-`heal_blocked_reason = "no reviewer available"` — surfaced, not silently skipped.
+**Note on tracking:** `fleet/reds.tsv` is itself gitignored (`.gitignore:84` **[V]**). That is CORRECT — it is per-checkout runtime state. Only the *design of record* needs to be tracked (§7).
 
-**Mitigation:** the issue-board renders `heal_blocked_reason` in the surface
-block so the operator sees blocked heals. The `NEVER` gate + `ALWAYS` built-in
-commands do not depend on review-pool.
+---
 
-### 9.3 The preflight `git -C` bypass seam (inherited)
+## 4. LEG 3 — SELF-HEAL: gated auto-launch to the SG executor
 
-The `land.sh` `git -C` bypass seam from UNIFIED-RECONCILIATION-GATE §3.3 applies
-here too: a direct push to master bypasses land.sh → the plane's preflight check
-doesn't run → an issue that the plane WOULD have caught slips through. The
-mitigations are the same (§3.3): post-receive hook detection + timer-based
-reconcile that catches drift at the next tick.
+**Pattern:** StackStorm *rule→action* + ArgoCD *opt-in selfHeal + prune*. **The doctrine is GATED, never blind** — `foreman-cadence.sh` already encodes it: *"Every subcommand runs report-only (NEVER --fix). Acting stays a manager decision."* **[V]** `foreman-cadence.sh:19-21`. We keep that default and add a **per-class opt-in** (ArgoCD's `selfHeal: true` is per-app; ours is per failure-class via the registry's `safe_to_auto_fix` column).
 
-## 10. v2 — explicitly deferred
+**The rule→action layer (new, thin):** for each open issue whose class is `safe_to_auto_fix=yes` (allowlist), the rule:
+1. **mints a remediation ticket** from the row's `remediation_recipe` (e.g. inert symbol → "wire or dispose per disposition"; unwired canary → "wire into firing layer"; done-but-unmerged → `reconcile-merged.sh` is itself the auto-fix, already safe);
+2. **enqueues via `lease-enqueue.sh`** — THE single exactly-once chokepoint: idempotent flock+`state/enqueued/<id>` marker (no double-launch), composed with Faktory (durable store) + work-lease (commit-boundary gate). **[V]** `lease-enqueue.sh:1-24`;
+3. **routes execution through `review-pool.sh`** — reviewer≠builder enforced, **fail-closed: any inability to genuinely review ⇒ BOUNCE, never APPROVE**, verdict to review-log. **[V]** `review-pool.sh` header. So an auto-launched fix reaches master ONLY through adversarial review, never a launcher auto-commit.
 
-| v2 capability | why deferred |
+**Safety rails (why this is not blind):**
+- **allowlist gate** — a class defaults `safe_to_auto_fix=no`; only cheap/mechanical/reversible classes (inert-dispose, unwired-wire, reconcile-merged, stale-claim-release) are opted in. High-blast classes stay report-only → manager. **[I]** (mirrors ArgoCD per-app opt-in **[V]**).
+- **loop-guard** — an auto-launched fix that spins (claim→no-commit→release) is quarantined after N by `loop-guard.sh` **[V]**, so a bad recipe can't fork-bomb the SG tab.
+- **no direct-to-master** — review-pool + work-lease gate; the `--commit-dirty` sweep hazard is structurally excluded. **[V]** [[commit-dirty-sweeps-subagent-wip]].
+- **exactly-once** — `lease-enqueue.sh` dedup marker prevents the same issue minting N duplicate remediation jobs. **[V]**
+
+**Folded from the discarded revision (rig-native, ADOPTED):**
+- **Anti-flap gate** — `auto_launch_gate ∈ {ALWAYS | after_N_ticks=N | NEVER}`. A finding must persist N consecutive ticks before auto-launch. Genuinely new and correct; adopted as a registry column.
+- **Double-launch gate** — if the row's `heal_launched_at` is set and the launched ticket is still open, skip. If that ticket is DONE and the finding persists, mark `heal-failed` and **escalate — never auto-retry**.
+- **`heal_blocked_reason`** — when review-pool has no available reviewer the heal cannot launch; the reason is *rendered*, never silently skipped.
+- **Built-in heal commands** — some recipes are one idempotent invocation (`fleet/checks/graphify-freshness.sh update`, `fleet/config-sync.sh` — both verified present **[V]**); these run inline, no droid. A non-zero exit escalates to `heal-failed` + P0 surface.
+
+**REJECTED from the discarded revision (F9):** its §4.4 *"reuse `ReviewerCircuitBreaker` from `src/charon/failover.py:73-142`"*. That file is **absent from `charon-private`**; it lives in the PUBLIC product repo, which must ship standalone. **[V]** A rig bash script cannot use it without importing across the rig/product boundary or copying product code into the rig — both violate [[product-vs-build-rig-boundary]] — and it is unactionable as written (no import path, no invocation shape, no cross-process persistence). **The rig-native equivalent is `loop-guard.sh`'s durable `state/loop-guard/<id>` quarantine plus `lease-enqueue.sh`'s flock + `state/enqueued/<id>` exactly-once marker, both already owned and both already named in this design.** No circuit-breaker is built.
+
+---
+
+## 5. FAIL-CLOSED SEMANTICS — the enforcement floor (BINDING on all slices)
+
+The words "fail-closed"/"fail-open" appeared **zero times** in the discarded revision (F5). They are the floor here. Contrast the incumbents, which state it in their own headers: `gate-parity.sh:13` *"Fail-CLOSED: an unrunnable predicate (missing binary, timeout, parse error) => RED — never silently pass through"*; `plane-canary.sh` prints `fail-closed` on every RED line. **[V]**
+
+**(a) Unresolvable predicate ⇒ RED.** A registry/desired-source that is absent, unreadable, or unparseable ⇒ **RED (`source-unresolvable`)**, never an empty set and never a skip. This binds explicitly for `RECONCILER-REGISTRY.tsv`, which does not exist **[V]**. A discovery-leg non-zero exit ⇒ **RED**, never an all-clear. An unresolvable predicate must never widen the pass set.
+
+**(b) Mandatory `check_cmd` — closure requires POSITIVE PROOF, never absence of evidence.** Every issue row carries a `check_cmd`. A finding closes **only** when its `check_cmd` exits 0, or on an explicit RECORDED override — exactly `preflight.sh:1-8`'s doctrine, and exactly what `run_check` / `cmd_scan` / `cmd_close` already implement **[V]**. **Closing on the discovery leg "not re-emitting" a finding is FORBIDDEN**: if the discovery leg crashes, times out, or emits zero tuples, an absence-closure model auto-closes every open issue and renders the board all-green. That is a textbook fail-OPEN and a regression against machinery we already have. This is the single most important line in this document.
+
+**(c) Zero items scanned ⇒ RED.** Every leg declares a `min_scanned` floor. A scan whose scanned population is 0 — empty registry, zero candidate files, empty runner set — is **RED (`vacuous-pass`)**, never a silent GREEN. This mirrors `gate-creation-standard.sh` **S2 NON-VACUOUS** (*"a gate that passes on zero items proves nothing"*) **[V]** and is the whole reason `META-GATE-FINDINGS-ZERO` exists. A GREEN verdict must always name the number of items it scanned.
+
+**(d) Every red-proof reachable by a REAL runner.** See §9 — a proof no runner executes is decoration, not evidence.
+
+**(e) Degraded input is RED for the class it degrades, not a warn.** A stale graphify graph makes the reachability walk incomplete ⇒ the `inert` class goes **RED (`input-degraded`)**, not "warn". The discarded revision's §9.1 chose warn — that fails open on the highest-value class exactly when its input is untrustworthy. Overruled.
+
+**(f) Registration is mandatory.** See §10 — an unregistered check is invisible to the meta-gates, which is the disease this plane claims to cure.
+
+---
+
+## 6. RECOMMENDED BUILD SEQUENCE (compose-heavy)
+
+| # | step | composes (owned) vs new | risk |
+|---|---|---|---|
+| 0 | **Fold, don't fork.** This plane SUPERSEDES-SCOPE the desired-vs-actual class `UNIFIED-RECONCILIATION-GATE` owns (`UNIFIED-RECONCILIATION-GATE-DESIGN.md:9-14` **[V]**). Land the DISCOVER+SURFACE legs as *that gate's aggregation axis*; the SELF-HEAL leg is the new consumer. Two reconcilers must not drift. | compose | **HIGH if forked** |
+| 0b | **Anchor commit first.** Land the `.gitignore` negation(s) + any registry rows the slices need, in ONE commit, before fanning out. `.gitignore:37-42` records that four separate PRs each appended their own negation and had to re-resolve the same conflict three times. **[V]** [[anchor-lines-serialize-parallel-work]] | compose | low (HIGH if skipped) |
+| 1 | **Detector-registry** (generalize `fleet/plane-canary-registry.tsv` → `fleet/detector-registry.tsv`, +`class,graph_anchor,cadence,severity,check_cmd,min_scanned,safe_to_auto_fix,remediation_recipe`). Register the existing sensors §2. | compose | low |
+| 2 | **SURFACE = extend `reds.tsv`** — give the ~6 advisory `cmd_detect` detectors a `check_cmd` + auto-register/self-close pair (reuse `board_gate` / `done_merge_gate` machinery); add the ONE aggregate SessionStart line + age escalation. **NOT a new board (F2).** | compose | low–med |
+| 3 | **⚠ BARRED — KS29 discovery leg.** Two preconditions, both external to this design: **(i)** land `feat/reconcile-gate-wired` (`d603494`) — its detector is already written and its absence is why the `reconciliation` plane is proofless RED; building it again is a duplicate build (F3). **(ii)** satisfy `INERT-WIRING-ENFORCEMENT-DURABLE`, an **operator-escalated DESIGN-FIRST** ticket: *"do NOT build another gate before explaining WHY the prior ones decayed, or it repeats the failure."* **[V]** This plane is another gate for that class; the decay root-cause is not in scope here and is not asserted. **Do not start slice 2 until both clear.** | **blocked** | **HIGHEST** (else fake-green, `REGISTRY-CANDIDATES.md:58-59`) |
+| 4 | **Rule→action layer** — for `safe_to_auto_fix=yes` rows: recipe→ticket→`lease-enqueue.sh`→`review-pool.sh`, with the §4 anti-flap / double-launch / `heal_blocked_reason` gates. Default OFF per class. **(the one genuinely-new slice)** | compose (lease-enqueue + review-pool + claim + loop-guard) | med — allowlist must start tiny |
+| 5 | **Close the 8 RED plane-canary rows, or record why a new plane precedes fixing the one already shouting.** Non-optional: §0 makes this the design's own premise test. | action, not build | — |
+| 6 | **Catalogue the remaining gap classes as rows** (junk-launcher-commit detector, SG off-Claude e2e, claim/lease exactly-once) each with a dogfood. | compose | low |
+| 7 | **Level-trigger the whole loop on cadence** (`foreman-cadence.sh cadence`), K8s/ArgoCD interval guarantee. | compose | low |
+
+**Composes:** check_inert_code.py, plane-canary.sh, graphify(+freshness), reconcile-merged.sh, reconcile-stale-claims.sh, loop-guard.sh, lease-enqueue.sh, review-pool.sh, claim.sh, foreman-cadence.sh, session-start.sh, preflight.sh + reds.tsv, UNIFIED-RECONCILIATION-GATE. **Builds new:** the verdict→action rule layer (step 4) and — once unbarred — the KS29 discovery primitive (step 3). The "new board" of the discarded revision is **struck**.
+
+**Biggest risk restated:** do NOT adopt StackStorm/ArgoCD/Backstage/Dagster as tools (service-shaped, rejected-class per `plane-canary.sh:14-24`); **do NOT fork a second reconciler or a second board**; do NOT let self-heal bypass review (`--commit-dirty` hazard). The self-heal allowlist starts with *one* trivially-safe class and widens only after the surface has proven stable.
+
+---
+
+## 7. WHERE THIS DOCUMENT LIVES, AND WHY IT MUST BE TRACKED
+
+**Root cause of the fork:** `.gitignore:10` is `fleet/state/*` with a per-file `!` negation allowlist. This design's path had **no negation**, so the 109-line document was invisible to git — `git status` never showed it, and the 639-line replacement was **force-added** over it without a diff anyone could see. *A design of record that git cannot see is how this fork happened.*
+
+**Decision: keep the path, add the negation.** `fleet/state/DESIGN-SG-ISSUE-CONTROL-PLANE.md` plus a new `.gitignore` line `!fleet/state/DESIGN-SG-ISSUE-CONTROL-PLANE.md`.
+
+Alternatives considered and rejected:
+- `fleet/DESIGN-*.md` (tracked by default, no negation needed) — **rejected**: `fleet/board/SG-ISSUE-CONTROL-PLANE.md`'s `owns:` names `fleet/state/DESIGN-SG-ISSUE-CONTROL-PLANE.md` **[V]**, and this session must not edit `fleet/board/*`. Moving the file would immediately red the owns-tracked reconciler.
+- `fleet/board/SG-ISSUE-CONTROL-PLANE-DESIGN.md` — **rejected**: `validate_board.sh` globs `board/*.md` and parses **every** one as a ticket **[V]**; the existing `*-DESIGN.md` files there are tickets (with `repo:`/`tier:`/`owns:` front-matter), not design bodies. A design doc there becomes a phantom ticket.
+
+The negation is the convention already used for **12** durable `fleet/state/` artifacts (`ROADMAP.tsv`, `RULE-REGISTRY.tsv`, `BENCH-PROVISIONAL-SCORING-DESIGN.md`, `EVAL-REGISTRY.md`, …) **[V]**. It makes this file `git add`-able rather than force-added, visible in `git status`, and diffable in review — which is exactly the failure it closes. Land it in the §6 step-0b anchor commit.
+
+---
+
+## 8. OWNS RECONCILIATION + BLAST RADIUS (F8, F10)
+
+The three build-slice tickets **already landed on master** (`99c709c`). This design does not spawn them; it must MATCH them. **Where this design and a landed ticket disagree, the TICKET is authoritative** — the ticket is the machine-checked `owns` contract:
+
+| slice | authoritative `owns` (from the landed ticket) **[V]** |
 |---|---|
-| **Per-model blast-tier routing for heal droids** | Depends on BLAST-TIER Consumer B (grading substrate) being repaired. v1 heals use the CLAIM_ONLY pin — the SG droid that picks the heal ticket is whatever droid the operator assigns. |
-| **Heal effectiveness scoring** | Did the launched heal FIX the issue? The plane needs N heals to have launched before it can compute a heal-effectiveness score. v1 records heal → outcome; v2 computes the score. |
-| **Cross-repo issue discovery (charon product repo)** | The plane currently operates on the rig repo (charon-private). The product repo (charon) has its own set of checks + detectors + drift. A cross-repo issue board is a v2 expansion — the same tsv schema, different repo root. |
-| **Session-context issue injection** | The operator's ask: "surfaces at SessionStart" includes injecting the issue-board into the droid's session context so a droid assigned a fix ticket sees the issue evidence. v1: droid reads the ticket brief (which includes the issue evidence inline). v2: session-ctx-preamble.sh injects it. |
-| **Slack/webhook notification adapter** | The loud surface block is preflight-only. A non-preflight notification (Slack, webhook) for P0 issues that appear between SessionStart ticks is a v2 adapter — the same board read, different render target. Depends on the WORKLOOP-INTEGRITY-STACK-SPIKE harness verdict. |
+| `ISSUE-BOARD-SURFACE` | `fleet/issue-board.sh`, `fleet/state/issue-board.tsv`, `fleet/tests/issue-board.test.sh` — `depends_on:` **empty** |
+| `KS29-DISCOVERY-LEG` | `fleet/checks/registry-discovery.sh`, `fleet/state/component-registry.tsv`, `fleet/tests/registry-discovery.test.sh` — `depends_on:` **empty** |
+| `ISSUE-SELF-HEAL-RULES` | `fleet/issue-heal.sh`, `fleet/state/self-heal-allowlist.tsv`, `fleet/tests/issue-heal.test.sh` — `depends_on: ISSUE-BOARD-SURFACE` |
 
-## 11. Self-check — this design is COMPLETE iff
+The discarded revision invented a different path for **every file in slices 2 and 3, and five of six in slice 1**, and asserted a `depends_on` the tickets do not carry. All invented paths are **struck**. Because this session must not edit `fleet/board/*`, the following are handed back as required board edits, for whoever owns the board:
 
-- [x] **The 7 failure classes (§2)** — each with desired-source, actual-source,
-  drift-algorithm, RED condition, and heal-template classification (safe/never).
-- [x] **The 3 build-slice decomposition (§6)** — file-disjoint, sequence ordered,
-  with clear dependencies (SURFACE → DISCOVERY → SELF-HEAL).
-- [x] **The shared substrate (§1)** — graphify, the issue-class registry, the
-  heal-template registry, the existing UNIFIED-RECONCILIATION-GATE axis,
-  plane-canary, lease-enqueue, review-pool.
-- [x] **Adopt-first posture (§7)** — all 4 patterns cited (StackStorm, ArgoCD,
-  K8s, Backstage/Dagster), with explicit "why not the tool itself" for each.
-- [x] **fail-on-revert (§8)** — one dogfood per slice, plus the plane's own
-  plane-canary row.
-- [x] **OPEN SEAMS (§9)** — graphify dependency, review-pool dependency,
-  preflight bypass — each flagged with mitigation.
-- [x] **v2 deferred list (§10)** — 5 items, each with a one-line reason.
-- [x] **Gating (§5)** — safe vs NEVER classes listed; the gate is data in the
-  registry, not hard-coded.
-- [x] **KS20 anti-accretion** — per-class detectors are registry rows, not scripts;
-  per-class heal-templates are registry rows, not scripts; future classes are data
-  appends, not new build.
+- **B1.** `ISSUE-BOARD-SURFACE` re-scope: §3 changes its deliverable from a new board to *extending `reds.tsv`*. Its `owns` should lose `fleet/state/issue-board.tsv` and gain `fleet/preflight.sh` (see B3), or the ticket must be re-briefed.
+- **B2.** `KS29-DISCOVERY-LEG` must record the two §6-step-3 preconditions (land `d603494`; clear `INERT-WIRING-ENFORCEMENT-DURABLE`'s design-first bar) as blockers.
+- **B3.** **`fleet/preflight.sh` is in NOBODY's `owns`** and two slices need to modify it. Assign it to **exactly one** — `ISSUE-BOARD-SURFACE` — and have slice 3 call in, never edit. Two slices editing `preflight.sh` is a silent collision at land.
+- **B4.** `SG-ISSUE-CONTROL-PLANE.owns` should add `docs/review-log/SG-ISSUE-CONTROL-PLANE.md` (rig convention; `RECONCILE-REVIEW-GATE` / `REPO-FIELD-REQUIRED` / `REVIEW-DISPENSATION-CANARY` all list theirs).
 
-## 12. Reviewer notes (this doc only)
+**"File-disjoint — no collision" was FALSE and is struck.** Every registry the slices declare lives under `fleet/state/`, so each needs its own `.gitignore` negation — `.gitignore` is the single most contended file in the repo, and it appeared in none of the discarded revision's `owns` lists. Per §6 step 0b, **all negations land in ONE anchor commit before any slice starts**. Note also the convention the discarded revision broke: `reds.tsv` and `plane-canary-registry.tsv` live at `fleet/`, *not* `fleet/state/`, precisely to avoid this.
 
-- **Why this design supersedes UNIFIED-PLANE-CANARY-FRAMEWORK:** UNIFIED-PLANE-
-  CANARY-FRAMEWORK scoped a canary framework for the 10 declared planes. This
-  design scopes the WHOLE control plane — DISCOVER, SURFACE, SELF-HEAL — of
-  which the plane-canary is the quarantined-good leg. The canary framework's
-  surface is preserved (plane-canary.sh + registry continue to operate); this
-  design adds the universal issue-board that reads the plane-canary's output
-  alongside every other detector.
-- **Why this design supersedes gate-test-health-on-master:** gate-test-health-on-
-  master was a specific surface ask (tracking which checks fail on master). This
-  design's `failing/RED` class (§2.2) is the generalized form — every check,
-  not just the gate suite, and surfaced on the issue board alongside every other
-  issue class.
-- **Why this design supersedes loud-failure-monitor:** loud-failure-monitor was
-  the "surface loudly" half of this design — make issues unmissable at
-  SessionStart. This design's SURFACE slice (§3) is that half, wired into a
-  larger loop.
-- **Why the decomposition is SURFACE → DISCOVERY → SELF-HEAL, not parallel:**
-  The SURFACE slice is the write target for both DISCOVERY and SELF-HEAL. It
-  must land first so the other two have a destination. DISCOVERY is higher-risk
-  new build (graphify reachability walk) and produces the raw issue tuples.
-  SELF-HEAL consumes those tuples and is the lowest-risk (it gates and launches;
-  the launch mechanism — lease-enqueue — already exists). The serial dependency
-  is data-flow: SURFACE provides the tsv schema → DISCOVERY writes to it →
-  SELF-HEAL reads from it.
-- **Why ~85% is already owned:** the detectors exist (10+ in preflight), the
-  reconcilers exist (UNIFIED-RECONCILIATION-GATE), the droid dispatch exists
-  (lease-enqueue), the review pool exists (review-pool.sh), the graph exists
-  (graphify), the canary suite exists (plane-canary). The ~15% new build: the
-  union surface, the graphify reachability walk, and the gated auto-launch engine.
-- **Why this doc is in `fleet/state/` (gitignored) and force-added:** same as
-  UNIFIED-RECONCILIATION-GATE-DESIGN.md reviewer note #1 — this is the `owns-tracked`
-  class (§1.2 R-E). The design is its own first test fixture. The
-  `RECONCILE-OWNS-TRACKED` reconciler (already designed, not yet built) MUST cite
-  this doc as a second canonical R-E example alongside UNIFIED-RECONCILIATION-
-  GATE-DESIGN.md.
+---
+
+## 9. RED-PROOFS AND THEIR RUNNERS (F6) — a proof no runner executes is decoration
+
+The rig has exactly **two** real runners **[V]**:
+- `fleet/gate.sh:33` — `tests=("$TESTS_DIR"/*.test.sh)`, a glob over `fleet/tests/`;
+- `fleet/checks/rig-ci-scope.sh:49` `CI_SUITES` — a **hand-maintained literal allowlist**, whose own comment states *"anything added to fleet/tests/ later is excluded BY DEFAULT and only runs in CI once someone deliberately adds it here after proving it is hermetic, offline and fast. NEVER replace this with a `for t in fleet/tests/*.test.sh` sweep."*
+
+**Binding requirement.** Every red-proof this plane ships must satisfy BOTH:
+1. its filename matches `fleet/tests/*.test.sh` (so `fleet/gate.sh` picks it up); **and**
+2. it is added to `CI_SUITES` by name, after proving it hermetic/offline/fast — read the runner set by **invoking `rig-ci-scope.sh suites`**, never by re-parsing the array, and never by editing that file (owned by `HANDOFF-GATE-NONBYPASSABLE`).
+
+If the runner lookup is unresolvable ⇒ **RED (`runner-set-unresolvable`)**, not a fallback to glob-only. If the resolved runner set is empty ⇒ **RED (`vacuous-pass`)** per §5(c).
+
+This is exactly the S1 sub-assertion `fleet/board/META-GATE-REDPROOF-REACHABLE.md` already specifies **[V]**; this design does not rebuild it, it **inherits** it. (That ticket exists on master but not at `8838670` — this branch is behind master.)
+
+Concretely: each slice's red-proof is named per its ticket's `owns` (§8) — `fleet/tests/issue-board.test.sh`, `fleet/tests/registry-discovery.test.sh`, `fleet/tests/issue-heal.test.sh` — and **each gets its own `CI_SUITES` entry and its own `plane-canary-registry.tsv` row.** One shared row for three checks (the discarded revision's proposal) leaves two proofs with no runner.
+
+---
+
+## 10. REGISTRATION — this plane must be visible to the meta-gates (F7)
+
+A plane whose stated purpose is *"find checks that no meta-gate can see"* must not itself be invisible. `gate-creation-standard` appeared **zero** times in the discarded revision. Binding:
+
+- Every new `fleet/checks/*.sh` must pass `bash fleet/checks/gate-creation-standard.sh check` — S1 RED-PROOFED (companion test exists **and is runner-reachable**, §9), S2 NON-VACUOUS, S3 UN-GAMED, S5 FAIL-LOUD (`set -uo pipefail`), S10 TRACEABILITY. **[V]** header read.
+- Every enforceable rule this plane introduces gets a row in `fleet/state/RULE-REGISTRY.tsv` (consumed by `fleet/checks/rule-coverage.sh`, wired into `preflight.sh` as `coverage_gate` **[V]**).
+- One `fleet/plane-canary-registry.tsv` row **per slice** (schema `plane · canary_script · dogfood_test · wired_in · owner_ticket` **[V]**), not one total.
+- Every green-gate miss this plane discovers is appended to `fleet/state/GATE-GAP-LEDGER.tsv` via `gate-creation-standard.sh append`.
+
+**Acceptance must be a literal command, not prose** (F12). "Fully wired" means: `bash fleet/plane-canary.sh reconcile` reports GREEN for this plane's row(s), **and** `bash fleet/checks/gate-creation-standard.sh check` passes for every new check, **and** each red-proof appears in `bash fleet/checks/rig-ci-scope.sh suites`. Acceptance must additionally require **non-duplication with `reds.tsv`** — the failure mode most likely to be declared satisfied while wrong.
+
+---
+
+## 11. CONFLICTS ADJUDICATED — where the base won, and where the branch had evidence
+
+Per the operator's fold rule: the base wins unless the branch carried evidence it was wrong. Stated explicitly:
+
+| topic | ruling | why |
+|---|---|---|
+| new `issue-board.tsv` vs extend `reds.tsv` | **BASE WINS** | The branch never argued against `preflight.sh:1-8`'s close policy; the review supplied positive evidence the incumbent is stronger (F2). |
+| fold vs fork | **BASE WINS, verbatim** (§6 step 0) | The branch did the forked thing the base names as the HIGH risk. |
+| `[V]` provenance · ⚠-KS29-unbuilt flag · review-pool + loop-guard + lease-enqueue rails · `--commit-dirty` hazard | **BASE WINS** | Dropped by the branch with no justification; all restored. |
+| circuit breaker | **BASE WINS** | Branch's `ReviewerCircuitBreaker` is in the PUBLIC product repo, verified absent from the rig (F9). `loop-guard.sh` is the rig-native equivalent. |
+| `preflight.sh` line `878` vs `895/896` | **BRANCH NOT WRONG — both true, different checkouts.** Verified `:878` @ `8838670` and `:896` @ master. Adopted fix: **cite symbols, not line numbers** (header note). |
+| 5-field per-class contract (desired / actual / algorithm / RED-condition) | **BRANCH FOLDED IN** | Genuinely new, genuinely useful structure — adopted as the registry row contract, with `check_cmd` + `min_scanned` added (§5). |
+| anti-flap `after_N_ticks`, double-launch gate, `heal-failed` escalation, `heal_blocked_reason`, built-in heal commands | **BRANCH FOLDED IN** | New, correct, rig-implementable. |
+| loud aggregate SessionStart header | **BRANCH FOLDED IN, REDUCED** | Good idea; rendered as ONE line on the existing surface, not a second table. |
+| `failing/RED` + `done-but-unmerged` as new classes | **BRANCH STRUCK** | Verbatim `board_gate` / `done_merge_gate`; already built, already auto-registering, already self-closing (F2). |
+| slice file paths · `depends_on` · "file-disjoint" | **BRANCH STRUCK** | Contradicts the three landed tickets on every slice; `.gitignore` collision unacknowledged (F8, F10). |
+| `RECONCILER-REGISTRY.tsv` as a desired-source | **BRANCH STRUCK** | Does not exist; §5(a) makes an absent source RED. |
+| warn-on-stale-graph | **BRANCH STRUCK** | Fails open on the highest-value class; §5(e) makes it RED. |
+
+---
+
+## 12. OPEN SEAMS — flagged, fail-closed, not faked-closed
+
+1. **graphify completeness.** The reachability walk is only as complete as graphify's extractors. Pre-condition: `graphify-freshness.sh check`. **A stale/incomplete graph makes the `inert` class RED (`input-degraded`), not a warn** — §5(e).
+2. **review-pool availability.** If no reviewer is available the heal cannot launch; the issue stays open with `heal_blocked_reason` **rendered** in the surface. Not silently skipped.
+3. **`git -C` push bypass.** A direct push bypasses `land.sh`, so the plane's preflight leg does not run. Inherited from `UNIFIED-RECONCILIATION-GATE-DESIGN.md §3.3`; mitigation is the same (timer-based reconcile catches it at the next tick). Level-triggering is what makes this survivable.
+4. **`fleet/reuse-check.sh` cannot be run at design stage** — it requires the candidate file to exist on disk and raises `FileNotFoundError` for a not-yet-created path **[V]** (reviewer-verified). Reuse for this design was established by direct search instead. **This is a real rig gap and needs its own ticket**: the reuse gate is unusable for the case it is most needed in.
+5. **`UNIFIED-PLANE-CANARY-FRAMEWORK` status is ambiguous** — described as "blocked by this, launched immediately after", but the board carries it as a superseded redirect stub. Confirm which before launching anything.
+6. **This branch is behind master.** `META-GATE-REDPROOF-REACHABLE.md`, `META-GATE-FINDINGS-ZERO.md` and `META-GATE-CALLSITE-ENUM.md` exist on master and not at `8838670` **[V]**. Refresh before building.
+
+---
+
+## 13. REVIEW DISPOSITION — the 10 REQUIRED CHANGES
+
+| # | required change | status |
+|---|---|---|
+| 1 | Restore/merge the 109-line incumbent; `[V]` provenance, fold-don't-fork ruling, ⚠-KS29 flag, review-pool/loop-guard/lease-enqueue rails must survive; add the `.gitignore` negation | **DONE** — this document; §6 step 0 is verbatim; negation added (§7) |
+| 2 | Re-scope slice 1 from "new board" to "extend `reds.tsv`" | **DONE in design** (§3, §6 step 2). Ticket edit handed back as **B1** (§8) — board is out of scope this session |
+| 3 | Land `feat/reconcile-gate-wired` (`d603494`) before slice 2; address `INERT-WIRING-ENFORCEMENT-DURABLE`'s design-first bar | **DONE as a BAR** (§6 step 3) — both are external actions this design cannot perform; slice 2 is barred until they clear |
+| 4 | Close the 8 RED plane-canary rows, or state why a new plane precedes fixing the one already shouting | **DONE** — §0 records the falsified premise and re-frames the design around "un-actioned"; §6 step 5 sequences the closure. **Closing them is not this design's work** |
+| 5 | Fail-closed section: unresolvable source ⇒ RED · discovery non-zero exit ⇒ RED · zero-scanned ⇒ RED · stale graphify ⇒ RED · mandatory `check_cmd` | **DONE** — §5(a)–(f) |
+| 6 | Pin the runner for all three red-proofs (`*.test.sh` + explicit `CI_SUITES`) | **DONE** — §9 |
+| 7 | Registry rows in `owns`: `RULE-REGISTRY.tsv`, one `plane-canary-registry.tsv` row per slice, `.gitignore` negations as an anchor commit | **DONE in design** (§10, §6 step 0b). The `owns` field edits are board edits → **B1–B4** (§8) |
+| 8 | Reconcile §6.1 with the three landed tickets (paths + `depends_on`); assign `preflight.sh` to exactly one slice | **DONE in design** — §8 makes the tickets authoritative and strikes the invented paths. Ticket-side edit → **B3** |
+| 9 | Replace product-repo `ReviewerCircuitBreaker` with `loop-guard.sh` + `lease-enqueue.sh` | **DONE** — §4 |
+| 10 | Independent review of the review-log (reviewer ≠ author model) | **PARTIAL / DEFERRED** — the self-attested `CONFIRMED-CLEAN` is withdrawn; `docs/review-log/SG-ISSUE-CONTROL-PLANE.md` now records the independent adversarial review (agen-kolar) and its DO-NOT-LAND verdict. A fresh independent review **of this revision** is still required and is a **land precondition** |
+
+**Deferred, with reasons:** the #2/#7/#8 ticket-field edits (this session is barred from `fleet/board/*`; another sub owns it — handed back as B1–B4). #3 and #4 are actions on other branches/tickets, not design content, so they are recorded as sequenced bars rather than performed. #10's re-review of this revision cannot be self-performed.
+
+---
+
+### Provenance
+
+Files read (**[V]**), revision 1: `check_inert_code.py`, `plane-canary.sh`, `plane-canary-registry.tsv`, `graphify-freshness.sh`, `reconcile-merged.sh`, `loop-guard.sh`, `lease-enqueue.sh`, `review-pool.sh`, `foreman-cadence.sh`, `session-start.sh`(grep), `UNIFIED-RECONCILIATION-GATE-DESIGN.md`, `REGISTRY-CANDIDATES.md`, `RECONCILE-GATE-WIRED.md`, `ROADMAP.tsv`(KS22/24/26/29), `plane-canary-gap-survey.md`, live `graph.json` (7471 nodes / 9786 links). Docs fetched (WebSearch): StackStorm sensors/triggers/rules/actions+ChatOps (github.com/stackstorm/st2; medium), ArgoCD selfHeal/prune/reconcile-interval (argo-cd.readthedocs.io; oneuptime), K8s level-triggered reconcile (deepwiki; oneuptime), Backstage Tech-Insights facts/checks/scorecards (roadie.io) + Soundcheck staleness (backstage.spotify.com), Dagster freshness/Declarative-Automation (docs.dagster.io; dagster.io 1-1).
+
+Added for revision 2 (**[V]**, read or executed this session): `fleet/preflight.sh` (header `:1-8`, `run_check`, `cmd_scan`, `cmd_add`, `cmd_detect`, `board_gate`, `executor_gate`, `graphify_freshness_gate`, scan dispatch `:878`@`8838670` / `:896`@master), `fleet/reds.tsv` schema, `.gitignore:1-90` (negation allowlist; `fleet/state/*` at `:10`, `fleet/reds.tsv` at `:84`, anchor-file note at `:37-42`), `fleet/checks/rig-ci-scope.sh:40-75` (`CI_SUITES`), `fleet/gate.sh:33` (runner glob), `fleet/checks/gate-creation-standard.sh:1-40` (S1/S2/S3/S5/S10), `fleet/validate_board.sh:40-70` (board `*.md` parsed as tickets), `fleet/plane-canary-registry.tsv` (5-col schema), `fleet/board/{SG-ISSUE-CONTROL-PLANE,ISSUE-BOARD-SURFACE,KS29-DISCOVERY-LEG,ISSUE-SELF-HEAL-RULES,RECONCILE-GATE-WIRED,INERT-WIRING-ENFORCEMENT-DURABLE,META-GATE-REDPROOF-REACHABLE,META-GATE-FINDINGS-ZERO}.md`, `fleet/state/reviews/SG-ISSUE-CONTROL-PLANE-REVIEW-agen-kolar.md`, and the discarded 639-line revision in full. **Executed:** `bash fleet/plane-canary.sh reconcile` → 8/10 RED (§0); existence checks confirming `fleet/checks/reconcile-gate-wired.sh`, `fleet/tests/reconcile-gate-wired.test.sh`, `fleet/state/RECONCILER-REGISTRY.tsv`, `fleet/checks/reconcile-timer.sh` and `src/charon/failover.py` are all ABSENT from the rig. Inferred items tagged **[I]**.
