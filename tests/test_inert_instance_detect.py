@@ -84,7 +84,7 @@ class TestInstanceInertCore:
 
     def test_inert_appears_in_check_output(self, tmp_path: Path) -> None:
         repo = _build_fixture(tmp_path, with_invocation=False)
-        passed, undisposed, dead, schema = M.check(repo_root=repo)
+        passed, undisposed, dead, schema, roster_issues = M.check(repo_root=repo)
         assert not passed
         assert schema == []
         assert "widget.Widget" in dead
@@ -92,7 +92,7 @@ class TestInstanceInertCore:
 
     def test_live_absent_from_check_output(self, tmp_path: Path) -> None:
         repo = _build_fixture(tmp_path, with_invocation=True)
-        passed, undisposed, dead, schema = M.check(repo_root=repo)
+        passed, undisposed, dead, schema, roster_issues = M.check(repo_root=repo)
         assert passed
         assert schema == []
         assert "widget.Widget" not in dead
@@ -193,9 +193,77 @@ class TestDispositionHonest:
     def test_current_codebase_passes(self) -> None:
         """The real repo, including the 6 gateway modules now tracked in the
         disposition file, must still pass — all 6 are disposed."""
-        passed, undisposed, dead, schema_issues = M.check()
+        passed, undisposed, dead, schema_issues, roster_issues = M.check()
         assert schema_issues == []
+        assert roster_issues == []
         assert undisposed == [], (
             f"new dead symbol(s) not tracked: {undisposed}"
         )
         assert passed is True
+
+
+class TestGateBHoleClosed:
+    """THE GATE-B RED-PROOF (INERT-INSTANCE-DETECT accept D2).
+
+    Gate B of WORK-GATE-UNIVERSAL is built on this detector, so a detector that
+    reports OK while an inert module carries no disposition CERTIFIES INERT CODE
+    AS FULLY WIRED. Before the KNOWN_INSTANCE_INERT roster, that hole was real
+    and measured: dropping SessionAffinity, ConsensusRouter or VirtualKeyManager
+    from the disposition file left ``check_inert_code.py`` at rc=0, because the
+    heuristic's collision-tolerant method matching cannot see those three.
+
+    These tests delete each of the six entries in turn (in memory — the real
+    file is never written) and require the detector to go RED for every one.
+    """
+
+    def test_dropping_any_of_the_six_turns_the_gate_red(self, monkeypatch) -> None:
+        real = M.load_dispositions()
+        for mod in sorted(EXPECTED_MODULES):
+            pruned = {k: v for k, v in real.items() if k != mod}
+            monkeypatch.setattr(M, "load_dispositions", lambda p=pruned: dict(p))
+            passed, undisposed, dead, schema_issues, roster_issues = M.check()
+            assert mod in dead, (
+                f"{mod} is instance-inert but the detector does not even report "
+                "it — Gate B would certify it as wired"
+            )
+            assert mod in undisposed, f"{mod} undispositioned but not reported"
+            assert passed is False, (
+                f"detector still GREEN with {mod} undispositioned — this is the "
+                "Gate-B hole, not a pass"
+            )
+
+    def test_roster_covers_exactly_the_six(self) -> None:
+        """NON-VACUOUS: a roster that has drifted empty (or narrowed to only the
+        modules the heuristic already catches) would pass over nothing."""
+        assert set(M.KNOWN_INSTANCE_INERT) == set(EXPECTED_MODULES)
+
+    def test_roster_backstops_what_the_heuristic_misses(self) -> None:
+        """The roster must be load-bearing, not decorative: at least one of the
+        six is invisible to the heuristic, so the roster is the only thing
+        holding it. If the heuristic ever catches all six, this assertion
+        (deliberately) still holds via the roster — but it documents WHY the
+        roster exists."""
+        heuristic = set(M.find_instance_inert_classes())
+        assert set(EXPECTED_MODULES) - heuristic, (
+            "expected the heuristic to miss at least one of the six; if it now "
+            "catches all six, re-derive whether the roster is still needed"
+        )
+        assert set(EXPECTED_MODULES) <= set(M.KNOWN_INSTANCE_INERT)
+
+    def test_stale_roster_row_is_a_failure(self, monkeypatch) -> None:
+        """A roster row whose code no longer exists must RED, so a module cannot
+        be deleted while leaving the gate silently checking nothing."""
+        bogus = dict(M.KNOWN_INSTANCE_INERT)
+        bogus["charon.gone.Vanished"] = "src/charon/gone.py"
+        monkeypatch.setattr(M, "KNOWN_INSTANCE_INERT", bogus)
+        issues = M.find_stale_roster_symbols()
+        assert any("charon.gone.Vanished" in i for i in issues)
+        passed, _u, _d, _s, roster_issues = M.check()
+        assert passed is False
+        assert roster_issues
+
+    def test_roster_does_not_apply_to_foreign_trees(self, tmp_path: Path) -> None:
+        """Scoping guard: the roster describes THIS repo, so a fixture tree must
+        not inherit its rows (which would red every fixture test)."""
+        assert M.roster_for(tmp_path) == {}
+        assert set(M.roster_for(M.REPO_ROOT)) == set(EXPECTED_MODULES)

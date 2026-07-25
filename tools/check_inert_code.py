@@ -66,6 +66,39 @@ DISPOSITION_PATH = REPO_ROOT / "tools" / "inert-code-disposition.json"
 _VALID_DISPOSITIONS = re.compile(r"^(wire|delete|retire|keep-.+)$")
 _MESSAGE_RE = re.compile(r"^inert-code: (\S+) unreachable")
 
+# ── Audited instance-inert roster (the Gate-B hole) ──────────────────────────
+# ``find_instance_inert_classes`` deliberately tolerates FALSE NEGATIVES: a
+# class whose method name collides with any unrelated instance call anywhere in
+# the tree reads as "invoked" and is silently not flagged. Measured on this
+# tree, that blindspot swallows 3 of the 6 gateway modules that R43-WIRING-AUDIT
+# and SR-4 independently confirmed have ZERO invocation sites:
+#
+#   flagged by the heuristic : RequestInspector, Observability, SpeculativeExecutor
+#   MISSED by the heuristic  : SessionAffinity (.resolve collides with Path.resolve
+#                              and PolicyRouter.resolve), ConsensusRouter,
+#                              VirtualKeyManager (.create/.resolve/.list_keys/.revoke
+#                              all collide with unrelated instance calls)
+#
+# So the heuristic alone cannot hold the line, and WORK-GATE-UNIVERSAL's Gate B
+# ("no inert/unwired code ships") is built ON this detector — it would certify
+# those three as fully wired. This roster is the non-heuristic backstop: a
+# hand-audited list of symbols KNOWN to be constructed-and-stored-but-never-
+# invoked, each of which MUST carry an explicit disposition or the gate fails.
+#
+# Maintaining it: when a module here is genuinely wired, or is retired and its
+# code deleted, REMOVE ITS ROW HERE IN THE SAME CHANGE. A row whose class no
+# longer exists in the tree is itself a gate failure (see
+# ``find_stale_roster_symbols``) — that is what stops the roster from quietly
+# going vacuous and passing over an empty set.
+KNOWN_INSTANCE_INERT: dict[str, str] = {
+    "charon.request_inspector.RequestInspector": "src/charon/request_inspector.py",
+    "charon.session_affinity.SessionAffinity": "src/charon/session_affinity.py",
+    "charon.observability.Observability": "src/charon/observability.py",
+    "charon.speculative_execution.SpeculativeExecutor": "src/charon/speculative_execution.py",
+    "charon.consensus.ConsensusRouter": "src/charon/consensus.py",
+    "charon.virtual_keys.VirtualKeyManager": "src/charon/virtual_keys.py",
+}
+
 
 def _strip_src_prefix(sym: str) -> str:
     """KSF computes dotted module names relative to the repo root, which
@@ -154,7 +187,9 @@ def find_instance_inert_classes(repo_root: Path = REPO_ROOT) -> list[str]:
                 full_class = _strip_src_prefix(f"{mod_name}.{node.name}")
                 methods: set[str] = set()
                 for item in node.body:
-                    if _is_callable_method(item) and isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        continue
+                    if _is_callable_method(item):
                         methods.add(item.name)
                 if methods:
                     class_methods[full_class] = methods
@@ -225,26 +260,77 @@ def validate_dispositions(dispositions: dict[str, dict]) -> list[str]:
     return issues
 
 
-def check(repo_root: Path = REPO_ROOT) -> tuple[bool, list[str], list[str], list[str]]:
-    """Return (passed, undisposed_dead_symbols, all_dead_symbols, schema_issues).
+def roster_for(repo_root: Path) -> dict[str, str]:
+    """The audited roster applicable to *repo_root*.
 
-    ``all_dead_symbols`` is the union of KSF-detected dead module-level symbols
-    and instance-inert classes (constructed but never invoked).
+    ``KNOWN_INSTANCE_INERT`` is an audit OF THIS PRODUCT TREE — its rows name
+    real classes at real paths under ``src/charon``. Pointed at a synthetic
+    fixture tree (as the red-proof tests do), it would describe nothing there,
+    so it applies only when the target IS this repo. This is a scoping rule, not
+    an escape hatch: there is no way to disable the roster for the real tree.
+    """
+    try:
+        same = repo_root.resolve() == REPO_ROOT.resolve()
+    except OSError:
+        same = False
+    return dict(KNOWN_INSTANCE_INERT) if same else {}
+
+
+def find_stale_roster_symbols(repo_root: Path = REPO_ROOT) -> list[str]:
+    """Return ``KNOWN_INSTANCE_INERT`` entries whose class no longer exists.
+
+    Non-vacuity guard. The roster is the backstop for exactly the modules the
+    heuristic cannot see, so a roster that has silently drifted out of the tree
+    (module deleted, class renamed) checks NOTHING while still reporting OK —
+    the same false-green this detector exists to kill. An entry that no longer
+    resolves to a real ``class <Name>`` in its recorded file is therefore a gate
+    failure: retire the code and its roster row together, in one change.
+    """
+    stale: list[str] = []
+    for symbol, relpath in roster_for(repo_root).items():
+        class_name = symbol.rsplit(".", 1)[-1]
+        source = repo_root / relpath
+        if not source.exists():
+            stale.append(f"{symbol}: {relpath} no longer exists")
+            continue
+        tree = _parse_file(source)
+        if tree is None:
+            stale.append(f"{symbol}: {relpath} could not be parsed")
+            continue
+        found = any(
+            isinstance(node, ast.ClassDef) and node.name == class_name
+            for node in ast.walk(tree)
+        )
+        if not found:
+            stale.append(f"{symbol}: class {class_name} not defined in {relpath}")
+    return stale
+
+
+def check(repo_root: Path = REPO_ROOT) -> tuple[bool, list[str], list[str], list[str], list[str]]:
+    """Return (passed, undisposed_dead_symbols, all_dead_symbols, schema_issues,
+    roster_issues).
+
+    ``all_dead_symbols`` is the union of KSF-detected dead module-level symbols,
+    heuristically-detected instance-inert classes (constructed but never
+    invoked), and the hand-audited ``KNOWN_INSTANCE_INERT`` roster — the last of
+    which is what makes the gate FAIL rather than report OK for the three
+    gateway modules the heuristic structurally cannot see.
     """
     dead = find_dead_symbols(repo_root)
     instance_inert = find_instance_inert_classes(repo_root)
-    all_dead = sorted(set(dead) | set(instance_inert))
+    roster_issues = find_stale_roster_symbols(repo_root)
+    all_dead = sorted(set(dead) | set(instance_inert) | set(roster_for(repo_root)))
     dispositions = load_dispositions()
     schema_issues = validate_dispositions(dispositions)
     undisposed = [s for s in all_dead if s not in dispositions]
-    passed = not undisposed and not schema_issues
-    return passed, undisposed, all_dead, schema_issues
+    passed = not undisposed and not schema_issues and not roster_issues
+    return passed, undisposed, all_dead, schema_issues, roster_issues
 
 
 def main() -> int:
-    passed, undisposed, dead, schema_issues = check()
+    passed, undisposed, dead, schema_issues, roster_issues = check()
     dispositions = load_dispositions()
-    instance_inert = set(find_instance_inert_classes())
+    instance_inert = set(find_instance_inert_classes()) | set(KNOWN_INSTANCE_INERT)
     # Work units = source files walked for public symbols, not dead symbols
     # found. A clean tree legitimately has zero dead symbols; a gate pointed at
     # the wrong tree also has zero. Counting the INPUT distinguishes them.
@@ -278,6 +364,17 @@ def main() -> int:
     if schema_issues:
         print(f"\nFAIL: {DISPOSITION_PATH.name} has malformed entries:", file=sys.stderr)
         for issue in schema_issues:
+            print(f"  - {issue}", file=sys.stderr)
+
+    if roster_issues:
+        print(
+            f"\nFAIL: {len(roster_issues)} KNOWN_INSTANCE_INERT roster entr"
+            f"{'y has' if len(roster_issues) == 1 else 'ies have'} drifted out of the "
+            "tree — a roster row must be deleted in the SAME change as the code it "
+            "tracks, or the gate checks nothing while reporting OK:",
+            file=sys.stderr,
+        )
+        for issue in roster_issues:
             print(f"  - {issue}", file=sys.stderr)
 
     if undisposed:
