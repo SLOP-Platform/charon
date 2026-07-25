@@ -1,8 +1,8 @@
 # ROUTER-LEDGER-DECAY — router-side model-signal ledger decay
 
 Implements exponential half-life decay for model-signal ledger entries in the
-routing policy package. Extracted intent from the retired `fleet/memory/bitemporal.py`
-(FN-MEMORY-RETIRE-ADOPT) — no fleet/memory dependency, pure stdlib router code.
+routing policy package. Extracted intent from the retired bitemporal reference
+(FN-MEMORY-RETIRE-ADOPT) — pure stdlib router code, no retired-module dependency.
 
 ## Decisions
 
