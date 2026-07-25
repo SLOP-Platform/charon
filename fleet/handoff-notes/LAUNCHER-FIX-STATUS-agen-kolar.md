@@ -127,16 +127,16 @@ said was unwired. No daemon change.
   carries it across the loop boundary.
 
 **Test:** `fleet/tests/droid-bridge.test.sh` — real scratch bridge daemon, real `claim.sh` /
-work-lease / parallelizability gate / leak-guard, real git repo. **Last run 41 pass / 1 fail.**
+work-lease / parallelizability gate / leak-guard, real git repo. **RE-RUN AFTER THE G5 FIX:
+42 pass / 0 fail, `TEST_RC=0`. RESOLVED — nothing outstanding here.**
 
-> ⚠️ **THE ONE OUTSTANDING ITEM IN THIS WHOLE HANDOFF.** The single failure was **G5 asserting
-> against the wrong ledger path** — a *test* bug, not a code defect: `exhaust_led` writes to
-> `CHARON_EXHAUST_LEDGER`, which the harness did not override. The override is now in place and
-> G5 points at it, but **the ~7-minute suite was not re-run after that one-line fix**.
-> **NEXT SESSION: run `bash fleet/tests/droid-bridge.test.sh` and confirm 42/42.**
+(History, for the record: the earlier 41/1 failure was **G5 asserting against the wrong ledger
+path** — a *test* bug, not a code defect: `exhaust_led` writes to `CHARON_EXHAUST_LEDGER`,
+which the harness did not override. Override added, G5 repointed, suite re-run green.)
 
 Side effect of that same gap: earlier runs appended **2 advisory `work-class-missing` rows** to
 the real `fleet/provider-exhaustion-ledger.tsv`. Test artifacts, harmless, should be dropped.
+The harness is hermetic now, so it will not add more.
 
 ---
 
@@ -175,7 +175,11 @@ here all pass), `handoff-mechanize`, `promotion-gate`, `reconcile-merged`, `self
 
 ## Next session, in order
 
-1. `bash fleet/tests/droid-bridge.test.sh` → expect **42/42**.
-2. `bash fleet/gate.sh` → expect the same 7 pre-existing failures, no new ones.
+1. ~~`bash fleet/tests/droid-bridge.test.sh`~~ — **DONE, 42/42, `TEST_RC=0`.**
+2. `bash fleet/gate.sh` against `8f0a4e5` → expect the same **7** pre-existing failures
+   (`assign-dispatch` a1/d1/e1, `handoff-mechanize`, `promotion-gate`, `reconcile-merged`,
+   `selfcheck-cycle`, `submit-checkin`, `w0b-harden`) and **no new ones**. This is the only
+   verification still outstanding.
 3. Map a board ticket to this branch so the work-lease hook stops refusing, then land.
 4. Operator: purge the grader spool (command above); decide on the merged `kimi-k2.6` rc=134 row.
+5. Drop the 2 stray `work-class-missing` rows from `fleet/provider-exhaustion-ledger.tsv`.
