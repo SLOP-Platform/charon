@@ -99,7 +99,7 @@ def _cmd_land(args: argparse.Namespace) -> int:
     sdir = Path(args.state_dir).resolve()
     try:
         ledger = Ledger.load(sdir, args.task_id)
-    except Exception as exc:  # LedgerCorruption / missing — surface loudly
+    except Exception as exc:  # noqa: BLE001 - LedgerCorruption / missing — surface loudly
         print(f"error: {exc}", file=sys.stderr)
         return 2
     owned = list(args.owned or [])
@@ -141,7 +141,7 @@ def _cmd_land(args: argparse.Namespace) -> int:
 def _cmd_ledger(args: argparse.Namespace) -> int:
     try:
         out = api.show_ledger(args.task_id, state_dir=args.state_dir)
-    except Exception as exc:  # LedgerCorruption etc. — surface loudly
+    except Exception as exc:  # noqa: BLE001 - LedgerCorruption etc. — surface loudly
         print(f"error: {exc}", file=sys.stderr)
         return 2
     print(json.dumps(out, indent=2))
@@ -201,7 +201,7 @@ def _warn_unsendable_keys() -> None:
                 f"`{_invocation_name()} providers add <provider> --base-url {base} "
                 f"--key ...` so it is stored against the provider.",
                 file=sys.stderr)
-    except Exception:  # noqa: BLE001 — diagnostics must never block startup
+    except Exception:  # noqa: BLE001, S110 - diagnostics must never block startup
         pass
 
 
@@ -240,7 +240,8 @@ def _cmd_gate(args: argparse.Namespace) -> int:
     """
     local_runner = Path.cwd() / "tools" / "run_gate.py"
     if local_runner.is_file():
-        return subprocess.run([sys.executable, str(local_runner)]).returncode
+        # argv is [sys.executable, run_gate.py]; shell=False
+        return subprocess.run([sys.executable, str(local_runner)]).returncode  # noqa: S603
     from .gate_runner import run_gate
     return run_gate()
 
@@ -329,7 +330,7 @@ def _import_models(name: str, *, free_only: bool = False, into_pool: str | None 
         name, key_env=preset.key_env, base_url=preset.base_url)
     try:
         found = providers.list_models(name, overrides, api_key=api_key)
-    except Exception as exc:  # network/HTTP/parse — report, don't crash
+    except Exception as exc:  # noqa: BLE001 - network/HTTP/parse — report, don't crash
         print(f"error: could not list models for {name!r}: {type(exc).__name__} "
               f"(key set? base reachable?)", file=sys.stderr)
         return None
@@ -492,7 +493,7 @@ def _do_probe(base_url: str, api_key: str) -> str | None:
         if exc.code in (401, 403):
             return f"key rejected (HTTP {exc.code})"
         return f"probe failed (HTTP {exc.code})"
-    except Exception:  # noqa: S112 — network probe, any transport error is handled
+    except Exception:  # noqa: BLE001, S112 - network probe, any transport error is handled
         return "provider unreachable or probe timed out"
 
 
@@ -736,7 +737,7 @@ def _provider_test(name: str, base_url: str | None) -> int:
         note = "needs a key (expected)" if exc.code in (401, 403) else "check the path"
         print(f"{name}: base resolves — HTTP {exc.code} from {url} ({note})")
         return 0
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - CLI probe boundary: reported as UNREACHABLE, exit 1
         print(f"{name}: UNREACHABLE — {type(exc).__name__} (check base_url / network)",
               file=sys.stderr)
         return 1
@@ -1024,7 +1025,7 @@ def _tier_recommend(provider_name: str) -> int:
 
     try:
         catalog = providers.list_models(provider_name)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - CLI boundary: surfaced to stderr, exit 2
         print(f"error: cannot reach {provider_name} — {exc}", file=sys.stderr)
         return 2
     if not catalog:
@@ -1380,8 +1381,9 @@ def _integrate(base: Path, done_tips: list[tuple[Any, str]], state_dir: Path) ->
     gitutil.add_worktree(base, integ, gitutil.head(base))
     for unit, tip in done_tips:
         for path in unit.owns:
-            subprocess.run(
-                ["git", "-C", str(integ), "checkout", tip, "--", path],
+            subprocess.run(  # noqa: S603 - git argv, shell=False; internal paths/refs
+                # git resolved via PATH by design
+                ["git", "-C", str(integ), "checkout", tip, "--", path],  # noqa: S607
                 capture_output=True, text=True,
             )
     return str(integ)
@@ -1451,7 +1453,7 @@ class _ReviewingRunner:
             for b in backends.values():
                 try:
                     b.kill()
-                except Exception:
+                except Exception:  # noqa: BLE001, S110 - best-effort backend reap in finally; never mask the run result
                     pass
 
 
@@ -1542,7 +1544,7 @@ def run_status(state_dir: str = api.DEFAULT_STATE_DIR) -> dict:
                 entry["verified"] = sorted(cps[-1].verified)
                 entry["remaining"] = sorted(cps[-1].remaining)
             entry["lkg_ref"] = led.lkg_ref
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - unreadable ledger leaves board state standing; not fatal
             pass  # never claimed / not a readable ledger — board state still stands
         totals[u.state] = totals.get(u.state, 0) + 1
         units.append(entry)
@@ -1763,7 +1765,7 @@ def _cmd_runs(args: argparse.Namespace) -> int:
     except FileNotFoundError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
-    except Exception as exc:  # corrupt board etc. — surface loudly
+    except Exception as exc:  # noqa: BLE001 - corrupt board etc. — surface loudly
         print(f"error: {exc}", file=sys.stderr)
         return 2
     print(json.dumps(out, indent=2))

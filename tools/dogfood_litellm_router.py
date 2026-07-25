@@ -37,6 +37,13 @@ from charon.litellm_plane import litellm_router as lr  # noqa: E402
 from charon.proxy_server import GatewayProxyServer, UpstreamRoute  # noqa: E402
 
 
+def _require(cond: bool, msg: str) -> None:
+    """Hard check. NOT `assert`: asserts are stripped under `python -O`, which
+    would let this dogfood print "DOGFOOD OK" without any control having fired."""
+    if not cond:
+        raise SystemExit(f"DOGFOOD FAILED: {msg}")
+
+
 class _Stub(BaseHTTPRequestHandler):
     captured_auth = None
 
@@ -85,8 +92,9 @@ def main() -> int:
         print("request model : charon/cheapest")
         print(f"served content: {content!r}")
         print(f"upstream saw  : {_Stub.captured_auth!r}  (base-bound #181 key delivered)")
-        assert content == "pong"
-        assert _Stub.captured_auth == "Bearer DOGFOOD-KEY"
+        _require(content == "pong", f"stub upstream did not serve pong: {content!r}")
+        _require(_Stub.captured_auth == "Bearer DOGFOOD-KEY",
+                 f"upstream saw the wrong key: {_Stub.captured_auth!r}")
 
         # 2) SSRF: a cloud-metadata base is refused before the Router builds
         meta = GatewayProxyServer(host="127.0.0.1", port=0, pools={
@@ -99,7 +107,7 @@ def main() -> int:
             print(f"ssrf refused  : {exc}")
         finally:
             meta.server_close()
-        assert ssrf_ok
+        _require(ssrf_ok, "cloud-metadata base was NOT refused (SSRF control did not fire)")
 
         # 3) egress allowlist: an off-preset (attacker) base is refused (fail-closed)
         off = GatewayProxyServer(host="127.0.0.1", port=0, pools={
@@ -112,7 +120,7 @@ def main() -> int:
             print(f"egress refused: {str(exc).splitlines()[0]}")
         finally:
             off.server_close()
-        assert egress_ok
+        _require(egress_ok, "off-preset base was NOT refused (egress allowlist did not fire)")
 
         # 4) SG-never-Anthropic: no deployment for an anthropic-only model
         ant = GatewayProxyServer(host="127.0.0.1", port=0, pools={
@@ -121,7 +129,8 @@ def main() -> int:
         anthropic_router = lr.make_router(ant)
         ant.server_close()
         print(f"anthropic legs: {anthropic_router.model_list}  (SG-never-Anthropic: dropped)")
-        assert anthropic_router.model_list == []
+        _require(anthropic_router.model_list == [],
+                 f"SG-never-Anthropic leaked a deployment: {anthropic_router.model_list}")
 
     httpd.shutdown()
     print("== DOGFOOD OK: served through adopted litellm.Router; all 4 controls fired ==")

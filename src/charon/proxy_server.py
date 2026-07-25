@@ -339,7 +339,7 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 if not c:
                     break
                 out.append(c)
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110 - drain is best-effort; the partial body is returned
             pass
         return b"".join(out)
 

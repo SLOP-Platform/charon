@@ -112,7 +112,7 @@ def main(argv: list[str] | None = None, *, _once: bool = False) -> int:
     while True:
         try:
             _poll_once(queue_dir, state_dir)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - poll loop must survive one job's failure; printed, then continues
             print(f"worker poll error (continuing): {exc}", file=sys.stderr)
         if _once:
             break

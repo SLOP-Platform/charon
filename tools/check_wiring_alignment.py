@@ -38,7 +38,7 @@ def main() -> int:
             data = tomllib.loads(pyproject.read_text())
             scripts = data.get("project", {}).get("scripts", {})
             entrypoints_count += len(scripts)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - unparseable pyproject ⇒ count 0, not fatal
             pass
     ep_file = REPO_ROOT / ".ksf" / "entrypoints.json"
     if ep_file.exists():
@@ -47,7 +47,7 @@ def main() -> int:
                 eps = json.load(f)
                 if isinstance(eps, dict):
                     entrypoints_count += len(eps)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - unparseable entrypoints ⇒ count 0, not fatal
             pass
     emit_work_units(entrypoints_count)
 

@@ -32,7 +32,7 @@ def _extract(raw: bytes, content_type: str) -> dict:
                 continue
             try:
                 obj = json.loads(payload)
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001, S112 - a malformed SSE chunk is skipped; the rest still parses
                 continue
             model = model or obj.get("model", "")
             if obj.get("usage"):

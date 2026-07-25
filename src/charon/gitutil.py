@@ -7,8 +7,10 @@ from pathlib import Path
 
 
 def _run(args: list[str], cwd: Path) -> str:
-    proc = subprocess.run(
-        ["git", *args], cwd=str(cwd), capture_output=True, text=True, check=True
+    # git argv, shell=False; internal callers only. git resolved via PATH by design.
+    proc = subprocess.run(  # noqa: S603
+        ["git", *args],  # noqa: S607
+        cwd=str(cwd), capture_output=True, text=True, check=True
     )
     return proc.stdout.strip()
 

@@ -356,7 +356,7 @@ def forward_with_failover(handler, srv) -> None:
     try:
         orig_bj = json.loads(raw_body) if raw_body else {}
         requested = orig_bj.get("model", "")
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001, S110 - malformed client body ⇒ empty dict; the 502 path below reports it
         pass
 
     chain = srv.chain_for(requested)
@@ -583,7 +583,7 @@ def forward_with_failover(handler, srv) -> None:
             status, rhdrs = resp.status, dict(resp.headers)
         except urllib.error.HTTPError as exc:
             resp, status, rhdrs = exc, exc.code, dict(exc.headers)
-        except Exception:  # provider unreachable → fail over (don't 502 outright)
+        except Exception:  # noqa: BLE001 - provider unreachable → fail over, not a 502
             srv.inflight_dec(route)
             srv.observer.record(srv.observer.classify(okey, 503, {}, {},
                                 expected_model=expected), count_usage=False, session=session_id,
@@ -621,7 +621,7 @@ def forward_with_failover(handler, srv) -> None:
                     srv.inflight_dec(route)  # release the spent first attempt's slot
                     try:
                         resp.close()
-                    except Exception:  # best-effort close of the spent attempt's fd
+                    except Exception:  # noqa: BLE001, S110 - best-effort close of a spent fd
                         pass
                     srv.inflight_inc(route)
                     start = time.monotonic()
@@ -634,7 +634,7 @@ def forward_with_failover(handler, srv) -> None:
                         status, rhdrs = resp.status, dict(resp.headers)
                     except urllib.error.HTTPError as exc:
                         resp, status, rhdrs = exc, exc.code, dict(exc.headers)
-                    except Exception:  # unreachable on retry → fail over, same as a
+                    except Exception:  # noqa: BLE001 - unreachable on retry → fail over, as a
                         # first-attempt connection error (no further retry).
                         srv.observer.record(
                             srv.observer.classify(okey, 503, {}, {}, expected_model=expected),
@@ -848,7 +848,7 @@ def forward_with_failover(handler, srv) -> None:
                     head_bytes += len(c)
                     if _extract(b"".join(head), ctype).get("model"):
                         break
-            except Exception:  # upstream dropped/garbled before we committed any byte
+            except Exception:  # noqa: BLE001 - upstream died before we committed a byte
                 stream_broke = True
             if stream_broke:  # nothing sent yet → treat like a failed attempt, fail over
                 srv.observer.record(
@@ -900,7 +900,7 @@ def forward_with_failover(handler, srv) -> None:
                         break
                     full.append(c)
                     ok = handler._write(c)
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - headers already committed; a partial stream is unavoidable
                 pass  # headers committed; partial stream is unavoidable
             full_bytes = b"".join(full)
             served_obs = srv.observer.classify(okey, 200, rhdrs,
@@ -929,6 +929,6 @@ def forward_with_failover(handler, srv) -> None:
             srv.inflight_dec(route)
             try:  # release the upstream socket/fd promptly (don't lean on GC)
                 resp.close()
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - best-effort socket release in finally
                 pass
         return

@@ -195,8 +195,8 @@ class GateOutcome:
 
 # --------------------------------------------------------------------- git glue
 def _git(repo: str, *args: str, timeout: int = 120) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", "-C", repo, *args],
+    return subprocess.run(  # noqa: S603 - git argv, shell=False; internal subcommands
+        ["git", "-C", repo, *args],  # noqa: S607 - git resolved via PATH by design
         capture_output=True,
         text=True,
         timeout=timeout,
@@ -225,8 +225,9 @@ def run_gitleaks(repo: str) -> GitleaksResult:
     (never imported): ``unavailable`` when the binary is absent or errors,
     ``leaks`` on a positive detection (exit 1), ``clean`` otherwise."""
     try:
-        proc = subprocess.run(
-            ["gitleaks", "detect", "--source", repo, "--no-banner", "--redact"],
+        proc = subprocess.run(  # noqa: S603 - fully literal gitleaks argv, shell=False
+            # optional external scanner, PATH lookup
+            ["gitleaks", "detect", "--source", repo, "--no-banner", "--redact"],  # noqa: S607
             capture_output=True,
             text=True,
             timeout=300,
@@ -460,7 +461,8 @@ def _pr_body(outcome: GateOutcome) -> str:
 
 
 def _default_pr_runner(argv: list[str]) -> str:
-    proc = subprocess.run(argv, capture_output=True, text=True, timeout=120)
+    # argv built by land.py; shell=False, injectable
+    proc = subprocess.run(argv, capture_output=True, text=True, timeout=120)  # noqa: S603
     if proc.returncode != 0:
         raise LandError(f"`{' '.join(argv[:3])} …` failed: {proc.stderr.strip()}")
     return proc.stdout.strip()

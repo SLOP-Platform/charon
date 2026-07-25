@@ -42,7 +42,7 @@ from .api import _invocation_name
 
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = 8080
-_TOKEN_ENV = "CHARON_GATEWAY_TOKEN"
+_TOKEN_ENV = "CHARON_GATEWAY_TOKEN"  # noqa: S105 - env-var NAME, not a credential value
 _MAX_MODELS_BYTES = 1_000_000  # cap the /models response (memory-DoS guard)
 
 

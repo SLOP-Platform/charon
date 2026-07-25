@@ -173,8 +173,10 @@ def claim(
         pass
 
     existing = _read_claim(path)
-    if _is_live(existing, now):
-        assert existing is not None
+    # `existing is not None` is spelled out rather than asserted: `_is_live`
+    # already implies it, but an `assert` for the narrowing would vanish under
+    # `python -O` and leave an AttributeError in the raise below.
+    if existing is not None and _is_live(existing, now):
         raise ClaimContended(
             f"unit {unit_id!r} is held by pid {existing.pid} "
             f"(epoch {existing.epoch}, worktree {existing.worktree})"

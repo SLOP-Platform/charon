@@ -13,7 +13,7 @@ try:  # version is owned by pyproject.toml; never duplicated as a literal here
     from importlib.metadata import version as _version
 
     __version__ = _version("charon")
-except Exception:  # pragma: no cover - source checkout without install
+except Exception:  # noqa: BLE001 - no install metadata ⇒ sentinel  # pragma: no cover
     __version__ = "0+unknown"
 
 # ADR-0002 INV-B5 runtime guard: Charon must never share a process with a host project.

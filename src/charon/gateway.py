@@ -119,7 +119,7 @@ _tier_pools = routing_policy.tier_pools
 
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = 8080
-_TOKEN_ENV = "CHARON_GATEWAY_TOKEN"
+_TOKEN_ENV = "CHARON_GATEWAY_TOKEN"  # noqa: S105 - env-var NAME, not a credential value
 
 
 class GatewayBindRefused(Exception):
@@ -822,7 +822,11 @@ def run(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> int:
     tq = f"?token={cfg.token}" if cfg.token else ""
     if cfg.host in ("127.0.0.1", "localhost", "::1"):
         print(f"  console: {server.url}/{tq} (local only)", file=sys.stderr)
-    elif cfg.host == "0.0.0.0":
+    # noqa reason: this is a COMPARISON against the operator's configured host, not
+    # a bind. The bind default is `_DEFAULT_HOST = "127.0.0.1"`; reaching this branch
+    # requires the operator to have explicitly asked for a bind-all listener, and all
+    # the branch does is print a LAN console URL instead of a loopback one.
+    elif cfg.host == "0.0.0.0":  # noqa: S104
         import socket
         try:
             lan = socket.gethostbyname(socket.gethostname())

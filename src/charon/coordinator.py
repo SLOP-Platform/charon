@@ -243,7 +243,7 @@ def _consult_reviewer(
         return False, "apply-with-consensus requires a reviewer; none configured (fail-closed)"
     try:
         findings = reviewer.review(unit, outcome)
-    except Exception as exc:  # timeout / unavailable / crash ⇒ fail closed
+    except Exception as exc:  # noqa: BLE001 - timeout / unavailable / crash ⇒ fail closed
         return False, f"reviewer error (fail-closed): {exc}"
     if findings.passes:
         return True, "reviewer passed"

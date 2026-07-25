@@ -47,11 +47,28 @@ class AcceptanceCheck:
             )
 
     def verify(self, cwd: str, timeout: int = 600) -> bool:
-        """Run the check against ``cwd``. True iff exit code 0."""
+        """Run the check against ``cwd``. True iff exit code 0.
+
+        SECURITY — trust boundary for the ``shell=True`` below. Running an
+        operator-authored command string IS this class's whole purpose (INV-6:
+        acceptance is executable, never prose), and real criteria use shell
+        grammar (``pytest x && ruff check``, pipes, globs), so ``shlex.split``
+        is not a substitute. ``self.cmd`` is therefore treated as trusted input
+        and MUST only ever be populated from a trusted source:
+          - the CLI / library caller (already at full local privilege), or
+          - ``POST /v1/runs``'s ``accept`` list, which sits behind
+            ``service.app.require_token`` and executes in the worker's
+            auto-created sandbox worktree (``RunRequest`` deliberately has no
+            ``repo`` field, so a caller cannot aim a run at a host path).
+        Consequence: anyone who can authenticate to the service can run
+        commands as the worker — that is the product's stated capability, not a
+        bypass. Do NOT widen this by accepting a ``cmd`` from an unauthenticated
+        surface, and do not relax the service token gate.
+        """
         try:
-            proc = subprocess.run(
+            proc = subprocess.run(  # noqa: S602 - see the SECURITY note above
                 self.cmd,
-                shell=True,  # noqa: S602
+                shell=True,
                 cwd=cwd,
                 timeout=timeout,
                 capture_output=True,

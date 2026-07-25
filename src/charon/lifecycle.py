@@ -184,7 +184,7 @@ def subprocess_preflight_seam(
     def _run(argv: list[str]) -> int:
         import subprocess
 
-        return subprocess.call(argv)
+        return subprocess.call(argv)  # noqa: S603 - operator-configured script argv, shell=False
 
     call = runner or _run
 

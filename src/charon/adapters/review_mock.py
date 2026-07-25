@@ -19,7 +19,7 @@ __all__ = ["MockReviewer", "ReviewMode", "ReviewerError"]
 
 
 class ReviewMode(enum.Enum):
-    PASS = "pass"  # empty findings → gate passes
+    PASS = "pass"  # noqa: S105 - review VERDICT enum member, not a credential
     BLOCK = "block"  # blocking findings → gate refuses
     ERROR = "error"  # raises → gate must fail CLOSED
     FLAKY = "flaky"  # errors `k` times then passes (breaker / recovery)

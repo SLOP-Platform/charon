@@ -31,7 +31,7 @@ def _load_manifest() -> dict:
     try:
         import tomllib
         return tomllib.loads(manifest_path.read_text())
-    except Exception:
+    except Exception:  # noqa: BLE001 - unreadable/absent manifest ⇒ empty, never fatal
         return {}
 
 

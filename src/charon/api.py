@@ -290,7 +290,7 @@ def run_task(
             for b in run_backends.values():
                 try:
                     b.kill()
-                except Exception:
+                except Exception:  # noqa: BLE001, S110 - best-effort reap in finally; a kill() failure must not mask the run result
                     pass
             if proxy_server is not None:
                 proxy_server.shutdown()
@@ -438,7 +438,7 @@ def list_ledgers(state_dir: str = DEFAULT_STATE_DIR) -> list[dict]:
             continue
         try:
             led = Ledger.load(sdir, child.name)
-        except Exception:
+        except Exception:  # noqa: BLE001, S112 - corrupt/foreign state dir is skipped, never fatal to a listing
             continue  # not a valid ledger (bad id / corrupt) — omit, don't crash
         remaining = sorted(led.remaining())
         usage = led.cumulative_usage()

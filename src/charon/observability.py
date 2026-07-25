@@ -110,7 +110,7 @@ class Observability:
                 },
             )
             netutil.open_keyed(req, timeout=5)
-        except Exception:  # noqa: BLE001 — non-blocking by design
+        except Exception:  # noqa: BLE001, S110 - non-blocking by design
             pass
 
     def _export_langfuse(self, event: ObsEvent) -> None:
@@ -146,5 +146,5 @@ class Observability:
                 headers={"Content-Type": "application/json"},
             )
             netutil.open_keyed(req, timeout=5)
-        except Exception:  # noqa: BLE001 — non-blocking by design
+        except Exception:  # noqa: BLE001, S110 - non-blocking by design
             pass

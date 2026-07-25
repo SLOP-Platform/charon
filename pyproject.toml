@@ -49,7 +49,34 @@ src = ["src", "tests", "tools"]
 extend-exclude = ["tools/_vendor"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP"]
+# S  = flake8-bandit (security). Adopted 2026-07-24 to replace bespoke pattern
+#      matching: the hand-rolled tools/check_security.py reported CLEAN while `S`
+#      surfaced 72 real findings in src/ (incl. the one `shell=True` and a
+#      bind-all-interfaces literal). Security is a merge-blocking ratchet — every
+#      finding is either fixed or carries a NARROW per-line `# noqa: S###` with a
+#      written reason. Never blanket-disable a code here to make the gate pass.
+# BLE = flake8-blind-except. `except Exception` hides real faults; deliberate
+#      graceful-degrade sites carry a per-line `# noqa: BLE001` naming what
+#      degrades and why swallowing is correct there.
+select = ["E", "F", "I", "B", "UP", "S", "BLE"]
+
+[tool.ruff.lint.per-file-ignores]
+# Test-suite carve-outs. Codes are ENUMERATED, never the whole `S` prefix, so a
+# newly-added bandit rule (weak hash, disabled TLS verify, unsafe deserialize, …)
+# still fires inside tests/ instead of being silently pre-approved.
+"tests/**" = [
+    "S101",  # `assert` IS the test assertion mechanism
+    "S104",  # "0.0.0.0" appears as bind-address FIXTURE DATA in gateway tests
+    "S105",  # fake token/env-name literals in fixtures — no real credential
+    "S106",  # same, passed as a keyword argument
+    "S107",  # same, as a default argument
+    "S108",  # /tmp paths are the subject under test for temp-file handling
+    "S110",  # try/except/pass in teardown helpers — best-effort cleanup
+    "S310",  # urlopen against the test's own loopback stub server
+    "S603",  # subprocess with argv lists (shell=False) driving the CLI under test
+    "S607",  # partial paths ("git", "python3") to reach the ambient toolchain
+    "BLE001",  # broad catches asserting "does not raise" behaviour
+]
 
 [tool.mypy]
 python_version = "3.11"

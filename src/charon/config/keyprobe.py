@@ -75,7 +75,7 @@ def validate_provider_key(
                     if isinstance(mid, str) and mid:
                         first_model_id = mid
                         break
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 - any /models failure falls through to the completion probe
         pass  # fall through to the completion probe
 
     # If /models already proved the key works, that's sufficient — return early

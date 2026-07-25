@@ -90,8 +90,9 @@ def _run_ruff(repo: str, files: list[str], timeout: int) -> ScanResult:
         return ScanResult("ruff", "B", "skipped", note="no .py files in diff")
     t0 = time.monotonic()
     try:
-        proc = subprocess.run(
-            ["ruff", "check", "--select", "S", "--", *py_files],
+        proc = subprocess.run(  # noqa: S603 - literal flags; diff paths after `--`
+            # ruff resolved via PATH by design
+            ["ruff", "check", "--select", "S", "--", *py_files],  # noqa: S607
             capture_output=True, text=True, timeout=timeout, cwd=repo,
         )
     except FileNotFoundError:
@@ -116,8 +117,9 @@ def _run_shellcheck(repo: str, files: list[str], timeout: int) -> ScanResult:
         return ScanResult("shellcheck", "B", "skipped", note="no shell files in diff")
     t0 = time.monotonic()
     try:
-        proc = subprocess.run(
-            ["shellcheck", "--format", "gcc", "--", *sh_files],
+        proc = subprocess.run(  # noqa: S603 - literal flags; diff paths after `--`
+            # shellcheck via PATH; absence handled
+            ["shellcheck", "--format", "gcc", "--", *sh_files],  # noqa: S607
             capture_output=True, text=True, timeout=timeout, cwd=repo,
         )
     except FileNotFoundError:
@@ -141,8 +143,8 @@ def _run_actionlint(repo: str, files: list[str], timeout: int) -> ScanResult:
         return ScanResult("actionlint", "B", "skipped", note="no workflow files in diff")
     t0 = time.monotonic()
     try:
-        proc = subprocess.run(
-            ["actionlint", "--", *wf_files],
+        proc = subprocess.run(  # noqa: S603 - literal flags; diff paths after `--`
+            ["actionlint", "--", *wf_files],  # noqa: S607 - actionlint via PATH; absence handled
             capture_output=True, text=True, timeout=timeout, cwd=repo,
         )
     except FileNotFoundError:
@@ -167,8 +169,9 @@ def _run_semgrep(
         return ScanResult("semgrep", "C", "skipped", note="no matching files exist")
     t0 = time.monotonic()
     try:
-        proc = subprocess.run(
-            ["semgrep", "--config", ruleset, "--quiet", "--json", "--", *existing],
+        proc = subprocess.run(  # noqa: S603 - pinned ruleset; paths after `--`
+            # semgrep via PATH; absence handled
+            ["semgrep", "--config", ruleset, "--quiet", "--json", "--", *existing],  # noqa: S607
             capture_output=True, text=True, timeout=timeout, cwd=repo,
         )
     except FileNotFoundError:

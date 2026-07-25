@@ -39,7 +39,7 @@ except ImportError as exc:  # pragma: no cover
 
 from .. import __version__, api
 
-_TOKEN_ENV = "CHARON_SERVICE_TOKEN"
+_TOKEN_ENV = "CHARON_SERVICE_TOKEN"  # noqa: S105 - env-var NAME, not a credential value
 _QUEUE_DIR_ENV = "CHARON_QUEUE_DIR"
 
 

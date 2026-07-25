@@ -172,7 +172,7 @@ class CoordinatorRunner:
             for b in backends.values():
                 try:
                     b.kill()
-                except Exception:
+                except Exception:  # noqa: BLE001, S110 - best-effort backend reap in finally
                     pass
 
 
@@ -388,7 +388,7 @@ class Scheduler:
         try:
             res = self._runner(unit, claim.worktree, cost_gate=gate)
             return res.status, res.note, res.checkpoints, tuple(res.verified)
-        except Exception as exc:  # isolation: a unit's crash is its own result
+        except Exception as exc:  # noqa: BLE001 - isolation: a unit's crash is its own result
             return "error", f"{type(exc).__name__}: {exc}", 0, ()
 
     def _settle(

@@ -484,7 +484,10 @@ def _ask_to_switchboard(ask: ModelInvoker) -> SwitchboardClient:
             return [sentinel]
 
         def deliver(self_inner, route: _PlannerRoute, need: PlannerNeed) -> dict | None:  # noqa: N805
-            assert route is sentinel
+            # Explicit raise, not `assert` (stripped under `python -O`): the
+            # injected adapter can only ever be handed its own sentinel route.
+            if route is not sentinel:
+                raise ValueError(f"injected-ask got a foreign route: {route.label!r}")
             return ask(need.prompt)
 
     return _Injected()

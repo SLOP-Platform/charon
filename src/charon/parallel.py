@@ -185,7 +185,7 @@ def _run_one(unit: Unit, gate: SharedBudget, state_dir: str) -> dict:
         )
         out["goal"] = unit.goal  # so the consumer can map results back to units
         return out
-    except Exception as exc:  # one unit's failure never corrupts a sibling
+    except Exception as exc:  # noqa: BLE001 - one unit's failure never corrupts a sibling
         return {"status": "error", "goal": unit.goal,
                 "note": f"{type(exc).__name__}: {exc}"}
 

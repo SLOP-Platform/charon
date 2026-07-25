@@ -166,7 +166,9 @@ def _tracked_files() -> list[str]:
     without having scanned anything. Both cases raise loudly so the gate/CI
     exits non-zero instead of silently no-op'ing.
     """
-    result = subprocess.run(["git", "ls-files", "-z"], capture_output=True, text=True, check=False)
+    # git via PATH by design; argv list, shell=False
+    result = subprocess.run(["git", "ls-files", "-z"],  # noqa: S607
+                            capture_output=True, text=True, check=False)
     if result.returncode != 0:
         raise RuntimeError(
             f"git ls-files failed (rc={result.returncode}) — refusing to run public-clean on an "
@@ -189,7 +191,9 @@ def _staged_content(rel: str) -> str | None:
     index (e.g. a deletion) or when the staged blob is binary/undecodable, which
     the caller skips (mirrors ``check_file``'s binary handling).
     """
-    result = subprocess.run(["git", "show", f":{rel}"], capture_output=True, check=False)
+    # git argv, shell=False; `rel` is a tracked path from git ls-files, not user input
+    result = subprocess.run(["git", "show", f":{rel}"],  # noqa: S603, S607
+                            capture_output=True, check=False)
     if result.returncode != 0:
         return None
     try:

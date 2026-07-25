@@ -167,7 +167,7 @@ def try_handle_control_plane(handler, srv) -> bool:
             except ValueError as exc:
                 handler._json(400, {"error": {"message": str(exc)}})  # validation msg only
                 return True
-            except Exception:
+            except Exception:  # noqa: BLE001 - HTTP boundary: 400 without leaking a path
                 handler._json(400, {"error": {"message": "setup write failed"}})  # no path leak
                 return True
             handler._json(status, obj)

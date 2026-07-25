@@ -260,7 +260,8 @@ def run_gate() -> int:
 
     for cmd, label in CHECKS:
         print(f"  [{label}] ", end="", flush=True)
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        # cmd from the literal CHECKS table; shell=False
+        result = subprocess.run(cmd, capture_output=True, text=True)  # noqa: S603
         if result.returncode != 0:
             print(f"FAILED (exit {result.returncode})")
             if result.stderr:

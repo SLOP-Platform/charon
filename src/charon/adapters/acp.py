@@ -99,7 +99,8 @@ class AcpBackend:
                 self._log_fh = log_path.open("ab")
             except OSError:
                 pass
-        self._proc = subprocess.Popen(
+        # argv list, shell=False; operator-configured agent command
+        self._proc = subprocess.Popen(  # noqa: S603
             self.command,
             cwd=str(worktree),
             env=merged,
@@ -113,7 +114,11 @@ class AcpBackend:
     def _readline(self, deadline: float) -> str:
         """Read one NDJSON line, bounded by ``deadline`` (monotonic). Raises
         AcpError on timeout or EOF — so a hung agent cannot block forever."""
-        assert self._proc is not None and self._proc.stdout is not None
+        # An explicit raise, not `assert`: asserts are compiled out under
+        # `python -O`, which would turn this into an AttributeError on None
+        # deeper in the loop instead of the documented AcpError.
+        if self._proc is None or self._proc.stdout is None:
+            raise AcpError("agent process not started")
         while b"\n" not in self._buf:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -239,6 +244,6 @@ class AcpBackend:
         if self._log_fh is not None:
             try:
                 self._log_fh.close()
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001, S110 - best-effort close of the agent log fd during teardown
                 pass
             self._log_fh = None
