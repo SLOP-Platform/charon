@@ -6,7 +6,16 @@ priority: 2
 branch: feat/droid-lifecycle-reap
 owns: fleet/fleet-droid.sh, fleet/reap-orphans.sh, fleet/tests/test_droid_reap.sh, fleet/foreman.sh
 serial_justified: One cohesive droid-lifecycle safety change — the cleanup path + its out-of-band reaper + the shared preserve-committed-work guard all touch the same claim/worktree invariant; splitting orphans the contract.
-depends_on: FLEET-DEMAND-DRIVEN-ROUTING, TICKET-MAP-GATE
+depends_on: FLEET-DEMAND-DRIVEN-ROUTING, TICKET-MAP-GATE, DROID-CLIENT-PREFLIGHT-PATH
+real-dep-droid-client-preflight: |
+  ADDED 2026-07-24 — MERGE-ORDER edge, NOT a build prerequisite [[disjoint-owns-not-no-dependency]].
+  DROID-CLIENT-PREFLIGHT-PATH also owns fleet/fleet-droid.sh (PATH derivation, unconditional gateway
+  token re-derivation, the idle push droid, and the F4 fix that stops a missing work_class bypassing
+  detention/capped-exclusion/cost-cap). It is BUILT, TESTED and pushed while this ticket is unstarted,
+  so it lands FIRST as the launcher ANCHOR and this ticket rebases onto the landed launcher
+  [[anchor-lines-serialize-parallel-work]]. LAUNCHER-CRASH-PARTIAL-DETECT already depends on this
+  ticket, so it inherits the same ordering transitively — one edge sequences the whole launcher family
+  rather than five pairwise ones.
 real-dep: both edit fleet/fleet-droid.sh (FLEET-DEMAND rewrites 131 lines of the claim/resolve path); LIFECYCLE-REAP must sequence onto FLEET-DEMAND's LANDED version to avoid clobbering it.
 real-dep: TICKET-MAP-GATE also edits fleet/fleet-droid.sh (a ten-line guard-branch anchor at :375, before p0_worktree_setup at :408) and is ALREADY BUILT+PUSHED at b784de1; merge order = built work anchors first, so LIFECYCLE-REAP sequences onto its LANDED version rather than clobbering the dispatch-time lease gate. Added 2026-07-24 with TICKET-MAP-GATE's boarding.
 dep-kind: build

@@ -195,6 +195,19 @@ emit_compact() {
 }
 
 # ----- main -----
+# SOURCE GUARD (DROID-CLIENT-PREFLIGHT, 2026-07-24): sourcing this file must expose its
+# HELPERS — `bearer_token()` above is the ONE canonical gateway-token derivation, and the
+# header comment already declares the shell's CHARON_GATEWAY_TOKEN authoritative-stale —
+# WITHOUT running the live probe, writing the registry, or installing an EXIT trap that
+# would clobber the sourcing script's own. fleet-droid.sh's pre-claim gateway preflight
+# reuses bearer_token() through this seam rather than hand-rolling a second JSON reader
+# (a third copy of that parse already exists at preflight.sh:detect_gateway_token_drift;
+# this guard is how the count stops growing).
+# Executing normally (`bash env-registry.sh`) is unchanged: $0 == ${BASH_SOURCE[0]}.
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then
+  return 0
+fi
+
 _probe_tmp="$(mktemp 2>/dev/null || echo "/tmp/env-registry-probe.$$")"
 trap 'rm -f "$_probe_tmp" 2>/dev/null || true' EXIT
 _probed_status="$(live_probe "$_probe_tmp" | head -1)"

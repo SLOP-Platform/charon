@@ -104,6 +104,27 @@ case ",modelA,modelC," in
   *) bad "e1 pick stays within the offered --candidates set (got '$picked', outside modelA,modelC)" ;;
 esac
 
+echo "== (f) F4 MONEY GUARDRAIL: a ticket with NO work_class must FAIL CLOSED =="
+# Detention, gateway capped-exclusion AND the cost cap all scope BY work_class. This arm used
+# to emit the FULL UNFILTERED CHAIN and exit 0 behind a stderr note — so simply omitting the
+# field bypassed every money guardrail at once, and, exiting 0, could never go RED.
+# validate_board.sh mitigates it at BOARD level, but a fail-open code path must not depend on
+# a separate check catching the input first.
+printf 'tier: strong\n' > "$D/ticket-no-workclass.md"
+rc=0
+out="$(CHARON_TIER_MODELS="$D/tier-models.tsv" CHARON_SCORECARD_TSV="$D/scorecard-empty.tsv" \
+       bash "$SRC/fleet-droid.sh" resolve strong "$D/ticket-no-workclass.md" 2>/dev/null)" || rc=$?
+check "f1 no work_class exits 9 (distinct from 3=no-chain, 7=all-detained)" "$rc" "9"
+check "f2 no work_class emits NO chain at all"                              "$out" ""
+# NON-VACUITY CONTROL: the very same invocation WITH a work_class must still resolve normally,
+# so f1/f2 cannot pass because resolve is simply broken.
+printf 'tier: strong\nwork_class: routing\n' > "$D/ticket-has-workclass.md"
+rc=0
+out="$(CHARON_TIER_MODELS="$D/tier-models.tsv" CHARON_SCORECARD_TSV="$D/scorecard-empty.tsv" \
+       bash "$SRC/fleet-droid.sh" resolve strong "$D/ticket-has-workclass.md" 2>/dev/null)" || rc=$?
+check "f3 CONTROL: with work_class still exits 0"        "$rc" "0"
+check "f4 CONTROL: with work_class still emits the chain" "$out" "modelA,modelB,modelC"
+
 echo
 echo "--- $PASS passed, $FAIL failed ---"
 [ "$FAIL" -eq 0 ] || exit 1

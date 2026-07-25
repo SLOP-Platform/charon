@@ -156,7 +156,7 @@ run_toolow_timeout_case() {  # rc=124 WITH streamed output -> model-attributable
   f="$(req_json_for "$spool" "$ref")"
   if [ -n "$f" ]; then
     ok "timeout kill (rc=124) WITH streamed output -> capture row IS enqueued (latency is a failure class)"
-    grep -q 'BLOCK' "$f" \
+    grep -q '"actual_verdict": "BLOCK"' "$f" \
       && ok "  ...and the row's verdict is BLOCK (model-attributable too-slow)" \
       || bad "  ...but the row's verdict is not BLOCK: $(cat "$f")"
   else
