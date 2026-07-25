@@ -132,8 +132,41 @@ run_infra_fault_case "connection refused" "TICK-INFRA-CONNREF" 'echo "Error: con
 run_infra_fault_case "connection reset" "TICK-INFRA-CONNRST" 'echo "read: connection reset by peer" >&2; exit 1'
 run_infra_fault_case "context deadline exceeded" "TICK-INFRA-CTXDL" 'echo "context deadline exceeded" >&2; exit 1'
 run_infra_fault_case "sqlite database is locked" "TICK-INFRA-DBLOCK" 'echo "Error: database is locked" >&2; exit 1'
-run_infra_fault_case "timeout kill (rc=124)" "TICK-INFRA-TIMEOUT" 'echo "hanging..." >&2; exit 124'
+# rc=124 is NO LONGER a blanket infra fault. EVAL-LATENCY-GATE (see the rc=124 branch in
+# charon-run.sh and fleet/tests/dogfood-latency-gate.test.sh) split it into TWO sub-cases,
+# because "the timeout wrapper fired" says nothing on its own about whose fault it was:
+#   - NO output before the budget  -> leg/infra hang, NEVER model-attributable -> no row
+#   - output streamed, then killed -> the model was simply TOO SLOW to finish, which IS a
+#     model verdict (latency-is-a-failure-class) -> BLOCK, same as any other quality fail
+# This case previously asserted "rc=124 -> never a row" and had been RED on master since
+# EVAL-LATENCY-GATE landed: the stub writes "hanging..." to stderr, charon-run.sh folds
+# stderr into $OUT (`>> "$OUT" 2>&1`), so the leg looked like streamed output and correctly
+# BLOCKed. The BEHAVIOUR was right and the EXPECTATION was stale. Pinning both sub-cases
+# now, so neither direction can regress unnoticed. (Folded in per the standing "never leave
+# a pre-existing red" rule; confirmed identical on origin/master before touching it.)
+run_infra_fault_case "timeout kill (rc=124), NO output — leg hang" "TICK-INFRA-TIMEOUT" 'exit 124'
 run_infra_fault_case "opaque rc=3 (phi-4-style)" "TICK-INFRA-RC3" 'echo "unexpected failure" >&2; exit 3'
+
+# Counterpart of the case above: rc=124 WITH streamed output must still be charged to the
+# model. Inlined rather than added to run_infra_fault_case, whose whole contract is "expect
+# NO row".
+d="$(mktemp -d)"; cp -r "$SRC/capture" "$d/"; cp "$SRC/charon-run.sh" "$d/"
+spool="$d/spool"; mkdir -p "$spool"
+cwd="$(mktemp -d)"; brief="$d/brief.md"; echo "do the thing" > "$brief"; outlog="$d/out.txt"
+printf '#!/usr/bin/env bash\necho "streaming real tokens"\nexit 124\n' > "$BIN/opencode"
+chmod +x "$BIN/opencode"
+CAPTURE_SPOOL_DIR="$spool" CHARON_JOB_REF="TICK-TOO-SLOW" CHARON_JOB_WORK_CLASS="bugfix" \
+  bash "$d/charon-run.sh" "$cwd" "$outlog" "$brief" my-model >/dev/null 2>&1 || true
+f="$(req_json_for "$spool" "TICK-TOO-SLOW")"
+if [ -n "$f" ]; then
+  ok "timeout kill (rc=124) WITH output -> DOES enqueue a row (too-slow is a model verdict)"
+  grep -q '"actual_verdict": "BLOCK"' "$f" \
+    && ok "too-slow row is actual_verdict=BLOCK" \
+    || bad "too-slow row is actual_verdict=BLOCK (body: $(cat "$f"))"
+else
+  bad "timeout kill (rc=124) WITH output -> DOES enqueue a row (found none)"
+fi
+rm -rf "$d" "$cwd"
 
 echo "== charon-run.sh: a genuine non-infra model failure still enqueues BLOCK (unchanged) =="
 d="$(mktemp -d)"; cp -r "$SRC/capture" "$d/"; cp "$SRC/charon-run.sh" "$d/"

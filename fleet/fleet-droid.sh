@@ -16,6 +16,40 @@
 # (claim once, stand down when empty); raise `--retries` to ride out longer dependency gaps, or `--retries 0` = NEVER stand down (persistent tab: polls every --wait min forever, auto-claiming as work appears).
 set -euo pipefail
 FLEET="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ── DROID-CLIENT-PREFLIGHT (2026-07-24) ──────────────────────────────────────
+# Same fault class charon-run.sh fixes, one layer up. `~/.local/bin` is added to
+# PATH ONLY by ~/.bashrc / ~/.profile (interactive or login shells). A tab
+# launched via setsid/nohup/`sh -c`/a tool-invoked wrapper gets neither — and
+# BOTH `opencode` (the work client) AND `gh` (how this launcher publishes the
+# PR) live in ~/.local/bin. So the whole droid loop silently loses two binaries
+# based on nothing but how the tab was started.
+# APPEND, never prepend: an already-resolvable binary (test stub, deliberate
+# operator override) must keep winning; this only adds a fallback location.
+case ":${PATH}:" in
+  *":$HOME/.local/bin:"*) : ;;
+  *) [ -d "$HOME/.local/bin" ] && export PATH="$PATH:$HOME/.local/bin" ;;
+esac
+# Fail LOUD and EARLY on a missing prereq rather than letting it surface later
+# disguised as ticket/model/provider failure. Checked here: the binaries this
+# launcher itself shells out to. The work CLIENT is preflighted by
+# charon-run.sh (exit 4) — it owns that check because $CHARON_AGENT_CMD is
+# swappable and this layer must not assume which client is in play.
+_missing=()
+for _b in git gh python3 timeout curl; do
+  command -v "$_b" >/dev/null 2>&1 || _missing+=("$_b")
+done
+if [ "${#_missing[@]}" -gt 0 ]; then
+  {
+    echo "[fleet-droid] FATAL: required binary not found: ${_missing[*]}"
+    echo "[fleet-droid]   PATH searched: $PATH"
+    echo "[fleet-droid]   LOCAL ENVIRONMENT fault — no ticket claimed, nothing attempted."
+    echo "[fleet-droid]   Likely cause: launched from a non-login, non-interactive shell"
+    echo "[fleet-droid]   (setsid/nohup/sh -c) that sourced neither ~/.bashrc nor ~/.profile."
+  } >&2
+  exit 4
+fi
+unset _b _missing
 CHARON="/home/stack/code/charon"   # DEFAULT product repo (a ticket's `repo:` field overrides per-ticket)
 # OFF-CLAUDE WORK CLIENT (SWAPPABLE). The droid's actual work runs THROUGH THE CHARON GATEWAY, not
 # `claude -p` (which speaks to Anthropic directly and burns Claude tokens). Default client =
@@ -341,7 +375,22 @@ resolve_runnable_chain(){
           # `CAPPED-FILTER-UNAVAILABLE:` line prints, a `capped-filter-unavailable` row lands in the
           # provider-exhaustion ledger, and the caller burns one loop-guard attempt so a persistent
           # outage QUARANTINES the ticket and surfaces it to the operator.
-          echo "[fleet-droid] CAPPED-FILTER-UNAVAILABLE: could not read gateway capped state for cost band '$cur' (see the availability error above — commonly a 401/missing CHARON_GATEWAY_TOKEN, or the gateway being down). FAILING CLOSED: gateway capped-exclusion did NOT run, so this band's chain is NOT trusted and is NOT handed over, and NO cost spill-up is taken off an error. DETAINING '$start' work: the ticket is released and stays claimable, retried when gateway status is readable again. Export a gateway token / restore $(printf '%s' "${CHARON_GATEWAY_URL:-http://10.0.1.60:8080}") to re-enable." >&2
+          # REMEDIATION TEXT CORRECTED (DROID-CLIENT-PREFLIGHT, 2026-07-24). The old wording blamed
+          # "a 401/missing CHARON_GATEWAY_TOKEN" and told the operator to export one. BOTH halves
+          # of that were wrong in the way that matters (the old string itself is deliberately not
+          # reproduced here — fleet/tests/charon-run-client-preflight.test.sh pins its absence):
+          #   - It is a 302, not a 401. The gateway REDIRECTS an unauthenticated /charon/status and
+          #     answers with a ZERO-BYTE body, which is why the symptom surfaces as
+          #     json.loads("") -> "Expecting value: line 1 column 1 (char 0)" and why any check
+          #     comparing against 401 misses it entirely.
+          #   - Telling the operator to export one is the ACTION THAT CAUSED THE OUTAGE. A shell that already
+          #     exports a STALE CHARON_GATEWAY_TOKEN gets the SAME 302/0-byte answer as a shell with
+          #     no token at all (dogfooded both ways), and availability.py PREFERS the env var — so
+          #     exporting reproduces the failure instead of fixing it.
+          # The only correct remedy is to RE-DERIVE from the opencode config, which the pre-claim
+          # preflight at the top of this script now does automatically; reaching this line at all
+          # means the gateway went unreadable MID-RUN.
+          echo "[fleet-droid] CAPPED-FILTER-UNAVAILABLE: could not read gateway capped state for cost band '$cur' (see the availability error above — typically /charon/status answering 302 with a ZERO-BYTE body because the bearer token is missing OR STALE, or the gateway being down). FAILING CLOSED: gateway capped-exclusion did NOT run, so this band's chain is NOT trusted and is NOT handed over, and NO cost spill-up is taken off an error. DETAINING '$start' work: the ticket is released and stays claimable, retried when gateway status is readable again. FIX: do NOT 'export CHARON_GATEWAY_TOKEN' — a stale value fails identically and availability.py PREFERS the env var. RE-DERIVE it from ${CHARON_OPENCODE_CONFIG:-$HOME/.config/opencode/opencode.json} (provider.charon.options.apiKey), or restore $(printf '%s' "${CHARON_GATEWAY_URL:-http://10.0.1.60:8080}")." >&2
           exhaust_led "band:$cur" "capped-filter-unavailable" "work_class=$wc start=$start ceiling=$ceiling: /charon/status unreadable (auth/reach) — capped-exclusion did not run; DETAINED (fail closed, no spill-up)"
           return 7
         fi
@@ -551,6 +600,80 @@ cleanup(){
     fi
   fi
 }
+# ── GATEWAY / TOKEN PREFLIGHT — PRE-CLAIM (DROID-CLIENT-PREFLIGHT, instance 2) ───────────────────
+# SAME CLASS as the PATH fix at the top of this file: the launcher trusted the INVOKING SHELL'S
+# ENVIRONMENT instead of DERIVING what it needs. PATH was instance 1; the gateway bearer token is
+# instance 2, and worse — the code already documented the right answer and nobody wired it.
+#
+# WHAT WENT WRONG (real incident, 2026-07-25): a PowerShell-invoked, non-interactive bash inherited
+# no CHARON_GATEWAY_TOKEN. capability/availability.py reads the token from the AMBIENT ENV ONLY
+# (its GATEWAY_TOKEN_ENVS tuple), so its unauthenticated GET /charon/status came back 302 with a
+# ZERO-BYTE body -> json.loads("") -> "Expecting value: line 1 column 1 (char 0)". The capped-filter
+# then FAILED CLOSED and DETAINED the ticket. That fail-closed is CORRECT and is deliberately left
+# untouched. The defect is that it fired PER TICKET: claim -> detain -> re-claim -> quarantine, and
+# it chewed through FIVE tickets before the operator killed the tab.
+#
+# A token/gateway fault is a STARTUP condition, not a per-ticket one. Detect it ONCE, here, BEFORE
+# the claim loop, and stand down with a distinct code — instead of burning the board into quarantine
+# one ticket at a time. Placed before the cleanup traps so a preflight exit is clean (nothing has
+# been claimed, no worktree exists, so there is nothing to clean up).
+#
+# TOKEN DERIVATION: env-registry.sh:bearer_token() is the ONE canonical reader
+# (~/.config/opencode/opencode.json -> provider.charon.options.apiKey). Sourced through its source
+# guard in a COMMAND-SUBSTITUTION SUBSHELL, so neither its `set -uo pipefail` nor its FLEET/OUTPUT/
+# GATEWAY_URL variables can leak into this script. env-registry.sh's own header states the rule this
+# implements: "CHARON_GATEWAY_TOKEN (shell env) is documented STALE ... always re-derive from the
+# live opencode config". So the DERIVED value WINS; a disagreeing shell var is reported as drift
+# (same notion of drift as preflight.sh:detect_gateway_token_drift) and overridden, never obeyed.
+GW_URL="${CHARON_GATEWAY_URL:-http://10.0.1.60:8080}"
+_derived_tok=""
+if [ -r "$FLEET/env-registry.sh" ]; then
+  _derived_tok="$( . "$FLEET/env-registry.sh" >/dev/null 2>&1 && bearer_token 2>/dev/null || true )"
+fi
+_env_tok="${CHARON_GATEWAY_TOKEN:-}"
+if [ -n "$_derived_tok" ]; then
+  if [ -n "$_env_tok" ] && [ "$_env_tok" != "$_derived_tok" ]; then
+    {
+      echo "[fleet-droid] WARN: gateway-token-drift — CHARON_GATEWAY_TOKEN from the shell differs from"
+      echo "[fleet-droid]   the token in ${CHARON_OPENCODE_CONFIG:-$HOME/.config/opencode/opencode.json}"
+      echo "[fleet-droid]   (provider.charon.options.apiKey). opencode.json is AUTHORITATIVE; the shell"
+      echo "[fleet-droid]   value is documented stale. PREFERRING THE DERIVED TOKEN for this run."
+      echo "[fleet-droid]   Fix your shell profile (or unset CHARON_GATEWAY_TOKEN) to silence this."
+    } >&2
+  fi
+  # Export so EVERY downstream reader picks it up — capability/availability.py, assign.py's
+  # --gateway-availability probe, and any child that reads the ambient env — without each of
+  # them needing to learn how to derive it.
+  export CHARON_GATEWAY_TOKEN="$_derived_tok"
+fi
+
+# PROVE the gateway is actually readable with that token, right now. The failure signature we are
+# defending against is NOT an HTTP error code — an unauthenticated /charon/status answers 302 with an
+# EMPTY BODY, which curl reports as success. So the test is "does the body parse as a JSON object",
+# which is exactly what availability.py needs and exactly what blew up.
+_gw_body="$(curl -sS --max-time 8 \
+              -H "Authorization: Bearer ${CHARON_GATEWAY_TOKEN:-}" \
+              -H 'Accept: application/json' \
+              "$GW_URL/charon/status" 2>/dev/null || true)"
+if ! printf '%s' "$_gw_body" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if isinstance(d,dict) else 1)' 2>/dev/null; then
+  _tok_state="derived from ${CHARON_OPENCODE_CONFIG:-$HOME/.config/opencode/opencode.json}"
+  [ -n "$_derived_tok" ] || _tok_state="EMPTY — no token could be derived, and none was inherited"
+  {
+    echo "[fleet-droid] FATAL: gateway /charon/status is NOT READABLE — standing down BEFORE claiming any ticket."
+    echo "[fleet-droid]   gateway:   $GW_URL/charon/status"
+    echo "[fleet-droid]   token:     $_tok_state"
+    echo "[fleet-droid]   response:  ${#_gw_body} bytes, not a JSON object (an unauthenticated"
+    echo "[fleet-droid]              /charon/status answers 302 with a 0-byte body — that is this signature)."
+    echo "[fleet-droid]   WHY THIS IS FATAL AT STARTUP: the capped-filter fails closed and DETAINS work when"
+    echo "[fleet-droid]              it cannot read gateway state. Continuing would claim, detain and"
+    echo "[fleet-droid]              QUARANTINE ticket after ticket. ZERO tickets were claimed."
+    echo "[fleet-droid]   FIX: set provider.charon.options.apiKey in"
+    echo "[fleet-droid]        ${CHARON_OPENCODE_CONFIG:-$HOME/.config/opencode/opencode.json}, or bring \$GW_URL back up."
+  } >&2
+  exit 5
+fi
+unset _derived_tok _env_tok _gw_body _tok_state
+
 trap 'cleanup; echo "[$DROID] stood down."; exit 130' INT TERM
 trap cleanup EXIT
 wmsg=""; [ "$WAIT_MIN" -gt 0 ] && wmsg=", wait=${WAIT_MIN}m retries=${RETRIES} patience=${PATIENCE}"
