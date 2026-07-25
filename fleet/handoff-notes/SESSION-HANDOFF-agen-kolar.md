@@ -48,6 +48,40 @@ saesee-tiin (MANAGER)     charon  in-progress  -       2026-07-24T16:49:50  STAL
 The session ran far past the point this file was first written. **Where this block and the
 sections below disagree, THIS BLOCK WINS.**
 
+### 🔴 BLOCKING PRE-EXISTING RED — CLEAR THIS BEFORE YOU LAND ANYTHING
+
+`bash /home/stack/charon-private/fleet/validate_board.sh` → **rc=1**. Exact text:
+
+```
+RED  owns-collision LIVE (no dep ordering): fleet/preflight.sh <- MARKER-PROOF-MECHANIZE
+     PREFLIGHT-GATE-RUN-HELPER RECONCILE-WIRING REPO-MAP-CONVERGE SYNC-SCHEDULE
+     [ordered pairs: MARKER-PROOF-MECHANIZE|PREFLIGHT-GATE-RUN-HELPER,
+      PREFLIGHT-GATE-RUN-HELPER|RECONCILE-WIRING, PREFLIGHT-GATE-RUN-HELPER|REPO-MAP-CONVERGE,
+      PREFLIGHT-GATE-RUN-HELPER|SYNC-SCHEDULE]
+```
+
+**Why it matters more than it looks:** `land.sh` runs `validate_board.sh` as the RIG MERGE GATE
+(it does NOT run `gate.sh`). While this is RED, **every rig land refuses**. Session agen-kolar
+landed 8 PRs before this surfaced and left it standing — it is genuinely pre-existing, not caused
+by today's work, and per standing rule it is NOT to be dismissed as "not mine".
+
+**Five tickets declare `owns: fleet/preflight.sh`.** Four pairs are dep-ordered; the collision is
+the pairs that are NOT. Two routes:
+- **Narrow:** add the missing `depends_on:`/`real-dep:` edges so every pair is ordered. Fast, but it
+  leaves a 906-line god-file with 5 owners — the contention returns with the next ticket.
+- **Root:** the **operator-approved `preflight.sh` decomposition** — extract each of the 8 inline
+  `*_gate()` into `fleet/checks/<gate>.sh` + a companion test, leaving preflight a thin chain driver.
+  That also drops all 8 into the meta-gate's directory glob, so they become audited by construction.
+  **Sequencing is fixed and must be respected:** `PREFLIGHT-GATE-RUN-HELPER`'s fail-closed `_gate_run`
+  lands FIRST, the chain drains, THEN the extraction. Decomposing first would clobber 5 branches, and
+  extracting nine fail-OPEN blocks before the helper exists means fixing them nine times.
+
+**Recommendation:** narrow fix now to unblock landing, root fix as the sequenced follow-on — but that
+is an operator call, since the narrow fix is exactly the "patch the instance, leave the class" move
+this session kept flagging.
+
+---
+
 ### 🔴 OPERATOR'S P0 FOR THIS SESSION — DO THIS FIRST
 
 **`VERIFICATION-SUBSTRATE-HARDENING`** (`fleet/board/VERIFICATION-SUBSTRATE-HARDENING.md`, P0,
