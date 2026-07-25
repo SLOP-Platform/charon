@@ -48,6 +48,36 @@ saesee-tiin (MANAGER)     charon  in-progress  -       2026-07-24T16:49:50  STAL
 The session ran far past the point this file was first written. **Where this block and the
 sections below disagree, THIS BLOCK WINS.**
 
+### 🔴 OPERATOR'S P0 FOR THIS SESSION — DO THIS FIRST
+
+**`VERIFICATION-SUBSTRATE-HARDENING`** (`fleet/board/VERIFICATION-SUBSTRATE-HARDENING.md`, P0,
+frontier, `branch: feat/verification-substrate-hardening`, no deps — startable immediately).
+
+Operator directive, verbatim intent: *"can we mechanize the things being measured on the wrong
+thing so it doesn't go on habit? We need a deep investigation into how to stop fake greens. We also
+keep using search patterns that don't work (grep) and ref-citing errors, almost landing broken code.
+We need to be better."*
+
+**The class:** a check ran and did not check what its reader believed it checked. 17 instances are
+enumerated on the ticket with file:line — 7 measured-the-wrong-thing (wrong ref, wrong grep pattern,
+`git cherry` false negatives, a piped-away exit code), 8 fake-greens (a gate whose RED-set file did
+not exist; `optional:true` turning a missing enforcer into an affirmative OK; a preflight killed by
+an unbound variable so its stand-down never fired), and 2 almost-landed-broken.
+
+**Two things make this P0 rather than a cleanup:**
+- **B4 was the fix for the B-class defects and was itself one.** PR #271 nearly merged with a
+  gateway preflight that did nothing. It was caught ONLY because the land was gated on a green
+  suite — not by review, not by the author, not by CI.
+- **Discipline has already failed.** Four sub-sessions had to REFUSE manager instructions to avoid
+  propagating errors, and were right every time. The ticket explicitly forbids "another rule" as
+  the remedy.
+
+Phase 1 is investigation + an independently-reviewed design — **not code**. It carries two
+`open_questions` for the operator (how strict before people disable it; rig-only or product too).
+Evidence corpus: `/home/stack/charon-private/fleet/handoff-notes/` (38 artifacts).
+
+---
+
 ### FINAL STATE (supersedes everything below)
 - **`origin/master` = `cd8e5e1`** — **PR #271 landed the droid launcher fix**, LIVE-verified on master:
   `push-only` present (10 hits), the PATH export at `charon-run.sh:30` + `fleet-droid.sh:31`,
