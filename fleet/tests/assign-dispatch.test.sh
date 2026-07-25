@@ -28,6 +28,11 @@ check(){ [ "$2" = "$3" ] && ok "$1" || bad "$1 (expected '$3', got '$2')"; }
 D="$(mktemp -d)"
 trap 'rm -rf "$D"' EXIT
 
+# HERMETIC: the resolve hook now runs a gateway CAPPED-filter (CRIPPLE #2). Pin it to an empty
+# /charon/status snapshot (nothing capped) so these ranking tests never touch the live gateway.
+printf '{"pools":{},"balance":{},"cooldown_seconds":{}}\n' > "$D/status-clean.json"
+export CHARON_GATEWAY_STATUS_FILE="$D/status-clean.json"
+
 printf 'strong\tmodelA,modelB,modelC\n' > "$D/tier-models.tsv"
 printf 'tier: strong\nwork_class: routing\n' > "$D/ticket.md"
 

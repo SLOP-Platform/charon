@@ -127,6 +127,252 @@ detention_filter_chain(){
   ( IFS=','; echo "${kept[*]}" )
 }
 
+# ---- CRIPPLE #2/#3 (FLEET-DEMAND-DRIVEN-ROUTING): capped-filter + cost-band spill-up -------------
+# tier_canon_path: the cost-band SSOT doc. CHARON_TIER_CANON is a FILE seam (same shape as
+# CHARON_TIER_MODELS / CHARON_SCORECARD_TSV / CHARON_GATEWAY_STATUS_FILE) so tests can point the
+# parsers at a fixture SSOT. Deliberately a FILE path and never a cap VALUE: no env var can hand
+# the cost cap a number, so the cap can only ever come from a config file (see spill_ceiling_tier).
+tier_canon_path(){ echo "${CHARON_TIER_CANON:-$FLEET/state/TIER-CANON.md}"; }
+
+# cost_tier_axis: the canonical cost-band axis, CHEAPEST-FIRST, space-separated, PARSED from
+# TIER-CANON.md's CANONICAL_COST_TIERS (the single source — no hardcoded ladder in code), with a
+# fail-safe literal fallback matching that doc so the dispatcher can never die because the doc moved.
+cost_tier_axis(){
+  local axis=""
+  axis="$(awk -F'=' '/CANONICAL_COST_TIERS[[:space:]]*=/{gsub(/[^a-z, ]/,"",$2); gsub(/[ ,]+/," ",$2); sub(/^ +/,"",$2); print $2; exit}' "$(tier_canon_path)" 2>/dev/null || true)"
+  [ -n "$axis" ] || axis="economy strong frontier"   # fail-safe: matches TIER-CANON.md's axis
+  echo "$axis"
+}
+
+# next_tier_up: given a canonical cost-band tier, echo the NEXT more-expensive band on the axis
+# (economy -> strong -> frontier). Echoes EMPTY when already at the top band or when off-axis.
+next_tier_up(){
+  local cur="$1" prev="" t
+  for t in $(cost_tier_axis); do
+    [ "$prev" = "$cur" ] && { echo "$t"; return 0; }
+    prev="$t"
+  done
+  echo ""   # cur is the top band (frontier) or off-axis — no higher tier
+}
+
+# tier_rank <tier> -> 0-based position on the cheapest-first axis; EMPTY + rc 1 when off-axis.
+tier_rank(){
+  local want="$1" i=0 t
+  for t in $(cost_tier_axis); do
+    [ "$t" = "$want" ] && { echo "$i"; return 0; }
+    i=$((i+1))
+  done
+  echo ""; return 1
+}
+
+# tier_above <a> <b> -> rc 0 when band <a> is MORE EXPENSIVE than band <b>. FAIL CLOSED: if either
+# band is off-axis (unrankable) the answer is "yes, above" — an unrecognisable band is never
+# treated as cheap enough to escalate into.
+tier_above(){
+  local ra rb
+  ra="$(tier_rank "$1")" || return 0
+  rb="$(tier_rank "$2")" || return 0
+  { [ -n "$ra" ] && [ -n "$rb" ]; } || return 0
+  [ "$ra" -gt "$rb" ]
+}
+
+# ---- COST-CAP GUARDRAIL (MONEY PATH) ------------------------------------------------------------
+# spill_ceiling_tier: the MOST EXPENSIVE cost band a COST-driven spill-up may escalate INTO, read
+# from `SPILL_UP_COST_CEILING` in the cost-band SSOT (fleet/state/TIER-CANON.md — the same doc that
+# already owns the axis and the $/Mtok thresholds; the cap is a routing-cost policy, so it lives
+# with the cost-band definition rather than in a new parallel config).
+#
+# FAIL CLOSED, by construction: this echoes EMPTY whenever the key is missing, empty, malformed, or
+# names a band that is not on the axis — and the caller treats EMPTY as "no cost-driven spill-up at
+# all" (ceiling := the ticket's own starting band). An absent/blank/garbage value therefore means
+# ZERO escalation, never "no cap". There is deliberately NO in-code default ceiling: a hardcoded
+# fallback here would be exactly the "unset config silently means unlimited" hole this guardrail
+# exists to close (and would be a second source of truth the doc could drift from).
+#
+# Adopt-vs-build: no maintained library models "a bash dispatcher's cost-band escalation ladder"
+# (LiteLLM's max_budget/soft-budget caps SPEND at the gateway plane — a different, complementary
+# control that cannot refuse an escalation decision made HERE, before any request is issued), so
+# the guardrail is a ~20-line policy read over config we already own.
+spill_ceiling_tier(){
+  local raw=""
+  raw="$(awk -F'=' '/^[[:space:]]*SPILL_UP_COST_CEILING[[:space:]]*=/{gsub(/[^a-zA-Z]/,"",$2); print tolower($2); exit}' "$(tier_canon_path)" 2>/dev/null || true)"
+  [ -n "$raw" ] || { echo ""; return 0; }
+  tier_rank "$raw" >/dev/null 2>&1 || { echo ""; return 0; }   # off-axis value -> fail closed
+  echo "$raw"
+}
+
+# exhaust_led <model-or-band> <event> <note>: append ONE row to the provider-exhaustion ledger the
+# fleet already records routing/exhaustion events in. Same file, same 5-column schema
+# (ts/job/model/event/note) and the same CHARON_EXHAUST_LEDGER override that charon-run.sh:17-21
+# owns — a cost-cap hit is an exhaustion event, so it belongs in THAT ledger, not a new sink.
+# (Not factored into a shared helper: charon-run.sh sources no shared lib, and rewiring the live
+# work-executor's ledger writer mid-branch is a bigger money-path blast radius than this 3-liner.)
+# Best-effort by design: a ledger write can never fail a dispatch decision.
+COST_CAP_LEDGER="${CHARON_EXHAUST_LEDGER:-/home/stack/charon-private/fleet/provider-exhaustion-ledger.tsv}"
+exhaust_led(){
+  [ -f "$COST_CAP_LEDGER" ] || printf 'ts\tjob\tmodel\tevent\tnote\n' > "$COST_CAP_LEDGER" 2>/dev/null || true
+  printf '%s\t%s\t%s\t%s\t%s\n' "$(date -u +%FT%TZ)" "${CHARON_JOB_REF:-${DROID:-fleet-droid}}" \
+    "$1" "$2" "$3" >> "$COST_CAP_LEDGER" 2>/dev/null || true
+  return 0
+}
+
+# capped_filter_chain: drop gateway-CAPPED models (every provider that can serve the id is
+# parked/drained/cooled per /charon/status — CRIPPLE #2's GatewayStatusAvailability) from a chain.
+# Prints the surviving comma chain on stdout. Return contract, mirroring availability.py's
+# EXIT_ALL_CAPPED / EXIT_STATUS_UNAVAILABLE:
+#   0  filtered against a snapshot we actually READ; stdout = survivors.
+#   7  every model is POSITIVELY capped (tier exhausted -> caller may SPILL UP).
+#   8  the capped-exclusion COULD NOT RUN (gateway unreachable / 401 / no bearer token /
+#      unparseable snapshot / python3 or availability.py missing). We know nothing about capped
+#      state -> caller must DETAIN, never spill and never treat this as "nothing capped".
+#
+# FAIL-OPEN DEFECT, FIXED HERE (money path). This used to swallow stderr (`2>/dev/null`) and map
+# every non-7 error to "keep all, rc 0" — byte-for-byte identical to a healthy gateway reporting
+# nothing capped. A dispatcher running without a gateway token (the live gateway answers 401
+# "missing or invalid bearer token" unauthenticated) therefore had the ENTIRE capped-exclusion
+# silently no-op: it filtered nothing, spent against parked/drained providers, and surfaced
+# nothing. stderr is now PASSED THROUGH (the real error is visible) and an unreadable snapshot is
+# its own return code, so "nothing capped" and "could not ask" can never be confused again.
+#
+# The missing-prerequisite case (no python3 / no availability.py) is the SAME class — the filter
+# does not run — so it takes the same rc 8 path rather than a quiet pass-through: a rig that cannot
+# evaluate caps must stop loudly, not spend blind.
+capped_filter_chain(){
+  local py="$FLEET/capability/availability.py"
+  if ! { [ -f "$py" ] && command -v python3 >/dev/null 2>&1; }; then
+    echo "[fleet-droid] capped-filter PREREQUISITE MISSING (python3 and/or $py) — gateway capped-exclusion cannot run." >&2
+    return 8
+  fi
+  local out rc
+  # stderr is NOT redirected: availability.py's diagnostic (and any traceback) must reach the
+  # operator/log. Only stdout is captured.
+  set +e; out="$(python3 "$py" filter-capped "$@")"; rc=$?; set -e
+  [ "$rc" -eq 7 ] && return 7                       # positively ALL-capped -> exhausted
+  if [ "$rc" -ne 0 ]; then                          # 8 (unreadable snapshot) or any unexpected rc
+    [ "$rc" -eq 8 ] || echo "[fleet-droid] capped-filter exited unexpectedly (rc=$rc) — treating as UNAVAILABLE (see stderr above)." >&2
+    return 8
+  fi
+  local kept=() m
+  while IFS= read -r m; do [ -n "$m" ] && kept+=("$m"); done <<<"$out"
+  # rc 0 with an empty survivor list breaks the CLI contract (all-capped is rc 7) -> unavailable,
+  # NOT a silent keep-all.
+  [ "${#kept[@]}" -gt 0 ] || { echo "[fleet-droid] capped-filter returned rc 0 with NO models — contract violation, treating as UNAVAILABLE." >&2; return 8; }
+  ( IFS=','; echo "${kept[*]}" )
+}
+
+# resolve_runnable_chain: THE single tier -> RUNNABLE-chain resolver used by BOTH the `resolve`
+# dev/test hook AND the main claim loop (production path == test path — the whole point of the
+# `resolve` hook). For a work_class + STARTING cost-band tier it applies, in order:
+#   (1) REORDER  — assign.py real-outcome ranking (gateway-cap-aware pick), advisory
+#   (2) DETENTION — drop HARD-detained models (model-detention.sh)
+#   (3) CAPPED    — drop gateway-capped models (capped_filter_chain / GatewayStatusAvailability)
+# If a tier yields NO runnable model (no chain row, OR whole chain HARD-detained, OR whole chain
+# gateway-capped) it SPILLS UP to the next cost band (economy->strong->frontier) and retries —
+# operator rule: better a PAID model does the work than it backlogs trying for cheap. Prints the
+# runnable comma chain and returns 0; returns 7 when the ladder can go no further. The caller then
+# SKIPs + records loop-guard.sh (the per-<droid,ticket> attempt budget) so an unrunnable ticket is
+# QUARANTINED after N re-claims rather than re-hammered — the spill-up walks UP the ladder in ONE
+# claim instead of re-hammering one band.
+#
+# (4) COST CAP (money path). Spill-up used to be UNBOUNDED: a run of capped/exhausted cheap legs
+# (a free-tier window closing) could walk every ticket into the most expensive band and keep it
+# there, with nothing in the loop able to say no. Each hop is now classified by WHY the band was
+# unrunnable, and the two reasons are governed differently — deliberately, because they are
+# different kinds of escalation:
+#   * COST escalation (band was gateway-CAPPED, or has no chain row): bounded by
+#     SPILL_UP_COST_CEILING (see spill_ceiling_tier). A hop INTO a band above the ceiling is
+#     REFUSED.
+#   * SAFETY escalation (band was wholly HARD-detained for this work_class): NOT bounded. Established
+#     semantics — tier is a capability FLOOR and money-path detention ESCALATES; a model that
+#     fabricated on money-path work must never run, so "cheap" is not an argument for running it.
+#     A safety hop that crosses the ceiling is still LOUD + ledgered ('cost-cap-bypass-detention'),
+#     so the carve-out is observable rather than a silent hole.
+#
+# ON A CAP HIT WE **DETAIN**, WE DO NOT ESCALATE AND WE DO NOT HARD-FAIL THE TICKET. The resolver
+# returns 7 (the same unrunnable signal the ladder-exhausted case uses), so the claim loop releases
+# the ticket back to the board: it stays claimable and is retried on the next claim, i.e. it WAITS
+# for a cheaper leg to free (a park to lapse / a free-tier window to reopen). Detain, not fail,
+# because the work is valid and the constraint is transient; detain, not escalate, because
+# escalation is exactly the overspend this guardrail exists to prevent. It cannot silently overspend
+# (the more expensive band is never even offered to the work client — the refusal happens BEFORE any
+# model is handed over) and it cannot silently backlog either: every hit prints a greppable
+# `COST-CAP:` line, writes a `cost-cap-detain` row to the provider-exhaustion ledger, and burns one
+# loop-guard attempt, so a persistently capped ticket is QUARANTINED and surfaced to the operator,
+# who is the only one who can authorise spending above the ceiling (by raising it in the SSOT).
+resolve_runnable_chain(){
+  local wc="$1" start="$2" cur="$2" spilled="" reason=""
+  local ceiling; ceiling="$(spill_ceiling_tier)"
+  if [ -z "$ceiling" ]; then
+    # FAIL CLOSED: absent/blank/malformed cap != "no cap". Cost-driven spill-up is DISABLED
+    # (ceiling := the starting band), so a broken SSOT can never authorise an unbounded escalation.
+    echo "[fleet-droid] COST-CAP: no usable SPILL_UP_COST_CEILING in $(tier_canon_path) — FAILING CLOSED: cost-driven spill-up DISABLED (cost band '$start' only). Fix the SSOT to re-enable escalation." >&2
+    exhaust_led "band:$start" "cost-cap-config-invalid" "work_class=$wc: SPILL_UP_COST_CEILING absent/malformed in $(tier_canon_path) — cost spill-up disabled (fail closed)"
+    ceiling="$start"
+  fi
+  while [ -n "$cur" ]; do
+    local static reordered det capf
+    static="$(tier_chain "$cur")"
+    if [ -z "$static" ]; then
+      echo "[fleet-droid] resolve: no gateway model chain for cost band '$cur' — spilling up." >&2
+      reason="no-chain"
+    else
+      reordered="$(assign_reorder_chain "$wc" "$cur" "$static")"
+      local -a rmodels=(); IFS=',' read -r -a rmodels <<<"$reordered" || true
+      if det="$(detention_filter_chain "$wc" "${rmodels[@]}")"; then
+        local -a dmodels=(); IFS=',' read -r -a dmodels <<<"$det" || true
+        local caprc=0
+        capf="$(capped_filter_chain "${dmodels[@]}")" || caprc=$?
+        if [ "$caprc" -eq 0 ]; then
+          [ -n "$spilled" ] && echo "[fleet-droid] SPILL-UP: cost band '$start' had NO runnable model (all detained/capped); escalated to '$cur' (cost ceiling '$ceiling') — a paid model does the work rather than backlogging for cheap." >&2
+          echo "$capf"; return 0
+        elif [ "$caprc" -eq 8 ]; then
+          # CAPPED-FILTER UNAVAILABLE -> DETAIN (return 7), the SAME choice the cost cap makes on an
+          # invalid ceiling, and for the same reason. We cannot see capped state, so:
+          #   * we cannot hand back this band's chain — it may be wholly parked/drained/cooled, and
+          #     "keep everything" was precisely the old silent no-op (spend against dead providers);
+          #   * we must NOT spill up either — an unreadable snapshot is not evidence of exhaustion,
+          #     and escalating on it is a cost-band jump bought with an ERROR (the overspend the
+          #     cap exists to refuse). So the ladder stops here; no costlier band is offered.
+          # DETAIN, not hard-fail the dispatch: the work is valid and the fault is transient
+          # (gateway restart / token not exported). Returning 7 releases the ticket back to the
+          # board still claimable, so it retries once the gateway is readable again. It cannot
+          # silently overspend (no model is handed to the work client at all) and it cannot
+          # silently backlog: the real error is on stderr (no longer swallowed), the greppable
+          # `CAPPED-FILTER-UNAVAILABLE:` line prints, a `capped-filter-unavailable` row lands in the
+          # provider-exhaustion ledger, and the caller burns one loop-guard attempt so a persistent
+          # outage QUARANTINES the ticket and surfaces it to the operator.
+          echo "[fleet-droid] CAPPED-FILTER-UNAVAILABLE: could not read gateway capped state for cost band '$cur' (see the availability error above — commonly a 401/missing CHARON_GATEWAY_TOKEN, or the gateway being down). FAILING CLOSED: gateway capped-exclusion did NOT run, so this band's chain is NOT trusted and is NOT handed over, and NO cost spill-up is taken off an error. DETAINING '$start' work: the ticket is released and stays claimable, retried when gateway status is readable again. Export a gateway token / restore $(printf '%s' "${CHARON_GATEWAY_URL:-http://10.0.1.60:8080}") to re-enable." >&2
+          exhaust_led "band:$cur" "capped-filter-unavailable" "work_class=$wc start=$start ceiling=$ceiling: /charon/status unreadable (auth/reach) — capped-exclusion did not run; DETAINED (fail closed, no spill-up)"
+          return 7
+        fi
+        echo "[fleet-droid] cost band '$cur': ALL models gateway-CAPPED (every provider parked/drained/cooled) — spilling up." >&2
+        reason="capped"
+      else
+        echo "[fleet-droid] cost band '$cur': ALL models HARD-detained for work_class '$wc' — spilling up." >&2
+        reason="detained"
+      fi
+    fi
+    local nxt; nxt="$(next_tier_up "$cur")"
+    if [ -z "$nxt" ]; then
+      echo "[fleet-droid] resolve: cost band '$cur' is the TOP band (frontier) and still has no runnable model — cost-band ladder EXHAUSTED." >&2
+      return 7
+    fi
+    if tier_above "$nxt" "$ceiling"; then
+      if [ "$reason" = "detained" ]; then
+        # Documented carve-out: safety escalation is not cost-bounded (see header). Loud + ledgered.
+        echo "[fleet-droid] COST-CAP: spilling '$cur' -> '$nxt' ABOVE the cost ceiling '$ceiling' because band '$cur' is wholly HARD-detained for work_class '$wc' — safety escalation overrides the cost cap (a detained model must never run). This spends above the ceiling." >&2
+        exhaust_led "band:$cur->$nxt" "cost-cap-bypass-detention" "work_class=$wc start=$start ceiling=$ceiling: whole band HARD-detained — safety escalation above the cost ceiling"
+      else
+        echo "[fleet-droid] COST-CAP: REFUSING to spill '$cur' -> '$nxt' — band '$nxt' is above the configured spill-up cost ceiling '$ceiling' (SPILL_UP_COST_CEILING in $(tier_canon_path)). Reason band '$cur' was unrunnable: $reason. DETAINING '$start' work: the ticket is released and stays claimable so it waits for a cheaper leg to free — it is NOT escalated into a more expensive band and NOT silently dropped. Raise the ceiling in the SSOT to authorise the spend." >&2
+        exhaust_led "band:$cur->$nxt" "cost-cap-detain" "work_class=$wc start=$start ceiling=$ceiling reason=$reason: refused cost spill-up above ceiling — DETAINED (retry when a cheaper leg frees)"
+        return 7
+      fi
+    fi
+    spilled=1; cur="$nxt"
+  done
+  return 7
+}
+
 # ---- S4 (Gap A rig facet): REAL-OUTCOME ranking consult -----------------------------------------
 # Before this, the tier->model resolution above consulted ONLY the static fleet/tier-models.tsv
 # chain — capability/assign.py's real-outcome grades (model-scorecard.tsv's source=live lane, see
@@ -147,8 +393,12 @@ assign_reorder_chain(){
   local tsv_args=()
   [ -n "${CHARON_SCORECARD_TSV:-}" ] && tsv_args=(--tsv "$CHARON_SCORECARD_TSV")
   local picked=""
+  # CRIPPLE #2: --gateway-availability makes assign.py consult /charon/status so its real-outcome
+  # PICK never promotes a gateway-capped model to the front. This is advisory + fail-open (gateway
+  # unreachable -> unknown for all, pick unchanged); the AUTHORITATIVE capped exhaustion signal that
+  # triggers spill-up is capped_filter_chain (which also covers ungraded ids assign() never ranks).
   picked="$(python3 "$py" --work-class "$wc" --tier "$canon" --candidates "$static_csv" \
-              "${tsv_args[@]}" --print-model 2>/dev/null)" || true
+              "${tsv_args[@]}" --gateway-availability --print-model 2>/dev/null)" || true
   # Sanity: never trust a picked id we didn't explicitly offer as a candidate.
   case ",$static_csv," in *",$picked,"*) ;; *) picked="" ;; esac
   if [ -z "$picked" ]; then echo "$static_csv"; return 0; fi
@@ -177,15 +427,13 @@ if [ "${1:-}" = "resolve" ]; then
     IFS=',' read -r -a RMODELS <<<"$rline" || true
     ( IFS=','; echo "${RMODELS[*]}" ); exit 0
   fi
-  # S4: consult assign.py's real-outcome ranking BEFORE detention filtering, same as the main
-  # claim loop below — production path == test path (this hook exists so a test can observe
-  # exactly what the loop would do).
-  rline="$(assign_reorder_chain "$rwc" "$rcanon" "$rline")"
-  IFS=',' read -r -a RMODELS <<<"$rline" || true
-  if rkept="$(detention_filter_chain "$rwc" "${RMODELS[@]}")"; then
+  # Resolve via the SINGLE shared resolver (reorder + detention + capped filter + cost-band
+  # spill-up), the SAME function the main claim loop below calls — production path == test path,
+  # so a test can observe exactly what the loop would do (including spill-up to a higher band).
+  if rkept="$(resolve_runnable_chain "$rwc" "$rcanon")"; then
     echo "$rkept"; exit 0
   else
-    echo "[fleet-droid] resolve: ALL eligible models detained for work_class '$rwc' — needs escalation or a heavily-tested run/override." >&2
+    echo "[fleet-droid] resolve: NO runnable model for work_class '$rwc' at cost band '$rcanon' or ANY band spill-up was allowed to reach (all detained/capped, or the COST-CAP refused a costlier band — see the COST-CAP line above) — needs escalation or a heavily-tested run/override." >&2
     exit 7
   fi
 fi
@@ -338,29 +586,25 @@ while true; do
       || echo "[$DROID] LOOP-GUARD: $id quarantined (parallelizability-gate refused repeatedly)." >&2
     continue
   fi
-  # DETENTION-REDLINE: scope the tier chain to THIS ticket's work_class (read from its board file)
-  # and drop HARD-detained models BEFORE the run. Advisory-flagged models stay (loud warning). If the
-  # WHOLE chain is HARD-detained, FAIL LOUD + skip — a detained model can only run behind an explicit
-  # override, never a silent fall-through. RUN_MODELS is what actually feeds the work client below.
+  # DETENTION-REDLINE + CRIPPLE #2/#3: scope the tier chain to THIS ticket's work_class (from its
+  # board file) and resolve it to a RUNNABLE chain via the SAME shared resolver the `resolve` hook
+  # uses — real-outcome reorder + drop HARD-detained + drop gateway-CAPPED, and SPILL UP to the next
+  # cost band when the whole band is unrunnable (all detained/capped) rather than burning a ~1800s
+  # timeout on a capped model or backlogging on cheap. Only when the WHOLE ladder up to frontier is
+  # unrunnable do we SKIP (+ loop-guard record) — a detained/capped model never runs by fall-through.
   wclass="$(awk -F': ' '$1=="work_class"{sub(/^[^:]*: ?/,"");print;exit}' "$tfile")"
   if [ -n "$wclass" ]; then
-    # S4 (Gap A rig facet): consult assign.py's real-outcome ranking for THIS ticket's
-    # work_class before detention-filtering. $models_line is the tier's static chain (set once
-    # above from tier-models.tsv); WC_MODELS is that same set, re-ordered when assign.py has a
-    # real-outcome pick for it, unchanged otherwise (see assign_reorder_chain's docstring above).
-    wc_line="$(assign_reorder_chain "$wclass" "$CANON" "$models_line")"
-    IFS=',' read -r -a WC_MODELS <<<"$wc_line" || true
-    if run_line="$(detention_filter_chain "$wclass" "${WC_MODELS[@]}")"; then
+    if run_line="$(resolve_runnable_chain "$wclass" "$CANON")"; then
       IFS=',' read -r -a RUN_MODELS <<<"$run_line" || true
     else
-      echo "[$DROID] SKIP $id: ALL eligible models detained for work_class '$wclass' — needs escalation or a heavily-tested run/override. NOT running a detained model." >&2
+      echo "[$DROID] SKIP $id: NO runnable model for work_class '$wclass' at cost band '$CANON' or ANY band spill-up was allowed to reach (all detained/capped, or the COST-CAP refused a costlier band — see the COST-CAP line above; the ticket is DETAINED and stays claimable, it will retry when a cheaper leg frees). NOT running a detained/capped model and NOT spending above the ceiling." >&2
       bash "$FLEET/release.sh" "$id" >/dev/null 2>&1 || true; current=""
       bash "$FLEET/loop-guard.sh" record "$id" "$DROID" >/dev/null 2>&1 \
-        || echo "[$DROID] LOOP-GUARD: $id quarantined (all models detained for '$wclass')." >&2
+        || echo "[$DROID] LOOP-GUARD: $id quarantined (no runnable model after spill-up for '$wclass')." >&2
       continue
     fi
   else
-    echo "[$DROID] WARNING: $id has no work_class field — detention filter cannot scope; running the FULL chain unfiltered." >&2
+    echo "[$DROID] WARNING: $id has no work_class field — detention/capped filter cannot scope; running the FULL chain unfiltered." >&2
     RUN_MODELS=("${MODELS[@]}")
   fi
   pfile="$(awk -F': ' '$1=="prompt"{sub(/^[^:]*: ?/,"");print;exit}' "$tfile")"

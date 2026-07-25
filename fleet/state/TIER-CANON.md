@@ -78,6 +78,56 @@ tests) pass the map; ids not present in the map and not in the curated
 catalog return `unknown` (fail-closed, surfaced in the rationale, NOT
 silently admitted).
 
+### The spill-up cost ceiling — the money-path COST CAP
+
+`fleet/fleet-droid.sh`'s resolver (`resolve_runnable_chain`) SPILLS UP
+this axis when a cost band has no runnable model: tier is a capability
+FLOOR, so work escalates to a costlier band rather than backlogging on
+a band whose whole chain is detained or gateway-capped. That escalation
+must be BOUNDED. Without a cap, a run of capped/exhausted cheap legs —
+a free-tier window closing, a funding drain parking a provider — walks
+work into the most expensive band and KEEPS it there, and nothing in
+the loop can say no. The cap is the most expensive band a COST-driven
+spill-up may escalate INTO:
+
+    SPILL_UP_COST_CEILING = strong
+
+Read from THIS file by `fleet-droid.sh` (`spill_ceiling_tier`). The
+value must be one of the canonical bands above. `strong` means
+escalation is allowed up to the mid-band workhorses (blended
+< $1.50/Mtok by the threshold table above) and NO further: entering the
+`frontier` band (>= $1.50/Mtok) is an operator decision, made by
+raising this line, not an automatic consequence of a cheap leg going
+dark. A ticket that DECLARES a band at or above the ceiling still runs
+in its own declared band — the cap governs ESCALATION, never the band
+the operator explicitly asked for.
+
+**FAIL CLOSED.** If this key is missing, blank, malformed, or names a
+band that is not on the axis, the dispatcher does NOT fall back to a
+default and does NOT run uncapped: cost-driven spill-up is DISABLED
+entirely (ceiling := the ticket's own starting band), loudly, with a
+`cost-cap-config-invalid` row in the provider-exhaustion ledger. There
+is deliberately NO in-code default — an in-code fallback would be a
+second source of truth and would turn "config absent" into "silently
+uncapped", which is the exact hole this cap closes.
+
+**On a cap hit the work DETAINS, it does not fail and does not
+escalate**: the resolver returns 7, the claim loop releases the ticket,
+and it stays claimable so it retries when a cheaper leg frees. Each hit
+prints a greppable `COST-CAP:` line and writes a `cost-cap-detain` row
+to `fleet/provider-exhaustion-ledger.tsv`, and burns one loop-guard
+attempt, so a permanently capped ticket is quarantined and surfaced
+rather than looping forever.
+
+**One deliberate carve-out.** A band that is unrunnable because its
+whole chain is HARD-DETAINED for the ticket's `work_class` (a model
+that fabricated on money-path work) escalates ABOVE the ceiling: that
+is a SAFETY escalation, and the established semantics are that
+money-path detention escalates — "cheap" is never an argument for
+running a model proven to fabricate. That hop is loud and is ledgered
+as `cost-cap-bypass-detention`, so it is observable, not a silent hole.
+Only capped/exhausted (cost) escalation is bounded by the ceiling.
+
 ### "tier-appropriate difficulty" — defined concretely
 
 MODEL-PREFLIGHT.md's staged ladder (R0/R1/R2/R3) says "difficulty
