@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test_gate_creation_standard.sh — RED-PROOF / FAIL-ON-REVERT tests for the meta-gate
+# gate-creation-standard.test.sh — RED-PROOF / FAIL-ON-REVERT tests for the meta-gate
 # fleet/checks/gate-creation-standard.sh (ticket GATE-CREATION-STANDARDIZE).
 #
 # This is the meta-gate's OWN evidence under the standard it enforces: each case below
@@ -10,10 +10,14 @@
 #
 # Operates entirely in TEMP isolated fixtures via the GCS_* env seams — never touches the
 # live fleet/, tools/gates.json, or the real GATE-GAP-LEDGER.tsv. The one exception is the
-# final LIVE case, which runs `check` read-only against the real repo and asserts GREEN
-# (accept item 4: the seeded ledger classes each trace to a concrete standard item).
+# final LIVE case, which runs `check` read-only against the real repo and asserts that its
+# open findings are EXACTLY the recorded set (see LIVE_KNOWN_OPEN, case 14).
 #
-# Run:  bash fleet/tests/test_gate_creation_standard.sh   (exit 0 = all pass)
+# Cases 16-20 cover META-GATE-CALLSITE-ENUM: the audited population is derived by CALL SITE
+# (what the enforcement entrypoints invoke), not by directory. Revert that enumerator and
+# cases 16/17 go green-when-they-must-be-RED and the suite FAILS.
+#
+# Run:  bash fleet/tests/gate-creation-standard.test.sh   (exit 0 = all pass)
 set -uo pipefail
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GATE="$SRC/checks/gate-creation-standard.sh"
@@ -43,18 +47,27 @@ MD
   printf 'date\tgates_green\tissue_shipped\troot_class\tgate_improvement\tstatus\n' > "$d/state/ledger.tsv"
   printf '2026-07-01\tg\tissue\tbuilt-but-inert\timprove\tfixed\n' >> "$d/state/ledger.tsv"
   printf 'echo not wired here\n' > "$d/validate_board.sh"
+  # a conformant enforcement ENTRYPOINT: it invokes the fleet check, so the call-site
+  # enumeration is non-vacuous in every fixture world.
+  mkdir -p "$d/ep"
+  printf '#!/usr/bin/env bash\nset -uo pipefail\nbash "%s/checks/sample-gate.sh" check\n' "$d" > "$d/ep/preflight.sh"
   echo "$d"
 }
+# Per-case env overrides (appended LAST so they win over the fixed fixture env).
+EXTRA_ENV=()
 run_gate(){ # run_gate <world> <mode> [gate args...]
   local d="$1" mode="$2"; shift 2
   env GCS_PRODUCT_REPO="$d/repo" GCS_GATES_JSON="$d/repo/tools/gates.json" \
       GCS_CHECKS_DIR="$d/checks" GCS_TESTS_DIR="$d/tests" \
       GCS_LEDGER="$d/state/ledger.tsv" GCS_STANDARD="$d/standard.md" \
       GCS_VALIDATE_BOARD="$d/validate_board.sh" GCS_LEDGER_MIN=1 \
+      GCS_FLEET="$d" GCS_REPO_ROOT="$d" GCS_ENTRYPOINTS="ep/*.sh" GCS_CALLSITE_MIN=1 \
       GCS_BASELINE_GATE_IDS="old-legacy good-gate" \
       GCS_GRANDFATHER_NO_REDPROOF="old-legacy" \
       GCS_BASELINE_CHECKS="sample-gate.sh" \
       GCS_GRANDFATHER_NO_TEST="" GCS_GRANDFATHER_NO_SETLINE="" \
+      GCS_GRANDFATHER_CALLSITE_NO_TEST="" \
+      ${EXTRA_ENV[@]+"${EXTRA_ENV[@]}"} \
       bash "$GATE" "$mode" "$@" 2>&1
 }
 
@@ -162,11 +175,102 @@ out="$(run_gate "$D" append "g" "i" not-a-known-class "imp" "open")"; rc=$?
 out="$(run_gate "$D" append "g" "$(printf 'bad\tfield')" built-but-inert "imp" "open")"; rc=$?
 [ $rc -ne 0 ] && ok "(13e) append with embedded TAB refused" || bad "(13e) embedded tab must be refused"
 
-# (14) LIVE: the real repo/fleet/ledger conforms to the standard TODAY (read-only).
-# Proves accept item 4: every seeded ledger class traces to a concrete standard item, the
-# seeded grandfather baselines match reality, and the meta-gate is green at introduction.
+# ---------- (16-20) CALL-SITE ENUMERATION (META-GATE-CALLSITE-ENUM) ----------
+
+# (16) CORE FAIL-ON-REVERT for this ticket: a script INVOKED by an enforcement entrypoint but
+# living outside fleet/checks/ and carrying no companion test -> RED unaudited-callsite.
+# Revert the call-site enumerator (back to the directory glob) and this exits 0 => FAIL.
+D="$(mk_world)"
+printf '#!/usr/bin/env bash\nset -uo pipefail\nexit 0\n' > "$D/inline-thing.sh"
+printf 'bash "%s/inline-thing.sh"\n' "$D" >> "$D/ep/preflight.sh"
+out="$(run_gate "$D" check)"; rc=$?
+[ $rc -eq 1 ] && ok "(16) invoked-but-untested script outside checks/ -> RED" || bad "(16) call-site member without a red-proof must be RED, got exit $rc: $out"
+has "$out" "unaudited-callsite: inline-thing.sh" "(16b) names the unaudited call site (placement is no longer an exemption)"
+# ...and a companion carrying the red-proof marker clears it (the exemption is EVIDENCE, not location)
+printf '# red-proof: reverts detection -> this fails\n' > "$D/tests/inline-thing.test.sh"
+out="$(run_gate "$D" check)"; rc=$?
+[ $rc -eq 0 ] && ok "(16c) red-proofed call-site member -> GREEN" || bad "(16c) red-proofed call-site member should clear, got exit $rc: $out"
+
+# (17) TRIGGER-INSTANCE REPRODUCTION (the tier-drift escape, commit 0a759a8): enforcement
+# INLINED into validate_board.sh. Under the directory glob this was invisible forever; under
+# call-site enumeration validate_board.sh itself joins the audited set and is RED until proofed.
+D="$(mk_world)"
+cat > "$D/validate_board.sh" <<'VB'
+#!/usr/bin/env bash
+set -uo pipefail
+# INLINE enforcement block (the escape): a tier-drift check that lives in no fleet/checks/ file
+if grep -q 'tier: bogus' board.md 2>/dev/null; then echo "TIER-DRIFT"; exit 1; fi
+VB
+printf 'bash "%s/validate_board.sh"\n' "$D" >> "$D/ep/preflight.sh"
+out="$(run_gate "$D" check)"; rc=$?
+[ $rc -eq 1 ] && ok "(17) inline enforcement in validate_board.sh -> validate_board.sh is audited and RED" || bad "(17) the tier-drift escape must be impossible, got exit $rc: $out"
+has "$out" "unaudited-callsite: validate_board.sh" "(17b) names validate_board.sh itself (the host of the inline block)"
+
+# (18) NON-VACUOUS: an entrypoint set that resolves to zero files -> RED, never a silent pass.
+D="$(mk_world)"
+EXTRA_ENV=(GCS_ENTRYPOINTS="no-such-dir/*.sh")
+out="$(run_gate "$D" check)"; rc=$?
+EXTRA_ENV=()
+[ $rc -eq 1 ] && ok "(18) zero-resolution entrypoint set -> RED (exit 1)" || bad "(18) a run that examined zero call sites must NOT be green, got exit $rc: $out"
+has "$out" "callsite-enum-vacuous" "(18b) names the vacuous enumeration (S2)"
+has "$out" "entrypoint-missing: enforcement entrypoint 'no-such-dir" "(18c) names the entrypoint that matched nothing (S3)"
+
+# (19) FLOOR: derived call-site set below GCS_CALLSITE_MIN -> RED callsite-set-shrunk
+D="$(mk_world)"
+EXTRA_ENV=(GCS_CALLSITE_MIN=99)
+out="$(run_gate "$D" check)"; rc=$?
+EXTRA_ENV=()
+[ $rc -eq 1 ] && ok "(19) call-site set below its floor -> RED" || bad "(19) a shrunk audited population must be RED, got exit $rc: $out"
+has "$out" "callsite-set-shrunk" "(19b) names the shrunk set (S3 UN-GAMED)"
+
+# (20) STALE EXEMPTION: a grandfathered name that no longer exists on disk -> RED.
+# (Frozen exemptions may only SHRINK; a dangling name is how such a list silently grows.)
+D="$(mk_world)"
+EXTRA_ENV=(GCS_GRANDFATHER_CALLSITE_NO_TEST="deleted-gate.sh")
+out="$(run_gate "$D" check)"; rc=$?
+EXTRA_ENV=()
+[ $rc -eq 1 ] && ok "(20) grandfathered name absent from disk -> RED" || bad "(20) stale exemption must be RED, got exit $rc: $out"
+has "$out" "stale-exemption: GRANDFATHER_CALLSITE_NO_TEST names 'deleted-gate.sh'" "(20b) names the stale exemption"
+
+# (14) LIVE: the real repo/fleet/ledger, read-only.
+# ASSERTION CHANGED by META-GATE-CALLSITE-ENUM (2026-07-24), deliberately and on the record:
+# this case used to assert LIVE == GREEN. That premise was FALSE — the live tree has been RED
+# with 4 unsurfaced findings and this case has been failing (PASS=30 FAIL=1) in a suite that
+# no runner executed. Asserting GREEN also creates the wrong incentive: the cheapest way to
+# pass is to grandfather real findings away. So the assertion is now "the live open findings
+# are EXACTLY the recorded set below" — a NEW finding fails this suite (it must be fixed or
+# recorded), and a DISAPPEARING finding also fails it (a finding count that drops is a red
+# flag, not a win). Fixing a live finding = deleting its line here, and the suite goes green.
+LIVE_KNOWN_OPEN=(
+  "unproofed-gate: 'reachability-gate'"                                  # product registry, owned elsewhere
+  "no-red-proof-test: large-file-guard.sh"                               # pre-existing fleet check, untested
+  "no-red-proof-test: rig-ci-scope.sh"                                   # pre-existing fleet check, untested
+  "fail-quiet: fleet/_lib.sh"                                            # surfaced BY call-site enumeration
+  "fail-quiet: fleet/gh-cache.sh"                                        # surfaced BY call-site enumeration
+  "fail-quiet: fleet/push-verify.sh"                                     # surfaced BY call-site enumeration
+  "fail-quiet: fleet/repo-registry.sh"                                   # surfaced BY call-site enumeration
+  "fail-quiet: fleet/watchdog/watchdog-lib.sh"                           # surfaced BY call-site enumeration
+  "no-red-proof-marker: handoff-generated-state.test.sh covers fleet/handoff.sh"
+  "unaudited-callsite: fleet/validate_board.sh"                          # THE trigger instance, deliberately not exempted
+  "class-untraced: ledger root_class 'no-decision-time-gate'"            # ledger/standard, owned elsewhere
+)
 out="$(bash "$GATE" check 2>&1)"; rc=$?
-[ $rc -eq 0 ] && ok "(14) LIVE check -> GREEN (seeded ledger + standard + baselines conform)" || bad "(14) LIVE check must be GREEN, got exit $rc: $out"
+live_n="$(printf '%s\n' "$out" | grep -c '^  RED  [a-z-]*:')"
+if [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]; then
+  ok "(14) LIVE check returns a definite verdict (exit $rc)"
+else
+  bad "(14) LIVE check must exit 0 (GREEN) or 1 (RED), got $rc — an indefinite verdict is not evidence: $out"
+fi
+[ "$live_n" -eq "${#LIVE_KNOWN_OPEN[@]}" ] \
+  && ok "(14b) LIVE open findings = the recorded ${#LIVE_KNOWN_OPEN[@]}" \
+  || bad "(14b) LIVE has $live_n open findings, ${#LIVE_KNOWN_OPEN[@]} recorded — a NEW finding must be FIXED or RECORDED here, never suppressed:
+$out"
+for k in "${LIVE_KNOWN_OPEN[@]}"; do
+  has "$out" "$k" "(14c) recorded live finding still present: ${k%%:*}"
+done
+# and the call-site enumeration is non-vacuous on the REAL tree (a live run that examined
+# nothing would sail through every assertion above).
+printf '%s\n' "$out" | grep -q 'callsite-enum-vacuous' && bad "(14d) LIVE call-site enumeration is VACUOUS" || ok "(14d) LIVE call-site enumeration is non-vacuous"
 
 # (15) DETERMINISM (S6, dogfooded): LIVE check twice -> identical output + verdict
 out2="$(bash "$GATE" check 2>&1)"; rc2=$?
