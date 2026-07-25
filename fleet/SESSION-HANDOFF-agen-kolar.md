@@ -63,10 +63,36 @@ Read and fully follow /home/stack/charon-private/fleet/SESSION-HANDOFF-agen-kola
    `branch: feat/branch-ticket-map-gate`. Note: `feat/work-lease-gate` is **already merged into
    master** (stale, 98 behind) — delete it, there is nothing to land there.
 
-5. **Then LAND, in this order** (fewest lands → most unblocked):
-   ① #207 + #211 + #222 (RECONCILE trio; `RECONCILE-WIRING` alone gates 4 more)
-   ② `feat/github-limits-hardening` ③ #208 REPO-FIELD-REQUIRED
-   ④ `feat/meta-gate-callsite-enum` ⑤ `feat/sync-schedule` ⑥ #205 INVENTORY-TABLE
+5. **Then LAND — but the queue below is CORRECTED. Two items were booby-trapped.**
+   A four-lane triage at session end verified these by CONTENT, not commit graph. Read this before landing anything.
+
+   ⚠️ **① PR #211 (`RECONCILE-GATE-WIRED`) — DO NOT LAND AS-IS.** Its head `d603494` is
+   **detector-only and LACKS THE WIRE**. Merging it ships the meta-gate INERT, and it leaves a live
+   `VALID_AREA` landmine that **aborts ALL of preflight on any rig-meta RED**. The wire exists on
+   `feat/reconcile-gate-wired-salvaged` (pushed this session @ `6d4d6db`, ls-remote proven) which is
+   the SAME sha as local `feat/reconcile-gate-wired` — a duplicate ref, not a fork. Land the wired
+   version, not #211's head. See TP-1 in `reviews/TRIAGE-LANE3-RECONCILE-agen-kolar.md`.
+
+   🛑 **② `feat/github-limits-hardening` — DO NOT LAND. It is a REGRESSION.** It DELETES 66/15/36/87
+   lines across 4 files and still carries the dead `gh pr list -r` bug. Both it AND its `-v2` are
+   dead — the real work already landed by RE-DERIVATION (master is ahead: `gh-cache` +7 lines
+   `pr_number_is_merged`; `end-session` +34 lines M2 stale-handoff guard). Reap both.
+
+   Remaining queue, unaffected: #207 · #222 · #208 `REPO-FIELD-REQUIRED` ·
+   `feat/meta-gate-callsite-enum` · `feat/sync-schedule` · #205 `INVENTORY-TABLE`.
+
+   🛑 **Also do NOT land `feat/issue-board-surface`** (salvaged + pushed @ `42b3904` for preservation
+   only). Two of its five files wire the **STRUCK** `fleet/state/issue-board.tsv` fork into the LIVE
+   SessionStart hook and `foreman-cadence`. Landing it installs the design that was explicitly
+   rejected this session. Recommend CLOSE PR #261 and retire `fleet/board/ISSUE-BOARD-SURFACE.md`.
+
+   ### ⚠️ METHOD — `git cherry` LIES in this rig. Do not trust the commit graph.
+   Work here lands by **RE-DERIVATION, not cherry-pick**: someone re-implements on a fresh branch and
+   merges that, so original SHAs never appear upstream. `git cherry` and `git log origin/master..<br>`
+   both keep reporting "unique commits" for branches that are **fully landed**. Lane 1 got a false
+   "+" on all six of its branches; Lane 2's warning caught `feat/stranded-work-detect` the same way.
+   **Proof must be content-level:** diff the branch's OWNED files vs `origin/master`, and check for an
+   archived `status: done` ticket. This is the generalised `feat/work-lease-gate` trap.
 
 ### Detail on #3 — the board regroup (INTERRUPTED mid-flight)
    A sub misread "bundle" and MERGED 9 tickets into 3. **Operator clarified: bundle = GROUP by
