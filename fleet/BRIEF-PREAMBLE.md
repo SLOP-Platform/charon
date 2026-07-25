@@ -39,7 +39,16 @@ executes is not evidence. Confirm your test actually ran and say how you confirm
 ## 6. Work-lease
 Acquire via the MAIN checkout's `/home/stack/charon-private/fleet/work-lease.sh` invoked
 from your worktree cwd — the worktree's own copy writes to a different claims store and
-the hook will not see it. Subcommands: `acquire|check|holds|bind|dispatch|release`.
+the hook will not see it. Subcommands on master: `acquire|check|holds|bind|dispatch|release`.
+**Plus `guard-branch` on branch `feat/branch-ticket-map-gate` (`b784de1`)** — the creation-time
+gate at `work-lease.sh:408`, wired at `fleet-droid.sh:375`, refusing a branch that maps to no
+board ticket. It is NOT on master, so grepping master will wrongly report it absent.
+
+**Method note, learned the hard way:** "X does not exist" is only true if you checked the right
+ref. Two sessions concluded `guard-branch` was missing by grepping master while it lived on an
+unlanded branch, and one of them nearly wrote that error into three tickets. **Always state
+which ref you checked when you report something missing.**
+
 Release when done. **Do NOT use `WORK_LEASE_BYPASS=1`** — report the refusal instead,
 unless the brief explicitly authorises it.
 
