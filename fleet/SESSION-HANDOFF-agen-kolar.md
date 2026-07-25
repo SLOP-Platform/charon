@@ -1,0 +1,170 @@
+# Charon Fleet — Session Handoff — agen-kolar (2026-07-24)
+
+## Bootstrap (copy-paste into next session)
+
+```
+Read and fully follow /home/stack/charon-private/fleet/SESSION-HANDOFF-agen-kolar.md — you are the fresh Charon fleet MANAGER, carry it out, then flip to fleet mode.
+```
+
+**Session ended at ~95% budget. Everything was committed and pushed before stop; nothing lost.**
+
+---
+
+## FIRST ACTIONS (priority order)
+
+0. **`bash fleet/pending.sh list`** — your operator decision list, persists across sessions,
+   labels never reused. 8 open (S,T,U,V,W,Y,Z). Read it before anything else.
+
+1. **Finish the last gate red — you are ONE check from unblocking the whole board.**
+   The keystone all session: `land.sh` runs the full gate and **refuses on red**, so 21
+   built-and-pushed branches cannot merge and ~34 of ~40 blocked board edges wait on them.
+   **Reds went 10 → 1 this session** (`fix/rig-reds-disposition` @ `f65c5f2`, pushed).
+   - Remaining: **`handoff-mechanize`** — owned by `fix/handoff-gotcha-verifiable`, whose work is
+     finished and STAGED in `/home/stack/charon-private-wt/HANDOFF-GOTCHA` but uncommitted because
+     no board ticket maps that branch. **Create the ticket, commit, and the gate should go green.**
+   - (`priority-validator` is already fixed on master — `UNIFIED-PLANE-CANARY-FRAMEWORK` is `priority: 5`.)
+   - Root cause found and fixed: `gate.sh` launched all 77 tests unbounded on 16 cores →
+     `fork: Resource temporarily unavailable` → the gate was **non-deterministic** (9 vs 10 reds on an
+     unchanged tree). Also killed a **real unguarded fork-bomb cycle** in `rig-ci-scope`.
+
+2. **Then LAND, in this order** (fewest lands → most unblocked):
+   ① #207 + #211 + #222 (RECONCILE trio; `RECONCILE-WIRING` alone gates 4 more)
+   ② `feat/github-limits-hardening` ③ #208 REPO-FIELD-REQUIRED
+   ④ `feat/meta-gate-callsite-enum` ⑤ `feat/sync-schedule` ⑥ #205 INVENTORY-TABLE
+
+3. **Finish the board regroup — INTERRUPTED mid-flight.**
+   A sub misread "bundle" and MERGED 9 tickets into 3. **Operator clarified: bundle = GROUP by
+   lens/project at the same priority, keeping tickets SEPARATE so agents work in PARALLEL.**
+   Merging into fat serial tickets defeats the wall-clock goal.
+   - Recoverable verbatim from git: `DONE-SH-INTEGRITY-FIX`, `DISCOVERY-{NORMALIZE,DIFF,QUEUE,APPROVAL-WIRE,CADENCE}`
+   - NOT in git (created today, never committed, then deleted): `PREFLIGHT-GATE-RUN-HELPER`,
+     `META-GATE-PREFLIGHT-WIRE-CLOSED` — reconstruct from content absorbed into `WCI-CONTENTION-TEETH`.
+   - Group via existing ROADMAP.tsv `project`/`wave` + same `priority:`. Do not invent a field.
+   - Check for `fleet/state/reviews/BOARD-REGROUP-STATUS-agen-kolar.md`.
+
+---
+
+## Pushed this session (ls-remote proven; NONE merged)
+
+| Branch | SHA | What |
+|---|---|---|
+| `fix/rig-reds-disposition` | `f65c5f2` | **7 gate reds fixed**, bounded gate concurrency, fork-bomb cycle killed |
+| `feat/tier-classifier` | `f1f162c` | tier-drift gate can go RED / fails closed / non-vacuous (manager-verified) |
+| `fix/gate-reentrancy-guard` | `2b6d2ad` | product: prevents gate↔test-suite unbounded recursion |
+| `feat/registry-meta-catalog` | `78dd0c7` | rebased; both behaviours proven by execution |
+| `feat/watchdog-restart-cmds-verify` | `a23fce3` | 4 restart_cmds fixed; dogfood proven (break→refuse, fix→allow) |
+| `feat/meta-gate-callsite-enum` | `a92019d` | meta-gate audits by CALL SITE not directory: nodes 21→57, findings 4→11 |
+| `feat/FLEET-DEMAND-DRIVEN-ROUTING-avail-cap` | `4f33f87` | broker cost-cap (detain-on-cap) + capped-filter fail-closed |
+| `feat/wci-contention-teeth` | `300e9a4` | wci auto-tickets at P1, idempotent, 4 fail-open paths closed |
+| `feat/plane-canary-wire` | `aed5fc2` | plane-canary wired to 4 triggers (had ZERO callers) |
+| `feat/4lom-canary-service` | `0c6b9e6` | slow-vs-broken attribution sensor, staleness-proof |
+| `feat/sg-issue-control-plane` | `b9d314b` | design 639→298→403; registry seeded with 12 classes |
+| `fix/work-lease-worktree-resolve` | `5d951e8` | **PARTIAL** — `_link_src` only; claims-store split NOT fixed |
+| `feat/gw-cutover-live-wire` | `064d197` | **STOP** — refused; money path untouched; 5 guard tests mechanize the stop |
+| `feat/diff-cover-mutmut-adopt` | `404881d` | preserved only (DO-NOT-LAND; 6-item fix list on its ticket) |
+| `feat/gateway-litellm-live-wire` | `5ebe5c0` | evidence preserved, hex redacted, gate 16/16 |
+| rig `master` | `859e3b9` | board + 14 review/audit docs |
+
+**Blocked on a ticket:** `fix/handoff-gotcha-verifiable` (staged, see action 1);
+`docs/contributing-hook-install` (staged; ticket now exists).
+
+---
+
+## Classes found (evidence in `fleet/state/reviews/*-agen-kolar.md`)
+
+1. **Gates that cannot go RED** — tier-drift's RED-set file absent → every mismatch WARN at rc 0.
+2. **Gates that fail OPEN** — 9 `[ -f ] || return 0` blocks in `preflight.sh`.
+3. **Red-proofs no runner executes** — **33 never-run rig test files** + 63 reachable only via
+   `handoff.sh`. 7 guard money/security/data-loss (`test_real_shell_injection.py`,
+   `test_grader_daemon.py`, `test_land_safe_sync.sh`, `test_droid_reap.sh`).
+   **Worst: product `reachability-gate`** — enforcer `../charon-private/fleet/checks/no-unreachable-paths.sh`
+   **does not exist**, `optional:true` → SKIP, reports OK rc=0. A fake affirmative green in the PUBLIC repo.
+4. **Enforcement invisible to the meta-gate** — membership by DIRECTORY; 23 checks outside scope.
+5. **Vacuous passes** — zero items scanned = GREEN.
+6. **Budget breaches that SILENTLY disable checks — 12 found.** Worst: `validate_board.sh:393`
+   parallelizability gate needs ~21.7s vs a hardcoded 15s → prints `parallelizability-check-failed`
+   and **does not run**, board still GREEN. Root cause O(n²) (`is_decomposed()` re-walks 113 tickets
+   per ticket), not the 15. `fleet/benchmark/budget-derive.py` (p95×1.5) exists, tested, **zero callers**.
+7. **Inert detectors** — `plane-canary.sh` (0 callers, now wired), `stale-check.sh` (0 callers),
+   `dark-work-check.sh` (rc discarded by `|| true`).
+8. **Built-but-unlanded — 21 branches.** THE bottleneck.
+9. **No ticket mapping** — 4 finished branches blocked today; **10 more** worktree branches have no ticket.
+10. **Stale docs asserting false behaviour** — the `land.sh` gotcha is FALSE; it suppressed working tooling.
+11. **Rig→product boundary leak** — product `.git/hooks` displaced the public-clean guard on a PUBLIC repo.
+12. **Adopted-tool under-utilization** — below.
+
+---
+
+## Adopted tools we under-use (highest-value finding; all execution-verified)
+
+`Router.__init__` takes **52 params; `make_router` sets 6.**
+
+- **U1 `litellm_params["order"]`** — we already COMPUTE the funding-class chain order and throw it away.
+  Setting it = **300/300 deterministic** first-leg vs today's 97/105/98 coin flip.
+  **This is the GW-CUTOVER blocker, and it is one parameter.**
+- **U2 `enable_pre_call_checks=True`** is off → `max_input_tokens` at `litellm_router.py:142` is dead
+  config; a 4000-token prompt can route to a 100-token leg.
+- **U3 ruff `S`+`BLE`** → **72 findings incl. `shell=True` and bind-all-interfaces**, while our
+  hand-rolled 330-line `check_security.py` reports clean. **Security fake-green.**
+- **Does NOT serve (do not retry):** `routing_strategy="cost-based-routing"` is *intentionally
+  unimplemented on the sync path we call* (raises `RouterRateLimitError`); even async it ranks on static
+  list price with a 5.0 sentinel. LiteLLM rate limits are minute-only (no RPD) → `quota.py` /
+  `FT-WIRE-QUOTA` remain real work.
+- **F5 answered:** `src/charon/decompose_effort.py` ALREADY implements the effort scorer
+  (`2.0·difficulty + 0.15·size + 1.0·behaviours`) the tier classifier ignores. On our board
+  `nsurf` vs tier ρ=+0.075 (noise), `difficulty` ρ=+0.413. radon/lizard/scc/COCOMO killed on our own
+  data (maxCC vs SLOC ρ=+0.901 — measuring size again).
+
+---
+
+## Operator decisions RECORDED
+
+- **Gitea is PRIMARY** → `FORGE-PRIMARY-GITEA` (P:1); acceptance demands *executed* failover both ways.
+- **TIER-BALANCE F11 REJECTED** — review-class keeps its capability tier (reviews caught 3 fake-greens,
+  the recursion hazard and a design fork that no gate caught). Recorded on the ticket with rationale.
+- **F5 OPEN** — interim `nsurf>=3 AND difficulty-floor` approved pending research; research now supports
+  it and offers better (`decompose_effort.py`).
+- **Preflight decomposition APPROVED, sequenced:** `PREFLIGHT-GATE-RUN-HELPER`'s fail-closed `_gate_run`
+  FIRST → chain drains → THEN extract the 8 inline `*_gate()` into `fleet/checks/<gate>.sh` (which also
+  drops them into the meta-gate's glob). Decomposing first clobbers 5 branches.
+- **Economy starvation is LEGITIMATE** — 1 genuine candidate only; idle economy tabs are correct.
+- **Monit: WAIT for instruction.** Gate: reds clear → land `WATCHDOG-RESTART-CMDS-VERIFY` →
+  `fleet/watchdog/verify-restart-cmds.sh` exits 0 → THEN two sudo steps on the **LOCAL WSL box, not 4-LOM**.
+- **Bundle = GROUP by lens at same priority, NOT merge into fat serial tickets.**
+- **Report cadence:** batch 3+ agent completions before summarising; token-lean prose.
+
+---
+
+## Gotchas
+
+- **`land.sh` DOES create PRs** (`:395` create, `:399` ready, `:404` merge). The old "does NOT create one"
+  gotcha is FALSE. It needs HEAD on the branch; use `land-push.sh <branch> [repo]` for a named branch.
+  Refuses on RED gate.
+- **`git add` aborts entirely if any pathspec fails** → nothing stages, and a later commit can silently
+  capture only what was already staged. `5d24ce6` claimed content it did not contain for exactly this
+  reason. **Always check `git diff --cached --name-only` before committing.**
+- Work-lease refuses any worktree branch with no board ticket → **create the ticket BEFORE firing a sub
+  that will commit.** Acquire via the MAIN checkout's `work-lease.sh` from the worktree cwd (the
+  worktree's own copy writes to the wrong claims store — that split is NOT yet fixed).
+- Hooks now wired via `core.hooksPath` (rig → `fleet/hooks`; product → `.git/hooks-active/` chaining
+  public-clean FIRST then work-lease). Sessions were clobbering `.git/hooks` into whichever worktree
+  booted last.
+- Do **NOT** run `charon gate` on `feat/diff-cover-mutmut-adopt` — unbounded pytest↔gate recursion.
+
+---
+
+## Open question the operator raised — unanswered, worth a ticket
+
+**The code map (graphify) did not proactively surface any of this prior art.** We repeatedly found work
+already built but unwired/unlanded: `decompose_effort.py`, `budget-derive.py`, `feat/work-lease-gate`'s
+dispatch-time enforcement, 21 unlanded branches, `litellm` capabilities. Graphify refreshes at
+SessionStart and after every land, yet nothing ever queries it for **"built but no caller"**.
+That query, on a cadence, surfaced loudly, would have found most of today's findings without a human asking.
+
+## Prior art NOT yet evaluated — reuse-check BEFORE building
+
+`feat/work-lease-gate` @ `e6eacea` — *"dispatch-time enforcement, single store, auto-wire, fail-closed
++ tests"*. That is precisely the branch→ticket mechanization AND the claims-store fix. Unlanded,
+unticketed. A sub was evaluating it at session end; check
+`fleet/state/reviews/BRANCH-TICKET-MAP-agen-kolar.md` and
+`/home/stack/charon-private-wt/TICKET-MAP-GATE` before rebuilding anything.
