@@ -1,6 +1,7 @@
 tier: economy
 difficulty: 2
 work_class: rig-meta
+priority: 2
 branch: feat/project-membership-gate
 depends_on: DIFFICULTY-SCHEMA
 owns: /home/stack/charon-private/fleet/validate_board.sh, /home/stack/charon-private/fleet/state/ROADMAP.tsv

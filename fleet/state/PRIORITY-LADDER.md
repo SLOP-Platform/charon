@@ -21,7 +21,43 @@ chat; the on-disk field is the integer.
 | P:3   | Router standalone                 | The router's own standalone work.                                                                            |
 | P:4   | quick wins                        | Fast, isolated, low-risk.                                                                                    |
 | P:5   | reserved lowest                   | Reserved lowest explicit band.                                                                               |
-| unset | (no `priority:` field)            | Treated as the lowest band (internally 9999) — auto-sequenced by the dependency graph and the rest of the ladder. NOT a priority band in its own right; absence just means "let the graph order it". |
+| unset | (no `priority:` field)            | **NOT ALLOWED on a live ticket (since 2026-07-24)** — the validator goes RED. `claim.sh` still parses an absent field as 9999 (lowest) as a runtime *fallback*, but the board contract now REQUIRES the field. Sole exemption: a PARKED ticket (see below). |
+
+### `priority:` is REQUIRED on every live ticket (2026-07-24)
+
+Until this date, an absent `priority:` passed the drift gate silently: the validator
+caught an explicitly INVALID value (it rejected a `priority: 9` that day) but never a
+MISSING one. Absence was "unset = lowest band", implicit-by-absence — so an unprioritised
+ticket was indistinguishable from a deliberately-deprioritised one, and invisible to every
+priority-ordered view.
+
+What that cost, found on the live board 2026-07-24: **27 of 122 live tickets carried no
+`priority:` at all**, including three blockers —
+
+| Ticket                        | blocks | assigned | why that band |
+| ----------------------------- | :----: | :------: | ------------- |
+| `GITHUB-LIMITS-HARDENING`     |   4    |    2     | Standalone rig hardening with the largest reverse-dep surface on the board (4 tickets) and the widest owned seam (gh-cache/done.sh/land pacing) — the P:2 "biggest blast-radius standalone" band. Proactive, NOT operator-escalated CG-active work, so not P:0/P:1. |
+| `GATEWAY-NONTOKEN-METERING`   |   2    |    1     | Attached-CG product work: the LIVE gateway's cost meter (`src/charon/gateway.py`), money-path, difficulty 2, single file — the P:1 "attached CG, not huge, not over-dependent" band exactly. |
+| `SYNC-SCHEDULE`               |   2    |    4     | Quick win: wires the ALREADY-BUILT `sync-checkouts.sh` into two existing call sites; economy tier, difficulty 1, low risk. Its blocking=2 promotes it *within* P:4 via ladder rung 2 (blocking DESC) — blocking is a tie-break, not a band promotion. |
+
+The remaining 21 live-but-unset tickets were assigned in the same pass (5×P:1, 9×P:2,
+3×P:3, 6×P:4, 1×P:5). **Zero were stamped P:0** — the board already carried 38 P:0s, and
+a board where everything is P:0 has no priority at all; none of the 24 was
+operator-escalated or CG-active.
+
+**The one legitimate "unset" — EXPLICIT, not implicit.** A **PARKED** ticket may leave
+`priority:` unset. Parked work is not claimable at all (`claim.sh` skips it), so there is
+no ordering for a band to affect; requiring one would be noise on held work. Parked is
+decided by THE canonical predicate — `is_parked()` in `_lib.sh` (the `parked:` field) OR a
+`note:` containing `PARKED` — the same rule `claim.sh` and `validate_board.sh` use, so the
+exemption cannot drift from what "parked" means elsewhere. A parked ticket MAY still carry
+a priority; it is simply not required to. Three tickets are exempt under this rule today:
+`FT-WIRE-QUOTA`, `GITEA-ACTIONS-CI-SPIKE` (parked by field), `PRICE-REFRESHER` (parked by
+note prose).
+
+**Nothing else is exempt.** `submitted:` / `claimed:` tickets are LIVE —
+`GITHUB-LIMITS-HARDENING` was SUBMITTED and second in the landing queue, which is precisely
+how it stayed invisible.
 
 ### Why LOWER = more urgent
 
@@ -98,9 +134,18 @@ this ladder entirely: it pins the droid to one named ticket, case-insensitive.
 ## Drift protection
 
 A drift test (`fleet/tests/priority-validator.test.sh`, hermetic) walks every
-`fleet/board/*.md` and fails RED if any `priority:` value is not:
-- a valid integer 0..5, OR
-- absent (the field is OPTIONAL — unset is the "let the graph order it" case).
+`fleet/board/*.md` and fails RED if a ticket's `priority:` is:
+- present but not a valid integer 0..5 (`HIGH` / `P2` / `9` / `-1` / non-integer), OR
+- **ABSENT on a ticket that is not PARKED** (added 2026-07-24 — see "REQUIRED on every
+  live ticket" above; a parked ticket is the sole recorded exemption), OR
+- examined across ZERO tickets — a vacuous run (empty/renamed board glob) is RED, never a
+  silent pass.
+
+Red-proofed by execution: strip `priority:` from a live ticket in a scratch copy of
+`fleet/` → the suite exits **1** naming the ticket; restore it → exits **0**. Empty the
+scratch board → exits **1** on the VACUOUS assertion. The absence, exemption (parked by
+field AND by note prose) and restore paths each have a synthetic fixture inside the suite,
+so the surface cannot rot into a no-op on a board that happens to be clean.
 
 The test also exercises the claim ladder end-to-end against a synthetic board to
 prove the selection order is stable (priority beats alpha; blocking beats blast).

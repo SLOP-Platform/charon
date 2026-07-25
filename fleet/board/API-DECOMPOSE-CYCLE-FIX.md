@@ -2,6 +2,7 @@ repo: charon
 tier: economy
 difficulty: 2
 work_class: refactor
+priority: 4
 branch: feat/api-decompose-cycle-fix
 owns: src/charon/api.py, src/charon/decompose.py, tools/check_arch.py
 depends_on:

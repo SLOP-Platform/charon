@@ -11,6 +11,15 @@ priority-why: |
   P:1 — attached CG work on the live built-but-not-wired CG, and dep-blocked behind WCI-CONTENTION-TEETH
   so it cannot be claimed today. NOT P:0 (HANDOFF-GOTCHA-VERIFIABLE is the keystone gating the landing
   queue); NOT P:2 (it is not standalone — it extends a mechanism that already landed).
+cross-ref: |
+  INERT-INSTANCE-DETECT (product repo, re-ranked to P:1 on 2026-07-24 to match this ticket) is the
+  PRODUCT half of this same class — constructed-but-never-INVOKED, Python only. The split is
+  structural: its detector cannot see fleet/*.sh, and this ticket's `no-callers` subcommand is the
+  rig half. Zero owns overlap (fleet/checks + fleet/state here; tools/*.py + tools/*.json there),
+  so NO dep edge in either direction — but neither may be worked in ignorance of the other: any
+  change to what "inert" MEANS (the construct-store-but-never-INVOKE definition, the exemption
+  schema at E4, the recorded-rationale requirement) must land in BOTH halves or the two certify by
+  different rules. Its detector is built+pushed at origin/feat/inert-instance-detect @ 699be71.
 source: operator 2026-07-23 ("mechanized automated method to always keep the code map updated as things change"); ON-DEMAND-TOOL-LEDGER.tsv row (graphify: 0 callers, hand-refresh only); EXTENSION source operator 2026-07-24 ("I need this mechanized, fully wired in, anti-stale, with loud notices")
 note: |
   The code map (graphify-out/graph.json) is refreshed ONLY by hand — product graph is days stale, rig

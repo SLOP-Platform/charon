@@ -2,6 +2,7 @@ repo: charon-private
 tier: strong
 difficulty: 2
 work_class: rig-meta
+priority: 4
 parked:
 reserved_note: The compaction MECHANISM (fleet/hooks/memory-compact.sh) is a self-contained bash script that takes the memory dir as a PARAM and is tested against fixtures — fully SG-claimable. It must NEVER hardcode the ~/.claude path (per no-hardcoded-cross-boundary-paths) and NEVER delete a memory topic file — only compact the INDEX. The manager reviews the run against the real memory dir before wiring.
 branch: feat/memory-index-compaction

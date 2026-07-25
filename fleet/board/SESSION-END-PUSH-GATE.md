@@ -2,6 +2,7 @@ repo: charon-private
 tier: strong
 difficulty: 2
 work_class: ci-infra
+priority: 2
 branch: feat/session-end-push-gate
 depends_on: HANDOFF-GOTCHA-VERIFIABLE
 real-dep: HANDOFF-GOTCHA-VERIFIABLE — shared fleet/end-session.sh surface. That branch
