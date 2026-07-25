@@ -92,7 +92,26 @@ import sys
 import tempfile
 from pathlib import Path
 
-FLEET_DIR = Path("/home/stack/charon-private-wt/EVAL-PROMOTION-GATE/fleet")
+# RIG-REDS 2026-07-24: this used to be a HARD-CODED absolute path to the
+# /home/stack/charon-private-wt/EVAL-PROMOTION-GATE worktree. That worktree was
+# removed, so every scenario died with `ModuleNotFoundError: No module named
+# 'promote'` and the selftest reported a VACUOUS 0-passed/4-failed RED that had
+# nothing to do with the gate under test. The heredoc is quoted (no shell
+# interpolation), so the shell wrapper exports its own $FLEET_DIR as
+# CHARON_FLEET_DIR and the harness reads it here — the test now follows whatever
+# checkout/worktree it is run from. [[no-hardcoded-cross-boundary-paths]]
+import os  # noqa: E402
+
+_fleet_env = os.environ.get("CHARON_FLEET_DIR")
+if not _fleet_env:
+    print(json.dumps({"scenario": "-", "ok": False,
+                      "detail": "CHARON_FLEET_DIR not exported by the shell wrapper"}))
+    sys.exit(2)
+FLEET_DIR = Path(_fleet_env)
+if not (FLEET_DIR / "benchmark" / "promote.py").is_file():
+    print(json.dumps({"scenario": "-", "ok": False,
+                      "detail": f"promote.py missing under {FLEET_DIR}"}))
+    sys.exit(2)
 sys.path.insert(0, str(FLEET_DIR / "benchmark"))
 sys.path.insert(0, str(FLEET_DIR / "capability"))
 import promote as _promote  # noqa: E402
@@ -417,11 +436,17 @@ PYEOF
 run_scenario() { # run_scenario <a|b|c|d> -- drives the hermetic harness.
   local sc="$1"
   local out
-  out="$(python3 "$HARNESS" "$sc" 2>&1)"
+  out="$(CHARON_FLEET_DIR="$FLEET_DIR" python3 "$HARNESS" "$sc" 2>&1)"
   local ok
   ok="$(printf '%s' "$out" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print('YES' if d.get('ok') else 'NO')" 2>/dev/null)"
   local detail
   detail="$(printf '%s' "$out" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('detail',''))" 2>/dev/null)"
+  # FAIL-LOUD (RIG-REDS 2026-07-24): when the harness dies before emitting JSON
+  # (import error, traceback), both python3 -c calls above swallow it via
+  # 2>/dev/null and the FAIL line printed an EMPTY reason — which is exactly how
+  # the dead hard-coded FLEET_DIR path stayed undiagnosed. If we could not parse
+  # a detail, report the harness's RAW output instead of nothing.
+  [ -n "$detail" ] || detail="(no JSON from harness) raw output: ${out//$'\n'/ | }"
   if [ "$ok" = "YES" ]; then
     ok "(a) $sc: $detail"
   else

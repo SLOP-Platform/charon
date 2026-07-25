@@ -2,6 +2,7 @@ repo: charon-private
 tier: strong
 difficulty: 4
 work_class: ci-infra
+priority: 2
 branch: feat/ssot-drift-gate
 depends_on: EVAL-TAXONOMY-ALIGN
 real-dep: EVAL-TAXONOMY-ALIGN — this gate ENFORCES the taxonomy SSOT that TAXONOMY-ALIGN defines; it cannot drift-check a canonical that does not yet exist.

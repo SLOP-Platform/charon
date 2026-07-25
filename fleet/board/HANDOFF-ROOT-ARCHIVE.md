@@ -2,6 +2,7 @@ repo: charon-private
 tier: economy
 difficulty: 1
 work_class: docs
+priority: 4
 branch: feat/handoff-root-archive
 depends_on:
 owns: HANDOFF.md, fleet/tests/handoff-root-staleness.test.sh

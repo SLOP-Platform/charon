@@ -1,6 +1,13 @@
 tier: economy
 difficulty: 1
 work_class: ci-infra
+priority: 4
+priority-why: |
+  P:4 (assigned 2026-07-24; the field was ABSENT until then) — P:4 is the quick-win band (fast,
+  isolated, low-risk) and this is exactly that: the mechanism (fleet/sync-checkouts.sh, FF-only,
+  dirty-safe, divergence-guarded) ALREADY EXISTS; the work is wiring it into two existing call
+  sites. Economy tier, difficulty 1. Its blocking=2 does NOT promote the band — blocking is ladder
+  rung 2 (a WITHIN-band tie-break), so it is already picked first among P:4s without inflating it.
 branch: feat/sync-schedule
 repo: charon-private
 depends_on: STARTUP-CONTEXT-DIET, FOREMAN-WIRE

@@ -181,23 +181,50 @@ OUT_B3="$(run_reaper "$ROOT_B3" "$ROOT_B3/hom*")"
 [ -f "$ROOT_B3/home/precious" ] \
   && ok "B3a: \$HOME SURVIVED" \
   || bad "B3a: \$HOME was DESTROYED"
-case "$OUT_B3" in *REFUSE*) ok "B3b: the refusal was reported" ;; *) bad "B3b: no REFUSE line: $OUT_B3" ;; esac
+# RIG-REDS 2026-07-24: branch-reaper later grew an EARLIER, STRICTLY STRONGER guard —
+# `_rp_glob_ok` refuses the whole TARGET at config-validation time ("INVALID CONFIG — worktree
+# glob '…/hom*' would admit the protected tree '…/home'") before the per-candidate loop that
+# prints "REFUSE" is ever entered. The old assertion matched only the per-candidate wording,
+# so a HARDENING of the destruction path read as a regression. Accept either refusal channel;
+# the survival assertion above (B3a) is what actually pins the behaviour, and it is unchanged.
+case "$OUT_B3" in
+  *REFUSE*|*"INVALID CONFIG"*) ok "B3b: the refusal was reported" ;;
+  *) bad "B3b: no refusal line at all: $OUT_B3" ;;
+esac
 
 # B4: target is the filesystem root — asserted via the REFUSE report only. `/` is never a
 # candidate for removal here because the guard refuses before any rm, and the test asserts the
 # refusal text; nothing on the real filesystem is touched either way.
 ROOT_B4="$(mk_reaper_fixture)"
 OUT_B4="$(run_reaper "$ROOT_B4" "/")"
+# RIG-REDS 2026-07-24: `_rp_glob_ok` now rejects '/' one step EARLIER than the old
+# "refusing filesystem root" per-candidate reason — a bare '/' does not end in '*', so it
+# never reaches the depth check. Assert the refusal, and cover the depth rule itself with
+# the '/*' form below so the "rooted directly at '/'" branch is still genuinely exercised
+# (otherwise retiring the old wording would have silently dropped that coverage).
 case "$OUT_B4" in
-  *"refusing filesystem root"*) ok "B4: '/' is REFUSED with the root reason" ;;
+  *"INVALID CONFIG"*|*"refusing filesystem root"*) ok "B4: '/' is REFUSED before any target is emitted" ;;
   *) bad "B4: '/' was not refused as filesystem root: $OUT_B4" ;;
+esac
+OUT_B4b="$(run_reaper "$ROOT_B4" "/*")"
+case "$OUT_B4b" in
+  *"rooted directly at '/'"*) ok "B4b: '/*' is REFUSED by the depth rule (far too broad)" ;;
+  *) bad "B4b: '/*' was not refused by the depth rule: $OUT_B4b" ;;
 esac
 
 # B5 (POSITIVE): a legitimate stale fleet worktree dir with no live marker is STILL reaped.
 # REVERT LINE: this is the anti-over-block case — if the guard were widened to refuse
 # everything, B5 goes RED. It is what proves B1..B4 are not passing vacuously.
 ROOT_B5="$(mk_reaper_fixture)"
-mkdir -p "$ROOT_B5/live-fleet-TICKET1"; echo stale > "$ROOT_B5/live-fleet-TICKET1/f"
+# RIG-REDS 2026-07-24: this used to be a BARE DIRECTORY with one plain file in it. The reaper
+# later became fail-closed on undecidable state — such a dir is now KEPT with "not a readable
+# git working tree — state undecidable (fail-closed)", so B5 was asserting that the reaper
+# deletes something it now (correctly) refuses to judge, and the anti-over-block case was
+# providing NO coverage at all. Build a genuinely reapable worktree instead: a real linked
+# worktree, clean, with every commit already on a remote-tracking ref. The remote ref is
+# planted with `update-ref` — no network, and NO `git push` (the rig denies push in tests).
+git -C "$ROOT_B5/live" update-ref refs/remotes/origin/master "$(git -C "$ROOT_B5/live" rev-parse HEAD)"
+git -C "$ROOT_B5/live" worktree add -q "$ROOT_B5/live-fleet-TICKET1" --detach master
 OUT_B5="$(run_reaper "$ROOT_B5" "$ROOT_B5/live-fleet-*")"
 [ -d "$ROOT_B5/live-fleet-TICKET1" ] \
   && bad "B5: a legitimate stale worktree was NOT reaped (guard over-blocks)" \

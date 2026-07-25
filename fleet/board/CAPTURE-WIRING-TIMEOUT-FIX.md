@@ -2,10 +2,21 @@ repo: charon-private
 tier: strong
 difficulty: 2
 work_class: rig-meta
+priority: 4
 branch: feat/capture-wiring-timeout-fix
 owns: fleet/charon-run.sh
-depends_on: SALVAGE-STASH-CHARON-RUN
+depends_on: SALVAGE-STASH-CHARON-RUN, DROID-CLIENT-PREFLIGHT-PATH
 dep-kind: build
+real-dep-2: |
+  ADDED 2026-07-24 — MERGE-ORDER edge on DROID-CLIENT-PREFLIGHT-PATH, not a build prerequisite
+  [[disjoint-owns-not-no-dependency]]. That ticket also owns fleet/charon-run.sh (client PATH
+  derivation, unconditional gateway-token re-derivation, and the exit-code class that stops booking
+  infra crashes as model BLOCKs). It is BUILT, TESTED and pushed at 8f0a4e5 while this ticket is
+  UNSTARTED (its worktree still sits at the base commit), so it lands FIRST as the anchor and this
+  ticket sequences onto the landed file [[anchor-lines-serialize-parallel-work]]. The two changes are
+  disjoint WITHIN the file — client preflight / PATH / exit-code classification there, the
+  capture-enqueue rc=124 stray-row path here — so this is sequencing, not conflict. Declared rather
+  than left un-ordered so validate_board's owns-collision check reads it as dep-sequenced.
 real-dep: both own fleet/charon-run.sh. SALVAGE-STASH-CHARON-RUN landed FIRST (rig PR #83, merged
   2026-07-16T01:18Z) — this ticket sequences onto its landed version rather than co-writing the file.
   Declared 2026-07-16: validate_board flagged the pair as a LIVE owns-collision with no dep ordering

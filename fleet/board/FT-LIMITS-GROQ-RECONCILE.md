@@ -2,6 +2,7 @@ repo: charon-private
 tier: economy
 difficulty: 2
 work_class: money-path
+priority: 1
 branch: feat/ft-limits-groq-reconcile
 depends_on:
 owns: fleet/state/FREE-TIER-LIMITS.tsv, fleet/tests/ft-limits-reconcile.test.sh

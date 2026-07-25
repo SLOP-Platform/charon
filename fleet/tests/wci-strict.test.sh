@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test_wci_strict.sh — FAIL-ON-REVERT tests for wci-contention.sh's --strict HARD gate
+# wci-strict.test.sh — FAIL-ON-REVERT tests for wci-contention.sh's --strict HARD gate
 # (DEC-VALIDATE-STRICT). Runs entirely OFFLINE in an isolated temp fleet; NEVER touches
 # the live fleet/board or the product repo. The script under test resolves its board via
 # $HERE/board, so each fixture copies wci-contention.sh into a temp dir + writes a board/
@@ -16,7 +16,7 @@
 # stops exiting non-zero (an unknown/positional "--strict" arg is a no-op that keeps the
 # old always-0 advisory path) -> this test goes RED.
 #
-# Run:  bash fleet/tests/test_wci_strict.sh   (exit 0 = all pass)
+# Run:  bash fleet/tests/wci-strict.test.sh   (exit 0 = all pass)
 set -uo pipefail
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PASS=0; FAIL=0

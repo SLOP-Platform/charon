@@ -1,6 +1,7 @@
 tier: strong
 difficulty: 3
 work_class: ci-infra
+priority: 3
 branch: audit/land-sh-postmortem
 repo: charon-private
 depends_on:

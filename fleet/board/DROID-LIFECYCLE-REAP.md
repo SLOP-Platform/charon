@@ -2,6 +2,7 @@ repo: charon-private
 tier: strong
 difficulty: 3
 work_class: rig-meta
+priority: 2
 branch: feat/droid-lifecycle-reap
 owns: fleet/fleet-droid.sh, fleet/reap-orphans.sh, fleet/tests/test_droid_reap.sh, fleet/foreman.sh
 serial_justified: One cohesive droid-lifecycle safety change — the cleanup path + its out-of-band reaper + the shared preserve-committed-work guard all touch the same claim/worktree invariant; splitting orphans the contract.

@@ -1,10 +1,30 @@
 repo: charon
 tier: strong
-priority: 2
+priority: 1
 difficulty: 4
 work_class: ci-infra
 branch: feat/inert-instance-detect
 depends_on: CAPABILITY-ACTUALS-DEADREF-CLEANUP
+priority-why: |
+  P:1 (was P:2, re-ranked 2026-07-24) — attached-CG work: this is the PRODUCT half of the
+  operator's designated #2 item WIRE-GRAPHIFY-FRESHNESS (itself P:1), which names it as such;
+  the two halves must not sit in different bands. Its detector is BUILT AND PUSHED
+  (origin/feat/inert-instance-detect @ 699be71, 10/10 tests, check_inert_code.py rc=0,
+  public-clean), its blocking dep CAPABILITY-ACTUALS-DEADREF-CLEANUP is DONE, and until it lands
+  WORK-GATE-UNIVERSAL's Gate B certifies inert code as fully wired. NOT P:0: it is not the
+  keystone gating the landing queue, and the board already carries 38 P:0s — a 39th flattens the
+  band into no signal. NOT P:2: P:2 is "standalone, biggest blast-radius", and this is neither
+  standalone (it is one half of a split mechanism) nor the biggest surface (owns tools/ only).
+cross-ref: |
+  WIRE-GRAPHIFY-FRESHNESS (rig repo, P:1) is the RIG half of this same class. The split is
+  structural, not duplication: this ticket's Python detector cannot see fleet/*.sh, so the rig
+  half is a `no-callers` subcommand on fleet/checks/graphify-freshness.sh. Zero owns overlap
+  (tools/*.py + tools/*.json here; fleet/checks + fleet/state there), so there is NO dep edge in
+  either direction — but neither may be worked in ignorance of the other: a change to what
+  "inert" MEANS (the construct-store-but-never-INVOKE definition, the exemption schema, the
+  disposition rationale requirement) must land in both or the two halves certify by different
+  rules. Read that ticket's PART 2 (E4 exemptions, E6 non-vacuous) before changing this
+  detector's contract.
 owns: tools/check_inert_code.py, tools/inert-code-disposition.json, tests/test_inert_instance_detect.py
 serial_justified: check_inert_code.py and inert-code-disposition.json are one detector + its own schema
   unit, not two independent surfaces — the detector's classification logic is written against the
@@ -14,6 +34,45 @@ serial_justified: check_inert_code.py and inert-code-disposition.json are one de
   meaningless until the detector can SEE the instance-inert pattern, so the two cannot be built in
   parallel — they are strictly sequential halves of one change.
 accept: |
+  ### BLOCKING 2026-07-24 — THE SIX MODULES MUST EACH CARRY A DISPOSITION, AND THE DETECTOR MUST
+  ### FAIL WHILE ANY OF THEM DOES NOT. THIS TICKET DOES NOT PASS OTHERWISE.
+  The six are RequestInspector, SessionAffinity, Observability, SpeculativeExecutor,
+  ConsensusRouter, VirtualKeyManager — ZERO invocation sites each, constructed via `_module_inst`
+  (gateway.py:258-296, re-verified as the `_MODULE_SPECS` table at gateway.py:81-102) and stored
+  at proxy_server.py:559-566, never reached from `_handle()` -> `forward_with_failover()`. Three
+  requirements, all merge-blocking:
+
+  (D1) EXPLICIT DISPOSITION PER MODULE. Each of the six carries an explicit `wire|retire`
+       disposition DERIVED FROM fleet/state/WIRING-AUDIT-MATRIX.md's "INERT-to-WIRED Wiring Map"
+       (input, not decision — see scope-split (b)) and RECORDED in
+       tools/inert-code-disposition.json with a WRITTEN REASON. That file's existing entries are
+       the format to follow: note they already distinguish DELIBERATELY-INERT from DETECTOR FALSE
+       POSITIVES (e.g. the uvicorn string-load cascade), and the six must be classified in the
+       same vocabulary rather than a new one. An entry with an empty or absent reason is RED.
+
+  (D2) THE DETECTOR MUST FAIL, NOT REPORT OK, WHILE ANY OF THE SIX LACKS A DISPOSITION. This is
+       the Gate-B hole, stated in this ticket's own scope: "the detector currently reports OK
+       while all 6 sit inert, which means WORK-GATE-UNIVERSAL's Gate B would certify inert code
+       as fully wired." A check reporting OK over exactly what it exists to catch is the defect;
+       closing it means `tools/check_inert_code.py` exits NON-ZERO (not warns, not prints) for an
+       undispositioned instance-inert module. Red-proof it in tests/test_inert_instance_detect.py
+       by deleting one of the six entries from the disposition file -> detector RED; restore ->
+       GREEN. A pass that is reachable while an entry is missing does not satisfy this.
+
+  (D3) NO MODULE IS RETIRED WITHOUT OPERATOR SIGN-OFF RECORDED ON THIS TICKET. Retiring is
+       DESTRUCTIVE and wiring CHANGES LIVE GATEWAY BEHAVIOUR — each of the six is a real
+       engineering call, not a bookkeeping one. SpeculativeExecutor and ConsensusRouter in
+       particular name routing behaviour that someone may believe is already active; assuming
+       either way is how a silent behaviour change ships. THIS TICKET DOES NOT MAKE THE CALLS: it
+       surfaces each choice with its rationale (what wiring would cost, what removing would lose,
+       what the module was for) and records the operator's answer. A `retire` disposition without
+       an operator sign-off line on this ticket fails the ticket
+       [[adversarial-review-must-not-silently-override-operator]].
+
+  Unchanged by the above: this ticket still does NOT wire or retire anything and still does NOT
+  edit gateway.py / proxy_server.py (not owned here) — see DO (c). The interventions the
+  dispositions schedule are downstream tickets.
+
   ### EXTENDED 2026-07-19 — SR-8 IS THE SAME SIX MODULES, AND ITS "DONE" IS A FALSE RECEIPT.
   This ticket ABSORBS the SR-8 wiring work; no separate SR-8 ticket is to be created. Two
   independent passes reached these same six modules from opposite directions (this ticket from the

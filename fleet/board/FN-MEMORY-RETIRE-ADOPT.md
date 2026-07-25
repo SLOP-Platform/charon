@@ -2,6 +2,7 @@ repo: charon-private
 tier: economy
 difficulty: 3
 work_class: rig-meta
+priority: 4
 branch: feat/fn-memory-retire-adopt
 owns: fleet/memory/, fleet/research.sh
 serial_justified: One cohesive retire+adopt around a single owned surface (fleet/memory/) + its dangling refs; the delete and the reference-purge must land atomically or a gate points at a dead path.
