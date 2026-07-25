@@ -262,5 +262,52 @@
   "charon.types.SpendDecision": {
     "disposition": "keep-detector-false-positive-module-unreachable-cascade",
     "reason": "Referenced 8x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
+  },
+  "charon.request_inspector.RequestInspector": {
+    "disposition": "wire",
+    "reason": "Instance-inert: constructed in gateway.py:88, stored on GatewayProxyServer via self.modules[\"request_inspector\"], but inspect() (static method) is never called from any production entrypoint. Wire into request path per INERT-INSTANCE-DETECT scope-split (b). Low-cost intervention: call RequestInspector.inspect(messages) in the request processing loop to provide cheap routing hints."
+  },
+  "charon.observability.Observability": {
+    "disposition": "wire",
+    "reason": "Instance-inert: constructed in gateway.py:80, stored on GatewayProxyServer via self.modules[\"observability\"], but export() and get_metrics() are never called from any production entrypoint. Wire into request path per INERT-INSTANCE-DETECT scope-split (b). Moderate-cost intervention: wire export() calls at key lifecycle points (request start/finish, error, provider response)."
+  },
+  "charon.speculative_execution.SpeculativeExecutor": {
+    "disposition": "wire",
+    "reason": "Instance-inert: constructed in gateway.py:92 (opt_in=True), stored on GatewayProxyServer via self.modules[\"speculative\"], but execute() is never called from any production entrypoint. Wire into request path per INERT-INSTANCE-DETECT scope-split (b). Moderate-cost intervention: call execute() as an alternative to direct provider invocation, required only when speculative execution is enabled in config."
+  },
+  "charon.session_affinity.SessionAffinity": {
+    "disposition": "wire",
+    "reason": "Instance-inert: constructed in gateway.py:90, stored on GatewayProxyServer via self.modules[\"session_affinity\"], but pin()/resolve()/clear()/touch()/cleanup()/size() are never called from any production entrypoint. Wire into request path per INERT-INSTANCE-DETECT scope-split (b). Moderate-cost intervention: call resolve() in routing to pin sessions, call touch() after each request, expose cleanup() via periodic timer.",
+    "inert_class": true
+  },
+  "charon.consensus.ConsensusRouter": {
+    "disposition": "wire",
+    "reason": "Instance-inert: constructed in gateway.py:96 (opt_in=True), stored on GatewayProxyServer via self.modules[\"consensus\"], but verify() is never called from any production entrypoint. Wire into request path per INERT-INSTANCE-DETECT scope-split (b). Moderate-cost intervention: call verify() on provider response tuples before returning to client, required only when consensus routing is enabled in config.",
+    "inert_class": true
+  },
+  "charon.virtual_keys.VirtualKeyManager": {
+    "disposition": "wire",
+    "reason": "Instance-inert: constructed in gateway.py:101, stored on GatewayProxyServer via self.modules[\"vkeys\"], but create()/resolve()/list_keys()/revoke() are never called from any production entrypoint. Wire into request path per INERT-INSTANCE-DETECT scope-split (b). Moderate-cost intervention: call resolve() during key lookup in request processing, expose create()/list_keys()/revoke() via API endpoints.",
+    "inert_class": true
+  },
+  "charon.capability.grades_import.GradesImport": {
+    "disposition": "keep-detector-instance-inert-false-positive",
+    "reason": "Instance-inert detector false positive: GradesImport has 5 callable methods (load_into, reconcile_with_real, is_provisional, provenance_of, real_samples) but none of their names appear in any instance-variable \u2014 the heuristic cannot distinguish method-name collisions from genuine invocations and errs on the side of not flagging. The class IS genuinely used in production; this entry documents the detector limitation.",
+    "inert_class": true
+  },
+  "charon.capability.taxonomy.Classification": {
+    "disposition": "keep-detector-instance-inert-false-positive",
+    "reason": "Instance-inert detector false positive: Classification has a callable name() method (unusual for a frozen dataclass). The name() method is accessed as an attribute in practice (via dotted access like c.name), not called as c.name(...), but the detector's heuristic collects all dotted .method(...) patterns and cannot resolve attribute-vs-call without type information.",
+    "inert_class": true
+  },
+  "charon.ports.agent_launch.OpencodeRenderer": {
+    "disposition": "keep-detector-instance-inert-false-positive",
+    "reason": "Instance-inert detector false positive: OpencodeRenderer has a callable render() method that IS invoked at runtime via the AgentRenderer protocol dispatch, but the invocation goes through a Protocol interface (caller holds AgentRenderer, not OpencodeRenderer) which the heuristic cannot resolve statically.",
+    "inert_class": true
+  },
+  "charon.types.CapSet": {
+    "disposition": "keep-detector-instance-inert-false-positive",
+    "reason": "Instance-inert detector false positive: CapSet has a callable covers() method that IS invoked in production (capability/taxonomy.py and related modules), but the invocation pattern involves method calls on objects typed as the parent protocol/interface rather than the concrete CapSet type, which the heuristic cannot resolve statically.",
+    "inert_class": true
   }
 }
