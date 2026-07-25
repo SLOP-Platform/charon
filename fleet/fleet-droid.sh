@@ -610,6 +610,16 @@ while true; do
   pfile="$(awk -F': ' '$1=="prompt"{sub(/^[^:]*: ?/,"");print;exit}' "$tfile")"
   spec="$(cat "$tfile"; echo; echo '--- WORK SPEC ---'; cat "$pfile" 2>/dev/null || echo '(no prompt file)')"
   branch="$(awk -F': ' '$1=="branch"{sub(/^[^:]*: ?/,"");print;exit}' "$tfile")"
+  # TICKET-MAP-GATE — CREATION-TIME work-lease enforcement. The commit-time hook already refuses a
+  # worktree branch that maps to no board ticket, but it fires AFTER the build is finished (four
+  # agents lost complete, green work to that late refusal in one day). Run the SAME resolver HERE,
+  # before the worktree is created and before the model is launched, so an unmapped branch costs
+  # nothing. Fail-closed and loud: a missing/blank `branch:` field or a branch that resolves to no
+  # ticket RELEASES the claim instead of dispatching a build that could never be committed.
+  if ! bash "$FLEET/work-lease.sh" guard-branch "$branch" "ticket $id"; then
+    echo "[$DROID] $id: branch '$branch' maps to NO board ticket — REFUSING to create a worktree or launch a build for work that could not be committed. Fix the ticket's 'branch:' field. Releasing; next…" >&2
+    bash "$FLEET/release.sh" "$id" || true; current=""; continue
+  fi
   # MULTI-REPO: resolve the ticket's target repo (`repo:` field; absent -> charon product).
   # RR_PATH/RR_WT/RR_BASE/RR_GATE come from repo-registry.sh; owner/repo is derived (not hardwired).
   repokey="$(awk -F': ' '$1=="repo"{sub(/^[^:]*: ?/,"");print;exit}' "$tfile")"
