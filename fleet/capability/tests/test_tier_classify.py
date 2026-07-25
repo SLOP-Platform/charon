@@ -38,7 +38,8 @@ import tier_classify as tc  # noqa: E402
     ("docs", 2, "docs/x.md", "economy"),                                  # trivial docs
     ("docs", 4, "docs/x.md", "strong"),                                   # hard docs escalate
     ("design-review", 4, "fleet/design.md", "frontier"),                 # architecture cognition
-    ("design-review", 3, "fleet/design.md", "strong"),
+    ("design-review", 3, "fleet/design.md", "frontier"),                 # F11 review ratchet
+    ("design-review", 2, "fleet/design.md", "strong"),                   # review floor: never economy
     ("rig-meta", 1, "fleet/x.sh", "economy"),                            # trivial single-surface
     ("rig-meta", 3, "fleet/a.sh, fleet/b.sh", "strong"),                 # middle band
 ])
@@ -93,10 +94,69 @@ def test_litellm_tag_resolves_to_model_group():
         assert f"tag '{tier}'" in joined, f"tier tag {tier} did not resolve as a model-group"
 
 
-# ── live board is drift-free after the balance pass (regression fence) ───────
-def test_live_board_is_balanced():
+# ── EFFORT axis (F5): breadth alone must not reach frontier ──────────────────
+def test_breadth_alone_never_promotes():
+    """The rule the old `nsurf >= 3` clause broke. A d2 money ticket that owns
+    MANY files is still `strong`; the same work at d3 with a real requirement
+    list clears the ported HARD band and promotes. Reverting the effort clause
+    back to a breadth test flips the first case."""
+    wide = ", ".join(f"src/charon/routing_policy/m{i}.py" for i in range(12))
+    tier, why = tc.classify_tier("money-path", 2, wide, "- one thing\n")
+    assert tier == "strong", f"breadth alone promoted to {tier} ({why})"
+    accept = "\n".join(f"- behaviour {i}" for i in range(10))
+    tier2, _ = tc.classify_tier("money-path", 3, "src/charon/routing_policy/m0.py", accept)
+    assert tier2 == "frontier", "a genuinely high-EFFORT money ticket must still promote"
+
+
+def test_effort_constants_match_the_product_module():
+    """PORT PARITY (option (b)'s one real cost). fleet/capability/effort.py is a
+    port of the product's src/charon/decompose_effort.py; pin both sides."""
+    import effort as ef
+    assert (ef.DIFFICULTY_WEIGHT, ef.SIZE_WEIGHT, ef.BEHAVIOR_WEIGHT) == (2.0, 0.15, 1.0)
+    assert (ef.SOFT_THRESHOLD, ef.HARD_THRESHOLD) == (10.0, 16.0)
+
+
+# ── live board: derived-tier deltas are the REVIEWABLE OUTPUT, not silent ────
+# This rule change deliberately does NOT rewrite fleet/board/*.md (that file set is
+# owned by another live ticket). The tickets below are the ones whose DERIVED tier
+# moved; they are pending a board-side re-tier. When that lands this set empties —
+# which is exactly when this fence must be updated, not silently relaxed.
+PENDING_RETIERS = {
+    # F5 — EFFORT replaces the breadth proxy
+    "FT-CATALOG-SEED": ("frontier", "strong"),
+    "PRICE-REFRESHER": ("strong", "frontier"),
+    # F11 — review-class ratchet (design-review d3 no longer demoted to strong)
+    "BLAST-TIER-ENFORCEMENT-DESIGN": ("strong", "frontier"),
+    "INERT-WIRING-ENFORCEMENT-DURABLE": ("strong", "frontier"),
+    "REVIEW-RECONCILE-GATE-DESIGN": ("strong", "frontier"),
+    "SUBAGENT-WORKTREE-SANDBOX": ("strong", "frontier"),
+    "WORKLOOP-INTEGRITY-STACK-SPIKE": ("strong", "frontier"),
+}
+
+
+def test_live_board_drift_is_exactly_the_pending_retiers():
     board = FLEET / "board"
     if not board.exists():
         pytest.skip("board not present")
-    rows = tc.board_drift(str(board))
-    assert rows == [], f"live board has {len(rows)} tier drift(s): {[r[0] for r in rows]}"
+    got = {r[0]: (r[1], r[2]) for r in tc.board_drift(str(board))}
+    assert got == PENDING_RETIERS, (
+        "live board drift no longer matches the recorded pending re-tiers "
+        f"(unexpected: {set(got) - set(PENDING_RETIERS)}; "
+        f"resolved: {set(PENDING_RETIERS) - set(got)})"
+    )
+
+
+def test_no_review_class_downgrade():
+    """F11 as an INVARIANT over the live board, not just two examples: no
+    design-review ticket may derive a tier BELOW `strong`, ever."""
+    board = FLEET / "board"
+    if not board.exists():
+        pytest.skip("board not present")
+    for f in sorted(board.glob("*.md")):
+        txt = f.read_text()
+        if tc._field(txt, "work_class") != "design-review":
+            continue
+        tier, why = tc.classify_tier(
+            "design-review", tc._field(txt, "difficulty"), tc._field(txt, "owns"),
+            tc._block_field(txt, "accept"))
+        assert tier in ("strong", "frontier"), f"{f.stem} review-class -> {tier} ({why})"

@@ -206,6 +206,132 @@ else
   bad "(g3) SEC_RE tier depends on capitalisation (SECRETS.py != secrets.py)"
 fi
 
+echo "== (h) EFFORT replaces BREADTH: nsurf alone can never reach frontier (F5) =="
+# REVERT LINE: fleet/capability/tier_classify.py — the money branch's `high_effort` conjunct
+# (`if money and (d >= 4 or (livefwd and d >= 3) or high_effort)`) plus
+# fleet/capability/effort.py's EFFORT_DIFFICULTY_FLOOR / FRONTIER_EFFORT. Restore the old
+# `nsurf >= 3` and case (h1) flips to frontier: a difficulty-2 money ticket that owns three
+# small files gets priced at the top tier FOR ITS WHOLE LIFE (tier is a claim CEILING).
+# MEASURED on this board: nsurf vs declared tier rho=+0.075 (p=0.43, noise); difficulty +0.413.
+cls_a(){ python3 "$SRC/capability/tier_classify.py" classify \
+           --work-class "$1" --difficulty "$2" --owns "$3" --accept "$4" | cut -f1; }
+wide="src/charon/routing_policy/a.py,src/charon/routing_policy/b.py,src/charon/routing_policy/c.py"
+wider="$wide,src/charon/routing_policy/d.py,src/charon/routing_policy/e.py,src/charon/routing_policy/f.py"
+got="$(cls_a money-path 2 "$wide" '- one behaviour')"
+if [ "$got" = "strong" ]; then
+  ok "(h1) d2 money ticket owning 3 files -> $got (breadth alone no longer promotes)"
+else
+  bad "(h1) d2 money ticket owning 3 files -> $got, expected strong (breadth proxy is back)"
+fi
+got="$(cls_a money-path 2 "$wider" '- one behaviour')"
+if [ "$got" = "strong" ]; then
+  ok "(h2) DOUBLING breadth (6 files, same d2) still -> $got — breadth is not a promotion path"
+else
+  bad "(h2) 6-file d2 money ticket -> $got, expected strong"
+fi
+# ANTI-NEUTER: the clause must still FIRE on genuinely high-effort work, or the change is just
+# a deletion. Same single file, difficulty 3, a real 10-item requirement list -> frontier.
+acc="$(printf -- '- behaviour %s\n' 1 2 3 4 5 6 7 8 9 10)"
+got="$(cls_a money-path 3 src/charon/routing_policy/a.py "$acc")"
+if [ "$got" = "frontier" ]; then
+  ok "(h3) d3 money ticket with a 10-behaviour accept -> frontier (EFFORT still promotes)"
+else
+  bad "(h3) high-effort d3 money ticket -> $got, expected frontier — the effort clause is inert"
+fi
+# and the DIFFICULTY FLOOR is structural, not arithmetic: the same 10-behaviour accept at d2
+# must NOT promote, whatever the score.
+got="$(cls_a money-path 2 src/charon/routing_policy/a.py "$acc")"
+if [ "$got" = "strong" ]; then
+  ok "(h4) same 10-behaviour accept at d2 -> strong (EFFORT_DIFFICULTY_FLOOR is load-bearing)"
+else
+  bad "(h4) d2 + 10 behaviours -> $got, expected strong — the F5 difficulty floor is gone"
+fi
+# LIVE PROOF: the one ticket the review named. FT-CATALOG-SEED (greenfield-feature, d2, three
+# files) is the ticket breadth mis-priced; it must derive `strong` off the REAL board file.
+if [ -f "$SRC/board/FT-CATALOG-SEED.md" ]; then
+  got="$(python3 "$SRC/capability/tier_classify.py" classify FT-CATALOG-SEED | cut -f1)"
+  if [ "$got" = "strong" ]; then
+    ok "(h5) LIVE FT-CATALOG-SEED (the F5 example) derives $got, not frontier"
+  else
+    bad "(h5) LIVE FT-CATALOG-SEED derives $got, expected strong"
+  fi
+else
+  bad "(h5) fleet/board/FT-CATALOG-SEED.md is missing — cannot prove the F5 example (fail-closed)"
+fi
+
+echo "== (i) PORT PARITY: the rig's effort weights == the product's (option (b) cost) =="
+# REVERT LINE: fleet/capability/effort.py's DIFFICULTY_WEIGHT / SIZE_WEIGHT / BEHAVIOR_WEIGHT /
+# SOFT_THRESHOLD / HARD_THRESHOLD. The scorer is a PORT of the product's
+# src/charon/decompose_effort.py (the rig's CI runs a charon-private-only checkout, so importing
+# the product module would make this merge-blocking gate unrunnable there). A port's one real
+# cost is silent drift — so both sides are pinned by EXECUTION here.
+py_const(){ sed -n "s/^$2 = \([0-9.]*\).*/\1/p" "$1" | head -1; }
+E="$SRC/capability/effort.py"
+for pair in "DIFFICULTY_WEIGHT 2.0" "SIZE_WEIGHT 0.15" "BEHAVIOR_WEIGHT 1.0" \
+            "SOFT_THRESHOLD 10.0" "HARD_THRESHOLD 16.0"; do
+  set -- $pair
+  got="$(py_const "$E" "$1")"
+  if [ "$got" = "$2" ]; then
+    ok "(i1) effort.py $1 = $got (pinned)"
+  else
+    bad "(i1) effort.py $1 = '$got', expected $2 — the ported weights drifted"
+  fi
+done
+# Cross-repo half: whenever the PRODUCT tree is resolvable, diff the two sides for real.
+PROD="${CHARON_SRC:-/home/stack/code/charon/src}/charon/decompose_effort.py"
+if [ -f "$PROD" ]; then
+  mism=0
+  for pair in "DIFFICULTY_WEIGHT DIFFICULTY_WEIGHT" "SIZE_WEIGHT SIZE_WEIGHT" \
+              "BEHAVIOR_WEIGHT BEHAVIOR_WEIGHT" "SOFT_THRESHOLD DEFAULT_SOFT_THRESHOLD" \
+              "HARD_THRESHOLD DEFAULT_HARD_THRESHOLD"; do
+    set -- $pair
+    a="$(py_const "$E" "$1")"; b="$(py_const "$PROD" "$2")"
+    [ -n "$b" ] || { bad "(i2) product constant $2 not found in $PROD"; mism=1; continue; }
+    [ "$a" = "$b" ] || { bad "(i2) DRIFT: rig $1=$a vs product $2=$b"; mism=1; }
+  done
+  [ "$mism" -eq 0 ] && ok "(i2) all 5 constants match the product's decompose_effort.py"
+else
+  # NOT a silent skip: an unchecked case is announced, and (i1) still pins the rig side on
+  # every host, so a rig-side edit reds here even where the product tree is absent.
+  ok "(i2) product tree absent ($PROD) — cross-repo half UNCHECKED; (i1) still pins the rig side"
+fi
+
+echo "== (j) F11: review-class work is never demoted (operator decision 2026-07-24) =="
+# REVERT LINE: fleet/capability/tier_classify.py — the `if review and d >= 3:` ratchet and its
+# POSITION (immediately after the security ratchet, before every cheaper branch). Restore the
+# old `design-review d>=4 else strong` and (j1) flips to strong: every d3 adversarial review
+# runs on a cheaper model. Adversarial review is the rig's load-bearing quality mechanism; the
+# operator REJECTED trading its capability for cost.
+got="$(cls_a design-review 3 fleet/state/DESIGN.md '- judge it')"
+if [ "$got" = "frontier" ]; then
+  ok "(j1) design-review d3 -> $got (ratchet holds)"
+else
+  bad "(j1) design-review d3 -> $got, expected frontier — review capability was traded down"
+fi
+got="$(cls_a design-review 2 fleet/state/DESIGN.md '- judge it')"
+if [ "$got" = "strong" ]; then
+  ok "(j2) design-review d2 -> $got (floor: review work never falls to economy)"
+else
+  bad "(j2) design-review d2 -> $got, expected strong"
+fi
+# ORDER PROOF: a review ticket that ALSO looks money-ish must not be caught by the money
+# branch's cheaper `money floor` return. This is what makes it a ratchet rather than a rule.
+got="$(cls_a design-review 3 src/charon/pricing.py '- judge it')"
+if [ "$got" = "frontier" ]; then
+  ok "(j3) money-looking design-review d3 -> $got (ratchet precedes the money floor)"
+else
+  bad "(j3) money-looking design-review d3 -> $got, expected frontier — ratchet is mis-ordered"
+fi
+# BOARD-WIDE INVARIANT: no live design-review ticket derives below strong.
+low=0
+for f in "$SRC"/board/*.md; do
+  [ -f "$f" ] || continue
+  grep -q '^work_class: design-review$' "$f" || continue
+  t="$(python3 "$SRC/capability/tier_classify.py" classify "$(basename "$f" .md)" | cut -f1)"
+  case "$t" in strong|frontier) :;; *) bad "(j4) $(basename "$f" .md) review-class -> $t"; low=1;; esac
+done
+[ "$low" -eq 0 ] && ok "(j4) every LIVE design-review ticket derives strong or frontier"
+
 echo; echo "--- $PASS passed, $FAIL failed ---"
 if [ "$FAIL" -eq 0 ]; then
   echo "ALL TIER-DRIFT TESTS PASS"

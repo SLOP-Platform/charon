@@ -38,6 +38,9 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import effort  # noqa: E402  — the ported EFFORT scorer (see effort.py for the port rationale)
+
 # ── THE ONE TABLE: signal patterns (rubric §b "Signals") ─────────────────────
 # security-critical surfaces: mis-run key/egress/auth work leaks credentials.
 #
@@ -72,6 +75,20 @@ LIVEFWD_RE = re.compile(r'forwarder|proxy_server|gateway\.py|litellm_plane|park_
 MONEY_RE   = re.compile(r'balance|metering|cost_rank|routing_policy|pricing|price|tier-models|quota|ledger')
 # product runtime (hot path) not otherwise caught.
 HOT_RE     = re.compile(r'src/charon/')
+# REVIEW-CLASS work (F11, OPERATOR-DECIDED 2026-07-24, TIER-BALANCE `decisions:`):
+# "Review-class work KEEPS its capability tier; tier_classify.py must not demote it."
+# Rationale recorded on the ticket: adversarial review is currently THE load-bearing quality
+# mechanism in this rig (on 2026-07-24 alone it caught three fake-greens, a repo-wide
+# unbounded-recursion hazard and a design fork that NO gate caught). Cost is the wrong axis to
+# optimize on the review path, so this is a RATCHET like SEC_RE — never traded down.
+#
+# SCOPED TO THE work_class, deliberately. A path-pattern over `owns` (review|preflight|audit|
+# e2e) was built and MEASURED first: it promoted 16 unrelated rig tickets — MARKER-PROOF-
+# MECHANIZE, REPO-MAP-CONVERGE, SYNC-SCHEDULE, REACHABILITY-GATE … — because "review" and
+# "preflight" appear in half this rig's filenames. That is the same false-promotion class F5
+# exists to remove, with a new proxy. The operator's own wording ("add review-class
+# work_classes to the design-review branch of the rule") is the work_class axis; this is it.
+REVIEW_WORK_CLASSES = ("design-review",)
 MONEY_WORK_CLASSES = ("money-path", "routing")
 ECON_WORK_CLASSES  = ("docs", "tests", "rig-meta", "ci-infra", "refactor", "bugfix")
 TIERS = ("economy", "strong", "frontier")
@@ -88,34 +105,53 @@ def _signals(owns: str):
     return code, nsurf, sec, livefwd, money_p, hot
 
 
-def classify_tier(work_class: str, difficulty: int, owns: str) -> tuple[str, str]:
-    """Pure fn (work_class, difficulty, owns) -> (tier, reason). FIRST match wins.
+def classify_tier(work_class: str, difficulty: int, owns: str, accept: str = "") -> tuple[str, str]:
+    """Pure fn (work_class, difficulty, owns, accept) -> (tier, reason). FIRST match wins.
 
     Ordered exactly per rubric §b "Tier decision". Returns the reason so the
     drift check and routing path are auditable, never a black box.
+
+    ``accept`` is OPTIONAL and additive (callers that pre-date the EFFORT axis
+    keep working, they simply score 0 behaviours). It carries the ticket's
+    accept block, from which ``effort.count_behaviours`` derives the
+    BEHAVIOUR-count signal — the second-strongest term in the ported scorer.
     """
     wc = (work_class or "").strip()
     try:
         d = int(str(difficulty).split()[0])
     except (ValueError, IndexError, AttributeError):
         d = 0
-    _code, nsurf, sec, livefwd, money_p, hot = _signals(owns or "")
+    code, nsurf, sec, livefwd, money_p, hot = _signals(owns or "")
     money = wc in MONEY_WORK_CLASSES or livefwd or money_p
+    review = wc in REVIEW_WORK_CLASSES
+
+    # EFFORT (replaces the `nsurf >= 3` BREADTH proxy — see effort.py for the
+    # measurement that killed breadth: rho +0.075 vs difficulty's +0.413).
+    # size = the ticket's own declared owned-path count; behaviours = its accept
+    # items. The F5 difficulty floor lives inside is_high_effort, so no branch
+    # here can promote on breadth alone.
+    high_effort, eff = effort.is_high_effort(d, len(code), effort.count_behaviours(accept))
 
     if sec:
         return "frontier", "security-critical path (ratchet: never trade capability)"
-    if money and (d >= 4 or (livefwd and d >= 3) or nsurf >= 3):
-        return "frontier", f"money+ (livefwd={int(livefwd)} d{d} nsurf{nsurf})"
+    # F11 RATCHET — placed immediately after the security ratchet and BEFORE every branch
+    # that can return a cheaper tier (money/docs/economy), so review-class work can never be
+    # demoted by a later clause. That ordering IS the "keeps its capability tier" guarantee:
+    # the floor was d>=4, which demoted every d3 adversarial review to `strong`.
+    if review and d >= 3:
+        return "frontier", f"review-class ratchet d{d} (F11: capability never traded down)"
+    if money and (d >= 4 or (livefwd and d >= 3) or high_effort):
+        return "frontier", f"money+ (livefwd={int(livefwd)} d{d} effort{eff:g})"
     if money:
-        return "strong", f"money floor (d{d} nsurf{nsurf})"
+        return "strong", f"money floor (d{d} effort{eff:g})"
     if d >= 5:
         return "frontier", "max difficulty 5"
     if hot and d >= 4:
         return "frontier", f"product hot-path d{d}"
     if wc == "docs":
         return ("strong", f"docs d{d}") if d >= 4 else ("economy", f"docs d{d}")
-    if wc == "design-review":
-        return ("frontier", f"design-review d{d}") if d >= 4 else ("strong", f"design-review d{d}")
+    if review:
+        return "strong", f"review-class d{d} (floor: never economy)"
     if not (hot or money or sec) and (
         d == 1 or (d <= 2 and nsurf <= 1 and wc in ECON_WORK_CLASSES)
     ):
@@ -127,6 +163,32 @@ def classify_tier(work_class: str, difficulty: int, owns: str) -> tuple[str, str
 def _field(txt: str, name: str) -> str:
     m = re.search(r'(?m)^%s: *(.*)$' % re.escape(name), txt)
     return m.group(1).strip() if m else ""
+
+
+def _block_field(txt: str, name: str) -> str:
+    """Read a ticket field that may be a YAML-ish BLOCK scalar (``accept: |``).
+
+    ``_field`` returns the literal "|" for those, which would score every
+    block-form ticket as ONE behaviour and silently flatten the EFFORT axis on
+    the majority of this board (all 104 live tickets write ``accept:`` as a
+    block). Mirrors fleet/decompose.sh's parse_ticket: a ``|`` header consumes
+    the following indented/blank lines, dedented by two spaces.
+    """
+    lines = txt.splitlines()
+    head = name + ":"
+    for i, line in enumerate(lines):
+        if not line.startswith(head):
+            continue
+        rest = line[len(head):]
+        if rest.strip() != "|":
+            return rest.strip()
+        block = []
+        j = i + 1
+        while j < len(lines) and (lines[j][:1].isspace() or lines[j].strip() == ""):
+            block.append(lines[j])
+            j += 1
+        return "\n".join(b[2:] if b.startswith("  ") else b for b in block).strip()
+    return ""
 
 
 # DISTINCT sentinel for "the gate found a RED condition". It is deliberately NOT 2:
@@ -172,7 +234,8 @@ def board_scan(board_dir: str):
             continue  # tier-missing is validate_board's own concern, not ours
         examined += 1
         derived, reason = classify_tier(
-            _field(txt, "work_class"), _field(txt, "difficulty"), _field(txt, "owns")
+            _field(txt, "work_class"), _field(txt, "difficulty"), _field(txt, "owns"),
+            _block_field(txt, "accept"),
         )
         if derived != declared:
             rows.append((tid, declared, derived, reason))
@@ -251,9 +314,16 @@ def main(argv=None):
     p_c.add_argument("--work-class")
     p_c.add_argument("--difficulty")
     p_c.add_argument("--owns")
+    p_c.add_argument("--accept", default="", help="accept block (EFFORT behaviour count)")
 
     p_d = sub.add_parser("drift", help="board declared-vs-derived tier drift (gate mode)")
     p_d.add_argument("--board", default=os.path.join(fleet, "board"))
+
+    # The REVIEWABLE OUTPUT of any rule change: every ticket whose DERIVED tier moves.
+    # Deliberately read-only — this tool never rewrites fleet/board/*.md, so a rule change
+    # can never silently re-tier the board; a human (or the board-owning ticket) applies it.
+    p_dl = sub.add_parser("deltas", help="declared-vs-derived table for the WHOLE board (read-only)")
+    p_dl.add_argument("--board", default=os.path.join(fleet, "board"))
 
     sub.add_parser("router-validate", help="prove tier tags resolve as litellm model-groups")
 
@@ -263,10 +333,22 @@ def main(argv=None):
         if args.ticket:
             txt = open(os.path.join(fleet, "board", args.ticket + ".md")).read()
             wc, diff, owns = _field(txt, "work_class"), _field(txt, "difficulty"), _field(txt, "owns")
+            acc = _block_field(txt, "accept")
         else:
             wc, diff, owns = args.work_class or "", args.difficulty or "0", args.owns or ""
-        tier, why = classify_tier(wc, diff, owns)
+            acc = args.accept or ""
+        tier, why = classify_tier(wc, diff, owns, acc)
         print(f"{tier}\t{why}")
+        return 0
+
+    if args.cmd == "deltas":
+        rows, examined = board_scan(args.board)
+        for tid, decl, der, why in rows:
+            print(f"{tid}\t{decl}\t->\t{der}\t{why}")
+        print(f"# {len(rows)} derived-tier delta(s) over {examined} declared tier(s)")
+        if examined == 0:
+            print("# RED: vacuous scan — 0 declared tiers compared", file=sys.stderr)
+            return DRIFT_RED_RC
         return 0
 
     if args.cmd == "drift":
