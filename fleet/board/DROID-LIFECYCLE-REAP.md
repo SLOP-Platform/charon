@@ -7,10 +7,40 @@ branch: feat/droid-lifecycle-reap
 owns: fleet/fleet-droid.sh, fleet/reap-orphans.sh, fleet/tests/test_droid_reap.sh, fleet/foreman.sh
 serial_justified: One cohesive droid-lifecycle safety change — the cleanup path + its out-of-band reaper + the shared preserve-committed-work guard all touch the same claim/worktree invariant; splitting orphans the contract.
 depends_on: FLEET-DEMAND-DRIVEN-ROUTING, TICKET-MAP-GATE
+dep-status: |
+  2026-07-24: FLEET-DEMAND-DRIVEN-ROUTING **LANDED** today (PR #264; state/done/ marker present), so
+  ONE dep remains — TICKET-MAP-GATE, whose work is BUILT AND PUSHED at b784de1 and needs only landing.
+  This ticket is therefore one land away from claimable. `depends_on:` is left INTACT: claim.sh reads
+  state/done/ and will clear the landed dep on its own, and hand-pruning a dep list is how a real
+  ordering constraint gets lost [[disjoint-owns-not-no-dependency]].
 real-dep: both edit fleet/fleet-droid.sh (FLEET-DEMAND rewrites 131 lines of the claim/resolve path); LIFECYCLE-REAP must sequence onto FLEET-DEMAND's LANDED version to avoid clobbering it.
 real-dep: TICKET-MAP-GATE also edits fleet/fleet-droid.sh (a ten-line guard-branch anchor at :375, before p0_worktree_setup at :408) and is ALREADY BUILT+PUSHED at b784de1; merge order = built work anchors first, so LIFECYCLE-REAP sequences onto its LANDED version rather than clobbering the dispatch-time lease gate. Added 2026-07-24 with TICKET-MAP-GATE's boarding.
 dep-kind: build
 work_class_note: lifecycle-safety + data-safety; treat as money-adjacent (a bad reaper deletes work).
+bridge-evidence: |
+  ### LIVE EVIDENCE 2026-07-24 — THE SIGNAL ALREADY EXISTS AND NOTHING CONSUMES IT.
+  Queried the session bridge directly (`board(repo=charon)` -> `ok: true`). The board shows ONE
+  session, and it is a stalled MANAGER:
+      session_id       saesee-tiin  ("Charon fleet MANAGER (saesee-tiin)")
+      pid              1390007      model claude-opus-4-8
+      status           in-progress  (i.e. still claims to be working)
+      registered_at    2026-07-24T16:49:50   last_seen  2026-07-24T16:49:50
+      lease_expires_at 2026-07-24T16:59:50   expires_in_seconds 0
+      stall_seconds    45585  (12.6 HOURS)   stalled true   expiring_soon true
+      nudges           2  — including the bridge's own `auto-nudge-2`,
+                           payload: {"reason": "lease expired > 600s ago"}, from: "bridge"
+  READ THAT CAREFULLY: **the bridge ALREADY DETECTED the stall and ALREADY FIRED an escalation.** The
+  gap is not detection. Nothing on the fleet side CONSUMES the expired/escalated signal, so a
+  12.6-hour-dead manager sits on the board as `in-progress` with an unreleased lease, and the
+  auto-nudge lands in a queue no one drains.
+  DESIGN CONSEQUENCE — this is the ticket's mechanism, not a nice-to-have: the reaper must CONSUME the
+  bridge's expired/escalated signal rather than grow a SECOND liveness notion of its own. Two liveness
+  notions WILL drift, and when they do the reaper is the component that is wrong — and a wrong reaper
+  DELETES WORK (see work_class_note:). Cross-ref DROID-BRIDGE-REGISTER's push-mode: fold-in, which
+  records the same constraint from the other side.
+  Note also what this instance is NOT: it is a MANAGER session, not a droid tab, so the in-process
+  `cleanup` trap discussed in note: was never going to fire for it. Any reaper scoped only to droid
+  worktrees would still leave this exact row rotting on the board.
 note: |
   OBSERVED 2026-07-16 (manager session): a frontier tab was Ctrl-C'd / terminal-closed. Its claim
   record (frontier-11931) PERSISTED and its worktree PERSISTED — the in-process `cleanup` trap
