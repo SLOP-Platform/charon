@@ -106,6 +106,54 @@ Read and fully follow /home/stack/charon-private/fleet/SESSION-HANDOFF-agen-kola
 
 ---
 
+## STRANDED / UNFINISHED INVENTORY — audited at session end, nothing here is lost
+
+**Everything from THIS session is committed and pushed.** The items below are either
+(a) pushed-but-unmerged by design, or (b) PRE-EXISTING strandings this session surfaced but did
+not create. Listed so the next session does not have to rediscover them.
+
+**a) Pushed, proven on origin, NOT merged — 18 branches.** All named in the table above.
+None are lost; all need landing via the queue in action 5. Note `WCI-CONTENTION-TEETH` in
+particular: its ticket exists AND its branch is pushed, but it is dep-blocked behind the
+`preflight.sh` owners, so it will not appear claimable — that is expected, not a fault.
+
+**b) Finished work still UNCOMMITTED in a worktree (needs its ticket first):**
+- `/home/stack/charon-private-wt/HANDOFF-GOTCHA` — 5 files staged. **This is action 1.**
+  Ticket `HANDOFF-GOTCHA-VERIFIABLE` now exists, so it should commit cleanly.
+
+**c) PRE-EXISTING unpushed branches with commits (predate this session, unexamined):**
+`chore/gitignore-state-negations` (+1), `chore/retire-wire-graphify` (+1),
+`design/unified-reconciliation-gate` (+1), `doctrine/adopt-substrate-first` (+2),
+`feat/coverage-meta-gate-rederive` (+5), `feat/github-limits-hardening-v2` (+3),
+`feat/reconcile-gate-wired-salvaged` (+2), `feat/semgrep-ci-v2` (+3),
+`feat/session-end-push-gate-v2` (+3), `feat/stranded-work-detect-v2` (+1),
+`feat/substrate-first-gate` (+1), `feat/substrate-first-gate-v2` (+3).
+**These exist on NO remote.** Triage: rescue or reap. Several look like `-v2` retries of
+branches that already landed — check before assuming they are live work.
+
+**d) PRE-EXISTING dirty worktrees (uncommitted edits only, no commit loss):**
+`FIXTURE-BYPASS-GATE`, `FLEET-DEMAND-BROKER`, `HANDOFF-NAME-ALLOCATOR`, `ISSUE-BOARD-DEMO`,
+`ISSUE-BOARD-SURFACE` (5 files), `STRANDED-WORK-DETECT`, `WORK-LEASE-GATE`; product
+`charon-fleet-INERT-INSTANCE-DETECT` (4), `charon-fleet-LITELLM-SPIKE`,
+`charon-fleet-router-ledger-decay`. A worktree reaper would silently destroy these edits.
+
+**e) Branches with NO ticket (the lease gate will refuse their commits):**
+`feat/fixture-bypass-gate`, `feat/handoff-name-allocator`, `demo/issue-board-surface`,
+`feat/ksf-vendor-gates`, `salvage/preflight-verify-merged-ghcache-wip`,
+`fix/substrate-first-owns-base-ref`, `feat/substrate-first-gate-v2`, `feat/work-lease-gate`
+(already merged to master — delete), `feat/coverage-meta-gate`.
+`feat/branch-ticket-map-gate` was also missing a ticket; one was requested at session end —
+verify it exists before relying on it.
+
+**f) Obsolete, safe to delete once measurements are confirmed captured:**
+`spike/litellm-router-adapter` — superseded by shipped `src/charon/litellm_plane/`; its durable
+measurements were extracted to `fleet/state/LITELLM-SPIKE-MEASUREMENTS.md`.
+
+**g) 25 × `charon-fleet-dogfood-*` product worktrees** — eval scratch, 9-10 days old, no unlanded
+source. Bulk-reapable AFTER the above are dispositioned.
+
+---
+
 ## Classes found (evidence in `fleet/state/reviews/*-agen-kolar.md`)
 
 1. **Gates that cannot go RED** — tier-drift's RED-set file absent → every mismatch WARN at rc 0.
