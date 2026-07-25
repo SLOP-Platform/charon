@@ -48,8 +48,29 @@ saesee-tiin (MANAGER)     charon  in-progress  -       2026-07-24T16:49:50  STAL
 The session ran far past the point this file was first written. **Where this block and the
 sections below disagree, THIS BLOCK WINS.**
 
-### State of record
-- **`origin/master` = `ec34714`.** Five branches landed as **PRs #266–270**:
+### FINAL STATE (supersedes everything below)
+- **`origin/master` = `cd8e5e1`** — **PR #271 landed the droid launcher fix**, LIVE-verified on master:
+  `push-only` present (10 hits), the PATH export at `charon-run.sh:30` + `fleet-droid.sh:31`,
+  the infra-fault class at `charon-run.sh:121` (`[ "$rc" -ge 128 ]`), and the gateway preflight
+  **JSON-parsing the body** at `fleet-droid.sh:711` with the **302/0-byte** signature caught at `:719`
+  and `exit 5` at `:726` — NOT a 401-only check.
+  **So the idle-push droid, the PATH/token fix, and F4 are all now on master.**
+- 🔴 **It was BROKEN as pushed and nearly landed that way.** `charon-run-client-preflight.test.sh`
+  was **77/10 RED**: `derive_gateway_token()` kept results in `local derived` while the preflight read
+  `$_derived_tok`, so under `set -u` it died `unbound variable` and **the exit-5 stand-down never
+  fired** — the headline gateway preflight did nothing. Fixed by publishing the vars as globals → **87/0**.
+  Caught only because the land was gated on a green suite. **Fourth fake-green of the session, living
+  inside the fix for the third.**
+- **Also now PUSHED** (they were local-only and one `git clean` from gone — the grounding-doc review
+  caught this): `fix/board-write-lock` @ `6ef1fb1`, `fix/land-gate-rig-suite` @ `506caa1`.
+- **`/home/stack/charon-private/fleet/MANAGER-GROUNDING.md`** — full top-to-bottom manager grounding
+  (hosts, keys, approved push paths, droid launch incl. push-mode, rules, report formats, gaps).
+  Adversarially reviewed: SHIP-WITH-FIXES, corrections applied inline at the top.
+- **`fleet/handoff-notes/`** — 38 rescued artifacts (`fleet/state/` is gitignored; everything there
+  was untracked). Read these before redoing any interrupted work.
+
+### Earlier state
+- `origin/master` was `ec34714`. Five branches landed as **PRs #266–270**:
   `meta-gate-callsite-enum` (`a00c044`), `branch-ticket-map-gate` (`d31b140`),
   `wci-contention-teeth` (`3c8919b`), `plane-canary-wire` (`c61c552`), `4lom-canary-service` (`ec34714`).
   Earlier: broker **PR #264** (`128605a`), rig-reds **PR #265** (`dfdcc22`).
