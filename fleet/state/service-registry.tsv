@@ -34,3 +34,8 @@ grader-daemon	process	pgrep:grader-daemon\.py	file:~/charon-private/fleet/model-
 session-bridge	process	pgrep:session-bridge/proxy\.py	none	0	systemctl --user restart session-bridge	fleet
 gateway-4lom	host	tcp:10.0.1.60:8080	none	0	ssh 4-LOM sudo systemctl restart charon-gateway	fleet
 roci-tunnel	socket	unixsock:~/.charon/coordinator-charon.sock	none	0	fleet/bridge-reconnect.sh	fleet
+# canary-service  the gate-test SENSOR itself (4LOM-CANARY-SERVICE) — who-watches-the-canary. It is a
+#                long-lived `run-canary.sh loop` --user unit, so BOTH dimensions are real: pgrep sees
+#                the process, and freshness ages fleet/state/canary-report.tsv (the same 9-day-dead-
+#                grader class). TTL 3600s = ~4 missed 900s cycles; the runner also self-reports STALE.
+canary-service	process	pgrep:canary-service/run-canary\.sh	file:~/charon-private/fleet/state/canary-report.tsv	3600	systemctl --user restart charon-canary.service	fleet
