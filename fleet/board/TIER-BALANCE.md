@@ -48,13 +48,14 @@ promotions-applied: |
     GW-CUTOVER-LIVE-WIRE      strong -> frontier  money-path: live cutover wiring, livefwd=1 d5, measured effort 13.6
     ORDER-A-COST-PRIMARY-LAND strong -> frontier  money-path: cost-primary ordering, livefwd=1 d3, measured effort 10.75
     WIRE-GRADING-PRIOR-LIVE   strong -> frontier  money-path: live grading prior, livefwd=1 d3, measured effort 10.3
-  DELIBERATELY NOT APPLIED — the operator approved the FRONTIER set only; these two are still open:
-    FT-LIMITS-GROQ-RECONCILE  economy -> strong   money floor (d2, measured effort 7.3)
-    ROUTER-LEDGER-DECAY       economy -> strong   money floor (d3, measured effort 10.3)
-  CONSEQUENCE — READ BEFORE LANDING: both remain hard-fail REDs, so `tier_classify.py drift` still
-  exits 3 and gate 2f would go RED the moment this branch lands. The branch's OWN board files
-  already set both to `strong`, so LANDING APPLIES THEM REGARDLESS — the only real choice is
-  approve-the-two or hold the land. Landing is HELD pending that call.
+  APPROVAL EXTENDED same day to the remaining two (money floor, not frontier) — also APPLIED:
+    FT-LIMITS-GROQ-RECONCILE  economy -> strong   money floor: quota/limits reconcile, d2, measured effort 7.3
+    ROUTER-LEDGER-DECAY       economy -> strong   money floor: router spend-ledger decay, d3, measured effort 10.3
+  Both were independently re-derived from the same `deltas` run, not from the quoted list. Applying
+  them was also FORCED-CHOICE rather than optional: the branch's OWN board files already set both to
+  `strong`, so landing applies them regardless — the only alternatives were approve or hold the land.
+  ALL 9 outstanding drift REDs are now dispositioned; `tier_classify.py drift` against the live
+  board exits 0 with ZERO REDs, so gate 2f survives this branch landing.
 outstanding-reds: |
   ### 9 HARD-FAIL DRIFTS REMAIN ON THE LIVE BOARD — UNRESOLVED, AND THIS TICKET CANNOT LAND OVER THEM.
   Ran `tier_classify.py drift` (from c8c1f13) against the LIVE board 2026-07-24. FOUR were fixed on

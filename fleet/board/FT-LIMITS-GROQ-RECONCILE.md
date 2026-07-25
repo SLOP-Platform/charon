@@ -1,5 +1,5 @@
 repo: charon-private
-tier: economy
+tier: strong
 difficulty: 2
 work_class: money-path
 priority: 1
