@@ -5,7 +5,7 @@ priority: 1
 work_class: rig-meta
 branch: feat/wci-contention-teeth
 worktree: /home/stack/charon-private-wt/WCI-TEETH
-owns: fleet/wci-contention.sh, fleet/preflight.sh, fleet/tests/wci-contention-teeth.test.sh, fleet/tests/wci-strict.test.sh, fleet/tests/preflight-gate-run.test.sh, fleet/tests/meta-gate-wired.test.sh, fleet/state/GATE-GAP-LEDGER.tsv
+owns: fleet/wci-contention.sh, fleet/preflight.sh, fleet/tests/wci-contention-teeth.test.sh, fleet/tests/wci-strict.test.sh, fleet/tests/meta-gate-wired.test.sh, fleet/state/GATE-GAP-LEDGER.tsv
 depends_on: SYNC-SCHEDULE, MARKER-PROOF-MECHANIZE, PLANE-CANARY-WIRE, RECONCILE-WIRING, REPO-MAP-CONVERGE, META-GATE-CALLSITE-ENUM, META-GATE-REDPROOF-REACHABLE, META-GATE-FINDINGS-ZERO
 real-dep: META-GATE-CALLSITE-ENUM — DISJOINT owns, INHERITED from the absorbed leg (iii) and KEPT.
   Real build prereq: PHASE 4 wires the meta-gate into the BLOCKING chain. Wiring a DIRECTORY-shaped
@@ -30,7 +30,23 @@ state: PHASE 1 BUILT + GREEN + STAGED, NOT COMMITTED. The WCI-teeth work is fini
   (`WORK-LEASE REFUSED: worktree branch 'feat/wci-contention-teeth' maps to NO board ticket`) — THIS
   TICKET IS THAT MAPPING. The sub did NOT bypass; that was the right call. Third ticket-mapping
   refusal today.
+unbundle-in-progress: |
+  PARTIALLY UN-BUNDLED 2026-07-24 — READ THIS BEFORE CLAIMING. The operator's intent for "bundle"
+  is GROUP AT ONE PRIORITY IN ONE WAVE so parallel agents work the group, NOT fuse tickets into one
+  serial branch. The un-merge was started and HALTED on session budget. CURRENT STATE:
+   - PHASE 3 (the preflight fail-open invariant) is RESTORED to its own ticket,
+     PREFLIGHT-GATE-RUN-HELPER (branch feat/preflight-gate-run-helper), which now `depends_on:` this
+     ticket for the shared fleet/preflight.sh + the decomposition. `fleet/tests/preflight-gate-run.test.sh`
+     has been REMOVED from this ticket's owns and belongs to that ticket. The PHASE 3 acceptance text
+     below is now DUPLICATED there and should be DELETED from here by the next session.
+   - PHASE 4 (META-GATE-PREFLIGHT-WIRE-CLOSED) is STILL ABSORBED here and still needs restoring as
+     its own ticket owning fleet/tests/meta-gate-wired.test.sh + the GATE-GAP-LEDGER row, carrying
+     the META-GATE-CALLSITE-ENUM / META-GATE-REDPROOF-REACHABLE / META-GATE-FINDINGS-ZERO deps with
+     it (those three are PHASE-4 prereqs only — phases 1-2 are NOT blocked on them).
+   - Status/handoff: fleet/state/reviews/BOARD-REGROUP-STATUS-agen-kolar.md.
+  [[decomposed-by-design-not-reactive]] [[optimize-execution-wallclock-tokens]]
 bundle: |
+  ORIGINAL (now-reverted) BUNDLING NOTE, retained as the record of what was merged:
   BUNDLED 2026-07-24 (operator re-bundling pass, second wave). This ticket ABSORBED
   PREFLIGHT-GATE-RUN-HELPER — which had itself already absorbed META-GATE-PREFLIGHT-WIRE-CLOSED.
   Three tickets, one file (fleet/preflight.sh), one owner, one worktree, one branch.
