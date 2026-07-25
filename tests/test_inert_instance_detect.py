@@ -6,9 +6,17 @@ Three required assertions (from INERT-INSTANCE-DETECT):
     Adding a real invocation -> GREEN. Reverting the detector change causes
     the fixture to stop failing — the test fails.
 (2) A fixture that IS invoked after construction -> GREEN (no false positive).
-(3) Every one of the 6 known-inert gateway modules is present in
+(3) Every known-inert gateway module is present in
     inert-code-disposition.json with a wire|retire disposition and a non-empty
     rationale. EXTENDED 2026-07-19: each must carry a recorded operator answer.
+
+2026-07-24 (INERT-INSTANCE-DETECT): five of the original six were RETIRED and
+deleted (Observability, SpeculativeExecutor, SessionAffinity, ConsensusRouter,
+VirtualKeyManager). Only RequestInspector survives — it has a real planned
+consumer (RFL-3). The roster is therefore SMALLER, so the tests below no longer
+lean on "the heuristic misses one of the six" as their proof that the roster is
+load-bearing; that property is now proven directly against the MECHANISM, with a
+probe class the heuristic cannot see (see TestGateBHoleClosed).
 """
 from __future__ import annotations
 
@@ -18,12 +26,14 @@ import tools.check_inert_code as M
 
 EXPECTED_MODULES: frozenset[str] = frozenset({
     "charon.request_inspector.RequestInspector",
-    "charon.session_affinity.SessionAffinity",
-    "charon.observability.Observability",
-    "charon.speculative_execution.SpeculativeExecutor",
-    "charon.consensus.ConsensusRouter",
-    "charon.virtual_keys.VirtualKeyManager",
 })
+
+# A real, live class that the collision-tolerant heuristic does NOT flag and that
+# carries no disposition. Used to prove the roster mechanism forces a disposition
+# for symbols the heuristic can never surface — independent of which real modules
+# happen to be on the roster today.
+_HEURISTIC_BLIND_PROBE = "charon.policy_router.PolicyRouter"
+_HEURISTIC_BLIND_PROBE_PATH = "src/charon/policy_router.py"
 
 
 def _build_fixture(tmp_path: Path, with_invocation: bool) -> Path:
@@ -158,14 +168,14 @@ class TestNoFalsePositive:
 
 
 class TestDispositionHonest:
-    """FAIL-ON-REVERT (3): every one of the 6 named gateway modules is present
-    in inert-code-disposition.json with an explicit wire|retire disposition
+    """FAIL-ON-REVERT (3): every named gateway module is present in
+    inert-code-disposition.json with an explicit wire|retire disposition
     and a non-empty rationale. EXTENDED 2026-07-19: each entry must carry
     a recorded operator answer (non-empty reason)."""
 
     _DISPOSITION_PATH: Path = M.DISPOSITION_PATH
 
-    def test_all_six_modules_present(self) -> None:
+    def test_all_tracked_modules_present(self) -> None:
         dispositions = M.load_dispositions()
         for mod in sorted(EXPECTED_MODULES):
             assert mod in dispositions, (
@@ -191,8 +201,8 @@ class TestDispositionHonest:
             )
 
     def test_current_codebase_passes(self) -> None:
-        """The real repo, including the 6 gateway modules now tracked in the
-        disposition file, must still pass — all 6 are disposed."""
+        """The real repo, including every gateway module tracked in the
+        disposition file, must still pass — all of them are disposed."""
         passed, undisposed, dead, schema_issues, roster_issues = M.check()
         assert schema_issues == []
         assert roster_issues == []
@@ -212,11 +222,11 @@ class TestGateBHoleClosed:
     from the disposition file left ``check_inert_code.py`` at rc=0, because the
     heuristic's collision-tolerant method matching cannot see those three.
 
-    These tests delete each of the six entries in turn (in memory — the real
-    file is never written) and require the detector to go RED for every one.
+    These tests delete each roster entry in turn (in memory — the real file is
+    never written) and require the detector to go RED for every one.
     """
 
-    def test_dropping_any_of_the_six_turns_the_gate_red(self, monkeypatch) -> None:
+    def test_dropping_any_tracked_module_turns_the_gate_red(self, monkeypatch) -> None:
         real = M.load_dispositions()
         for mod in sorted(EXPECTED_MODULES):
             pruned = {k: v for k, v in real.items() if k != mod}
@@ -232,23 +242,57 @@ class TestGateBHoleClosed:
                 "Gate-B hole, not a pass"
             )
 
-    def test_roster_covers_exactly_the_six(self) -> None:
-        """NON-VACUOUS: a roster that has drifted empty (or narrowed to only the
-        modules the heuristic already catches) would pass over nothing."""
+    def test_roster_covers_exactly_the_tracked_modules(self) -> None:
+        """NON-VACUOUS: a roster that has drifted empty would pass over nothing."""
         assert set(M.KNOWN_INSTANCE_INERT) == set(EXPECTED_MODULES)
-
-    def test_roster_backstops_what_the_heuristic_misses(self) -> None:
-        """The roster must be load-bearing, not decorative: at least one of the
-        six is invisible to the heuristic, so the roster is the only thing
-        holding it. If the heuristic ever catches all six, this assertion
-        (deliberately) still holds via the roster — but it documents WHY the
-        roster exists."""
-        heuristic = set(M.find_instance_inert_classes())
-        assert set(EXPECTED_MODULES) - heuristic, (
-            "expected the heuristic to miss at least one of the six; if it now "
-            "catches all six, re-derive whether the roster is still needed"
+        assert M.KNOWN_INSTANCE_INERT, (
+            "the roster is EMPTY — the Gate-B backstop now checks nothing"
         )
-        assert set(EXPECTED_MODULES) <= set(M.KNOWN_INSTANCE_INERT)
+
+    def test_roster_backstops_what_the_heuristic_misses(self, monkeypatch) -> None:
+        """The roster must be load-bearing, not decorative.
+
+        Proven against the MECHANISM rather than against whichever modules happen
+        to be on the roster today: ``_HEURISTIC_BLIND_PROBE`` is a real class the
+        collision-tolerant heuristic does NOT flag and that carries no
+        disposition. Putting it on the roster must make the gate RED. If it does
+        not, the roster is inert and the Gate-B hole is back open — regardless of
+        how many rows the roster has.
+        """
+        heuristic = set(M.find_instance_inert_classes())
+        assert _HEURISTIC_BLIND_PROBE not in heuristic, (
+            f"{_HEURISTIC_BLIND_PROBE} is now heuristic-visible — pick a new "
+            "blind probe, or this test proves nothing"
+        )
+        assert _HEURISTIC_BLIND_PROBE not in M.load_dispositions()
+
+        probed = dict(M.KNOWN_INSTANCE_INERT)
+        probed[_HEURISTIC_BLIND_PROBE] = _HEURISTIC_BLIND_PROBE_PATH
+        monkeypatch.setattr(M, "KNOWN_INSTANCE_INERT", probed)
+        passed, undisposed, dead, _schema, roster_issues = M.check()
+        assert roster_issues == [], "the probe class must really exist"
+        assert _HEURISTIC_BLIND_PROBE in dead, (
+            "the roster did not surface a symbol the heuristic cannot see"
+        )
+        assert _HEURISTIC_BLIND_PROBE in undisposed
+        assert passed is False, (
+            "gate still GREEN with a rostered, undispositioned symbol — the "
+            "Gate-B hole is open"
+        )
+
+    def test_a_new_inert_instance_still_reds_without_a_roster_row(
+        self, tmp_path: Path
+    ) -> None:
+        """The other direction: a NEW instance-inert class nobody has rostered
+        must still fail, on the heuristic alone. Shrinking the roster must not
+        make new inert code shippable."""
+        repo = _build_fixture(tmp_path, with_invocation=False)
+        assert M.roster_for(repo) == {}, "fixture must not inherit this repo's roster"
+        inert = M.find_instance_inert_classes(repo)
+        assert any(sym.endswith(".Widget") for sym in inert), (
+            "a constructed-but-never-invoked class went undetected with no "
+            "roster row to catch it"
+        )
 
     def test_stale_roster_row_is_a_failure(self, monkeypatch) -> None:
         """A roster row whose code no longer exists must RED, so a module cannot

@@ -30,11 +30,9 @@ from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 from . import console_router, forwarder
 from .balance import BalanceTracker
 from .cache import SemanticCache
-from .consensus import ConsensusRouter
 from .guardrails import Guardrails
 from .latency import RollingLatency
 from .netutil import is_loopback
-from .observability import Observability
 from .policy_router import PolicyRouter
 from .providers import WIRE_OPENAI
 from .proxy import GatewayProxy
@@ -51,10 +49,7 @@ from .proxy_response import _extract, _pre_flight_estimate
 from .quality_scorer import QualityScorer
 from .request_inspector import RequestInspector
 from .response_normalizer import ResponseNormalizer
-from .session_affinity import SessionAffinity
-from .speculative_execution import SpeculativeExecutor
 from .spend_limits import SpendLimiter
-from .virtual_keys import VirtualKeyManager
 
 # Public import surface re-exported from this facade (decompose). Declaring the
 # re-exports in __all__ marks them as intentionally re-exported (clears F401) and
@@ -490,14 +485,9 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         guardrails: Guardrails | None = None,
         semantic_cache: SemanticCache | None = None,
         response_normalizer: ResponseNormalizer | None = None,
-        observability: Observability | None = None,
         quality_scorer: QualityScorer | None = None,
         spend_limiter: SpendLimiter | None = None,
         request_inspector: RequestInspector | None = None,
-        session_affinity: SessionAffinity | None = None,
-        speculative_executor: SpeculativeExecutor | None = None,
-        consensus_router: ConsensusRouter | None = None,
-        virtual_key_manager: VirtualKeyManager | None = None,
         policy_router: PolicyRouter | None = None,
         balance_tracker: BalanceTracker | None = None,
         latency_tracker: RollingLatency | None = None,
@@ -559,9 +549,8 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         # F29: populate self.modules from either the modules dict or individual kwargs.
         self.modules = modules or {}
         _mod_param_names = (
-            "guardrails", "semantic_cache", "response_normalizer", "observability",
-            "quality_scorer", "spend_limiter", "request_inspector", "session_affinity",
-            "speculative_executor", "consensus_router", "virtual_key_manager", "policy_router")
+            "guardrails", "semantic_cache", "response_normalizer",
+            "quality_scorer", "spend_limiter", "request_inspector", "policy_router")
         for _mn in _mod_param_names:
             _mv = locals().get(_mn)
             if _mv is not None:
@@ -571,14 +560,9 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         self.guardrails = self.modules.get("guardrails")
         self.semantic_cache = self.modules.get("semantic_cache")
         self.response_normalizer = self.modules.get("response_normalizer")
-        self.observability = self.modules.get("observability")
         self.quality_scorer = self.modules.get("quality_scorer")
         self.spend_limiter = self.modules.get("spend_limiter")
         self.request_inspector = self.modules.get("request_inspector")
-        self.session_affinity = self.modules.get("session_affinity")
-        self.speculative_executor = self.modules.get("speculative_executor")
-        self.consensus_router = self.modules.get("consensus_router")
-        self.virtual_key_manager = self.modules.get("virtual_key_manager")
         self.policy_router = self.modules.get("policy_router")
         # Also set attrs for any extra keys injected via modules= (new specs).
         for _mn in self.modules:

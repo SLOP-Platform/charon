@@ -30,10 +30,8 @@ from typing import Any
 from . import providers, routing_policy
 from .api import _invocation_name
 from .cache import SemanticCache
-from .consensus import ConsensusRouter
 from .guardrails import Guardrails
 from .netutil import is_loopback
-from .observability import Observability
 from .policy_router import PolicyRouter
 from .proxy import GatewayProxy, ProxyObservation
 from .proxy_server import GatewayProxyServer, UpstreamRoute
@@ -41,11 +39,8 @@ from .quality_scorer import QualityScorer
 from .request_inspector import RequestInspector
 from .response_normalizer import ResponseNormalizer
 from .routing_policy.catalog_refresh import CatalogRefresher
-from .session_affinity import SessionAffinity
-from .speculative_execution import SpeculativeExecutor
 from .spend_limits import SpendLimiter
 from .types import Usage
-from .virtual_keys import VirtualKeyManager
 
 # ── module registry (F29) ─────────────────────────────────────────────────────
 # Single source of truth for every Smart-Routing module.  Adding a new module is
@@ -77,8 +72,6 @@ _MODULE_SPECS: list[ModuleSpec] = [
                lambda d, sd: ResponseNormalizer()),
     ModuleSpec("guardrails", "guardrails",
                lambda d, sd: Guardrails(config=d if d else {"keywords": []})),
-    ModuleSpec("observability", "observability",
-               lambda d, sd: Observability(config=d if d else {})),
     ModuleSpec("quality", "quality_scorer",
                lambda d, sd: QualityScorer(state_dir=sd)),
     ModuleSpec("spend", "spend_limiter",
@@ -87,19 +80,6 @@ _MODULE_SPECS: list[ModuleSpec] = [
                    state_dir=sd)),
     ModuleSpec("inspector", "request_inspector",
                lambda d, sd: RequestInspector()),
-    ModuleSpec("session_affinity", "session_affinity",
-               lambda d, sd: SessionAffinity(ttl=float(d.get("ttl", 300)))),
-    ModuleSpec("speculative", "speculative_executor",
-               lambda d, sd: SpeculativeExecutor(
-                   enabled=True, max_providers=int(d.get("max_providers", 3))),
-               opt_in=True),
-    ModuleSpec("consensus", "consensus_router",
-               lambda d, sd: ConsensusRouter(
-                   enabled=True, default_count=int(d.get("default_count", 3)),
-                   similarity=float(d.get("similarity", 0.8))),
-               opt_in=True),
-    ModuleSpec("vkeys", "virtual_key_manager",
-               lambda d, sd: VirtualKeyManager(state_dir=sd)),
     ModuleSpec("policy", "policy_router",
                lambda d, sd: PolicyRouter(state_dir=sd)),
     # PROVIDER-CATALOG-REFRESH: background model→provider auto-mapping. opt_in
@@ -319,12 +299,13 @@ def _module_inst(name: str, state_dir: str | Path | None = None) -> Any:
     Reads ``<name>.json`` for operator overrides. ``opt_in`` specs return None
     unless their config file says ``{"enabled": true}``.
 
-    WARNING (INERT-INSTANCE-DETECT, 2026-07-24): the ``speculative`` and
-    ``consensus`` opt-in switches do NOT turn on any request-path behaviour.
-    Setting ``{"enabled": true}`` constructs the module and stores it on the
-    server; nothing ever invokes it. Same for ``session_affinity``'s ``ttl``:
-    it is read here, but no request is ever pinned. Do not read these knobs as
-    features an operator can enable — they are scheduled for retirement.
+    RETIRED (INERT-INSTANCE-DETECT, 2026-07-24): ``speculative.json``,
+    ``consensus.json``, ``session_affinity.json``, ``observability.json`` and
+    ``vkeys.json`` are NO LONGER READ. Their modules were constructed here and
+    stored on the server but never invoked once, so every one of those knobs —
+    including the ``{"enabled": true}`` on-switches — silently did nothing.
+    They and their modules are gone; a leftover config file is now simply
+    ignored and can be deleted. Do not re-add a spec row without a call site.
 
     F29: the body is a loop over ``_MODULE_SPECS`` — the single source of truth.
     Adding a new module = one spec row + one module file, editing ZERO god-files.

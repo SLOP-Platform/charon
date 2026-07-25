@@ -1,16 +1,24 @@
-"""Redirect refusal: the four sinks two reviewers missed, plus failover + logging.
+"""Redirect refusal: the sinks two reviewers missed, plus failover + logging.
 
 Two independent adversarial reviews of round 4 BOTH missed four key-bearing send
 sites — ``routing_proxy``, ``speculative_execution``, ``adapters/review`` and
 ``observability``. Round 5 routed them through the choke point but added no
 redirect coverage for any of them, so their safety rested entirely on a gate that
-a reviewer then defeated. This file gives each of the four a LIVE 302 test with a
-real attacker socket.
+a reviewer then defeated. This file gives each surviving site a LIVE 302 test
+with a real attacker socket.
 
-Correction (INERT-INSTANCE-DETECT, 2026-07-24): only ``routing_proxy`` and
-``adapters/review`` are live egress paths. ``speculative_execution`` and
-``observability`` are instance-inert — constructed by the gateway, never
-invoked — so their tests here prove a property of code that has never run.
+Correction (INERT-INSTANCE-DETECT, 2026-07-24): only two of those four were ever
+live egress paths — ``routing_proxy`` and ``adapters/review``.
+``speculative_execution`` and ``observability`` were instance-inert (constructed
+by the gateway, never invoked) and have been RETIRED, so their 302 tests are gone
+with them: they proved a property of code that never ran.
+
+What survives them is the choke point itself, and it is still fully proven here.
+``observability`` was the tree's only caller of ``netutil.keyed_request``'s
+non-Bearer ``auth_scheme``, so that arm is now covered directly against
+``netutil`` (``test_basic_auth_scheme_does_not_follow_redirect``) rather than
+through a module — a stronger test, since it no longer depends on any one caller
+existing.
 
 Every test here carries a POSITIVE CONTROL asserting the credential was actually
 in flight. Without it, "the attacker saw no Authorization header" passes just as
@@ -27,7 +35,7 @@ import urllib.error
 
 import pytest
 
-from charon import netutil, observability, proxy, routing_proxy, speculative_execution
+from charon import netutil, proxy, routing_proxy
 
 REAL_KEY = "sk-REAL-provider-secret"
 
@@ -117,7 +125,7 @@ def _assert_key_was_in_flight_but_not_leaked(provider: _Server, attacker: _Serve
         f"THE PROVIDER KEY REACHED THE REDIRECT TARGET: {attacker.seen_auths}")
 
 
-# ── the four sinks two reviewers missed ──────────────────────────────────────
+# ── the live sinks two reviewers missed ─────────────────────────────────────
 
 def test_routing_proxy_does_not_follow_redirect(redirect_pair) -> None:
     provider, attacker = redirect_pair
@@ -141,21 +149,6 @@ def test_routing_proxy_does_not_follow_redirect(redirect_pair) -> None:
     _assert_key_was_in_flight_but_not_leaked(provider, attacker)
 
 
-def test_speculative_execution_does_not_follow_redirect(redirect_pair) -> None:
-    provider, attacker = redirect_pair
-
-    class _Route:
-        upstream_base = provider.url + "/v1"
-        upstream_model = "test-model"
-        api_key = REAL_KEY
-        label = "spec-provider"
-        strip_v1 = False
-
-    ex = speculative_execution.SpeculativeExecutor(enabled=True, timeout_ms=10000)
-    ex.execute([_Route()], json.dumps({"model": "m", "messages": []}).encode())
-    _assert_key_was_in_flight_but_not_leaked(provider, attacker)
-
-
 def test_gateway_reviewer_does_not_follow_redirect(redirect_pair) -> None:
     from charon.adapters.review import GatewayReviewer
     from charon.types import Outcome, OutcomeStatus, WorkUnit
@@ -168,37 +161,6 @@ def test_gateway_reviewer_does_not_follow_redirect(redirect_pair) -> None:
     with pytest.raises(Exception):  # noqa: B017 — any failure is fine; the leak is the assertion
         reviewer.review(unit, outcome)
     _assert_key_was_in_flight_but_not_leaked(provider, attacker)
-
-
-def test_observability_langfuse_does_not_follow_redirect(redirect_pair) -> None:
-    """Langfuse creds ride as BASIC, not Bearer — a different auth_scheme through
-    the same choke point, so it needs its own proof."""
-    provider, attacker = redirect_pair
-    obs = observability.Observability({
-        "langfuse_url": provider.url + "/api/public/ingestion",
-        "langfuse_public_key": REAL_KEY,
-        "langfuse_secret_key": "secret",
-    })
-    obs.export(observability.ObsEvent(event_type="t", provider="p", model="m"),
-               targets=[observability.ObsTarget.LANGFUSE])
-    # Basic auth base64-encodes the credential, so the raw key is not a substring.
-    assert provider.seen_auths and any(
-        a and a.startswith("Basic ") for a in provider.seen_auths), (
-        "langfuse export never sent credentials — the leak assertion would be vacuous")
-    assert not attacker.seen_auths or not any(
-        a and a.startswith("Basic ") for a in attacker.seen_auths), (
-        f"LANGFUSE CREDENTIALS REACHED THE REDIRECT TARGET: {attacker.seen_auths}")
-
-
-def test_observability_webhook_does_not_follow_redirect(redirect_pair) -> None:
-    provider, attacker = redirect_pair
-    obs = observability.Observability({
-        "webhook_url": provider.url + "/hook", "webhook_secret": "s"})
-    obs.export(observability.ObsEvent(event_type="t", provider="p", model="m"),
-               targets=[observability.ObsTarget.WEBHOOK])
-    assert provider.seen_auths, "webhook never fired — nothing was proven"
-    assert not attacker.seen_auths, (
-        f"the webhook followed a redirect to the attacker: {attacker.seen_auths}")
 
 
 # ── P1: a refused redirect must fail over AND be diagnosable ─────────────────
@@ -238,51 +200,34 @@ def test_refused_redirect_is_logged_with_the_target_host(redirect_pair, caplog) 
     assert "127.0.0.1" in caplog.text, f"the refused Location host is not named: {caplog.text}"
 
 
-# ── P2: one bad base must not abort the whole speculative race ───────────────
+# ── the non-Bearer auth arm, re-homed off the retired `observability` module ──
 
-def test_bad_base_does_not_abort_the_speculative_race() -> None:
-    """`_build_request` SSRF-validates and raises ValueError on a link-local base.
+def test_basic_auth_scheme_does_not_follow_redirect(redirect_pair) -> None:
+    """`netutil.keyed_request(auth_scheme=...)` must refuse redirects for EVERY
+    scheme, not just Bearer.
 
-    Called outside any try (round 5), ONE typo'd upstream_base aborted `execute()`
-    entirely and discarded every healthy route's in-flight result.
+    This arm used to be proven through `observability`'s Langfuse export, which
+    was the tree's only non-Bearer caller. That module is retired, so the
+    property is asserted straight against the choke point — where it actually
+    lives. Without this, `auth_scheme` would have zero coverage and a future
+    Basic-auth caller would inherit an unproven path.
     """
-    healthy = _Server(_Attacker)
-
-    class _Bad:
-        upstream_base = "http://169.254.169.254/v1"  # cloud metadata — refused
-        upstream_model = "m"
-        api_key = REAL_KEY
-        label = "bad-route"
-        strip_v1 = False
-
-    class _Good:
-        upstream_base = healthy.url + "/v1"
-        upstream_model = "m"
-        api_key = REAL_KEY
-        label = "good-route"
-        strip_v1 = False
-
+    provider, attacker = redirect_pair
+    req = netutil.keyed_request(
+        provider.url + "/api/public/ingestion",
+        api_key="cHVibGljOnNlY3JldA==",
+        auth_scheme="Basic",
+        data=b"{}", method="POST",
+        headers={"Content-Type": "application/json"})
     try:
-        ex = speculative_execution.SpeculativeExecutor(enabled=True, timeout_ms=10000)
-        result = ex.execute([_Bad(), _Good()],
-                            json.dumps({"model": "m", "messages": []}).encode())
-        assert result is not None, (
-            "the malformed route took down the whole race — the healthy route's "
-            "result was discarded")
-        assert result.provider == "good-route"
-    finally:
-        healthy.close()
+        netutil.open_keyed(req, timeout=10)
+    except urllib.error.HTTPError:
+        pass  # the refused 302 surfaces as an error — that is the point
 
-
-def test_all_bad_bases_returns_none_rather_than_raising() -> None:
-    """Degenerate case: every route unbuildable must not escape as a ValueError."""
-
-    class _Bad:
-        upstream_base = "http://169.254.169.254/v1"
-        upstream_model = "m"
-        api_key = REAL_KEY
-        label = "bad"
-        strip_v1 = False
-
-    ex = speculative_execution.SpeculativeExecutor(enabled=True, timeout_ms=5000)
-    assert ex.execute([_Bad()], b'{"model":"m","messages":[]}') is None
+    assert provider.seen_auths and any(
+        a and a.startswith("Basic ") for a in provider.seen_auths), (
+        "no Basic credential was ever in flight — the leak assertion below "
+        "would pass vacuously")
+    assert not any(
+        a and a.startswith("Basic ") for a in attacker.seen_auths), (
+        f"BASIC CREDENTIALS REACHED THE REDIRECT TARGET: {attacker.seen_auths}")

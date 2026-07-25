@@ -76,6 +76,15 @@ Config (providers, models, pools, and the `0600` `secrets.json`) lives under
 `$CHARON_HOME` = **`/data`** inside the container, on the persistent
 `charon-config` volume. Pick whichever fits:
 
+> **Removed knobs (2026-07-24).** `speculative.json`, `consensus.json`,
+> `session_affinity.json`, `observability.json` and `vkeys.json` are **no longer
+> read**. Their modules were constructed at start-up but never invoked, so every
+> one of those settings — including the `{"enabled": true}` on-switches on
+> `speculative.json` and `consensus.json`, and the `ttl` on
+> `session_affinity.json` — silently did nothing. They have been retired. If you
+> have any of these files in your config volume they are now simply ignored and
+> can be deleted; nothing about request handling changes either way.
+
 ### (a) Interactive setup into the volume — recommended
 
 ```bash

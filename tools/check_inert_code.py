@@ -70,8 +70,8 @@ _MESSAGE_RE = re.compile(r"^inert-code: (\S+) unreachable")
 # ``find_instance_inert_classes`` deliberately tolerates FALSE NEGATIVES: a
 # class whose method name collides with any unrelated instance call anywhere in
 # the tree reads as "invoked" and is silently not flagged. Measured on this
-# tree, that blindspot swallows 3 of the 6 gateway modules that R43-WIRING-AUDIT
-# and SR-4 independently confirmed have ZERO invocation sites:
+# tree, that blindspot swallowed 3 of the 6 gateway modules that R43-WIRING-AUDIT
+# and SR-4 independently confirmed had ZERO invocation sites:
 #
 #   flagged by the heuristic : RequestInspector, Observability, SpeculativeExecutor
 #   MISSED by the heuristic  : SessionAffinity (.resolve collides with Path.resolve
@@ -85,18 +85,26 @@ _MESSAGE_RE = re.compile(r"^inert-code: (\S+) unreachable")
 # hand-audited list of symbols KNOWN to be constructed-and-stored-but-never-
 # invoked, each of which MUST carry an explicit disposition or the gate fails.
 #
+# 2026-07-24 (INERT-INSTANCE-DETECT): five of the six were RETIRED — Observability,
+# SpeculativeExecutor, SessionAffinity, ConsensusRouter and VirtualKeyManager were
+# deleted along with their rows here, per the maintenance rule below. Only
+# RequestInspector remains: it is the one with a real planned consumer (RFL-3
+# wires ``srv.request_inspector.inspect()``), so it stays constructed and stays
+# on this roster until that wiring lands.
+#
 # Maintaining it: when a module here is genuinely wired, or is retired and its
 # code deleted, REMOVE ITS ROW HERE IN THE SAME CHANGE. A row whose class no
 # longer exists in the tree is itself a gate failure (see
 # ``find_stale_roster_symbols``) — that is what stops the roster from quietly
 # going vacuous and passing over an empty set.
+#
+# A SHRINKING roster is not a weakening one. The roster only ever covered the
+# heuristic's blind spot; every symbol it names must still carry a disposition,
+# and a NEW instance-inert class is caught by ``find_instance_inert_classes``
+# whether or not anyone remembers to add a row here. Adding a row is required
+# only when a new inert class ALSO collides its way past the heuristic.
 KNOWN_INSTANCE_INERT: dict[str, str] = {
     "charon.request_inspector.RequestInspector": "src/charon/request_inspector.py",
-    "charon.session_affinity.SessionAffinity": "src/charon/session_affinity.py",
-    "charon.observability.Observability": "src/charon/observability.py",
-    "charon.speculative_execution.SpeculativeExecutor": "src/charon/speculative_execution.py",
-    "charon.consensus.ConsensusRouter": "src/charon/consensus.py",
-    "charon.virtual_keys.VirtualKeyManager": "src/charon/virtual_keys.py",
 }
 
 
