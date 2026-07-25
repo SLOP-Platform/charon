@@ -10,6 +10,71 @@ Read and fully follow /home/stack/charon-private/fleet/SESSION-HANDOFF-agen-kola
 
 ---
 
+## ⚠️ SESSION CONTINUATION — READ THIS BEFORE THE LIST BELOW
+
+The session ran far past the point this file was first written. **Where this block and the
+sections below disagree, THIS BLOCK WINS.**
+
+### State of record
+- **`origin/master` = `ec34714`.** Five branches landed as **PRs #266–270**:
+  `meta-gate-callsite-enum` (`a00c044`), `branch-ticket-map-gate` (`d31b140`),
+  `wci-contention-teeth` (`3c8919b`), `plane-canary-wire` (`c61c552`), `4lom-canary-service` (`ec34714`).
+  Earlier: broker **PR #264** (`128605a`), rig-reds **PR #265** (`dfdcc22`).
+- **`origin/save/agen-kolar-board` = `1c974cc`** — 10 commits that could NOT be merged to master
+  (local diverged 12-behind/9-ahead, and merge/rebase are denied session-wide). Contains the
+  **9 operator-approved tier promotions**, `BRIEF-PREAMBLE.md`, the guard-branch correction, and
+  board archives. **Merge this branch early — it is not optional history.**
+- Local `/home/stack/charon-private` master is BEHIND origin and dirty. That dirtiness caused every
+  `rc=8` base-sync refusal. Sync it first.
+
+### Verified live on master (not merely merged)
+- `work-lease.sh guard-branch` **refuses an unmapped branch (rc=1)**, wired at `fleet-droid.sh:619`.
+- `plane-canary` **fires** via `foreman-cadence.sh plane-canary` (rc=1, **8/10 planes RED**).
+- Meta-gate now enumerates by call site: **11 findings**, incl. `unaudited-callsite` on
+  `validate_board.sh` — **BUT it is still not called by validate_board, so it blocks nothing.**
+  ADVISORY-not-wired: the inert-code class surviving inside its own fix. Wire it.
+
+### 🔴 CORRECTED NUMBERS — earlier text in this file is WRONG
+- **Gate on master: 68 passed / 10 failed** (stable over 3 runs). **NOT 76/2, NOT "1 red left".**
+  **8 of the 9 failing suites fail STANDALONE on an idle box** — real reds, not load flakes.
+- **`LAND_RIG_TESTS` does not exist on master.** It lives only on unlanded `fix/land-gate-rig-suite`
+  @ `506caa1`, defaulting 0. **Do NOT arm it while 8 reds stand — that halts all rig landing.**
+- **`budget-derive.py` CANNOT serve the perf assertions** — it budgets LLM wall-clock seconds keyed
+  by work_class/difficulty from model-run ledgers; no input channel for bash-fixture timings.
+- `reconcile-merged`'s bound is **5000ms** (not 1900): 14/14 at 3594ms standalone, 6816ms under load.
+- **Real class fix for the flakes: the unbounded fork loop at `fleet/gate.sh:44-50`** (78 suites at
+  once on 16 cores).
+
+### 🔴 HAZARD THAT CAUSED THREE ERRORS TODAY
+**The manager relayed measurements between sub-sessions without re-verifying, and they compounded.**
+Three instances: a tier direction (would have written a wrong tier), `guard-branch` "does not exist"
+(it exists on a branch, not master), and the gate counts above. **Sub-sessions: re-derive any number
+you are given before acting on it, and say which ref/commit you measured.** Two subs refused
+instructions on this basis and were right both times.
+
+### Resume notes from interrupted work (`fleet/state/`, gitignored — read before redoing anything)
+`LANDING-CAMPAIGN-STATUS` · `TIER-REFRESH-STATUS` · `REDS-AND-ARM-STATUS` · `BOARD-LOCK-STATUS`
+· `LAUNCHER-FIX-STATUS` · `SG-TICKETING-STATUS` · `TIER-BALANCE-PROMOTION-PASS`
+
+### Completed late, not yet reflected below
+- **Board write lock BUILT** (`fix/board-write-lock`, `6ef1fb1`, ticket `BOARD-WRITE-LOCK` P0).
+  Root cause found: **`land.sh:341-342` commits BARE** (whole index) — that is the sweeper that lost
+  a lane's work; and `work-lease.sh:196` whitelists any `board-hygiene` message UNLOCKED.
+  `land.sh:341-342` still needs its own ticket.
+- **Six dead gateway modules RETIRED** (`5f6c488` docs, `ed62c6f` removals): SessionAffinity,
+  Observability, SpeculativeExecutor, ConsensusRouter, VirtualKeyManager. `RequestInspector` KEPT
+  (RFL-3 has the call site). ADR-0019:166 and docs/docker.md:117 corrected — they asserted
+  security-relevant behaviour from dead code.
+- **`availability.py` empty-snapshot fail-open CLOSED** (`fix/availability-empty-snapshot`, `2a17fc3`).
+  F4 (missing `work_class` bypasses ALL money guardrails) is **still open** — patch written and
+  red-proofed at `…/scratchpad/redproof/f4/F4.patch`, needs the `fleet-droid.sh` owner to apply.
+- **`tier-classifier` refreshed** onto master as merge `c98c5bc` (worktree clean, classifier proven
+  intact: 42 tests, drift 13 REDs → 1). Not landed. `origin/master` moved again mid-task — re-merge first.
+- **Scorecard:** operator cleared the false `kimi-k2.6` BLOCK. Now 64 rows, 1 BLOCK. A **P1 ticket**
+  covers the other **41 of 46 lifetime BLOCKs that were provably infra, not model failures.**
+
+---
+
 ## FIRST ACTIONS (priority order)
 
 0. **`bash fleet/pending.sh list`** — your operator decision list, persists across sessions,
