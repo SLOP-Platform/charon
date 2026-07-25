@@ -1,5 +1,5 @@
 repo: charon
-tier: strong
+tier: frontier
 difficulty: 4
 work_class: money-path
 branch: feat/ft-wire-quota

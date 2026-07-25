@@ -1,5 +1,5 @@
 repo: charon
-tier: strong
+tier: frontier
 priority: 0
 difficulty: 3
 work_class: money-path

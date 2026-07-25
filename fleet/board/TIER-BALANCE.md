@@ -34,6 +34,27 @@ design-rationale: |
   effort 7.45, promoted on breadth only). The floor is the fix; do not soften it to make a specific
   ticket pass.
 serial_justified: ALREADY BUILT as one commit (feat/tier-classifier @ f1f162c) — the classifier, its drift gate in validate_board.sh, its runner registration in rig-ci-scope.sh and its red-list are ONE contract: splitting them ships a gate with no classifier (or a classifier no runner executes), which is the exact non-enforcement the first review rejected. Remaining work is re-review + land, not a build that could fan out.
+promotions-applied: |
+  ### 2026-07-24 — OPERATOR-APPROVED: 7 of the 9 outstanding drift REDs APPLIED to the LIVE board.
+  Re-derived FIRST with `tier_classify.py deltas --board <live>` from the branch's own HEAD (c8c1f13,
+  the effort-scorer adoption) — NOT taken from the quoted list below, which was written against
+  f1f162c. The re-derivation returned the SAME 9 hard-fail ids, 35 deltas over 120 declared tiers.
+  Each applied line flips `tier:` ONLY, byte-identical to the branch's own edit, so the merge
+  resolves without conflict.
+    BOUNCE-1                  strong -> frontier  security surface: real-SUT egress/header exfil canary; SEC_RE ratchet, capability never traded down
+    FIX-PROVIDER-KEY-EXFIL    strong -> frontier  security surface: provider-key exfil path; SEC_RE ratchet, capability never traded down
+    FT-WIRE-QUOTA             strong -> frontier  money-path: live-forwarding quota wiring, d4, measured effort 12.6
+    GATEWAY-GRADE-ORDER-MVP   strong -> frontier  money-path: routing/grade-order, d5, measured effort 13.6
+    GW-CUTOVER-LIVE-WIRE      strong -> frontier  money-path: live cutover wiring, livefwd=1 d5, measured effort 13.6
+    ORDER-A-COST-PRIMARY-LAND strong -> frontier  money-path: cost-primary ordering, livefwd=1 d3, measured effort 10.75
+    WIRE-GRADING-PRIOR-LIVE   strong -> frontier  money-path: live grading prior, livefwd=1 d3, measured effort 10.3
+  DELIBERATELY NOT APPLIED — the operator approved the FRONTIER set only; these two are still open:
+    FT-LIMITS-GROQ-RECONCILE  economy -> strong   money floor (d2, measured effort 7.3)
+    ROUTER-LEDGER-DECAY       economy -> strong   money floor (d3, measured effort 10.3)
+  CONSEQUENCE — READ BEFORE LANDING: both remain hard-fail REDs, so `tier_classify.py drift` still
+  exits 3 and gate 2f would go RED the moment this branch lands. The branch's OWN board files
+  already set both to `strong`, so LANDING APPLIES THEM REGARDLESS — the only real choice is
+  approve-the-two or hold the land. Landing is HELD pending that call.
 outstanding-reds: |
   ### 9 HARD-FAIL DRIFTS REMAIN ON THE LIVE BOARD — UNRESOLVED, AND THIS TICKET CANNOT LAND OVER THEM.
   Ran `tier_classify.py drift` (from c8c1f13) against the LIVE board 2026-07-24. FOUR were fixed on
