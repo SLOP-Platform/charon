@@ -56,6 +56,30 @@ promotions-applied: |
   `strong`, so landing applies them regardless — the only alternatives were approve or hold the land.
   ALL 9 outstanding drift REDs are now dispositioned; `tier_classify.py drift` against the live
   board exits 0 with ZERO REDs, so gate 2f survives this branch landing.
+land-blocked: |
+  ### 2026-07-24 — LAND ATTEMPTED AND REFUSED, rc=4 GATE RED. The blocker is NOT the tier decisions.
+  `bash fleet/land.sh feat/tier-classifier /home/stack/charon-private-wt/TIER-BALANCE` -> rc=4:
+      RED tier-drift: FT-CATALOG-SEED  declared=frontier derived=strong   (money floor d2 effort7.45)
+      RED tier-drift: PRICE-REFRESHER  declared=strong   derived=frontier (money+ livefwd=0 d3 effort40.3)
+  MECHANISM — worth knowing before anyone repeats this: `fleet/land.sh:298-299` builds its gate as
+  `bash $REPO/fleet/validate_board.sh $REPO/fleet` where $REPO is the WORKTREE. The gate therefore
+  grades the BRANCH'S OWN COPY of fleet/board/, not the live board on master. Proving drift clean
+  against the live board (which this pass did, rc=0 / zero REDs) does NOT predict the land gate.
+  ROOT CAUSE: feat/tier-classifier is **41 commits behind master** with ~85 fleet/board/*.md files
+  diverged. FT-CATALOG-SEED and PRICE-REFRESHER are exactly the two the ticket records as "fixed on
+  master that day" — the branch still carries their pre-fix tiers, so its stale board self-fails 2f.
+  BLOCKING PRECONDITION IS NOW SATISFIABLE: depends_on REPO-FIELD-REQUIRED HAS landed — master's
+  fleet/validate_board.sh:100 carries its `repo:` check. The accept: clause "Rebased onto landed
+  REPO-FIELD-REQUIRED before land" can now actually be done, and is the remaining work.
+  NEXT STEP (deliberately NOT done here — 41 commits x ~85 diverged board files is a reconcile, not
+  a board write, and near-certain to conflict on the 36 tier: lines this branch owns):
+    1. rebase/merge feat/tier-classifier onto master in /home/stack/charon-private-wt/TIER-BALANCE
+    2. re-run `tier_classify.py board-retier` so applied tiers match the post-rebase board
+       (owns_data: records this as the sanctioned re-apply path)
+    3. re-run land.sh — the 9 promotions above are already on master, so 2f should then be clean
+  Also note the MAIN checkout was dirty during this attempt (another lane's board-archive WIP:
+  4 deleted fleet/board/*.md + 4 untracked fleet/board/archive/*.md). That did not cause this rc=4,
+  but it is the documented cause of land.sh rc=8 and should be settled before the retry.
 outstanding-reds: |
   ### 9 HARD-FAIL DRIFTS REMAIN ON THE LIVE BOARD — UNRESOLVED, AND THIS TICKET CANNOT LAND OVER THEM.
   Ran `tier_classify.py drift` (from c8c1f13) against the LIVE board 2026-07-24. FOUR were fixed on
