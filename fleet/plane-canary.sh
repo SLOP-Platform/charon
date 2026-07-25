@@ -31,6 +31,11 @@
 #                            table + a loud RED banner. Records each leg's exit
 #                            to $PC_RUNLOG so `reconcile` can see a failing proof.
 #   reconcile                the reconciliation leg (below), callable standalone.
+#   surface                  reconcile + a LOUD one-banner verdict naming the RED planes,
+#                            shaped for embedding in a firing layer's output. This is what
+#                            fleet/foreman-cadence.sh calls on every trigger. Fail-closed
+#                            and non-vacuous: zero declared planes / zero registry rows /
+#                            an unreadable registry are each RED, never a silent pass.
 #   suites | tests           print the hermetic dogfood_test path list, one per
 #                            line, so fleet/checks/rig-ci-scope.sh's CI_SUITES can
 #                            consume it without a second hand-maintained list.
@@ -72,7 +77,12 @@ RUNLOG="${PC_RUNLOG:-$FLEET/state/plane-canary-lastrun.tsv}"
 # PC_PLANES (space/comma-separated) overrides the constant so the hermetic
 # dogfood can inject a small fixture plane-set; DEFAULT is the hardcoded 10.
 PLANES=(data/serving failover egress-key review lifecycle landing balance config-ssot map-freshness reconciliation)
-if [ -n "${PC_PLANES:-}" ]; then
+# NON-VACUITY: the override fires when PC_PLANES is SET, not when it is non-empty.
+# `PC_PLANES=""` used to silently fall back to the hardcoded 10 — a caller that asked for
+# "no planes" got a different plane-set than it requested, and the empty case (the only
+# input that can make this suite vacuously GREEN) was unreachable and therefore untestable.
+# An explicitly empty plane-set is now honoured and caught by cmd_surface's zero-plane RED.
+if [ -n "${PC_PLANES+x}" ]; then
   # shellcheck disable=SC2206  # deliberate word-split of the override list.
   IFS=', ' read -r -a PLANES <<< "$PC_PLANES"
 fi
@@ -226,6 +236,69 @@ cmd_reconcile(){
   return 1
 }
 
+# ── surface leg (the LOUD, embeddable verdict) ──────────────────────────────
+# WHY THIS EXISTS (PLANE-CANARY-WIRE): `reconcile` was correct and returned 1 — and for
+# its entire existence NOTHING CALLED IT. A repo-wide grep found exactly two references:
+# this script and its own dogfood. Meanwhile 8 of the 10 declared planes were RED and
+# nobody acted, because nothing surfaced it. A firing layer cannot embed a 14-line table
+# and expect a session to notice; it needs ONE banner, the RED plane NAMES, and a non-zero
+# rc. That is `surface`. `reconcile` stays the detail view and is unchanged.
+#
+# FAIL-CLOSED and NON-VACUOUS — these are the contract, not decoration:
+#   * ZERO declared planes  -> RED. A plane-set that declares nothing can never go RED, so
+#     a GREEN from it is a vacuous pass — exactly the bug class this suite exists to kill.
+#   * ZERO registry rows    -> RED, same reason: nothing was actually examined.
+#   * registry unreadable   -> RED (inherited from cmd_reconcile's own precondition).
+# The counting/formatting pipes below operate on ALREADY-CAPTURED text; the DETECTOR's rc
+# is taken by capture-then-check (`out="$(cmd_reconcile 2>&1)" || rc=$?`) so $? is
+# reconcile's own exit and never a `tail`/`head`/`grep` tail exit. Never pipe the detector.
+cmd_surface(){
+  local n_planes="${#PLANES[@]}"
+  if [ "$n_planes" -eq 0 ]; then
+    echo "████ PLANE-CANARY: RED — ZERO planes declared (vacuous suite: a canary set that cannot fail is not a canary) ████"
+    return 1
+  fi
+  if [ ! -r "$REGISTRY" ]; then
+    echo "████ PLANE-CANARY: RED — registry unreadable at $REGISTRY (fail-closed: an unreadable registry is NOT 'no planes') ████"
+    return 1
+  fi
+  local n_rows
+  n_rows="$(awk -F'\t' '$1 != "" && $1 !~ /^#/ {n++} END{print n+0}' "$REGISTRY")"
+  if [ "$n_rows" -eq 0 ]; then
+    echo "████ PLANE-CANARY: RED — registry $REGISTRY has ZERO plane rows; $n_planes plane(s) declared and NONE examined (non-vacuous: an empty scan is never a pass) ████"
+    return 1
+  fi
+
+  local out rc=0
+  out="$(cmd_reconcile 2>&1)" || rc=$?
+  printf '%s\n' "$out"
+
+  local n_red n_green red_planes
+  n_red="$(printf '%s\n' "$out"   | awk '/^  RED /{n++}   END{print n+0}')"
+  n_green="$(printf '%s\n' "$out" | awk '/^  GREEN /{n++} END{print n+0}')"
+  # plane names live inside single quotes on every RED line ("plane 'failover': ...").
+  red_planes="$(printf '%s\n' "$out" | awk -F"'" '/^  RED /{ if (NF>=2) printf "%s ", $2 }')"
+  red_planes="${red_planes% }"
+
+  if [ "$rc" -eq 0 ] && [ "$n_red" -eq 0 ]; then
+    echo "════ PLANE-CANARY surface: GREEN — $n_green/$n_planes declared plane(s) wired+passing+proven ════"
+    return 0
+  fi
+  # LOUD. Banner form, RED plane names on their own line, and the next action. The failure
+  # being fixed is 8 REDs hiding inside a wall of WARN lines — a session scrolls past a WARN,
+  # it does not scroll past this.
+  echo
+  echo "████████████████████████████████████████████████████████████████████████"
+  echo "████ PLANE-CANARY RED: ${n_red} of ${n_planes} DECLARED PLANES HAVE NO TRUSTWORTHY CANARY"
+  echo "████ RED planes: ${red_planes:-(see the RED lines above)}"
+  echo "████ Each is a declared control/money plane that is unwired, proofless,"
+  echo "████ or entirely uncanaried. It will break silently in production."
+  echo "████ Detail:  bash fleet/plane-canary.sh reconcile"
+  echo "████████████████████████████████████████████████████████████████████████"
+  [ "$rc" -eq 0 ] && rc=1
+  return "$rc"
+}
+
 # ── run leg ─────────────────────────────────────────────────────────────────
 _RUN_ROWS=()
 _RUN_MODE="hermetic"
@@ -299,8 +372,9 @@ main(){
   case "${1:-}" in
     run)          shift; cmd_run "$@"; exit $?;;
     reconcile)    shift; cmd_reconcile "$@"; exit $?;;
+    surface)      shift; cmd_surface "$@"; exit $?;;
     suites|tests) cmd_suites; exit 0;;
-    *) echo "usage: plane-canary.sh {run [--live|--hermetic] | reconcile | suites | tests}" >&2; exit 2;;
+    *) echo "usage: plane-canary.sh {run [--live|--hermetic] | reconcile | surface | suites | tests}" >&2; exit 2;;
   esac
 }
 
