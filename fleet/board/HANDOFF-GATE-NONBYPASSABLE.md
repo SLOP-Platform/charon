@@ -21,6 +21,20 @@ note: |
   GATE_PARTS is validate_board.sh only (land.sh:288-304) — it does not know SESSION-HANDOFF-*.md files
   are special. CI (rig-ci-scope.sh) also never runs handoff-check.sh (grep "handoff" => zero hits).
   So the sanctioned normal merge path is a general-purpose escape hatch for ANY hand-edited handoff.
+
+  GENERALISED 2026-07-26 (operator item #6, folded here rather than a new ticket — this ticket already
+  owns fleet/land.sh and land.sh is ALREADY contended by RECONCILE-WIRING; a third concurrent writer
+  would have been the defect). The handoff case above is one INSTANCE of a wider hole:
+  **rig merges are not test-gated at all.** `fleet/land.sh:298` auto-detects `validate_board.sh` for
+  the rig — a board STRUCTURAL check — and never runs `fleet/gate.sh`, so a rig branch can merge with
+  any number of failing tests. MANAGER-OPERATING-RULES §8 mandates the FULL gate as the merge gate;
+  the rig path does not honour it.
+  Scope added: make the rig's GATE_PARTS include the real test gate, WITHOUT breaking the product
+  path (which selects its gate differently). Prove both paths still gate correctly — a change that
+  fixes the rig and silently loosens the product is a net loss.
+  Live evidence the hole is real, same day: `land-push.sh` DID refuse a push on a validate_board RED
+  (exit 4), so the structural check is wired — it is the TEST gate that is absent. Fixing the wrong
+  one of those two is the likely failure mode here.
 accept: |
   - fleet/land.sh: when the changed-file set for a land includes fleet/SESSION-HANDOFF-*.md, append
     `handoff-check.sh <file>` to GATE_PARTS UNCONDITIONALLY (mirror the existing per-repo GATE_PARTS
