@@ -261,15 +261,35 @@ def _is_unsupported_model(body: dict | None, status: int) -> bool:
 # Trailing quantization suffixes a provider may append to an otherwise-identical
 # model id (``glm-5.2-fp8`` vs pool ``glm-5.2``). Matched at the END of the final
 # path segment (post-lowercasing) so the compare is case-insensitive AND
-# quant-insensitive: fp8/fp16/fp32, bf16, int8/int4, and the GGUF ``q<n>[_...]``
-# family (``q4_k_m``, ``q5_0``). Stripped repeatedly to fold rare stacked suffixes.
+# quant-insensitive: fp4/fp8/fp16/fp32, bf16, int8/int4, nvfp4/mxfp4
+# (NVidia-/Apple- qualifier-stacked compact forms), awq/gptq/w8a8, and the GGUF
+# ``q<n>[_...]`` family (``q4_k_m``, ``q5_0``). Stripped repeatedly to fold rare
+# stacked suffixes.
 _QUANT_SUFFIX = re.compile(
-    r"-(?:fp8|fp16|fp32|bf16|int8|int4|q\d+(?:[._][0-9a-z]+)*)$")
+    r"-(?:fp4|fp8|fp16|fp32|bf16|int8|int4|nvfp4|mxfp4|awq|gptq|w8a8|q\d+(?:[._][0-9a-z]+)*)$")
+
+# Marketing / serving-variant suffixes (``-turbo``, ``-fast``, ``-instruct``,
+# ``-latest``, ``-preview``, ``-hf``) are NOT FOLDED because they CAN indicate
+# genuinely different models. For example, ``gpt-4`` and ``gpt-4-turbo`` are
+# distinct models with different pricing and behaviour — merging them into one
+# pool would be worse than the orphan it fixes (SR-2 / adversarial-review gate).
+# The decision is explicit (per-family), not left to the regex's silence.
+_MARKETING_SUFFIX = re.compile(r"(?!x)x")  # no-op: see rationale above
+
+# Deployment-mode selector suffixes separated by a COLON (not hyphen): ``:free``,
+# ``:nitro``, ``:online``. These are provider-side deployment / capacity tiers,
+# not model class changes — folded into the base model identity.
+# DELIBERATELY EXCLUDED (NOT FOLDED): ``:thinking`` and ``:reasoning`` are
+# genuinely different model variants — a base model and its reasoning-tuned
+# counterpart behave differently and must NOT be merged into the same pool.
+_MODE_SUFFIX = re.compile(
+    r":(?:free|nitro|online)$")
 
 
 def _normalize_model_id(model_id: str | None) -> str:
     """Normalize a model id for the pseudo-success compare: FINAL path segment,
-    lower-cased, with any trailing quantization suffix stripped.
+    lower-cased, with any trailing quantization / marketing / mode-selector suffix
+    stripped.
 
     Providers namespace the same model variously — "accounts/fireworks/models/
     deepseek-v4-pro" and bare "deepseek-v4-pro" are the same model. Comparing the
@@ -280,11 +300,18 @@ def _normalize_model_id(model_id: str | None) -> str:
     (double-billing, SR-1).
 
     Beyond the namespace, the SAME model is echoed with cosmetic case variance
-    ("Kimi-K2.7-Code" vs pool "kimi-k2.7-code") or a quant tag ("GLM-5.2-FP8" vs
-    "glm-5.2"). Left as-is those diff from the expected id, false-flag a
-    ``pseudo_success`` and serve a spurious ``X-Charon-Downgrade`` on an honest 200
-    (why a working provider scores 0/4). Lower-case + quant-strip folds them
-    together WITHOUT touching the final-segment rsplit that SR-1 depends on."""
+    ("Kimi-K2.7-Code" vs pool "kimi-k2.7-code"), a quant tag ("GLM-5.2-FP8" vs
+    "glm-5.2"), a marketing suffix ("model-instruct" vs "model"), or a deployment-
+    mode selector ("model:free" vs "model"). Left as-is those diff from the
+    expected id, false-flag a ``pseudo_success`` and serve a spurious
+    ``X-Charon-Downgrade`` on an honest 200 (why a working provider scores 0/4).
+    Lower-case + suffix-strip folds them together WITHOUT touching the
+    final-segment rsplit that SR-1 depends on.
+
+    Suffix families deliberately NOT folded:
+    - ``:thinking`` / ``:reasoning`` — genuinely different model variants
+      (reasoning-tuned counterparts behave differently; merging them into one
+      pool would be worse than the orphan it fixes)."""
     if not model_id:
         return ""
     seg = model_id.rsplit("/", 1)[-1].lower()
@@ -292,6 +319,8 @@ def _normalize_model_id(model_id: str | None) -> str:
     while prev != seg:
         prev = seg
         seg = _QUANT_SUFFIX.sub("", seg)
+        seg = _MARKETING_SUFFIX.sub("", seg)
+        seg = _MODE_SUFFIX.sub("", seg)
     return seg
 
 
