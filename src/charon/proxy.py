@@ -258,15 +258,21 @@ def _is_unsupported_model(body: dict | None, status: int) -> bool:
         body, _UNSUPPORTED_BODY_PATTERNS)
 
 
-# Trailing quantization suffixes a provider may append to an otherwise-identical
-# model id (``glm-5.2-fp8`` vs pool ``glm-5.2``). Matched at the END of the final
-# path segment (post-lowercasing) so the compare is case-insensitive AND
-# quant-insensitive: fp4/fp8/fp16/fp32, bf16, int8/int4, nvfp4/mxfp4
-# (NVidia-/Apple- qualifier-stacked compact forms), awq/gptq/w8a8, and the GGUF
-# ``q<n>[_...]`` family (``q4_k_m``, ``q5_0``). Stripped repeatedly to fold rare
-# stacked suffixes.
+# Trailing quantization / precision suffixes a provider may append to an
+# otherwise-identical model id (``glm-5.2-fp8`` vs pool ``glm-5.2``). Matched
+# at the END of the final path segment (post-lowercasing) so the compare is
+# case-insensitive AND quant-insensitive: fp4/fp8/fp16/fp32, bf16, int8/int4,
+# nvfp4/mxfp4 (NVidia-/Apple- qualifier-stacked compact forms), and the GGUF
+# ``q<n>[_...]`` family (``q4_k_m``, ``q5_0``). Stripped repeatedly to fold
+# rare stacked suffixes.
+#
+# DELIBERATELY EXCLUDED: ``awq``, ``gptq``, ``w8a8`` — these are weight-producing
+# ALGORITHMS, not precision casts (which are lossless flavour changes on the same
+# weights). awq/gptq produce measurably DIFFERENT weight matrices and live catalog
+# ZERO specimens exist to verify against. Included in the corpus as SYNTHETIC
+# entries pending a live specimen.
 _QUANT_SUFFIX = re.compile(
-    r"-(?:fp4|fp8|fp16|fp32|bf16|int8|int4|nvfp4|mxfp4|awq|gptq|w8a8|q\d+(?:[._][0-9a-z]+)*)$")
+    r"-(?:fp4|fp8|fp16|fp32|bf16|int8|int4|nvfp4|mxfp4|q\d+(?:[._][0-9a-z]+)*)$")
 
 # Marketing / serving-variant suffixes (``-turbo``, ``-fast``, ``-instruct``,
 # ``-latest``, ``-preview``, ``-hf``) are NOT FOLDED because they CAN indicate
@@ -274,16 +280,44 @@ _QUANT_SUFFIX = re.compile(
 # distinct models with different pricing and behaviour — merging them into one
 # pool would be worse than the orphan it fixes (SR-2 / adversarial-review gate).
 # The decision is explicit (per-family), not left to the regex's silence.
-_MARKETING_SUFFIX = re.compile(r"(?!x)x")  # no-op: see rationale above
 
 # Deployment-mode selector suffixes separated by a COLON (not hyphen): ``:free``,
-# ``:nitro``, ``:online``. These are provider-side deployment / capacity tiers,
-# not model class changes — folded into the base model identity.
-# DELIBERATELY EXCLUDED (NOT FOLDED): ``:thinking`` and ``:reasoning`` are
-# genuinely different model variants — a base model and its reasoning-tuned
-# counterpart behave differently and must NOT be merged into the same pool.
+# ``:nitro``, ``:online``, ``:low``, ``:medium``, ``:high``, ``:max``. These are
+# provider-side deployment / capacity / budget tiers, not model class changes —
+# folded into the base model identity.
+#
+# DELIBERATELY EXCLUDED (NOT FOLDED):
+# - ``:thinking`` and ``:reasoning`` — genuinely different model variants
+#   (reasoning-tuned counterparts behave differently and must NOT merge into the
+#   same pool).
+# - ``:1024``, ``:8192``, ``:32768``, ``:64000``, ``:32000`` and similar numeric
+#   colon-suffixes — thinking BUDGET tokens (quality-affecting), distinct from
+#   capacity tiers. A Claude model at :1024 thinking budget is a different
+#   quality point than :32768; merging them is lossy.
 _MODE_SUFFIX = re.compile(
-    r":(?:free|nitro|online)$")
+    r":(?:free|nitro|online|low|medium|high|max)$")
+
+# Explicit identity aliases — a narrow, auditable mapping applied BEFORE the
+# regex loop. Each alias resolves a provider-specific spelling into the base
+# pool id that the rest of the normalization path (lower-casing, suffix
+# stripping) then processes normally.  This is NOT a regex family and is NOT
+# a second normalizer — it is a one-shot lookup on the lower-cased final
+# segment, deliberately enumerable so a human can read and audit every alias.
+#
+# aistudio gemini preview ids:
+#   gemini-3-pro-preview    → gemini-3-pro    (the ONLY way to reach Gemini-3
+#                                               Pro on the aistudio endpoint)
+#   gemini-3-flash-preview  → gemini-3-flash  (the ONLY way to reach Gemini-3
+#                                               Flash on the aistudio endpoint)
+#
+# DELIBERATELY NOT ALIASED:
+#   gemini-3-pro-image-preview — IMAGE model, not text; aliasing would silently
+#                                 route text requests to an image-only model.
+#   gemini-3.1-flash-image      — also an IMAGE model; same rationale.
+_EXPLICIT_ALIASES: dict[str, str] = {
+    "gemini-3-pro-preview": "gemini-3-pro",
+    "gemini-3-flash-preview": "gemini-3-flash",
+}
 
 
 def _normalize_model_id(model_id: str | None) -> str:
@@ -311,15 +345,22 @@ def _normalize_model_id(model_id: str | None) -> str:
     Suffix families deliberately NOT folded:
     - ``:thinking`` / ``:reasoning`` — genuinely different model variants
       (reasoning-tuned counterparts behave differently; merging them into one
-      pool would be worse than the orphan it fixes)."""
+      pool would be worse than the orphan it fixes).
+    - Numeric colon-suffixes (``:1024``, ``:8192``, ``:32768``, ``:64000``,
+      ``:32000`` etc.) — thinking BUDGET tokens, quality-affecting (different
+      from capacity tiers like ``:free``/``:low``).
+
+    An explicit-alias table resolves provider-specific spellings (e.g. aistudio
+    gemini preview ids) into the corresponding base pool id BEFORE the suffix
+    stripping loop, so funded frontier legs on those endpoints reach their pool."""
     if not model_id:
         return ""
     seg = model_id.rsplit("/", 1)[-1].lower()
+    seg = _EXPLICIT_ALIASES.get(seg, seg)
     prev = ""
     while prev != seg:
         prev = seg
         seg = _QUANT_SUFFIX.sub("", seg)
-        seg = _MARKETING_SUFFIX.sub("", seg)
         seg = _MODE_SUFFIX.sub("", seg)
     return seg
 

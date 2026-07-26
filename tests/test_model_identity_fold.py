@@ -16,6 +16,9 @@ from charon.proxy import _normalize_model_id
 # ── CORPUS: real advertised model ids → expected folded identity ──────────────
 # Each entry: (raw_id, expected_folded_id, reason — the *reason* the id folds /
 #   does NOT fold, not a casual comment).
+# Entries marked [SYNTHETIC] test suffixes/aliases that exist in the algorithm
+# but have ZERO live catalog specimens — they guard against silent regressions,
+# not coverage of real traffic.
 # Non-vacuous guard: a corpus of zero entries is a test failure.
 _CORPUS = [
     # ── THE INSTANCE: fp4 omitted → orphan pool ───────────────────────────
@@ -40,13 +43,15 @@ _CORPUS = [
      "nvfp4 (NVidia-stacked fp4) — quant precision, not a different model"),
     ("model-mxfp4", "model",
      "mxfp4 (Apple-qualified fp4) — quant precision, not a different model"),
-    # awq / gptq / w8a8
-    ("deepseek-v3-awq", "deepseek-v3",
-     "awq quantization — not a different model"),
-    ("llama-3.3-70b-gptq", "llama-3.3-70b",
-     "gptq quantization — not a different model"),
-    ("model-w8a8", "model",
-     "w8a8 quantization — not a different model"),
+    # awq / gptq / w8a8 — DELIBERATELY NOT FOLDED (dropped from _QUANT_SUFFIX
+    # pending a live specimen; awq/gptq are weight-producing ALGORITHMS, not
+    # precision casts, with a different risk profile).  [SYNTHETIC]
+    ("deepseek-v3-awq", "deepseek-v3-awq",
+     "[SYNTHETIC] awq NOT folded — algorithm, not precision cast; no live specimen"),
+    ("llama-3.3-70b-gptq", "llama-3.3-70b-gptq",
+     "[SYNTHETIC] gptq NOT folded — algorithm, not precision cast; no live specimen"),
+    ("model-w8a8", "model-w8a8",
+     "[SYNTHETIC] w8a8 NOT folded — algorithm, not precision cast; no live specimen"),
     # GGUF q<n> family (includes stacked forms)
     ("qwen3-72b-q4_k_m", "qwen3-72b",
      "GGUF q4_k_m — quant form, not a different model"),
@@ -75,18 +80,49 @@ _CORPUS = [
      "marketing suffix kept — -hf can be a genuinely different model"),
 
     # ── deployment-mode selectors (COLON tail — FOLDED) ───────────────────
+    # :free / :nitro / :online have ZERO live specimens — included speculatively
+    # until a provider surfaces them.  [SYNTHETIC]
     ("openai/gpt-4o:free", "gpt-4o",
-     "deployment mode :free — same model, capacity tier"),
+     "[SYNTHETIC] deployment mode :free — same model, capacity tier"),
     ("openai/gpt-4o:nitro", "gpt-4o",
-     "deployment mode :nitro — same model, capacity tier"),
+     "[SYNTHETIC] deployment mode :nitro — same model, capacity tier"),
     ("openai/gpt-4o:online", "gpt-4o",
-     "deployment mode :online — same model, capacity tier"),
+     "[SYNTHETIC] deployment mode :online — same model, capacity tier"),
+    # :low / :medium / :high / :max — live nanogpt capacity tiers (coding-router)
+    ("nanogpt/coding-router:low", "coding-router",
+     "deployment mode :low — same model, capacity tier"),
+    ("nanogpt/coding-router:medium", "coding-router",
+     "deployment mode :medium — same model, capacity tier"),
+    ("nanogpt/coding-router:high", "coding-router",
+     "deployment mode :high — same model, capacity tier"),
+    ("nanogpt/coding-router:max", "coding-router",
+     "deployment mode :max — same model, capacity tier"),
+
+    # ── explicit aliases ──────────────────────────────────────────────────
+    # aistudio gemini preview ids → base pool (F1)
+    ("models/gemini-3-pro-preview", "gemini-3-pro",
+     "aistudio gemini-3-pro-preview aliased → gemini-3-pro"),
+    ("models/gemini-3-flash-preview", "gemini-3-flash",
+     "aistudio gemini-3-flash-preview aliased → gemini-3-flash"),
+    # NEGATIVE: image-preview must NOT land in the text pool
+    ("models/gemini-3-pro-image-preview", "gemini-3-pro-image-preview",
+     "image model — NOT aliased, must remain distinct from text pool"),
+    ("models/gemini-3.1-flash-image", "gemini-3.1-flash-image",
+     "image model — NOT aliased, must remain distinct from text pool"),
 
     # ── DELIBERATE NON-FOLDS — genuinely different models ─────────────────
     ("model:thinking", "model:thinking",
      "reasoning-tuned variant — deliberately distinct, NOT folded"),
     ("model:reasoning", "model:reasoning",
-     "reasoning-tuned variant — deliberately distinct, NOT folded"),
+     "[SYNTHETIC] reasoning-tuned variant — deliberately distinct, NOT folded; "
+     "no live specimens with this suffix"),
+    # -thinking (HYPHEN FORM) — live catalog has 5+ entries. NOT folded;
+    # -thinking ends the model name like a quant suffix would, so the corpus
+    # must prove it stays intact.
+    ("deepseek-ai/deepseek-v3.2-exp-thinking", "deepseek-v3.2-exp-thinking",
+     "-thinking (hyphen) NOT folded — reasoning variant, genuinely different"),
+    ("deepseek-ai/deepseek-v3.2-exp", "deepseek-v3.2-exp",
+     "base model without -thinking — PAIR proves they stay SEPARATE"),
 
     # ── CASE: lower-case folding already works ────────────────────────────
     ("Kimi-K2.7-Code", "kimi-k2.7-code",
