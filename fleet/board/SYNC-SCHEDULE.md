@@ -10,7 +10,16 @@ priority-why: |
   rung 2 (a WITHIN-band tie-break), so it is already picked first among P:4s without inflating it.
 branch: feat/sync-schedule
 repo: charon-private
-depends_on: STARTUP-CONTEXT-DIET, FOREMAN-WIRE
+depends_on: STARTUP-CONTEXT-DIET, FOREMAN-WIRE, PREFLIGHT-GATE-RUN-HELPER
+real-dep: PREFLIGHT-GATE-RUN-HELPER — shared single-owner of fleet/preflight.sh, and a real build
+  prereq: it rewrites the gate-run infrastructure (fail-open -> fail-closed, cmd_add || true mask
+  removal, vacuity guard) that this ticket's preflight.sh wiring sites (sync-checkouts at top of
+  preflight) must land on top of. Without it, the sync invocation would run inside a chain that
+  still fails open — a new gate leg inheriting the very class of defect this wave exists to close.
+  dep-kind: build.
+  APPLIED 2026-07-26 from fleet/state/PREFLIGHT-OWNERSHIP-RULING.md (PREFLIGHT-OWNS-ARBITRATE,
+  operator decision 16). This single edge is the ONLY change the ruling prescribes — the other four
+  tickets already chain transitively.
 real-dep: STARTUP-CONTEXT-DIET — shared fleet/preflight.sh edit region (this also
   transitively orders SYNC-SCHEDULE after HANDOFF-MECHANIZE via the existing
   HANDOFF-MECHANIZE -> HANDOFF-PIPEFAIL -> REPO-DECL-CENTRAL -> STARTUP-CONTEXT-DIET
