@@ -1,3 +1,9 @@
+retired: |
+  RETIRED 2026-07-26 by operator decision (action item #4) — NOT done, STRUCK.
+  Its work is preserved and pushed at 42b3904, but 2 of its 5 files wire the STRUCK
+  issue-board.tsv fork into the LIVE SessionStart hook, so landing it would install a design
+  this fleet explicitly rejected. PR #261 (feat/issue-board-surface) closed unmerged.
+  Archived rather than deleted so the rejected design and its rationale stay recoverable.
 repo: charon-private
 tier: strong
 priority: 1
