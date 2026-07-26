@@ -1,0 +1,53 @@
+{
+  "registry_entries": 5,
+  "routes_count": 5,
+  "pools_count": 3,
+  "pool_ids": [
+    "pool-1",
+    "pool-2",
+    "pool-3"
+  ],
+  "pool_membership": {
+    "pool-1": [
+      [
+        "model-a",
+        "openrouter",
+        "pinned-model-a"
+      ],
+      [
+        "model-b",
+        "openrouter",
+        "pinned-model-b"
+      ],
+      [
+        "disabled-model",
+        "together",
+        "pinned-disabled"
+      ]
+    ],
+    "pool-2": [
+      [
+        "model-c",
+        "groq",
+        null
+      ],
+      [
+        "model-d",
+        "deepseek",
+        "deepseek-chat"
+      ]
+    ],
+    "pool-3": [
+      [
+        "disabled-model",
+        "together",
+        "pinned-disabled"
+      ],
+      [
+        "model-d",
+        "deepseek",
+        "deepseek-chat"
+      ]
+    ]
+  }
+}

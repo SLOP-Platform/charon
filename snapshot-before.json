@@ -1,0 +1,71 @@
+{
+  "registry_entries": 5,
+  "routes_count": 4,
+  "pools_count": 3,
+  "pool_ids": [
+    "pool-1",
+    "pool-2",
+    "pool-3"
+  ],
+  "pool_membership": {
+    "pool-1": [
+      [
+        "model-a",
+        "openrouter",
+        "pinned-model-a"
+      ],
+      [
+        "model-b",
+        "openrouter",
+        "pinned-model-b"
+      ]
+    ],
+    "pool-2": [
+      [
+        "model-c",
+        "groq",
+        null
+      ],
+      [
+        "model-d",
+        "deepseek",
+        "deepseek-chat"
+      ]
+    ],
+    "pool-3": [
+      [
+        "model-d",
+        "deepseek",
+        "deepseek-chat"
+      ]
+    ]
+  },
+  "route_ids": [
+    "model-a",
+    "model-b",
+    "model-c",
+    "model-d"
+  ],
+  "route_details": {
+    "model-a": {
+      "provider": "openrouter",
+      "upstream_model": "pinned-model-a",
+      "upstream_base": "http://openrouter/v1"
+    },
+    "model-b": {
+      "provider": "openrouter",
+      "upstream_model": "pinned-model-b",
+      "upstream_base": "http://openrouter/v1"
+    },
+    "model-c": {
+      "provider": "groq",
+      "upstream_model": null,
+      "upstream_base": "http://groq/v1"
+    },
+    "model-d": {
+      "provider": "deepseek",
+      "upstream_model": "deepseek-chat",
+      "upstream_base": "http://deepseek/v1"
+    }
+  }
+}
