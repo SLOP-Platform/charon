@@ -1,0 +1,125 @@
+diff --git a/src/charon/config/keyprobe.py b/src/charon/config/keyprobe.py
+index 2b6abae..66ee0b7 100644
+--- a/src/charon/config/keyprobe.py
++++ b/src/charon/config/keyprobe.py
+@@ -6,6 +6,7 @@ import urllib.error
+ import urllib.request
+ 
+ from ..netutil import BROWSER_UA
++from ..providers import chat_url, models_url
+ 
+ _VALIDATE_TIMEOUT = 15.0
+ # Browser-like UA (P5): Cloudflare-fronted providers (groq/cerebras/together)
+@@ -34,12 +35,11 @@ def validate_provider_key(name: str, base_url: str | None, api_key: str) -> dict
+             return None
+ 
+     opener = urllib.request.build_opener(_NoRedirect())
+-    raw_base = base_url.rstrip("/") if base_url else ""
+ 
+     # Probe 1: GET /models — cheap, tells us the key works + model count
+     models_count = 0
+     try:
+-        req = urllib.request.Request(raw_base + "/models", method="GET")
++        req = urllib.request.Request(models_url(base_url), method="GET")
+         req.add_header("User-Agent", _VALIDATE_UA)
+         req.add_header("Authorization", "Bearer " + api_key)
+         resp = opener.open(req, timeout=_VALIDATE_TIMEOUT)
+@@ -58,7 +58,7 @@ def validate_provider_key(name: str, base_url: str | None, api_key: str) -> dict
+             "messages": [{"role": "user", "content": "hi"}],
+             "max_tokens": 1,
+         }).encode()
+-        req = urllib.request.Request(raw_base + "/chat/completions", data=body, method="POST")
++        req = urllib.request.Request(chat_url(base_url), data=body, method="POST")
+         req.add_header("User-Agent", _VALIDATE_UA)
+         req.add_header("Content-Type", "application/json")
+         req.add_header("Authorization", "Bearer " + api_key)
+diff --git a/src/charon/discover.py b/src/charon/discover.py
+index 3d50ce9..d965054 100644
+--- a/src/charon/discover.py
++++ b/src/charon/discover.py
+@@ -29,9 +29,9 @@ def discover_provider(base_url: str, api_key: str | None,
+     any error.
+     """
+     if strip_v1:
+-        url = base_url.rstrip("/") + "/models"
++        url = providers.models_url(base_url)
+     else:
+-        url = base_url.rstrip("/") + "/v1/models"
++        url = providers.join_endpoint(base_url, "v1/models")
+ 
+     req = urllib.request.Request(url, method="GET")
+     req.add_header("User-Agent", BROWSER_UA)
+diff --git a/src/charon/providers.py b/src/charon/providers.py
+index 487029b..a615bc4 100644
+--- a/src/charon/providers.py
++++ b/src/charon/providers.py
+@@ -64,6 +64,21 @@ PRESETS: dict[str, ProviderPreset] = {
+     k: ProviderPreset(**v) for k, v in MERGED_RAW_DATA.items()}
+ 
+ 
++def join_endpoint(base_url: str, path: str) -> str:
++    """Strip trailing slashes from *base_url* and join with *path*."""
++    return base_url.rstrip("/") + "/" + path.lstrip("/")
++
++
++def models_url(base_url: str) -> str:
++    """Resolve a provider's /models URL (base already includes /v1)."""
++    return join_endpoint(base_url, "models")
++
++
++def chat_url(base_url: str) -> str:
++    """Resolve a provider's /chat/completions URL."""
++    return join_endpoint(base_url, "chat/completions")
++
++
+ class _NoRedirect(urllib.request.HTTPRedirectHandler):
+     """Refuse redirects — a redirect could carry the ``Authorization`` Bearer to
+     another host (urllib does NOT strip it cross-host). Key-exfil guard."""
+@@ -172,7 +187,7 @@ def list_models(name: str, overrides: dict | None = None, *,
+     host = parts.hostname or ""
+     if host.startswith("169.254.") or host == "metadata.google.internal":
+         raise ValueError(f"refusing link-local / metadata host {host!r}")
+-    url = base.rstrip("/") + "/models"
++    url = models_url(base)
+     req = urllib.request.Request(url, method="GET")
+     req.add_header("User-Agent", BROWSER_UA)
+     if api_key:
+diff --git a/tests/test_providers.py b/tests/test_providers.py
+index e250906..1f9fc5c 100644
+--- a/tests/test_providers.py
++++ b/tests/test_providers.py
+@@ -143,6 +143,34 @@ def test_model_referencing_provider_resolves_route(monkeypatch, tmp_path):
+     assert cfg.routes["n"].upstream_base == "http://my-nano/v1"  # override applied
+ 
+ 
++# ── URL helpers (PROVIDER-URL-HELPER) ──────────────────────────────
++
++
++def test_models_url_normal_base():
++    assert providers.models_url("https://api.openai.com/v1") == "https://api.openai.com/v1/models"
++
++
++def test_models_url_base_with_trailing_slash():
++    assert providers.models_url("https://api.openai.com/v1/") == "https://api.openai.com/v1/models"
++
++
++def test_models_url_base_with_path_segment():
++    assert providers.models_url("https://opencode.ai/zen/v1") == "https://opencode.ai/zen/v1/models"
++    assert providers.models_url("https://opencode.ai/zen/go/v1") == "https://opencode.ai/zen/go/v1/models"
++
++
++def test_chat_url_normal_base():
++    assert providers.chat_url("https://api.openai.com/v1") == "https://api.openai.com/v1/chat/completions"
++
++
++def test_chat_url_base_with_path_segment():
++    assert providers.chat_url("https://opencode.ai/zen/v1") == "https://opencode.ai/zen/v1/chat/completions"
++
++
++def test_join_endpoint_v1_models():
++    assert providers.join_endpoint("http://localhost:8080", "v1/models") == "http://localhost:8080/v1/models"
++
++
+ # ── SR-5: pricing extraction unit + guards ────────────────────────
+ 
+ def test_extract_pricing_stores_per_token_verbatim():

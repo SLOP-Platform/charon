@@ -1,0 +1,37 @@
+diff --git a/src/charon/forwarder.py b/src/charon/forwarder.py
+index dff1064..cc1ab02 100644
+--- a/src/charon/forwarder.py
++++ b/src/charon/forwarder.py
+@@ -292,6 +292,32 @@ def forward_with_failover(handler, srv) -> None:
+                 "Capability exclusion would strand request (model=%s cap=%s); "
+                 "using full chain instead.", requested, cap)
+ 
++    # ── vision-aware route exclusion (RFL-3) ────────────────────────
++    # An image-bearing request routed to a text-only model hard-fails upstream
++    # (400), so this is a HARD exclusion — unlike the softer reasoning-capability
++    # heuristic above (which falls back to avoid stranding). If images are present
++    # we keep ONLY chain entries whose registry model_meta declares vision=true;
++    # if none remain we return a clear 502 rather than silently calling a
++    # text-only upstream. A request with no images is completely unaffected.
++    # Symmetric shape left open for `audio` (metadata key already exists) — scoped
++    # to images only for this ticket.
++    inspector = getattr(srv, "request_inspector", None)
++    if inspector is not None and chain:
++        hints = inspector.inspect(orig_bj.get("messages") or [])
++        if hints.has_images:
++            model_meta = getattr(srv, "model_meta", {}) or {}
++            vision_capable = [r for r in chain
++                              if (model_meta.get(r.model_id or "") or {}).get("vision") is True]
++            if vision_capable:
++                chain = vision_capable
++            else:
++                srv.observer.observe(requested, 502, {}, {}, count_usage=False)
++                handler._json(502, {"error": {"message": (
++                    f"no vision-capable route for model {requested!r} — the request "
++                    "contains image content but no configured provider supports vision"
++                )}})
++                return
++
+     # ── R7 capability-engine: max_context / max_concurrency eligibility ───
+     # Compute a single pre-flight token estimate (reused by spend cap above).
+     est_tokens = max(len(raw_body) // 4, 100)

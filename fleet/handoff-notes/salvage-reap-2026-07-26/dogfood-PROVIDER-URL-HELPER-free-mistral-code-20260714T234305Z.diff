@@ -1,0 +1,55 @@
+diff --git a/src/charon/config/keyprobe.py b/src/charon/config/keyprobe.py
+index 2b6abae..a38ba17 100644
+--- a/src/charon/config/keyprobe.py
++++ b/src/charon/config/keyprobe.py
+@@ -34,7 +34,7 @@ def validate_provider_key(name: str, base_url: str | None, api_key: str) -> dict
+             return None
+ 
+     opener = urllib.request.build_opener(_NoRedirect())
+-    raw_base = base_url.rstrip("/") if base_url else ""
++    raw_base = models_url(base_url) if base_url else ""
+ 
+     # Probe 1: GET /models — cheap, tells us the key works + model count
+     models_count = 0
+@@ -58,7 +58,7 @@ def validate_provider_key(name: str, base_url: str | None, api_key: str) -> dict
+             "messages": [{"role": "user", "content": "hi"}],
+             "max_tokens": 1,
+         }).encode()
+-        req = urllib.request.Request(raw_base + "/chat/completions", data=body, method="POST")
++        req = urllib.request.Request(chat_url(raw_base), data=body, method="POST")
+         req.add_header("User-Agent", _VALIDATE_UA)
+         req.add_header("Content-Type", "application/json")
+         req.add_header("Authorization", "Bearer " + api_key)
+diff --git a/src/charon/discover.py b/src/charon/discover.py
+index 3d50ce9..578541a 100644
+--- a/src/charon/discover.py
++++ b/src/charon/discover.py
+@@ -29,9 +29,9 @@ def discover_provider(base_url: str, api_key: str | None,
+     any error.
+     """
+     if strip_v1:
+-        url = base_url.rstrip("/") + "/models"
++        url = models_url(base_url)
+     else:
+-        url = base_url.rstrip("/") + "/v1/models"
++        url = models_url(base_url)
+ 
+     req = urllib.request.Request(url, method="GET")
+     req.add_header("User-Agent", BROWSER_UA)
+diff --git a/src/charon/providers.py b/src/charon/providers.py
+index 487029b..e26d7a8 100644
+--- a/src/charon/providers.py
++++ b/src/charon/providers.py
+@@ -156,6 +156,12 @@ def _extract_pricing(source: dict, entry: dict[str, object]) -> None:
+         entry[dst] = per_token
+ 
+ 
++def models_url(base_url: str) -> str:
++    return base_url.rstrip("/") + "/models"
++
++def chat_url(base_url: str) -> str:
++    return base_url.rstrip("/") + "/chat/completions"
++
+ def list_models(name: str, overrides: dict | None = None, *,
+                 api_key: str | None = None, timeout: float = 20.0) -> list[dict]:
+     """``GET <base>/models`` for a provider and return ``[{id, free}]`` it advertises.

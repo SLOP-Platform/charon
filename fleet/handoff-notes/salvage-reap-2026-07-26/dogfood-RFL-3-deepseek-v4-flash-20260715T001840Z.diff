@@ -1,0 +1,34 @@
+diff --git a/src/charon/forwarder.py b/src/charon/forwarder.py
+index dff1064..00ce94e 100644
+--- a/src/charon/forwarder.py
++++ b/src/charon/forwarder.py
+@@ -292,6 +292,29 @@ def forward_with_failover(handler, srv) -> None:
+                 "Capability exclusion would strand request (model=%s cap=%s); "
+                 "using full chain instead.", requested, cap)
+ 
++    # ── vision-aware route exclusion ──────────────────────────────
++    # RFL-3: image-bearing requests MUST only be routed to vision-capable
++    # providers. Unlike the reasoning-capability heuristic (which falls back
++    # to avoid stranding), this is a HARD exclusion: sending an image to a
++    # text-only provider will hard-fail upstream regardless.
++    _inspector = getattr(srv, "request_inspector", None)
++    if _inspector is not None and len(chain) > 0:
++        _hints = _inspector.inspect(orig_bj.get("messages") or [])
++        if _hints.has_images:
++            _vision_eligible = [
++                r for r in chain
++                if (r.model_id
++                    and srv.model_meta.get(r.model_id, {}).get("vision") is True)
++            ]
++            if _vision_eligible:
++                chain = _vision_eligible
++            else:
++                handler._json(502, {"error": {"message": (
++                    f"request contains images but model {requested!r} has no "
++                    f"providers that support vision"
++                )}})
++                return
++
+     # ── R7 capability-engine: max_context / max_concurrency eligibility ───
+     # Compute a single pre-flight token estimate (reused by spend cap above).
+     est_tokens = max(len(raw_body) // 4, 100)
