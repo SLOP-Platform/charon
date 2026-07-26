@@ -79,7 +79,7 @@ codes from the red-proof · gate pass/fail · how you proved hot-rotation observ
 git add -A && git commit -m "SECRET-HOTROTATE: force-refresh so provider-key rotation takes effect without a restart"
 ```
 
-Do NOT push.
+Do NOT push. **NEVER use `WORK_LEASE_BYPASS=1`** — if any gate refuses your commit, STOP and report rather than bypassing it.
 
 ## Dependencies & sequence
 

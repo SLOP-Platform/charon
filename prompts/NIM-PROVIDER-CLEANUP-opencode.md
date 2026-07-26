@@ -9,17 +9,16 @@ Never Claude/Anthropic. Graded sample, work_class `rig-meta`.
 One checkout, one agent.
 
 ## ⚠ BLOCKING PRECONDITION — CHECK THIS FIRST, DO NOT SKIP
-This ticket **depends on `ADD-PROVIDER-MECHANIZE-COMPLETE`**, which owns the SAME two files
-(`fleet/add-provider.sh`, `fleet/add-provider-interactive.sh`) and is **already in flight** in
-worktree `/home/stack/charon-private-wt/ADD-PROVIDER-MECHANIZE-COMPLETE`.
+Defects (a) and (b) of this ticket were ALREADY FIXED by `ADD-PROVIDER-MECHANIZE-COMPLETE`
+(`d7e03ab`), reviewed and landed 2026-07-26. **Your scope is now (c) ONLY — the free-tier catalog.**
 
-Before writing anything, verify that ticket has LANDED on master:
+Verify that landing is actually present before you start (a CONTENT check, not a marker file):
 ```
-ls /home/stack/charon-private/fleet/state/done/ADD-PROVIDER-MECHANIZE-COMPLETE 2>/dev/null && echo LANDED || echo NOT-LANDED
+grep -q 'read -rs' /home/stack/charon-private/fleet/add-provider-interactive.sh && echo LANDED || echo NOT-LANDED
 ```
-If **NOT-LANDED**: STOP. Report "blocked on ADD-PROVIDER-MECHANIZE-COMPLETE" and exit. Do not start.
-Two concurrent writers of the onboarding scripts is exactly the collision the board forbids.
-If **LANDED**: rebase onto it and proceed.
+If **NOT-LANDED**: STOP, report "blocked — ADD-PROVIDER-MECHANIZE-COMPLETE not merged", exit.
+If **LANDED**: proceed with (c) only. Do NOT re-fix (a) or (b) — re-fixing landed work is how a
+merge gets clobbered. If you believe (a) or (b) is still broken, STOP and report; do not edit.
 
 ## FIRST ACTS
 0. **Register on the session-bridge** — `session-bridge_register(session_id="<an UNUSED Jedi name;
@@ -31,48 +30,39 @@ If **LANDED**: rebase onto it and proceed.
 2. `cd /home/stack/charon-private-wt/NIM-PROVIDER-CLEANUP`
 3. Read the ticket (BINDING): `fleet/board/NIM-PROVIDER-CLEANUP.md`
 
-## THE THREE DEFECTS
-
-**(a) FALSE FAILURE REPORT.** `fleet/add-provider.sh` step 4 does not pass `--base-url`. Adding a
-NON-PRESET provider therefore reports FAILED even though the add SUCCEEDED. An operator who believes
-the report re-runs it or abandons a provider that is in fact configured. A tool that lies about its
-own outcome is worse than one that fails.
-
-**(b) SECRET LEAK — the highest-value item here.** `fleet/add-provider-interactive.sh` ECHOES the API
-key as it is typed. Read it without echo (`read -rs`, or `getpass` in python) and ensure it is not
-printed afterwards in confirmations, logs, or error paths. Audit the WHOLE script for the key reaching
-stdout/stderr — not just the prompt line. Keys in scrollback survive terminal history, screen shares
-and recordings.
+## YOUR SCOPE — ONE DEFECT
 
 **(c) MISSING LIMITS.** NVIDIA NIM has no rate-limit/credit entries in the free-tier catalog, so
 free-tier planning cannot see it. Add its real limits — **sourced, not guessed**, recording where each
 number came from. A wrong limit is worse than a missing one, because planning will trust it.
 
 ## REQUIRED PROOF (green is not proof)
-- (a) Add a non-preset provider with an explicit base-url: reports SUCCESS and the provider is present
-  afterwards. Show the command and output, before and after.
-- (b) **PROVE the key never reaches the terminal:** run the interactive add with an obviously-fake
-  dummy key while capturing stdout+stderr to a file, then grep that capture for the dummy value and
-  show ZERO hits. Assert the capture is NON-EMPTY first — grepping an empty file passes trivially.
-  Also confirm no key lands in any log the script writes.
-- (c) NIM entries present in the free-tier catalog with a cited source per number.
-- Regression test in `fleet/tests/add-provider.test.sh` covering (a) and (b). **RED-PROOF the (b)
-  test by execution:** revert the no-echo read -> test goes RED naming the leak. Report BOTH exit codes.
+- NIM entries present in the free-tier catalog with a cited source per number.
+- Regression test in `fleet/tests/add-provider.test.sh` asserting the NIM catalog entries exist and parse. RED-PROOF by execution: remove an entry -> test goes RED naming it. Report BOTH exit codes.
 - **NEVER commit or print a real key.** Check your own diff for secrets before committing.
 - FAIL-LOUD: no `| tail`, `| head`, `|| true`; `set -o pipefail` on verification paths.
 - State what you proved by RUNNING vs by READING, and which git ref you measured on.
 
 ## OWNS — do not touch anything else
-`fleet/add-provider.sh`, `fleet/add-provider-interactive.sh`, `fleet/state/free_tier_catalog.json`,
-`fleet/tests/add-provider.test.sh`. If the fix appears to need another file, STOP and report.
+`fleet/state/free_tier_catalog.json`, `fleet/tests/add-provider.test.sh` ONLY.
+The two add-provider scripts are NO LONGER yours — they landed via ADD-PROVIDER-MECHANIZE-COMPLETE. If the fix appears to need another file, STOP and report.
 
 ## REPORT BACK (short — no diffs)
 Precondition result (LANDED / NOT-LANDED) · files changed · the zero-hit grep proof for (b) · both
 exit codes from the red-proof · sources cited for the NIM limits · the commit SHA.
 
+## ⚠ BEFORE YOUR FIRST COMMIT — ACQUIRE THE WORK LEASE
+The rig refuses commits from a worktree holding no lease. Run this once, before you start:
+```
+bash /home/stack/charon-private/fleet/work-lease.sh acquire NIM-PROVIDER-CLEANUP
+```
+**NEVER use `WORK_LEASE_BYPASS=1`.** The refusal message advertises that bypass; it exists for
+emergencies, not for getting past your own commit. Using it defeats a safety gate and will fail
+review. If the lease cannot be acquired, STOP and report — do not bypass.
+
 ## LAST STEP (REQUIRED)
 ```
-git add -A && git commit -m "NIM-PROVIDER-CLEANUP: fix false-FAILED add, stop echoing the API key, add NIM free-tier limits"
+git add -A && git commit -m "NIM-PROVIDER-CLEANUP: add NVIDIA NIM rate-limit/credit entries to the free-tier catalog"
 ```
 
 Do NOT push.

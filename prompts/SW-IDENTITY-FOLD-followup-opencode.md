@@ -56,7 +56,41 @@ loop. Remove the pattern and the `.sub()` call; KEEP the rationale as a plain co
 disposition (why `-turbo`/`-instruct`/`-preview`/`-latest`/`-hf` are NOT folded) stays recorded.
 Deleting the comment loses the decision; keeping the regex keeps dead code. Do both correctly.
 
+### FINDING 3 (from adversarial review, minimax-m3-free) — 4 REAL stranded entries, live today
+The live catalog contains `nanogpt/coding-router:low`, `:medium`, `:high`, `:max` — nanogpt capacity
+tiers of ONE model, currently forming 4 separate pool ids plus the bare `coding-router` pool. That is
+the fp4 strand class again with different labels. `_MODE_SUFFIX` matches only `:free|:nitro|:online`.
+**Either fold `:low|:medium|:high|:max` into `_MODE_SUFFIX`, or document in-code why they differ from
+`:free`/`:nitro`/`:online`.** Decide with evidence and say which you chose and why.
+
+### FINDING 4 — the corpus proves two families with IDs THAT DO NOT EXIST
+The live catalog has ZERO entries with `-awq`, `-gptq`, `-w8a8`, `:free`, `:nitro` or `:online`. The
+corpus "covers" them using invented ids (`deepseek-v3-awq`, `llama-3.3-70b-gptq`, `model-w8a8`). That
+is vacuity wearing a corpus costume: it passes without exercising anything real. AND `awq`/`gptq` are
+weight-producing ALGORITHMS, not precision casts — the safety argument for folding them is weaker
+than for `fp8`/`bf16`.
+**Do ONE of:** (a) drop `awq|gptq|w8a8` from `_QUANT_SUFFIX` until a live specimen exists, or
+(b) keep them and record in the regex comment that they are SPECULATIVE, unverifiable against the
+current catalog, and carry a different risk profile from precision tags. State which and why.
+Mark synthetic corpus rows explicitly as synthetic so nobody mistakes them for live coverage.
+
+### FINDING 5 — non-folds preserved only by regex SILENCE (fragile)
+Live catalog: 5+ hyphen-form `-thinking` entries (`deepseek-ai/deepseek-v3.2-exp-thinking`,
+`gemini-2.5-flash-preview-09-2025-thinking`, ...) and 18 numeric budget suffixes
+(`claude-sonnet-4-thinking:1024`, `claude-opus-4-thinking:8192`, ...). All are correctly NOT folded —
+but only because no regex happens to match them. `-thinking` starts with `-` and ends the string: it
+is pattern-shaped exactly like a quant suffix, so a future edit could fold it and the corpus would
+stay GREEN while two genuinely different models merged.
+**Pin both with corpus rows** including the base/variant PAIR (e.g. `deepseek-v3.2-exp-thinking` AND
+`deepseek-v3.2-exp`, asserted to stay SEPARATE), and extend the deliberate-exclusion comment to name
+the numeric budget suffixes as quality-affecting non-folds, distinct from capacity tiers.
+
+## SOURCE FOR FINDINGS 3-5
+`/home/stack/charon-private/fleet/handoff-notes/ADVREVIEW-SW-IDENTITY-FOLD.md` — read it. Verdict was
+MERGE with 0 BLOCKING, so this is hardening, not a rework. Do NOT undo the accepted anchor.
+
 ## REQUIRED PROOF (green is not proof)
+- Corpus additions for Findings 3-5 as described, with synthetic rows LABELLED synthetic.
 - Extend `tests/test_model_identity_fold.py`: each new alias in the corpus with its expected result,
   AND a negative case proving `gemini-3-pro-image-preview` does NOT land in the text pool.
 - **RED-PROOF BY EXECUTION** for the alias: remove the alias -> the test goes RED naming the stranded
@@ -90,7 +124,7 @@ pass/fail · the commit SHA.
 git add -A && git commit -m "SW-IDENTITY-FOLD: alias aistudio gemini preview ids into their base pools; drop no-op marketing regex"
 ```
 
-Do NOT push.
+Do NOT push. **NEVER use `WORK_LEASE_BYPASS=1`** — if any gate refuses your commit, STOP and report rather than bypassing it.
 
 ## Dependencies & sequence
 

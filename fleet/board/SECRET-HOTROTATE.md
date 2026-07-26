@@ -15,6 +15,11 @@ released: |
   art to compare against, NOT as authority: they were never reviewed or landed, and 5 of the 27
   dogfood runs in that batch produced empty diffs. Any diff you adopt must be re-derived and proven
   here.
+latent-collision: |
+  WATCH: FIX-PROVIDER-KEY-EXFIL also owns src/charon/secrets.py. It is currently PARKED, so there is
+  no live collision and validate_board.sh is GREEN. If it is ever unparked while this ticket is in
+  flight, the two become concurrent writers of secrets.py — sequence them then, do not co-write.
+  Recorded 2026-07-26 (kit-fisto) so a future unpark does not silently create the collision.
 execution: |
   ASSIGNED TO A NON-ANTHROPIC MODEL via an `opencode` session (charon/* gateway model), NOT Claude.
   Graded sample: record into fleet/model-scorecard.tsv. One checkout, one agent — its OWN worktree.
