@@ -1,3 +1,10 @@
+retired: |
+  RETIRED 2026-07-26 — operator decision 26(c). Defects (a) false-FAILED add and (b) API key echo
+  leak LANDED via ADD-PROVIDER-MECHANIZE-COMPLETE (d7e03ab, merged 9eaa4f5). Defect (c) free-tier
+  limits is folded into FT-LIMITS-GROQ-RECONCILE, which already owns fleet/state/FREE-TIER-LIMITS.tsv
+  — validate_board.sh proved the duplication by flagging the owns-collision the moment this ticket's
+  owns were corrected to the real file. Nothing is lost: (c) was already deliberately deferred by
+  docs/review-log/ADD-PROVIDER-MECHANIZE-COMPLETE.md:67, and the catalog ticket is its proper home.
 repo: charon-private
 tier: strong
 difficulty: 2
