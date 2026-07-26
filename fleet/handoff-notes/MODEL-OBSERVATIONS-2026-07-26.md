@@ -60,3 +60,30 @@ model quality. This is a field note, not a ranking. Do NOT use it to pick tiers.
   contents, diffs) held up on independent verification.
 - **The reviewer role produced more value than the builder role.** cal-kestis and obi-wan-kenobi each
   found something their brief did not anticipate; builders did what they were told.
+
+---
+
+## UPDATE — SW-IDENTITY-FOLD follow-up (deepseek-v4-pro, unregistered session)
+
+`89d15c5`, manager-reviewed, MERGED to product master as PR #198 (squash) -> `fb39191`.
+- Implemented all 5 adversarial findings plus operator decisions 13/14.
+- **`_EXPLICIT_ALIASES` is exactly the narrow, auditable table asked for** — 2 entries
+  (`gemini-3-pro-preview`, `gemini-3-flash-preview`), one-shot lookup before the regex loop, not a
+  second normalizer. **Correctly REFUSED to alias `gemini-3-pro-image-preview`** (image model into a
+  text pool) and said why in-code. That judgement was the risk in this task and it got it right.
+- Fixed cal-kestis's F3 by extending `_MODE_SUFFIX` to `:low|:medium|:high|:max` — the 4 live
+  `coding-router` strands are gone. Dropped the no-op `_MARKETING_SUFFIX` regex.
+- VERIFIED BY MANAGER, not self-reported: corpus test 3 passed; `charon.cli gate` all checks passed.
+- Known residual edge (NOT a defect, recorded so nobody rediscovers it): the alias applies to the
+  final segment BEFORE suffix stripping, so a stacked form like `gemini-3-pro-preview-fp8` would not
+  alias. No such id exists in the live catalog today.
+
+## PROCESS FINDING — bridge registration is being skipped outright
+8 opencode sessions ran concurrently; **zero registered on the board.** This session committed real,
+correct work and never appeared. So the problem is NOT just the missing heartbeat
+(BRIDGE-PROXY-HEARTBEAT): models skip `register` itself, even with a mechanized
+`claim-jedi-name.sh` step 0 in the brief. Consequence: the manager cannot see or ASSIGN work through
+the bridge, which is the whole point of it.
+**Implication for BRIDGE-PROXY-HEARTBEAT:** the proxy should AUTO-REGISTER on startup (claiming a
+name itself) rather than waiting for the model to call `register`. Same lesson as everything else
+today — put it in the transport, not the prompt.
