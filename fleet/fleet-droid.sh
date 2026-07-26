@@ -16,6 +16,84 @@
 # (claim once, stand down when empty); raise `--retries` to ride out longer dependency gaps, or `--retries 0` = NEVER stand down (persistent tab: polls every --wait min forever, auto-claiming as work appears).
 set -euo pipefail
 FLEET="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ── DROID-CLIENT-PREFLIGHT (2026-07-24) ──────────────────────────────────────
+# Same fault class charon-run.sh fixes, one layer up. `~/.local/bin` is added to
+# PATH ONLY by ~/.bashrc / ~/.profile (interactive or login shells). A tab
+# launched via setsid/nohup/`sh -c`/a tool-invoked wrapper gets neither — and
+# BOTH `opencode` (the work client) AND `gh` (how this launcher publishes the
+# PR) live in ~/.local/bin. So the whole droid loop silently loses two binaries
+# based on nothing but how the tab was started.
+# APPEND, never prepend: an already-resolvable binary (test stub, deliberate
+# operator override) must keep winning; this only adds a fallback location.
+case ":${PATH}:" in
+  *":$HOME/.local/bin:"*) : ;;
+  *) [ -d "$HOME/.local/bin" ] && export PATH="$PATH:$HOME/.local/bin" ;;
+esac
+# Fail LOUD and EARLY on a missing prereq rather than letting it surface later
+# disguised as ticket/model/provider failure. Checked here: the binaries this
+# launcher itself shells out to. The work CLIENT is preflighted by
+# charon-run.sh (exit 4) — it owns that check because $CHARON_AGENT_CMD is
+# swappable and this layer must not assume which client is in play.
+_missing=()
+for _b in git gh python3 timeout curl; do
+  command -v "$_b" >/dev/null 2>&1 || _missing+=("$_b")
+done
+if [ "${#_missing[@]}" -gt 0 ]; then
+  {
+    echo "[fleet-droid] FATAL: required binary not found: ${_missing[*]}"
+    echo "[fleet-droid]   PATH searched: $PATH"
+    echo "[fleet-droid]   LOCAL ENVIRONMENT fault — no ticket claimed, nothing attempted."
+    echo "[fleet-droid]   Likely cause: launched from a non-login, non-interactive shell"
+    echo "[fleet-droid]   (setsid/nohup/sh -c) that sourced neither ~/.bashrc nor ~/.profile."
+  } >&2
+  exit 4
+fi
+unset _b _missing
+
+# derive_gateway_token — re-derive the gateway bearer token from the opencode config and
+# EXPORT it, overwriting whatever the shell had.
+#
+# UNCONDITIONAL OVERWRITE, not a fallback. capability/availability.py PREFERS
+# CHARON_GATEWAY_TOKEN from the ambient env, and env-registry.sh's own header documents that
+# variable as STALE ("always re-derive from the live opencode config"). Dogfooded: no token
+# -> /charon/status answers 302 with a 0-byte body; a STALE token -> the SAME 302/0-byte; the
+# correctly derived token -> 200 with parseable JSON. So a `${CHARON_GATEWAY_TOKEN:-derived}`
+# shape would be a no-op that leaves the outage fully intact.
+#
+# env-registry.sh:bearer_token() is the ONE canonical reader (~/.config/opencode/opencode.json
+# -> provider.charon.options.apiKey). Sourced through its source guard inside a command
+# substitution, so neither its `set -uo pipefail` nor its FLEET/OUTPUT/GATEWAY_URL variables
+# leak in here, and its live probe never fires. This is why no second JSON parse is written.
+#
+# Defined this early so BOTH entry paths get it: the `resolve` dev/test hook (which consults
+# the gateway through availability.py) and the main pre-claim preflight. Idempotent.
+# The two results are published as GLOBALS (_derived_tok / _env_tok), deliberately not locals: the
+# pre-claim gateway preflight further down reports WHICH token it used and whether one could be
+# derived at all, and with `set -u` in force a local would make that reporting line die with
+# "_derived_tok: unbound variable" (rc 1) instead of the loud, distinct exit 5 — turning the whole
+# stand-down into the opaque crash this preflight exists to replace. Both names are `unset` right
+# after the preflight so nothing downstream reads a stale token out of the environment.
+derive_gateway_token(){
+  _derived_tok="" _env_tok="${CHARON_GATEWAY_TOKEN:-}"
+  if [ -r "$FLEET/env-registry.sh" ]; then
+    _derived_tok="$( . "$FLEET/env-registry.sh" >/dev/null 2>&1 && bearer_token 2>/dev/null || true )"
+  fi
+  [ -n "$_derived_tok" ] || return 0
+  if [ -n "$_env_tok" ] && [ "$_env_tok" != "$_derived_tok" ]; then
+    {
+      echo "[fleet-droid] WARN: gateway-token-drift — CHARON_GATEWAY_TOKEN from the shell differs from"
+      echo "[fleet-droid]   the token in ${CHARON_OPENCODE_CONFIG:-$HOME/.config/opencode/opencode.json}"
+      echo "[fleet-droid]   (provider.charon.options.apiKey). opencode.json is AUTHORITATIVE; the shell"
+      echo "[fleet-droid]   value is documented stale. PREFERRING THE DERIVED TOKEN for this run."
+      echo "[fleet-droid]   Fix your shell profile (or unset CHARON_GATEWAY_TOKEN) to silence this."
+    } >&2
+  fi
+  # Export so EVERY downstream reader picks it up — capability/availability.py, assign.py's
+  # --gateway-availability probe, and any child that reads the ambient env — without each of
+  # them needing to learn how to derive it.
+  export CHARON_GATEWAY_TOKEN="$_derived_tok"
+}
 CHARON="/home/stack/code/charon"   # DEFAULT product repo (a ticket's `repo:` field overrides per-ticket)
 # OFF-CLAUDE WORK CLIENT (SWAPPABLE). The droid's actual work runs THROUGH THE CHARON GATEWAY, not
 # `claude -p` (which speaks to Anthropic directly and burns Claude tokens). Default client =
@@ -92,7 +170,7 @@ p0_worktree_setup(){
 # MULTI-REPO: maps a ticket's `repo:` field -> repo path / worktree / base branch / gate.
 # Absent field -> key `charon` (product) => IDENTICAL behavior to the old hardwired path.
 source "$FLEET/repo-registry.sh"
-usage(){ echo "usage: fleet-droid.sh <frontier|strong|economy|low|med|high|opus|sonnet|haiku> [--wait <min>] [--retries <n>] [--patience <cycles>] [--serial-justified=<reason>] [--only <TICKET-ID>]"; exit 2; }
+usage(){ echo "usage: fleet-droid.sh <frontier|strong|economy|low|med|high|opus|sonnet|haiku> [--wait <min>] [--retries <n>] [--patience <cycles>] [--serial-justified=<reason>] [--only <TICKET-ID>] [--push|--push-only] [--tick <sec>]"; exit 2; }
 
 # ---- DETENTION-REDLINE: shared tier/chain helpers ------------------------------------------------
 # Defined ONCE and used by BOTH the main claim loop and the `resolve` hook below, so the chain a
@@ -341,7 +419,22 @@ resolve_runnable_chain(){
           # `CAPPED-FILTER-UNAVAILABLE:` line prints, a `capped-filter-unavailable` row lands in the
           # provider-exhaustion ledger, and the caller burns one loop-guard attempt so a persistent
           # outage QUARANTINES the ticket and surfaces it to the operator.
-          echo "[fleet-droid] CAPPED-FILTER-UNAVAILABLE: could not read gateway capped state for cost band '$cur' (see the availability error above — commonly a 401/missing CHARON_GATEWAY_TOKEN, or the gateway being down). FAILING CLOSED: gateway capped-exclusion did NOT run, so this band's chain is NOT trusted and is NOT handed over, and NO cost spill-up is taken off an error. DETAINING '$start' work: the ticket is released and stays claimable, retried when gateway status is readable again. Export a gateway token / restore $(printf '%s' "${CHARON_GATEWAY_URL:-http://10.0.1.60:8080}") to re-enable." >&2
+          # REMEDIATION TEXT CORRECTED (DROID-CLIENT-PREFLIGHT, 2026-07-24). The old wording blamed
+          # "a 401/missing CHARON_GATEWAY_TOKEN" and told the operator to export one. BOTH halves
+          # of that were wrong in the way that matters (the old string itself is deliberately not
+          # reproduced here — fleet/tests/charon-run-client-preflight.test.sh pins its absence):
+          #   - It is a 302, not a 401. The gateway REDIRECTS an unauthenticated /charon/status and
+          #     answers with a ZERO-BYTE body, which is why the symptom surfaces as
+          #     json.loads("") -> "Expecting value: line 1 column 1 (char 0)" and why any check
+          #     comparing against 401 misses it entirely.
+          #   - Telling the operator to export one is the ACTION THAT CAUSED THE OUTAGE. A shell that already
+          #     exports a STALE CHARON_GATEWAY_TOKEN gets the SAME 302/0-byte answer as a shell with
+          #     no token at all (dogfooded both ways), and availability.py PREFERS the env var — so
+          #     exporting reproduces the failure instead of fixing it.
+          # The only correct remedy is to RE-DERIVE from the opencode config, which the pre-claim
+          # preflight at the top of this script now does automatically; reaching this line at all
+          # means the gateway went unreadable MID-RUN.
+          echo "[fleet-droid] CAPPED-FILTER-UNAVAILABLE: could not read gateway capped state for cost band '$cur' (see the availability error above — typically /charon/status answering 302 with a ZERO-BYTE body because the bearer token is missing OR STALE, or the gateway being down). FAILING CLOSED: gateway capped-exclusion did NOT run, so this band's chain is NOT trusted and is NOT handed over, and NO cost spill-up is taken off an error. DETAINING '$start' work: the ticket is released and stays claimable, retried when gateway status is readable again. FIX: do NOT 'export CHARON_GATEWAY_TOKEN' — a stale value fails identically and availability.py PREFERS the env var. RE-DERIVE it from ${CHARON_OPENCODE_CONFIG:-$HOME/.config/opencode/opencode.json} (provider.charon.options.apiKey), or restore $(printf '%s' "${CHARON_GATEWAY_URL:-http://10.0.1.60:8080}")." >&2
           exhaust_led "band:$cur" "capped-filter-unavailable" "work_class=$wc start=$start ceiling=$ceiling: /charon/status unreadable (auth/reach) — capped-exclusion did not run; DETAINED (fail closed, no spill-up)"
           return 7
         fi
@@ -416,6 +509,11 @@ assign_reorder_chain(){
 # test path). Prints the surviving comma chain on stdout; exits 7 with a loud message when the whole
 # chain is HARD-detained for the ticket's work_class — the identical skip decision the loop makes.
 if [ "${1:-}" = "resolve" ]; then
+  # This hook consults the gateway (capped-exclusion via availability.py), so it needs the
+  # SAME derived token the claim loop uses — otherwise `resolve` fails closed with a bogus
+  # "all capped" verdict purely because the invoking shell had no/stale token. Same class as
+  # the PATH fix above: derive, never inherit.
+  derive_gateway_token
   rtier="${2:?resolve needs: <tier> <ticketfile>}"; rtfile="${3:?resolve needs: <tier> <ticketfile>}"
   [ -f "$rtfile" ] || { echo "[fleet-droid] resolve: no such ticket file: $rtfile" >&2; exit 2; }
   rcanon="$(canon_tier "$rtier")"
@@ -423,9 +521,15 @@ if [ "${1:-}" = "resolve" ]; then
   [ -n "$rline" ] || { echo "[fleet-droid] resolve: no gateway model chain for tier '$rtier' (canonical '$rcanon')." >&2; exit 3; }
   rwc="$(awk -F': ' '$1=="work_class"{sub(/^[^:]*: ?/,"");print;exit}' "$rtfile")"
   if [ -z "$rwc" ]; then
-    echo "[fleet-droid] resolve: ticket $rtfile has no work_class — detention filter cannot scope; emitting FULL chain." >&2
-    IFS=',' read -r -a RMODELS <<<"$rline" || true
-    ( IFS=','; echo "${RMODELS[*]}" ); exit 0
+    # F4 (money guardrail, 2026-07-24): this arm used to emit the FULL UNFILTERED CHAIN and
+    # exit 0 behind a stderr note. Since detention, gateway capped-exclusion AND the cost cap
+    # ALL scope by work_class, a ticket that simply omits the field bypassed every money
+    # guardrail at once — and, exiting 0, could never go RED. validate_board.sh mitigates this
+    # at BOARD level, but a fail-open code path must not depend on a separate check catching
+    # the input first. FAIL CLOSED: emit no chain, exit 9 (distinct from 3 = "no chain for
+    # tier", so the two causes stay tellable apart).
+    echo "[fleet-droid] resolve: WORK-CLASS-MISSING: ticket $rtfile declares no work_class. Detention, gateway capped-exclusion and the cost cap ALL scope by work_class, so NONE of them can run. FAIL CLOSED: emitting no chain (this used to emit the FULL unfiltered chain behind a note that could not go RED). Add a work_class: field." >&2
+    exit 9
   fi
   # Resolve via the SINGLE shared resolver (reorder + detention + capped filter + cost-band
   # spill-up), the SAME function the main claim loop below calls — production path == test path,
@@ -439,6 +543,9 @@ if [ "${1:-}" = "resolve" ]; then
 fi
 
 TIER=""; WAIT_MIN=3; RETRIES=6; PATIENCE=1; SERIAL_JUSTIFIED=""; ONLY_TICKET=""
+# PUSH MODE (DROID-BRIDGE-REGISTER). off = today's pull loop, BYTE-IDENTICAL and still the
+# DEFAULT. See the block after the gateway preflight for the full rationale.
+PUSH_MODE=off; TICK_S="${DROID_TICK_S:-60}"
 while [ $# -gt 0 ]; do case "$1" in
   --wait)     WAIT_MIN="${2:?--wait needs minutes}"; shift 2;;
   --retries)  RETRIES="${2:?--retries needs a count}"; shift 2;;
@@ -451,6 +558,12 @@ while [ $# -gt 0 ]; do case "$1" in
   # not yet decomposed). Applies to whatever this tab claims next — a per-run override, not
   # a per-ticket record; prefer 'serial_justified: <reason>' on the ticket for a durable one.
   --serial-justified=*) SERIAL_JUSTIFIED="${1#*=}"; shift;;
+  # PUSH MODE, opt-in. --push = HYBRID (accept a manager dispatch, otherwise free-claim
+  # exactly as today). --push-only = the "idles until told" droid the operator asked for:
+  # never free-claims. Neither is the default; a tab launched as today behaves as today.
+  --push)      PUSH_MODE=hybrid; shift;;
+  --push-only) PUSH_MODE=only;   shift;;
+  --tick)      TICK_S="${2:?--tick needs seconds}"; shift 2;;
   frontier|strong|economy|opus|sonnet|haiku|low|med|high) TIER="$1"; shift;;       # arg allowlist: canonical (frontier/strong/economy) + legacy
   *) usage;;
 esac; done
@@ -504,6 +617,14 @@ echo "[$DROID] git identity: $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> (commits
 # reaper (fleet/reap-orphans.sh, wired into foreman) handles those cases. cleanup() only
 # runs when the shell actually exits.
 cleanup(){
+  # PUSH MODE: leave the board on a CLEAN exit so an idle row never outlives the tab.
+  # This is the tidy path only — a droid that is killed hard never reaches it, and that is
+  # intentional: the bridge's own lease expiry + graduated purge (daemon.py) is the single
+  # source of truth for "this droid is dead", and DROID-LIFECYCLE-REAP consumes THAT signal.
+  # Adding a second liveness notion here is exactly what the constraint forbids.
+  if [ "${PUSH_MODE:-off}" != off ] || [ -n "${BRIDGE_LEASE:-}" ]; then
+    bash "${BRIDGE:-$FLEET/droid-bridge.sh}" unregister "$DROID" >/dev/null 2>&1 || true
+  fi
   if [ -n "${current:-}" ] && [ ! -e "$FLEET/state/submitted/$current" ]; then
     bash "$FLEET/release.sh" "$current" >/dev/null 2>&1 || true; fi
   # Drop this run's loop-guard counters (per-run scratch); durable quarantine markers under
@@ -551,25 +672,247 @@ cleanup(){
     fi
   fi
 }
+# ── GATEWAY / TOKEN PREFLIGHT — PRE-CLAIM (DROID-CLIENT-PREFLIGHT, instance 2) ───────────────────
+# SAME CLASS as the PATH fix at the top of this file: the launcher trusted the INVOKING SHELL'S
+# ENVIRONMENT instead of DERIVING what it needs. PATH was instance 1; the gateway bearer token is
+# instance 2, and worse — the code already documented the right answer and nobody wired it.
+#
+# WHAT WENT WRONG (real incident, 2026-07-25): a PowerShell-invoked, non-interactive bash inherited
+# no CHARON_GATEWAY_TOKEN. capability/availability.py reads the token from the AMBIENT ENV ONLY
+# (its GATEWAY_TOKEN_ENVS tuple), so its unauthenticated GET /charon/status came back 302 with a
+# ZERO-BYTE body -> json.loads("") -> "Expecting value: line 1 column 1 (char 0)". The capped-filter
+# then FAILED CLOSED and DETAINED the ticket. That fail-closed is CORRECT and is deliberately left
+# untouched. The defect is that it fired PER TICKET: claim -> detain -> re-claim -> quarantine, and
+# it chewed through FIVE tickets before the operator killed the tab.
+#
+# A token/gateway fault is a STARTUP condition, not a per-ticket one. Detect it ONCE, here, BEFORE
+# the claim loop, and stand down with a distinct code — instead of burning the board into quarantine
+# one ticket at a time. Placed before the cleanup traps so a preflight exit is clean (nothing has
+# been claimed, no worktree exists, so there is nothing to clean up).
+#
+# TOKEN DERIVATION: env-registry.sh:bearer_token() is the ONE canonical reader
+# (~/.config/opencode/opencode.json -> provider.charon.options.apiKey). Sourced through its source
+# guard in a COMMAND-SUBSTITUTION SUBSHELL, so neither its `set -uo pipefail` nor its FLEET/OUTPUT/
+# GATEWAY_URL variables can leak into this script. env-registry.sh's own header states the rule this
+# implements: "CHARON_GATEWAY_TOKEN (shell env) is documented STALE ... always re-derive from the
+# live opencode config". So the DERIVED value WINS; a disagreeing shell var is reported as drift
+# (same notion of drift as preflight.sh:detect_gateway_token_drift) and overridden, never obeyed.
+GW_URL="${CHARON_GATEWAY_URL:-http://10.0.1.60:8080}"
+derive_gateway_token   # (defined near the top; also called before the `resolve` hook)
+
+# PROVE the gateway is actually readable with that token, right now. The failure signature we are
+# defending against is NOT an HTTP error code — an unauthenticated /charon/status answers 302 with an
+# EMPTY BODY, which curl reports as success. So the test is "does the body parse as a JSON object",
+# which is exactly what availability.py needs and exactly what blew up.
+_gw_body="$(curl -sS --max-time 8 \
+              -H "Authorization: Bearer ${CHARON_GATEWAY_TOKEN:-}" \
+              -H 'Accept: application/json' \
+              "$GW_URL/charon/status" 2>/dev/null || true)"
+if ! printf '%s' "$_gw_body" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if isinstance(d,dict) else 1)' 2>/dev/null; then
+  _tok_state="derived from ${CHARON_OPENCODE_CONFIG:-$HOME/.config/opencode/opencode.json}"
+  [ -n "$_derived_tok" ] || _tok_state="EMPTY — no token could be derived, and none was inherited"
+  {
+    echo "[fleet-droid] FATAL: gateway /charon/status is NOT READABLE — standing down BEFORE claiming any ticket."
+    echo "[fleet-droid]   gateway:   $GW_URL/charon/status"
+    echo "[fleet-droid]   token:     $_tok_state"
+    echo "[fleet-droid]   response:  ${#_gw_body} bytes, not a JSON object (an unauthenticated"
+    echo "[fleet-droid]              /charon/status answers 302 with a 0-byte body — that is this signature)."
+    echo "[fleet-droid]   WHY THIS IS FATAL AT STARTUP: the capped-filter fails closed and DETAINS work when"
+    echo "[fleet-droid]              it cannot read gateway state. Continuing would claim, detain and"
+    echo "[fleet-droid]              QUARANTINE ticket after ticket. ZERO tickets were claimed."
+    echo "[fleet-droid]   FIX: set provider.charon.options.apiKey in"
+    echo "[fleet-droid]        ${CHARON_OPENCODE_CONFIG:-$HOME/.config/opencode/opencode.json}, or bring \$GW_URL back up."
+  } >&2
+  exit 5
+fi
+unset _derived_tok _env_tok _gw_body _tok_state
+
+# ── PUSH MODE: register on the session-bridge (DROID-BRIDGE-REGISTER) ────────────────────────────
+# Operator ask: "a version of a droid which IDLES until the MANAGER/SUPERVISOR session sends them
+# work." Today droids PULL. This adds PUSH, as WIRING over primitives that already exist — see
+# fleet/droid-bridge.sh for the reuse table (nudge + board-poll + idempotency.py, no daemon change).
+#
+# ADDITIVE AND OPT-IN, deliberately not the default. Registering every tab by default would make the
+# whole pool depend on a daemon that is NOT yet supervised (SERVICE-LIVENESS-WATCHDOG owns that) and
+# has already died once to a reboot. `fleet-droid.sh <tier>` with no push flag makes ZERO bridge
+# calls and behaves byte-identically to before.
+#
+# BOUNDARY (manager-never-spawns-droids): the manager only ever dispatches to an ALREADY-RUNNING
+# droid. The operator opens tabs. Nothing here spawns anything.
+BRIDGE="$FLEET/droid-bridge.sh"
+BRIDGE_LEASE=""; BRIDGE_REPO="${CHARON_BRIDGE_REPO:-charon}"; PUSH_DEGRADED=0
+if [ "$PUSH_MODE" != off ]; then
+  if BRIDGE_LEASE="$(bash "$BRIDGE" register "$DROID" "$DROID" "$BRIDGE_REPO" pending 2>/dev/null)" \
+     && [ -n "$BRIDGE_LEASE" ]; then
+    echo "[$DROID] push mode '$PUSH_MODE': registered on the session-bridge as '$DROID' (repo=$BRIDGE_REPO, tick=${TICK_S}s)."
+  else
+    # FAIL-CLOSED ON WORK, LOUD ALWAYS — and the two modes diverge on purpose.
+    if [ "$PUSH_MODE" = only ]; then
+      # A push-only droid with no bridge has NO way to ever receive work. Spinning silently is
+      # precisely the failure that hid a dead grader for nine days, so stand down NOW, nonzero,
+      # with a durable marker. Exit 6, not the design's suggested 3: 3 is already taken above by
+      # the "no gateway model chain for tier" FATAL, and a code that means two things is a code
+      # that means nothing.
+      mkdir -p "$FLEET/state/push-degraded" 2>/dev/null || true
+      printf '%s\tpush-only\tbridge-unreachable\n' "$(date -u +%FT%TZ)" > "$FLEET/state/push-degraded/$DROID" 2>/dev/null || true
+      {
+        echo "[$DROID] FATAL: BRIDGE-DOWN — --push-only cannot receive work with no bridge."
+        echo "[$DROID]   A push-only droid has no pull fallback BY DESIGN, so idling here would be"
+        echo "[$DROID]   indistinguishable from a dead tab. Standing down loudly instead."
+        echo "[$DROID]   marker: $FLEET/state/push-degraded/$DROID"
+        echo "[$DROID]   Use --push (hybrid) to degrade to pull instead of standing down."
+      } >&2
+      exit 6
+    fi
+    # Hybrid: the manager may be gone, but the board is not. Degrade to pull — LOUDLY, and with a
+    # marker, so "it kept working" never means "nobody noticed the bridge died".
+    PUSH_DEGRADED=1; PUSH_MODE=off
+    mkdir -p "$FLEET/state/push-degraded" 2>/dev/null || true
+    printf '%s\thybrid\tbridge-unreachable-degraded-to-pull\n' "$(date -u +%FT%TZ)" > "$FLEET/state/push-degraded/$DROID" 2>/dev/null || true
+    {
+      echo "[$DROID] BRIDGE-DOWN: could not register on the session-bridge."
+      echo "[$DROID]   DEGRADING TO PULL for this run — dispatches cannot be received, free-claim continues."
+      echo "[$DROID]   marker: $FLEET/state/push-degraded/$DROID"
+    } >&2
+  fi
+fi
+
 trap 'cleanup; echo "[$DROID] stood down."; exit 130' INT TERM
 trap cleanup EXIT
+# ── PUSH-MODE HELPERS ────────────────────────────────────────────────────────────────────────────
+# The tick IS the heartbeat: droid-bridge.sh's `poll` calls board(session_id=…), which the daemon
+# answers by refreshing this session's 600s lease. So an idling droid proves liveness for free, and
+# a droid that DIES stops refreshing and expires into the daemon's own graduated purge. There is no
+# second liveness notion here — that is the point.
+bridge_fails=0
+push_bridge_down(){
+  bridge_fails=$((bridge_fails+1))
+  mkdir -p "$FLEET/state/push-degraded" 2>/dev/null || true
+  printf '%s\t%s\tbridge-unreachable (tick %s)\n' "$(date -u +%FT%TZ)" "$PUSH_MODE" "$bridge_fails" \
+    > "$FLEET/state/push-degraded/$DROID" 2>/dev/null || true
+  if [ "$PUSH_MODE" = only ]; then
+    echo "[$DROID] BRIDGE-DOWN (consecutive tick $bridge_fails) — --push-only has NO pull fallback by design." >&2
+    if [ "$RETRIES" -gt 0 ] && [ "$bridge_fails" -ge "$RETRIES" ]; then
+      echo "[$DROID] FATAL: BRIDGE-DOWN for $bridge_fails consecutive ticks — standing down (exit 6). marker: $FLEET/state/push-degraded/$DROID" >&2
+      exit 6
+    fi
+  else
+    echo "[$DROID] BRIDGE-DOWN — DEGRADING TO PULL for the rest of this run (free-claim continues; dispatches cannot arrive). marker: $FLEET/state/push-degraded/$DROID" >&2
+    PUSH_MODE=off; PUSH_DEGRADED=1
+  fi
+}
+# ONE tick. rc 0 = a dispatch is now in $PUSH_TICKET; 1 = nothing waiting; 2 = bridge down (handled).
+push_poll_once(){
+  PUSH_TICKET=""; PUSH_MSGID=""
+  local out rc
+  out="$(bash "$BRIDGE" poll "$DROID" "$BRIDGE_REPO" 2>/dev/null)"; rc=$?
+  case "$rc" in
+    0) read -r PUSH_TICKET PUSH_MSGID <<<"$out"
+       bridge_fails=0
+       echo "[$DROID] DISPATCH received: ticket=$PUSH_TICKET (msg=$PUSH_MSGID)"
+       # Ack immediately: the local idempotency ledger has already recorded this id, so the
+       # server-side copy has done its job and must not be redelivered.
+       [ -n "$BRIDGE_LEASE" ] && bash "$BRIDGE" ack "$DROID" "$BRIDGE_LEASE" "$PUSH_MSGID" >/dev/null 2>&1
+       return 0 ;;
+    1) bridge_fails=0; return 1 ;;
+    *) push_bridge_down; return 2 ;;
+  esac
+}
+# Idle on the bridge for up to <total> seconds, ticking every $TICK_S. Returns 0 the moment a
+# dispatch lands (never sleeps through one), 1 if the window elapsed or push was degraded away.
+push_wait(){
+  local total="$1" waited=0
+  while [ "$waited" -lt "$total" ]; do
+    sleep "$TICK_S"; waited=$((waited+TICK_S))
+    [ "$PUSH_MODE" = off ] && return 1
+    if push_poll_once; then return 0; fi
+  done
+  return 1
+}
+PUSH_TICKET=""; PUSH_MSGID=""; PUSH_CARRY=""
+
 wmsg=""; [ "$WAIT_MIN" -gt 0 ] && wmsg=", wait=${WAIT_MIN}m retries=${RETRIES} patience=${PATIENCE}"
 echo "[$DROID] charon-fleet droid up (off-Claude via ${CHARON_AGENT_CMD##*/}; gateway chain=${MODELS[*]}$wmsg). Ctrl-C to stand down."
 while true; do
+  # ── PUSH: is the manager holding work for us? ──────────────────────────────────────────────────
+  # Back to `pending` on the board first, so an idle droid is idle BY FIELD, never by inference.
+  # PUSH_CARRY holds a dispatch that arrived DURING an idle window. It must survive the
+  # loop-top reset: by the time push_wait returns, the message has already been consumed
+  # from the queue, recorded in the idempotency ledger and acked — so clearing it here and
+  # re-polling would find nothing and SILENTLY DROP the operator's work. (Caught by
+  # droid-bridge.test.sh section D, which is exactly why that test dispatches into an
+  # idling droid rather than a starting one.)
+  if [ -n "${PUSH_CARRY:-}" ]; then
+    PUSH_TICKET="$PUSH_CARRY"; PUSH_CARRY=""
+  else
+  PUSH_TICKET=""; PUSH_MSGID=""
+  if [ "$PUSH_MODE" != off ]; then
+    # ORDER MATTERS: poll BEFORE the status update. daemon.py's `update` handler runs the same
+    # _process_read as `board` — it DRAINS and returns the queue too (daemon.py:507,533). Since
+    # this script only wants a status change from it, a dispatch that landed just before an
+    # update would be marked delivered and then thrown away, stalling it until the 120s
+    # REDELIVER_WINDOW_S re-offered it. Polling first means the consuming call always gets first
+    # look; only a sub-millisecond window remains, and at-least-once redelivery covers that.
+    push_poll_once || true
+    [ -z "$PUSH_TICKET" ] && [ -n "$BRIDGE_LEASE" ] && bash "$BRIDGE" update "$DROID" pending >/dev/null 2>&1
+    # PUSH-ONLY: never free-claims. With nothing dispatched, idle ON THE BRIDGE (ticking, which is
+    # also the heartbeat) rather than falling through to claim.sh.
+    if [ "$PUSH_MODE" = only ] && [ -z "$PUSH_TICKET" ]; then
+      if [ "$WAIT_MIN" -gt 0 ] && { [ "$RETRIES" -eq 0 ] || [ "$empties" -lt "$RETRIES" ]; }; then
+        rmax="$RETRIES"; [ "$RETRIES" -eq 0 ] && rmax="∞"
+        echo "[$DROID] push-only: no dispatch — idling on the bridge, tick=${TICK_S}s for ${WAIT_MIN}m (idle $((empties+1))/$rmax)…"
+        if push_wait "$((WAIT_MIN*60))"; then empties=0; PUSH_CARRY="$PUSH_TICKET"; else empties=$((empties+1)); fi
+        continue
+      else
+        echo "[$DROID] push-only: no dispatch and idle budget exhausted — standing down."; break
+      fi
+    fi
+  fi
+  fi
+  # ── PER-ITERATION PIN ─────────────────────────────────────────────────────────────────────────
+  # CLAIM_ONLY used to be exported ONCE at launch, which is why a dispatch could not target a
+  # ticket on a RUNNING droid. It is now re-exported every iteration: a dispatched ticket pins THIS
+  # iteration only, and the launch-time --only pin is restored the moment the dispatch is done.
+  # NOTE what this does NOT do: it does not bypass anything. The pin only narrows what claim.sh will
+  # CONSIDER; the atomic claim, the work-lease, the parallelizability gate, loop-guard and
+  # leak-guard all still run exactly as they do for a pulled ticket.
+  export CLAIM_ONLY="${PUSH_TICKET:-$ONLY_TICKET}"
   # Tier patience: try OWN tier first; only dip to lower tiers once we've been
   # empty-at-own-tier for >= PATIENCE wait-cycles (gives lower tiers a head start).
   mode=both; [ "$empties" -lt "$PATIENCE" ] && mode=own-only
   if ! res="$(bash "$FLEET/claim.sh" "$TIER" "$DROID" "$mode")"; then
+    # A dispatch that cannot be claimed is REFUSED, not improvised around: unknown ticket id,
+    # already claimed, dep-blocked, parked, quarantined or done all land here. Tell the manager
+    # why and go back to idle. No branch, no worktree, no claim file is created — which is what
+    # makes "no dark work" structural rather than a promise.
+    if [ -n "$PUSH_TICKET" ]; then
+      echo "[$DROID] DISPATCH REFUSED: '$PUSH_TICKET' is not claimable by this droid (unknown, already claimed, blocked, parked or done). Staying idle." >&2
+      [ -n "$BRIDGE_LEASE" ] && bash "$BRIDGE" reply "$DROID" "${CHARON_MANAGER_SID:-manager}" \
+        "REFUSED ticket=$PUSH_TICKET reason=not-claimable-by-$DROID" >/dev/null 2>&1
+      continue
+    fi
     if [ "$WAIT_MIN" -gt 0 ] && { [ "$RETRIES" -eq 0 ] || [ "$empties" -lt "$RETRIES" ]; }; then
       empties=$((empties+1))
       rmax="$RETRIES"; [ "$RETRIES" -eq 0 ] && rmax="∞"
       echo "[$DROID] no $TIER-eligible work — waiting ${WAIT_MIN}m (empty $empties/$rmax)…"
-      sleep "$((WAIT_MIN*60))"; continue
+      # HYBRID: wait on the bridge instead of sleeping blind, so a dispatch wakes us within one
+      # tick instead of up to --wait minutes. Pull is unaffected: if nothing arrives we simply
+      # re-enter the same claim.sh call, exactly as the blind sleep did.
+      if [ "$PUSH_MODE" != off ]; then
+        # Carry a mid-window dispatch across the loop boundary — see PUSH_CARRY at the top.
+        if push_wait "$((WAIT_MIN*60))"; then PUSH_CARRY="$PUSH_TICKET"; fi
+      else
+        sleep "$((WAIT_MIN*60))"
+      fi
+      continue
     fi
     echo "[$DROID] no $TIER-eligible work left — standing down."; break
   fi
   empties=0
   read -r _tag id tfile <<<"$res"; current="$id"
+  if [ "$PUSH_MODE" != off ] && [ -n "$BRIDGE_LEASE" ]; then
+    bash "$BRIDGE" update "$DROID" in-progress >/dev/null 2>&1
+  fi
   echo "[$DROID] claimed $id — launching session…"
   # F46 PARALLELIZABILITY-GATE: refuse to launch a SPLITTABLE ticket (difficulty>=M AND >1
   # independent owned surface — see fleet/checks/parallelizability-gate.sh) as a single
@@ -604,12 +947,30 @@ while true; do
       continue
     fi
   else
-    echo "[$DROID] WARNING: $id has no work_class field — detention/capped filter cannot scope; running the FULL chain unfiltered." >&2
-    RUN_MODELS=("${MODELS[@]}")
+    # F4 (money guardrail): the claim-loop half of the same fail-open. A WARNING that still
+    # ran the full unfiltered chain is not a guardrail — it is a log line. Refuse the ticket,
+    # record WHY in the ledger, release it so it is not silently held, and quarantine it so we
+    # do not spin re-claiming a ticket that can never be scoped.
+    echo "[$DROID] SKIP $id: WORK-CLASS-MISSING — the ticket declares no work_class, so the detention filter, the gateway capped-exclusion and the cost cap could not scope and NONE of them ran. NOT running the full unfiltered chain (fail closed). The ticket is released and quarantined; add a work_class: field." >&2
+    exhaust_led "ticket:$id" "work-class-missing" "no work_class field: detention/capped/cost-cap could not scope — refused to run the unfiltered chain"
+    bash "$FLEET/release.sh" "$id" >/dev/null 2>&1 || true; current=""
+    bash "$FLEET/loop-guard.sh" record "$id" "$DROID" >/dev/null 2>&1 \
+      || echo "[$DROID] LOOP-GUARD: $id quarantined (no work_class)." >&2
+    continue
   fi
   pfile="$(awk -F': ' '$1=="prompt"{sub(/^[^:]*: ?/,"");print;exit}' "$tfile")"
   spec="$(cat "$tfile"; echo; echo '--- WORK SPEC ---'; cat "$pfile" 2>/dev/null || echo '(no prompt file)')"
   branch="$(awk -F': ' '$1=="branch"{sub(/^[^:]*: ?/,"");print;exit}' "$tfile")"
+  # TICKET-MAP-GATE — CREATION-TIME work-lease enforcement. The commit-time hook already refuses a
+  # worktree branch that maps to no board ticket, but it fires AFTER the build is finished (four
+  # agents lost complete, green work to that late refusal in one day). Run the SAME resolver HERE,
+  # before the worktree is created and before the model is launched, so an unmapped branch costs
+  # nothing. Fail-closed and loud: a missing/blank `branch:` field or a branch that resolves to no
+  # ticket RELEASES the claim instead of dispatching a build that could never be committed.
+  if ! bash "$FLEET/work-lease.sh" guard-branch "$branch" "ticket $id"; then
+    echo "[$DROID] $id: branch '$branch' maps to NO board ticket — REFUSING to create a worktree or launch a build for work that could not be committed. Fix the ticket's 'branch:' field. Releasing; next…" >&2
+    bash "$FLEET/release.sh" "$id" || true; current=""; continue
+  fi
   # MULTI-REPO: resolve the ticket's target repo (`repo:` field; absent -> charon product).
   # RR_PATH/RR_WT/RR_BASE/RR_GATE come from repo-registry.sh; owner/repo is derived (not hardwired).
   repokey="$(awk -F': ' '$1=="repo"{sub(/^[^:]*: ?/,"");print;exit}' "$tfile")"

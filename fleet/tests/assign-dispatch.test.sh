@@ -47,6 +47,23 @@ printf '%s\n' \
   '2026-07-01	live	R4	routing	1	modelC	MERGE	pass	-	10	-	0	n4' \
   > "$D/scorecard-live.tsv"
 
+# CONTROL PANEL (RIG-REDS 2026-07-24). EVAL-PROMOTION-GATE's F13 fix later added a
+# per-ref control-panel ADMISSION gate to grades.py `_rows_for()`: a source=live row
+# only counts toward a grade once its ref has a MUST-PASS control (strong-control,
+# N>=3, mean >= 80) AND a MUST-FAIL control (deepseek-v4-flash, N>=3, mean <= 20).
+# This fixture predates that gate and carried NO control rows, so after F13 landed
+# EVERY row above was excluded, assign.py REFUSED, and (a)/(d)/(e) went red for a
+# reason that has nothing to do with the S4 dispatch wiring under test — a stale
+# fixture, not a dispatch regression. Controls are added here so the fixture is
+# ADMISSIBLE again; the ranking assertions below are unchanged, so a revert of the
+# S4 wiring still flips this test red (fail-on-revert preserved).
+for _ref in R1 R2 R3 R4; do
+  for _n in 1 2 3; do
+    printf '2026-07-01\tlive\t%s\trouting\t1\tstrong-control\tMERGE\tpass\t100\t10\t-\t0\tctl-pass-%s\n' "$_ref" "$_n"
+    printf '2026-07-01\tlive\t%s\trouting\t1\tdeepseek-v4-flash\tBLOCK\tfail\t0\t10\t-\t0\tctl-fail-%s\n' "$_ref" "$_n"
+  done
+done >> "$D/scorecard-live.tsv"
+
 echo "== (a) live data present -> assign.py's pick (modelB) is promoted to the front =="
 out="$(CHARON_TIER_MODELS="$D/tier-models.tsv" CHARON_SCORECARD_TSV="$D/scorecard-live.tsv" \
        bash "$SRC/fleet-droid.sh" resolve strong "$D/ticket.md" 2>/dev/null)"
@@ -86,6 +103,27 @@ case ",modelA,modelC," in
   *",$picked,"*) ok "e1 pick stays within the offered --candidates set (got '$picked')" ;;
   *) bad "e1 pick stays within the offered --candidates set (got '$picked', outside modelA,modelC)" ;;
 esac
+
+echo "== (f) F4 MONEY GUARDRAIL: a ticket with NO work_class must FAIL CLOSED =="
+# Detention, gateway capped-exclusion AND the cost cap all scope BY work_class. This arm used
+# to emit the FULL UNFILTERED CHAIN and exit 0 behind a stderr note — so simply omitting the
+# field bypassed every money guardrail at once, and, exiting 0, could never go RED.
+# validate_board.sh mitigates it at BOARD level, but a fail-open code path must not depend on
+# a separate check catching the input first.
+printf 'tier: strong\n' > "$D/ticket-no-workclass.md"
+rc=0
+out="$(CHARON_TIER_MODELS="$D/tier-models.tsv" CHARON_SCORECARD_TSV="$D/scorecard-empty.tsv" \
+       bash "$SRC/fleet-droid.sh" resolve strong "$D/ticket-no-workclass.md" 2>/dev/null)" || rc=$?
+check "f1 no work_class exits 9 (distinct from 3=no-chain, 7=all-detained)" "$rc" "9"
+check "f2 no work_class emits NO chain at all"                              "$out" ""
+# NON-VACUITY CONTROL: the very same invocation WITH a work_class must still resolve normally,
+# so f1/f2 cannot pass because resolve is simply broken.
+printf 'tier: strong\nwork_class: routing\n' > "$D/ticket-has-workclass.md"
+rc=0
+out="$(CHARON_TIER_MODELS="$D/tier-models.tsv" CHARON_SCORECARD_TSV="$D/scorecard-empty.tsv" \
+       bash "$SRC/fleet-droid.sh" resolve strong "$D/ticket-has-workclass.md" 2>/dev/null)" || rc=$?
+check "f3 CONTROL: with work_class still exits 0"        "$rc" "0"
+check "f4 CONTROL: with work_class still emits the chain" "$out" "modelA,modelB,modelC"
 
 echo
 echo "--- $PASS passed, $FAIL failed ---"

@@ -11,7 +11,10 @@
 # `work-lease acquire` REFUSE, and a ticket a manager holds a lease on is skipped by claim.sh
 # (it is already in state/claims). This is the dispatch-time double-claim closure.
 #
-# Enforcement is at TWO boundaries:
+# Enforcement is at THREE boundaries (earliest first — late enforcement IS the defect):
+#   0. CREATION — `guard-branch <branch>` refuses a worktree/branch that maps to NO board ticket,
+#      BEFORE the worktree exists. Wired into fleet-droid.sh's dispatch loop. Without it the same
+#      requirement was only discovered at (2), after the whole build was already done.
 #   1. DISPATCH — `acquire`/`dispatch` refuse to hand a ticket to a second builder. fleet-droid.sh
 #      already acquires via claim.sh before launch; the manager ad-hoc path uses `dispatch`.
 #   2. COMMIT   — pre-commit / commit-msg hooks refuse an un-leased worktree commit and refuse
@@ -22,7 +25,33 @@
 set -euo pipefail
 
 FLEET="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STATE="$FLEET/state"
+
+# ONE STORE ACROSS WORKTREES (WORK-LEASE-WORKTREE-RESOLVE accept-1).
+# `fleet/state/*` is .gitignored, so every linked worktree starts with its OWN empty
+# state/claims/. Deriving the store from $FLEET therefore SPLIT it: an `acquire` run from a
+# worktree's copy of this script wrote <worktree>/fleet/state/claims/<t>, while the pre-commit
+# hook (a symlink resolving to the MAIN checkout's fleet/hooks/*) read <main>/fleet/state/claims/
+# — so a lease could be acquired successfully and the very next commit still REFUSED.
+# Resolve the store from `git rev-parse --git-common-dir`, which is IDENTICAL for the main
+# checkout and every linked worktree, so both agree on one store and one lock.
+# Falls back to $FLEET when $FLEET is not inside a git repo (hermetic tests) or the common dir's
+# parent holds no fleet/ — never silently points at a directory that is not a fleet root.
+_state_root() {
+  if [ -n "${WORK_LEASE_STATE_ROOT:-}" ]; then printf '%s' "$WORK_LEASE_STATE_ROOT"; return 0; fi
+  local gcd root
+  gcd="$(git -C "$FLEET" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
+    || gcd="$(git -C "$FLEET" rev-parse --git-common-dir 2>/dev/null)" || gcd=""
+  if [ -n "$gcd" ]; then
+    case "$gcd" in /*) :;; *) gcd="$(cd "$FLEET" && cd "$gcd" 2>/dev/null && pwd)" || gcd="";; esac
+  fi
+  if [ -n "$gcd" ]; then
+    root="$(cd "$gcd/.." 2>/dev/null && pwd)" || root=""
+    if [ -n "$root" ] && [ -f "$root/fleet/work-lease.sh" ]; then printf '%s' "$root/fleet"; return 0; fi
+  fi
+  printf '%s' "$FLEET"
+}
+STATE_ROOT="$(_state_root)"
+STATE="$STATE_ROOT/state"
 CLAIMS="$STATE/claims"          # SINGLE store — same dir claim.sh writes (state/claims/<ticket>)
 LOCK="$STATE/lock"              # SINGLE lock — same flock file claim.sh uses (state/lock)
 STALE_S="${WORK_LEASE_STALE_S:-900}"
@@ -47,14 +76,44 @@ current_wt() { git rev-parse --show-toplevel 2>/dev/null || echo "$PWD"; }
 # the canonical fleet mapping) -> a board/<branch>.md whose basename IS the branch. An UNMAPPED
 # branch returns non-zero: the caller FAILS CLOSED (a worktree with no resolvable ticket is not a
 # sanctioned work surface), never silently passes.
+#
+# branch_to_ticket [branch] — with no argument it resolves the CURRENT HEAD's branch (the
+# commit-boundary use); with an argument it resolves an ARBITRARY branch name, which is what the
+# creation-time guard needs (the branch does not exist yet when we must decide).
+# Both this worktree's board/ AND the shared (git-common-dir) board/ are searched: the shared one
+# is the current master board (a worktree cut days ago has a STALE board and would otherwise fail
+# to see a ticket that exists), while the local one still resolves a ticket a sub has authored on
+# its own branch but not yet landed.
 branch_to_ticket() {
-  local br; br="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" || return 1
+  local br="${1:-}"
+  if [ -z "$br" ]; then br="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" || return 1; fi
   [ -n "$br" ] || return 1
-  if declare -F ticket_for_branch >/dev/null 2>&1; then
-    local tid; tid="$(ticket_for_branch "$br" 2>/dev/null)" || true
-    [ -n "$tid" ] && { printf '%s' "$tid"; return 0; }
-  fi
-  [ -f "$FLEET/board/$br.md" ] && { printf '%s' "$br"; return 0; }
+  local root tid saved="${FLEET_LIB_BOARD:-}"
+  local roots="$FLEET"
+  [ "$STATE_ROOT" != "$FLEET" ] && roots="$FLEET $STATE_ROOT"
+  for root in $roots; do
+    [ -d "$root/board" ] || continue
+    if declare -F ticket_for_branch >/dev/null 2>&1; then
+      FLEET_LIB_BOARD="$root/board"
+      tid="$(ticket_for_branch "$br" 2>/dev/null)" || tid=""
+      FLEET_LIB_BOARD="$saved"
+      if [ -n "$tid" ]; then printf '%s' "$tid"; return 0; fi
+    fi
+    if [ -f "$root/board/$br.md" ]; then printf '%s' "$br"; return 0; fi
+  done
+  return 1
+}
+
+# board_reachable — fail-CLOSED precondition: at least one board/ directory holding at least one
+# ticket must be visible. No board == the mapping machinery is missing, and a gate that cannot
+# read its own inputs must REFUSE, never wave the branch through.
+board_reachable() {
+  local root roots="$FLEET"
+  [ "$STATE_ROOT" != "$FLEET" ] && roots="$FLEET $STATE_ROOT"
+  for root in $roots; do
+    [ -d "$root/board" ] || continue
+    if compgen -G "$root/board/*.md" >/dev/null 2>&1; then return 0; fi
+  done
   return 1
 }
 lf() { echo "$CLAIMS/$1"; }
@@ -168,6 +227,44 @@ cmd_dispatch() {
     [ "$#" -gt 0 ] && exec "$@"
   fi
   echo "dispatch-ok: lease acquired for '$ticket' — safe to launch the builder."
+}
+
+# guard-branch <branch> [context] — the CREATION-TIME gate (TICKET-MAP-GATE).
+#
+# THE CLASS THIS CLOSES: cmd_pre_commit already refuses a worktree branch that maps to no board
+# ticket — but it fires at COMMIT, i.e. after the whole build is finished. Four separate agents
+# paid that cost in one day: complete, tested, green work that could not be committed. The
+# mapping requirement is identical; only the MOMENT is wrong. This runs the SAME resolver at
+# worktree/branch-creation time, so an unmapped branch is refused before any work happens.
+#
+# FAIL CLOSED, LOUD, non-zero: an empty branch name, an unreachable board, or an unresolvable
+# branch all REFUSE (rc 1). WORK_LEASE_BYPASS is deliberately NOT honoured here — the answer to
+# "my branch maps to no ticket" is a ticket, never a softer gate; bypassing at creation would
+# just re-create the late-refusal it exists to prevent.
+cmd_guard_branch() {
+  local br="${1:-}" ctx="${2:-}"
+  if [ -z "$br" ]; then
+    echo "WORK-LEASE CREATION REFUSED: no branch name given (fail-closed)." >&2
+    return 1
+  fi
+  if ! board_reachable; then
+    echo "WORK-LEASE CREATION REFUSED: no readable board/ under '$FLEET' or '$STATE_ROOT'" >&2
+    echo "  The branch->ticket mapping machinery is MISSING; a gate that cannot read its inputs refuses." >&2
+    return 1
+  fi
+  local tid=""
+  if tid="$(branch_to_ticket "$br" 2>/dev/null)" && [ -n "$tid" ]; then
+    echo "work-lease: branch '$br' -> ticket '$tid'${ctx:+ ($ctx)}"
+    return 0
+  fi
+  cat >&2 <<EOM
+WORK-LEASE CREATION REFUSED: branch '$br'${ctx:+ ($ctx)} maps to NO board ticket.
+  Refusing to create a worktree/branch that could not be committed from later — this is the
+  SAME check pre-commit runs, moved to creation time so no work is wasted.
+  Fix FIRST, then retry: add a board ticket whose 'branch:' field is exactly '$br'
+  (or point this work at an existing ticket's branch).
+EOM
+  return 1
 }
 
 cmd_release() {
@@ -308,6 +405,7 @@ case "$cmd" in
   holds)         cmd_holds "$@" ;;
   bind)          cmd_bind "$@" ;;
   dispatch)      cmd_dispatch "$@" ;;
+  guard-branch)  cmd_guard_branch "$@" ;;
   release)       cmd_release "$@" ;;
   heartbeat)     cmd_heartbeat "$@" ;;
   pre-commit)    cmd_pre_commit "$@" ;;
@@ -315,5 +413,5 @@ case "$cmd" in
   install)       cmd_install "$@" ;;
   ensure)        cmd_ensure "$@" ;;
   uninstall)     cmd_uninstall "$@" ;;
-  *)             echo "Usage: $(basename "$0") {acquire|check|holds|bind|dispatch|release|heartbeat|pre-commit|commit-msg|install|ensure|uninstall}" >&2; exit 2 ;;
+  *)             echo "Usage: $(basename "$0") {acquire|check|holds|bind|dispatch|guard-branch|release|heartbeat|pre-commit|commit-msg|install|ensure|uninstall}" >&2; exit 2 ;;
 esac

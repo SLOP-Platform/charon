@@ -16,13 +16,22 @@ Before launching any droid/sub-session tabs against a set of tickets, do the WCI
 The mechanized trigger is the contention detector:
 
 ```
-fleet/preflight.sh detect        # surfaces the top DECOMPOSE CANDIDATES (advisory line)
+fleet/preflight.sh detect        # surfaces the candidates AND auto-tickets them (the teeth)
 fleet/wci-contention.sh [N]      # full owner lists; N = ownership threshold (default 4)
+fleet/wci-contention.sh --generate [--dry-run]   # candidate -> tracked priority:1 board ticket
 ```
 
 A file that shows up as a **DECOMPOSE CANDIDATE** means the backlog is mis-sliced against its own
 contention (see Step 2). Resolve it in the plan first — don't just open N tabs that all collide on
 one file.
+
+**The detector is no longer advisory (2026-07-24).** Every preflight runs `--generate`, which
+creates ONE board ticket per contended PATH (`WCI-DEC-<PATH>`, `priority: 1`, sequenced behind
+every live owner via `dep-kind: build`) and adds the matching `state/ROADMAP.tsv` row. It is
+idempotent (keyed on the path, never a second ticket) and self-closing (the ticket is auto-PARKED
+when contention drops below N, or when an owner declares `serial_justified:`). Suppress the writes
+for a session with `WCI_AUTOTICKET=0`; arm the ignored-ticket escalation by changing
+`WCI_RATCHET_DAYS` from `0` to e.g. `7` in `fleet/preflight.sh`.
 
 ---
 

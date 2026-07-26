@@ -5,7 +5,17 @@ difficulty: 3
 work_class: rig-meta
 branch: feat/droid-bridge-register
 owns: fleet/droid-bridge.sh, fleet/tests/droid-bridge.test.sh
-depends_on:
+depends_on: DROID-CLIENT-PREFLIGHT-PATH
+dep-kind: merge-order
+real-dep: |
+  ADDED 2026-07-24 — MERGE-ORDER edge, NOT a build prerequisite [[disjoint-owns-not-no-dependency]].
+  The PUSH-MODE fold-in described under push-mode: was actually BUILT on branch
+  fix/DROID-CLIENT-PREFLIGHT-PATH (commit "feat(DROID-BRIDGE-REGISTER): push mode", HEAD 8f0a4e5),
+  which therefore co-owns fleet/droid-bridge.sh and fleet/tests/droid-bridge.test.sh. That branch is
+  built, tested and pushed while this ticket is unstarted (its worktree sits at the base commit), so
+  it lands FIRST as the anchor and this ticket's REMAINING scope — the register / heartbeat /
+  unregister-trap / pickup-gate session lifecycle — rebases onto the landed bridge file rather than
+  co-writing it [[anchor-lines-serialize-parallel-work]] [[one-checkout-one-agent]].
 serial_justified: name-claim + register + heartbeat + unregister-trap + pickup-gate are ONE session
   lifecycle — a droid that registers but never heartbeats (goes stale) or never unregisters (strands its
   report) is the exact dark-work gap this closes; splitting them ships a half-lit session.

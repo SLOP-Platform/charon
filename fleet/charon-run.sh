@@ -8,6 +8,32 @@ set -u
 PFR_DEBUG="${PFR_DEBUG:-0}"
 dbg() { [ "$PFR_DEBUG" = "1" ] && printf '[charon-run][DEBUG] %s\n' "$*" >&2; return 0; }
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ── DROID-CLIENT-PREFLIGHT (2026-07-24): make the work client resolvable
+# regardless of the CALLER'S SHELL TYPE, then prove it is there before burning
+# the failover chain.
+#
+# Root cause it fixes: `$HOME/.local/bin` (where `opencode` lives) is put on
+# PATH only by ~/.bashrc and ~/.profile — i.e. only for an INTERACTIVE or LOGIN
+# shell. A fleet-droid.sh tab launched from a non-login, non-interactive shell
+# (setsid/nohup/sh -c/tool-invoked wrapper) therefore ran `timeout … opencode`
+# with no `opencode` on PATH -> `timeout` exits 127 -> every model in the chain
+# "failed" in under a second -> bogus "ALL MODELS EXHAUSTED / POOL TOO THIN".
+# See fleet/state/reviews/DROID-SESSION-FAILURE-agen-kolar.md.
+#
+# APPEND, never prepend: anything already resolvable on the caller's PATH must
+# keep winning (hermetic tests stub `opencode` via PATH="$STUBDIR:$PATH", and a
+# deliberate operator override must not be shadowed by ~/.local/bin). This adds
+# a FALLBACK location only, and only when it is not already on PATH.
+case ":${PATH}:" in
+  *":$HOME/.local/bin:"*) : ;;
+  *) [ -d "$HOME/.local/bin" ] && export PATH="$PATH:$HOME/.local/bin" ;;
+esac
+# The client is the DEFAULT, not a hardwire (same posture as fleet-droid.sh's
+# swappable $CHARON_AGENT_CMD): an operator can point this at any CLI with the
+# same `run --model <id> <prompt>` contract.
+OPENCODE_BIN="${OPENCODE_BIN:-opencode}"
+
 CWD="$1"; OUT="$2"; BRIEF="$3"; shift 3
 MODELS=("$@")
 PROMPT="$(cat "$BRIEF")"
@@ -58,8 +84,54 @@ is_infra_fault() {
   # note) -- a bare non-descriptive exit code with no model-attributable
   # content is an infra/opaque fault, not a model-quality signal.
   [ "$rc" -eq 3 ] && return 0
+  # ── EXIT-CODE CLASS (DROID-CLIENT-PREFLIGHT, 2026-07-24) ────────────────
+  # Written as a PREDICATE OVER A CLASS, deliberately not as a list of magic
+  # numbers bolted on one incident at a time -- that accretion is exactly how
+  # this predicate came to mis-book 42 of 46 lifetime BLOCK enqueues as model
+  # failures (fleet/state/reviews/SCORECARD-FALSE-BLOCK-AUDIT-agen-kolar.md).
+  # One of those is ALREADY MERGED into the live ledger routing ranks on:
+  # model-scorecard.tsv:36, kimi-k2.6, rc=134 (SIGABRT).
+  #
+  # The question this answers is ALWAYS: "did the MODEL produce a bad result,
+  # or did the LOCAL BOX fail to run it?" Only the former is a model verdict.
+  case "$rc" in
+    2)   # The client rejected our ARGUMENTS (argparse/usage). We built the
+         # command line, not the model. A launcher bug is never a model fault.
+         return 0 ;;
+    125) # `timeout` itself failed (its own internal error, distinct from 124
+         # = "child hit the budget", which is classified in the caller above).
+         return 0 ;;
+    126) # Found but NOT EXECUTABLE: bad perms, wrong ELF, noexec mount, bad
+         # interpreter line. The client never started.
+         return 0 ;;
+    127) # COMMAND NOT FOUND. The purest possible infra fault, and the one that
+         # produced three zero-commit sessions and 24 false BLOCKs when a
+         # non-login shell left ~/.local/bin off PATH.
+         return 0 ;;
+  esac
+  # SIGNAL DEATH: the shell reports a child killed by signal N as 128+N. A
+  # signal is something the ENVIRONMENT did TO the process -- OOM killer (137
+  # SIGKILL), operator Ctrl-C (130 SIGINT), supervisor stop (143 SIGTERM),
+  # native crash in the client binary (134 SIGABRT, 139 SIGSEGV). None is the
+  # model expressing a bad answer. Observed in the audit: 130 131 132 134 135
+  # 137 139 141 143 -- enumerating those nine would leave the tenth to be
+  # discovered by another poisoned ledger, so the RULE is the whole range.
+  # Safe as a rule because a CLI chooses small exit codes; >=128 is the shell's
+  # signal encoding, not a value the client picks to mean "the model failed".
+  [ "$rc" -ge 128 ] && return 0
+  # ── rc=1 IS DELIBERATELY *NOT* IN THE CLASS ─────────────────────────────
+  # rc=1 is the genuinely ambiguous one: it is both the client's generic
+  # "your run failed" (a REAL model verdict) and the exit code of an auth
+  # rejection or a `cd` into a reaped worktree (infra). Blanket-classifying it
+  # as infra would silently swallow every real model failure -- a false INFRA
+  # is exactly as corrosive as a false BLOCK, just in the other direction.
+  # So rc=1 stays TEXT-DISCRIMINATED: it is infra only when this attempt's own
+  # output carries a recognised infra signature, and a bare rc=1 with nothing
+  # infra in the tail is still charged to the model. The two rc=1 infra shapes
+  # the audit newly identified -- auth rejection and the reaped-worktree `cd`
+  # -- are added to the pattern below rather than to the code class.
   printf '%s' "$tail" | grep -qiE \
-    '\b5(0[0-9]|[1-9][0-9])\b.*(gateway|server|error)|bad gateway|service unavailable|gateway timeout|connection (reset|refused)|econnreset|econnrefused|context deadline exceeded|database is locked|"name"[[:space:]]*:[[:space:]]*"?unknownerror|internal server error' \
+    '\b5(0[0-9]|[1-9][0-9])\b.*(gateway|server|error)|bad gateway|service unavailable|gateway timeout|connection (reset|refused)|econnreset|econnrefused|context deadline exceeded|database is locked|"name"[[:space:]]*:[[:space:]]*"?unknownerror|internal server error|\b(401|403)\b|unauthorized|forbidden|invalid api key|missing or invalid bearer|authentication (failed|error)|(cd|chdir):.*no such file or directory|can'"'"'t cd to' \
     && return 0
   return 1
 }
@@ -90,6 +162,45 @@ cap() {  # cap <model> <claimed-result> [<verdict> <gate> <evidence>]
 # NOT surfaced to this wrapper by opencode; announcing the real provider needs an SG-side
 # X-Charon-Provider header + a session-tagged routing log (separate, not cheap). The model leg is
 # truthful and free — that is what we announce here.
+# ── CLIENT PREFLIGHT (DROID-CLIENT-PREFLIGHT) ────────────────────────────────
+# Runs BEFORE the STARTED announce and BEFORE the model loop, so a missing local
+# binary can NEVER be laundered into "ALL MODELS EXHAUSTED / POOL TOO THIN".
+# That conflation is the entire defect: four rc=127 legs in under a second read
+# as a thin provider pool and enqueued four scorecard BLOCKs against innocent
+# models. One loud line with a DISTINCT exit code beats four silent lies.
+#
+# Exit-code contract (callers/tests depend on these being distinct):
+#   0 = a model succeeded   3 = every model in the chain genuinely failed over
+#   4 = MISSING LOCAL PREREQ — nothing was attempted, no model is implicated
+#
+# HARD prereqs are exactly the two binaries this script's one command needs:
+# the work client and the `timeout` wrapper that execs it. `git`/`gh` are NOT
+# checked here on purpose — this script never shells out to them; fleet-droid.sh
+# owns those steps and preflights them itself (wrong layer to duplicate).
+PREFLIGHT_MISSING=()
+command -v "$OPENCODE_BIN" >/dev/null 2>&1 || PREFLIGHT_MISSING+=("$OPENCODE_BIN")
+command -v timeout        >/dev/null 2>&1 || PREFLIGHT_MISSING+=("timeout")
+if [ "${#PREFLIGHT_MISSING[@]}" -gt 0 ]; then
+  {
+    echo "[charon-run] FATAL: required binary not found: ${PREFLIGHT_MISSING[*]}"
+    echo "[charon-run]   PATH searched: $PATH"
+    echo "[charon-run]   This is a LOCAL ENVIRONMENT fault, NOT model/provider exhaustion."
+    echo "[charon-run]   No model was attempted; no scorecard entry was enqueued."
+    echo "[charon-run]   Likely cause: launched from a non-login, non-interactive shell that"
+    echo "[charon-run]   sourced neither ~/.bashrc nor ~/.profile (so ~/.local/bin is absent)."
+    echo "[charon-run]   Fix: install the binary, or set OPENCODE_BIN=/abs/path/to/client."
+    echo "CHARON_RUN_RESULT=PREREQ-MISSING missing=${PREFLIGHT_MISSING[*]}"
+  } | tee -a "$OUT" >&2
+  led "${MODELS[*]}" "prereq-missing" "required binary not found: ${PREFLIGHT_MISSING[*]}; PATH=$PATH; local env fault, NOT model-attributable"
+  exit 4
+fi
+# SOFT prereq: python3 backs the best-effort capture hook (capture/enqueue-capture.sh
+# builds its JSON with it). Missing python3 does not stop the WORK, but it silently
+# drops every scorecard capture — so say so loudly instead of degrading in silence.
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "[charon-run] WARN: python3 not on PATH — the scorecard capture hook will silently no-op for this run (work still proceeds)." | tee -a "$OUT" >&2
+fi
+
 FIRST_MODEL="${MODELS[0]:-}"
 echo "[charon-run] STARTED on charon/$FIRST_MODEL (failover chain: charon/$(IFS=,; echo "${MODELS[*]}"); upstream provider chosen by gateway)" >> "$OUT"
 for M in "${MODELS[@]}"; do
@@ -111,7 +222,7 @@ for M in "${MODELS[@]}"; do
   # before the `(cd ...)` wouldn't reset the clock.
   ATTEMPT_START_EPOCH=$(date -u +%s)
   ATTEMPT_START_ISO=$(date -u -d "@$ATTEMPT_START_EPOCH" +%FT%TZ 2>/dev/null || date -u +%FT%TZ)
-  ( cd "$CWD" && timeout "${CHARON_RUN_TIMEOUT_S:-1800}" opencode run --model "charon/$M" "$PROMPT" ) </dev/null >> "$OUT" 2>&1
+  ( cd "$CWD" && timeout "${CHARON_RUN_TIMEOUT_S:-1800}" "$OPENCODE_BIN" run --model "charon/$M" "$PROMPT" ) </dev/null >> "$OUT" 2>&1
   RC=$?
   dbg "attempt model=charon/$M exit_code=$RC"
   TAIL=$(tail -n +"$MARK" "$OUT")

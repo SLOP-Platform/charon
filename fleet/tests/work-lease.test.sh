@@ -159,6 +159,104 @@ bash "$WL" acquire CLAIMME sessNew "$TMP/wtNew" >/dev/null 2>&1 \
   || bad "a STALE lease was NOT reclaimable — a dead holder permanently blocks"
 bash "$WL" release CLAIMME >/dev/null 2>&1
 
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+# TICKET-MAP-GATE — the two defects the gate above did NOT close.
+#
+#   A. LATE ENFORCEMENT. cmd_pre_commit refuses an unmapped branch, but only at COMMIT — after
+#      the whole build is done. Measured 2026-07-24: four agents finished complete, tested, green
+#      work and could not commit it. Tests 11-14 prove the SAME requirement is now enforced at
+#      branch/worktree CREATION (`guard-branch`), and test 15 proves it is actually WIRED into
+#      fleet-droid.sh ahead of worktree creation (an unwired gate is inert).
+#   B. SPLIT CLAIMS STORE. `fleet/state/*` is .gitignored, so each linked worktree got its OWN
+#      empty state/claims/. An `acquire` run from a worktree's copy of work-lease.sh wrote the
+#      WORKTREE's store while the pre-commit hook (symlink -> the MAIN checkout's fleet/hooks/*)
+#      read the MAIN store: a lease could be acquired successfully and the commit still REFUSED.
+#      Tests 16-17 prove the store resolves from `git rev-parse --git-common-dir`, so the main
+#      checkout and every linked worktree share ONE store.
+#
+# REVERTS THAT TURN THESE RED:
+#   R1 work-lease.sh: delete cmd_guard_branch / its dispatch arm          -> RED 11,12,13,14
+#   R2 work-lease.sh: make cmd_guard_branch `return 0` unconditionally    -> RED 12,13,14
+#   R3 fleet-droid.sh: drop the guard-branch call from the dispatch loop  -> RED 15
+#   R4 work-lease.sh: restore STATE="$FLEET/state" (drop _state_root)     -> RED 16,17
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+
+# ── 11. CREATION gate: a MAPPED branch is allowed (non-vacuous — the gate is not blanket-deny) ─
+bash "$WL" guard-branch feat/a >/dev/null 2>&1 \
+  && ok "11 guard-branch ALLOWS a branch that maps to a ticket (rc 0)" \
+  || bad "11 guard-branch REFUSED a mapped branch — blanket-deny, gate is vacuous"
+
+# ── 12. CREATION gate: an UNMAPPED branch is REFUSED, before any work exists ────────────────
+g_out="$(bash "$WL" guard-branch feat/no-such-ticket 2>&1)"; g_rc=$?
+if [ "$g_rc" -ne 0 ]; then
+  ok "12 guard-branch REFUSES an unmapped branch at creation time (rc $g_rc)"
+  printf '%s' "$g_out" | grep -q 'REFUSED' \
+    && ok "12b refusal is LOUD (names REFUSED on stderr)" \
+    || bad "12b refusal was silent — no REFUSED text"
+else
+  bad "12 guard-branch ALLOWED an unmapped branch (rc 0) — late refusal at commit is back"
+fi
+
+# ── 13. FAIL-CLOSED: a blank branch name refuses (never treated as 'nothing to check') ───────
+bash "$WL" guard-branch "" >/dev/null 2>&1 \
+  && bad "13 guard-branch PASSED an empty branch name (fail-open)" \
+  || ok "13 guard-branch REFUSES an empty branch name (fail-closed)"
+
+# ── 14. FAIL-CLOSED: missing mapping machinery (no board) refuses, never waves through ───────
+NOBOARD="$TMP/noboard"; mkdir -p "$NOBOARD/state"
+cp "$REAL_FLEET/work-lease.sh" "$NOBOARD/work-lease.sh"
+cp "$REAL_FLEET/_lib.sh"       "$NOBOARD/_lib.sh"
+bash "$NOBOARD/work-lease.sh" guard-branch feat/a >/dev/null 2>&1 \
+  && bad "14 guard-branch PASSED with NO board/ present (fail-open on missing machinery)" \
+  || ok "14 guard-branch REFUSES when no board/ is readable (fail-closed)"
+
+# ── 15. WIRED: fleet-droid.sh runs the creation gate BEFORE it creates the worktree ─────────
+FD="$REAL_FLEET/fleet-droid.sh"
+g_line="$(grep -n 'work-lease.sh" guard-branch' "$FD" | head -1 | cut -d: -f1)"
+w_line="$(grep -n 'p0_worktree_setup "\$REPO"' "$FD" | head -1 | cut -d: -f1)"
+if [ -n "$g_line" ] && [ -n "$w_line" ] && [ "$g_line" -lt "$w_line" ]; then
+  ok "15 fleet-droid.sh calls guard-branch (line $g_line) BEFORE worktree creation (line $w_line)"
+else
+  bad "15 fleet-droid.sh does NOT gate branch->ticket before worktree creation (guard=${g_line:-none} create=${w_line:-none})"
+fi
+sed -n "${g_line:-1},$(( ${g_line:-1} + 4 ))p" "$FD" | grep -q 'release.sh' \
+  && ok "15b the refusal path RELEASES the claim instead of launching a doomed build" \
+  || bad "15b guard-branch failure does not release the claim"
+
+# ── 16/17. ONE STORE ACROSS WORKTREES (resolved from git-common-dir) ────────────────────────
+# A REAL rig repo with fleet/ at its root plus a REAL linked worktree — the exact topology that
+# split the store. Everything below runs the REAL work-lease.sh, never a transcription.
+RIG="$TMP/rig"
+git init -q -b master "$RIG"
+git -C "$RIG" config user.email t@t; git -C "$RIG" config user.name t
+mkdir -p "$RIG/fleet/board" "$RIG/fleet/hooks"
+cp "$REAL_FLEET/work-lease.sh" "$RIG/fleet/work-lease.sh"
+cp "$REAL_FLEET/_lib.sh"       "$RIG/fleet/_lib.sh"
+cp "$REAL_FLEET/hooks/pre-commit" "$RIG/fleet/hooks/pre-commit"
+cat > "$RIG/fleet/board/RIGTKT.md" <<'EOF'
+repo: charon-private
+tier: haiku
+branch: feat/rigtkt
+depends_on:
+EOF
+printf 'fleet/state/\n' > "$RIG/.gitignore"     # same ignore rule that split the store
+git -C "$RIG" add -A >/dev/null 2>&1; git -C "$RIG" commit -qm seed
+RIG_WT="$TMP/rig-wt"
+git -C "$RIG" worktree add -q -b feat/rigtkt "$RIG_WT" >/dev/null 2>&1
+
+# acquire using the WORKTREE's OWN copy of work-lease.sh (what an agent in a worktree runs)
+( cd "$RIG_WT" && bash "$RIG_WT/fleet/work-lease.sh" acquire RIGTKT sessW "$RIG_WT" ) >/dev/null 2>&1
+if [ -f "$RIG/fleet/state/claims/RIGTKT" ] && [ ! -f "$RIG_WT/fleet/state/claims/RIGTKT" ]; then
+  ok "16 a worktree-side acquire writes the MAIN checkout's store (single store via git-common-dir)"
+else
+  bad "16 worktree-side acquire wrote $( [ -f "$RIG_WT/fleet/state/claims/RIGTKT" ] && echo 'the WORKTREE store' || echo 'nowhere') — store still split"
+fi
+
+# and the MAIN checkout's script (the one the pre-commit hook symlink resolves to) must agree
+( cd "$RIG_WT" && bash "$RIG/fleet/work-lease.sh" check RIGTKT ) >/dev/null 2>&1 \
+  && ok "17 the MAIN checkout's work-lease.sh sees the worktree-acquired lease (hook and acquire agree)" \
+  || bad "17 acquire succeeded but the hook's script reports NO-LEASE — the acquire/commit split is back"
+
 echo ""
 if [ "$fails" -eq 0 ]; then echo "work-lease.test.sh: ALL PASS"; exit 0
 else echo "work-lease.test.sh: $fails FAILED"; exit 1; fi
