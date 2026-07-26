@@ -9,6 +9,13 @@ under work_class `bugfix`.
 One checkout, one agent.
 
 ## FIRST ACTS
+0. **Register on the session-bridge before anything else** — call
+   `session-bridge_register(session_id="<pick an UNUSED Jedi name — 'kit-fisto' is taken by the manager>",
+   name="SW-IDENTITY-FOLD — model identity folding", repo="charon", ticket="SW-IDENTITY-FOLD",
+   status="in-progress", model="<the model you are running>")`.
+   The MCP server is already configured — nothing to install. Call `session-bridge_update` when status
+   changes and `session-bridge_unregister` when done. The manager monitors you through this board;
+   an unregistered session is an invisible session.
 1. `git -C /home/stack/code/charon fetch origin`
 2. `git -C /home/stack/code/charon worktree add -b fix/sw-identity-fold /home/stack/charon-wt/SW-IDENTITY-FOLD origin/master`
 3. `cd /home/stack/charon-wt/SW-IDENTITY-FOLD`

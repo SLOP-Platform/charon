@@ -10,6 +10,10 @@ charon-rebuild-backup.git/
 fleet/state/*
 # ...except the persisted roadmap (canonical source for report.sh/handoff.sh).
 !fleet/state/ROADMAP.tsv
+# ...except the operator decision/action list (durable by design — a list that is
+# lost on a fresh clone or a handoff is not a running list; operator decision 11,
+# 2026-07-26). Read/written via fleet/pending.sh.
+!fleet/state/OPERATOR-ACTIONS.md
 # ...except the coverage-meta-gate rule registry (durable, git-tracked by design —
 # consumed by fleet/checks/rule-coverage.sh; the §11 mechanized-coverage source of truth).
 !fleet/state/RULE-REGISTRY.tsv

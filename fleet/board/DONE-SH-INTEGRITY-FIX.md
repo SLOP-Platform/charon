@@ -28,6 +28,19 @@ note: |
   PRODUCT repo) — so done.sh checks the PRODUCT repo's merged-PR history for a RIG ticket whose
   actual fix lives in the RIG repo. HANDOFF-PIPEFAIL was refused close on this path even though
   its fix was merged to charon-private master, because done.sh looked in the wrong repo.
+
+  (c) ADDED 2026-07-26 (operator decision 8a, manager session kit-fisto) — CONSTANT GRADE SIGNAL.
+  `fleet/done.sh:175` hardcodes `MERGE/pass/score=100` on every close. The scorecard therefore holds
+  63 MERGE vs 1 BLOCK and the render shows 100% merge in 24 of 25 cells: the ledger records an
+  OUTCOME that is not measured. Same integrity class as (a) and (b) — done.sh writing a value it did
+  not verify — which is why this folds here rather than into a new ticket that would become a fifth
+  concurrent writer of done.sh.
+  Consequence: model ranking cannot discriminate. `SW-PHASE0-GRADE-READ` fixes the READ side (the
+  >=3-strong-control filter that drops every row); without (c) that read returns a ranking computed
+  over a constant, which is worse than no ranking because it looks authoritative.
+  Scope for (c): derive pass/fail and score from the ticket's ACTUAL outcome (gate result / review
+  verdict / whether the PR merged), and record BLOCK when it did not. Do not invent a scoring model —
+  record what happened. Related: [[benchmark-not-a-valid-ranker]], [[scorecard-live-lane-is-the-ledger]].
 accept: |
   (a) ``merged_pr_touching_owns`` (fallback (c)) is tightened to only match a merged PR whose
   HEAD BRANCH matches the ticket's recorded ``branch:`` prefix/pattern, OR whose PR title/body
