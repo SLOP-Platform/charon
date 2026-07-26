@@ -4,6 +4,20 @@
 Graded sample, work_class `design-review`.
 **You are INVESTIGATING. Do NOT change product code. Do NOT retire anything.**
 
+## FIRST ACTS
+0. **Claim your session name MECHANICALLY — do not invent one.** Names collide when models pick
+   them; use the allocator (atomic, claim-before-build):
+   ```
+   NAME="$(bash /home/stack/charon-private/fleet/claim-jedi-name.sh)"
+   echo "claimed: $NAME"
+   ```
+   Then `session-bridge_register(session_id="<the claimed NAME>", name="DEAD GATEWAY MODULES confirm",
+   repo="charon", ticket="DEAD-GATEWAY-MODULES", status="in-progress", model="<your model>")`.
+   **Never reuse a name you see on the board — those sessions are LIVE.**
+   Then `session-bridge_update` every ~5 min as a HEARTBEAT (600s lease, else you are purged).
+1. Read the construction site: `git -C /home/stack/code/charon show HEAD:src/charon/gateway.py | sed -n '250,300p'`
+   That checkout is the MANAGER's — read only, never edit or branch there.
+
 ## THE CLAIM TO CONFIRM OR REFUTE
 Six modules are constructed at `src/charon/gateway.py:258-296` and reportedly have **ZERO invocation
 sites**:

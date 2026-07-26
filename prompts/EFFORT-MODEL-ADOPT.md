@@ -7,10 +7,16 @@ Graded sample, work_class `rig-meta`.
 **Do NOT work in `/home/stack/charon-private`** — the manager holds it. One checkout, one agent.
 
 ## FIRST ACTS
-0. **Register** — `session-bridge_register(session_id="<UNUSED Jedi name; kit-fisto, qui-gon-jinn,
-   mace-windu, rey-skywalker taken>", name="EFFORT-MODEL-ADOPT", repo="charon",
+0. **Claim your session name MECHANICALLY — do not invent one.** Names collide when models pick
+   them; use the allocator (atomic, claim-before-build):
+   ```
+   NAME="$(bash /home/stack/charon-private/fleet/claim-jedi-name.sh)"
+   echo "claimed: $NAME"
+   ```
+   Then `session-bridge_register(session_id="<the claimed NAME>", name="EFFORT-MODEL-ADOPT", repo="charon",
    ticket="EFFORT-MODEL-ADOPT", status="in-progress", model="<your model>")`.
-   **`session-bridge_update` every ~5 min as a HEARTBEAT** (600s lease or you are purged).
+   **Never reuse a name you see on the board — those sessions are LIVE.**
+   Then `session-bridge_update` every ~5 min as a HEARTBEAT (600s lease, else you are purged).
 1. `git -C /home/stack/charon-private worktree add -b feat/effort-model-adopt /home/stack/charon-private-wt/EFFORT-MODEL-ADOPT master`
 2. `cd /home/stack/charon-private-wt/EFFORT-MODEL-ADOPT`
 

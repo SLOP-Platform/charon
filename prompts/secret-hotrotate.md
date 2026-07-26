@@ -8,11 +8,16 @@ Never Claude/Anthropic. Graded sample, work_class `bugfix`.
 `/home/stack/charon-wt/SW-IDENTITY-FOLD` (another agent). One checkout, one agent.
 
 ## FIRST ACTS
-0. **Register on the session-bridge** — `session-bridge_register(session_id="<an UNUSED Jedi name;
-   kit-fisto and qui-gon-jinn are taken>", name="SECRET-HOTROTATE", repo="charon",
-   ticket="SECRET-HOTROTATE", status="in-progress", model="<your model>")`. MCP is already configured.
-   **Then call `session-bridge_update` every ~5 minutes as a HEARTBEAT** — the lease is 600s and a
-   session that stops heartbeating is purged from the board and becomes invisible to the manager.
+0. **Claim your session name MECHANICALLY — do not invent one.** Names collide when models pick
+   them; use the allocator (atomic, claim-before-build):
+   ```
+   NAME="$(bash /home/stack/charon-private/fleet/claim-jedi-name.sh)"
+   echo "claimed: $NAME"
+   ```
+   Then `session-bridge_register(session_id="<the claimed NAME>", name="SECRET-HOTROTATE", repo="charon",
+   ticket="SECRET-HOTROTATE", status="in-progress", model="<your model>")`.
+   **Never reuse a name you see on the board — those sessions are LIVE.**
+   Then `session-bridge_update` every ~5 min as a HEARTBEAT (600s lease, else you are purged).
 1. `git -C /home/stack/code/charon fetch origin`
 2. `git -C /home/stack/code/charon worktree add -b fix/secret-hot-rotation /home/stack/charon-wt/SECRET-HOTROTATE origin/master`
 3. `cd /home/stack/charon-wt/SECRET-HOTROTATE`

@@ -25,10 +25,16 @@ This gateway has a live history of metering being wrong in exactly this area:
 So "the metering code has a units/None/zero bug" is not a hypothetical here — it is the base rate.
 
 ## FIRST ACTS
-0. **Register** — `session-bridge_register(session_id="<UNUSED Jedi name; kit-fisto, qui-gon-jinn,
-   mace-windu, rey-skywalker taken>", name="ADVREVIEW LITELLM-COST-FIELD", repo="charon",
+0. **Claim your session name MECHANICALLY — do not invent one.** Names collide when models pick
+   them; use the allocator (atomic, claim-before-build):
+   ```
+   NAME="$(bash /home/stack/charon-private/fleet/claim-jedi-name.sh)"
+   echo "claimed: $NAME"
+   ```
+   Then `session-bridge_register(session_id="<the claimed NAME>", name="ADVREVIEW LITELLM-COST-FIELD", repo="charon",
    ticket="LITELLM-COST-FIELD-FIX", status="in-progress", model="<your model>")`.
-   **`session-bridge_update` every ~5 min as a HEARTBEAT** (600s lease or you are purged).
+   **Never reuse a name you see on the board — those sessions are LIVE.**
+   Then `session-bridge_update` every ~5 min as a HEARTBEAT (600s lease, else you are purged).
 1. `cd /home/stack/code/charon` is the MANAGER's checkout — do NOT work there. Use a read-only view:
    `git -C /home/stack/code/charon show 6782236` and
    `git -C /home/stack/code/charon show 6782236 -- src/charon/litellm_plane/metering.py`

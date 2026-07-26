@@ -17,10 +17,16 @@ specific model ids, which provider serves them, what the caller asked for, what 
 instead. "This looks risky" is not a finding. Neither is a verdict without a scenario.
 
 ## FIRST ACTS
-0. **Register** — `session-bridge_register(session_id="<UNUSED Jedi name; kit-fisto, qui-gon-jinn,
-   mace-windu, rey-skywalker taken>", name="ADVERSARIAL REVIEW SW-IDENTITY-FOLD", repo="charon",
+0. **Claim your session name MECHANICALLY — do not invent one.** Names collide when models pick
+   them; use the allocator (atomic, claim-before-build):
+   ```
+   NAME="$(bash /home/stack/charon-private/fleet/claim-jedi-name.sh)"
+   echo "claimed: $NAME"
+   ```
+   Then `session-bridge_register(session_id="<the claimed NAME>", name="ADVERSARIAL REVIEW SW-IDENTITY-FOLD", repo="charon",
    ticket="SW-IDENTITY-FOLD", status="in-progress", model="<your model>")`.
-   **`session-bridge_update` every ~5 min as a HEARTBEAT** (600s lease, else you are purged).
+   **Never reuse a name you see on the board — those sessions are LIVE.**
+   Then `session-bridge_update` every ~5 min as a HEARTBEAT (600s lease, else you are purged).
 1. Read the change: `git -C /home/stack/charon-wt/SW-IDENTITY-FOLD show 46eab38`
 2. Read the ticket and `docs/adr/0011-the-switchboard-demand-routed-no-pools.md` (INV-SW1/2/3).
 3. Read the LIVE catalog — the real corpus, not the test's:

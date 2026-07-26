@@ -8,11 +8,16 @@ Never Claude/Anthropic. Graded sample, work_class `bugfix`.
 The previous session (qui-gon-jinn) finished and released it. One checkout, one agent.
 
 ## FIRST ACTS
-0. **Register on the session-bridge** — `session-bridge_register(session_id="<an UNUSED Jedi name;
-   kit-fisto, qui-gon-jinn and mace-windu are taken>", name="SW-IDENTITY-FOLD followup",
-   repo="charon", ticket="SW-IDENTITY-FOLD", status="in-progress", model="<your model>")`.
-   **Then `session-bridge_update` every ~5 minutes as a HEARTBEAT** — the lease is 600s and a session
-   that stops heartbeating is purged and becomes invisible to the manager.
+0. **Claim your session name MECHANICALLY — do not invent one.** Names collide when models pick
+   them; use the allocator (atomic, claim-before-build):
+   ```
+   NAME="$(bash /home/stack/charon-private/fleet/claim-jedi-name.sh)"
+   echo "claimed: $NAME"
+   ```
+   Then `session-bridge_register(session_id="<the claimed NAME>", name="SW-IDENTITY-FOLD followup", repo="charon",
+   ticket="SW-IDENTITY-FOLD", status="in-progress", model="<your model>")`.
+   **Never reuse a name you see on the board — those sessions are LIVE.**
+   Then `session-bridge_update` every ~5 min as a HEARTBEAT (600s lease, else you are purged).
 1. `cd /home/stack/charon-wt/SW-IDENTITY-FOLD` (already on `fix/sw-identity-fold` at 46eab38)
 2. `git log --oneline -1` — confirm you are on 46eab38 before changing anything.
 

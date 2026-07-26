@@ -21,11 +21,16 @@ If **LANDED**: proceed with (c) only. Do NOT re-fix (a) or (b) — re-fixing lan
 merge gets clobbered. If you believe (a) or (b) is still broken, STOP and report; do not edit.
 
 ## FIRST ACTS
-0. **Register on the session-bridge** — `session-bridge_register(session_id="<an UNUSED Jedi name;
-   kit-fisto and qui-gon-jinn are taken>", name="NIM-PROVIDER-CLEANUP", repo="charon",
+0. **Claim your session name MECHANICALLY — do not invent one.** Names collide when models pick
+   them; use the allocator (atomic, claim-before-build):
+   ```
+   NAME="$(bash /home/stack/charon-private/fleet/claim-jedi-name.sh)"
+   echo "claimed: $NAME"
+   ```
+   Then `session-bridge_register(session_id="<the claimed NAME>", name="NIM-PROVIDER-CLEANUP", repo="charon",
    ticket="NIM-PROVIDER-CLEANUP", status="in-progress", model="<your model>")`.
-   **Then `session-bridge_update` every ~5 minutes as a HEARTBEAT** — the lease is 600s; a session
-   that stops heartbeating is purged from the board and goes invisible to the manager.
+   **Never reuse a name you see on the board — those sessions are LIVE.**
+   Then `session-bridge_update` every ~5 min as a HEARTBEAT (600s lease, else you are purged).
 1. `git -C /home/stack/charon-private worktree add -b fix/nim-provider-cleanup /home/stack/charon-private-wt/NIM-PROVIDER-CLEANUP master`
 2. `cd /home/stack/charon-private-wt/NIM-PROVIDER-CLEANUP`
 3. Read the ticket (BINDING): `fleet/board/NIM-PROVIDER-CLEANUP.md`
