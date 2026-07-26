@@ -12,7 +12,7 @@ real-dep: ADD-PROVIDER-MECHANIZE-COMPLETE — TRUE single-writer sequencing, NOT
   for. Rebase onto its landed version; never co-write. Added 2026-07-26 after validate_board.sh caught
   the collision — my original claim that no live ticket owned these files was ASSERTED, not verified.
 dep-kind: build
-owns: fleet/add-provider.sh, fleet/add-provider-interactive.sh, fleet/state/free_tier_catalog.json, fleet/tests/add-provider.test.sh
+owns: fleet/state/FREE-TIER-LIMITS.tsv, fleet/tests/test_add_provider.sh
 serial_justified: |
   ONE provider-onboarding surface: the two add-provider entrypoints plus the catalog they populate.
   The key-echo leak and the false-FAILED report are both defects in that same onboarding path, and the
@@ -23,6 +23,14 @@ execution: |
   One checkout, one agent — its OWN worktree.
 source: |
   Operator action item V (long-standing, non-blocking). Observed during NVIDIA NIM onboarding.
+corrected: |
+  2026-07-26 — the original owns: named TWO FILES THAT DO NOT EXIST
+  (`fleet/state/free_tier_catalog.json`, `fleet/tests/add-provider.test.sh`). Session cal-kestis
+  (minimax-m3-together) caught it and STOPPED rather than inventing them. The real artifacts are
+  `fleet/state/FREE-TIER-LIMITS.tsv` (a TSV, not JSON) and `fleet/tests/test_add_provider.sh`.
+  Defects (a) and (b) landed via ADD-PROVIDER-MECHANIZE-COMPLETE; only (c) remains. Note
+  docs/review-log/ADD-PROVIDER-MECHANIZE-COMPLETE.md:67 DEFERRED (c) deliberately — confirm with the
+  operator that (c) is still wanted before dispatching again, and check FT-CATALOG-SEED for overlap.
 note: |
   ## THREE DEFECTS IN THE PROVIDER-ONBOARDING PATH
 
