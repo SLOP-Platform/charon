@@ -152,15 +152,27 @@ def _write_secret(name: str, value: str) -> Path:
     return p
 
 
-def apply_to_env() -> None:
-    """Load stored secrets into ``os.environ`` without overriding anything already
-    set — an explicit environment variable always wins. Only well-formed key-env
-    names are loaded (so ``provider:<id>`` entries never surface as env vars), and
-    loader-sensitive vars (PATH, LD_PRELOAD, …) are never injected from the file
-    (defense-in-depth)."""
+def apply_to_env(*, force_refresh: bool = False) -> None:
+    """Load stored secrets into ``os.environ``.
+
+    By default (``force_refresh=False``), an explicit / already-resident environment
+    variable always wins (``setdefault`` semantics) — every existing call site is
+    unaffected.  With ``force_refresh=True``, an already-resident *legitimate* key
+    is overwritten with the current on-disk value, so a rotated provider key takes
+    effect live without a process restart.
+
+    Only well-formed key-env names are loaded (so ``provider:<id>`` entries never
+    surface as env vars), and loader-sensitive vars (PATH, LD_PRELOAD, …) are never
+    injected from the file (defense-in-depth).  These guards apply identically in
+    both modes — *force_refresh* only changes whether an already-resident
+    *legitimate* key is overwritten, never which keys are eligible to load at all.
+    """
     for k, v in load_secrets().items():
         if _KEY_ENV_RE.match(k) and k not in _SENSITIVE_ENV:
-            os.environ.setdefault(k, v)
+            if force_refresh:
+                os.environ[k] = v
+            else:
+                os.environ.setdefault(k, v)
 
 
 # --------------------------------------------------------------------------
