@@ -39,9 +39,12 @@ def _cost_from_hidden(hidden: Any) -> float | None:
     if val is None:
         return None
     try:
-        return float(val)
+        result = float(val)
     except (TypeError, ValueError):
         return None
+    if result == 0.0:
+        return None
+    return result
 
 
 def litellm_cost(response: Any) -> float:
@@ -66,7 +69,7 @@ def litellm_cost(response: Any) -> float:
         return 0.0
     usage = getattr(response, "usage", None)
     if usage is not None:
-        return float(getattr(usage, "cost", 0.0) or 0.0)
+        return float(getattr(usage, "cost", getattr(usage, "total_cost", 0.0)) or 0.0)
     return 0.0
 
 
