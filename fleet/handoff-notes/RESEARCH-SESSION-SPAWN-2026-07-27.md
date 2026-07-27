@@ -564,3 +564,160 @@ before and after.** No session I did not create was touched, interrupted, or sen
 - [wezterm cli spawn](https://wezterm.org/cli/cli/spawn.html) · [wezterm cli](https://wezterm.org/cli/cli/index.html)
 - Prior in-repo research: `fleet/handoff-notes/RESEARCH-AGENT-COMMS-2026-07-26.md`,
   `fleet/handoff-notes/SPIKE-SESSION-CTL-2026-07-26.md`, `fleet/session-ctl.sh`
+
+---
+
+# ADDENDUM — pushing the opening prompt into a spawned TUI (2026-07-27, follow-up)
+
+**ANSWER: the recipe EXISTS and is verified. No human keystroke is required.**
+`POST /tui/append-prompt` + `POST /tui/submit-prompt`, **against the worker's own port**, after a
+readiness gate. Not "one pasted line per tab" — zero pasted lines.
+
+This also **corrects a conclusion in `RESEARCH-AGENT-COMMS-2026-07-26.md`**, which said *"Do not build on
+`/tui/*`; use `/api/session/{id}/prompt`."* That was measured on a **headless `opencode serve`, where no
+TUI exists** — so of course the events went nowhere. With a real TUI attached (`opencode --port N`), the
+`/tui/*` endpoints are exactly the right mechanism, and `/api/session/{id}/prompt` is the wrong one.
+
+## A. Why `session-ctl.sh launch` produced a dead session
+
+`launch` does `POST /api/session` → `POST /api/session/{id}/prompt`. Both succeed, and both are
+irrelevant to the TUI. **The TUI owns its own session and will not adopt an externally-created one** —
+the same law behind the `attach -s` failure in §5. `POST /api/session` writes into the **global store**;
+no TUI is driving that row, so nothing executes and the title never gets generated. `admittedSeq:1` means
+*"durably written"*, **not** *"a TUI is running it"*. Confirmed **[V]**: manager-created session
+`ses_05e58f394ffe…` still had **0 messages** after a full round-trip, while the TUI ran the same prompt in
+a session of its own.
+
+**Corollary: do not use `session-ctl.sh launch` against a TUI worker.** It silently creates orphan rows.
+
+## B. The four questions, answered
+
+**1. Does the TUI create its session lazily? — YES, and there is no pre-turn id. [V]**
+A freshly spawned TUI has **no** session. One appears in the store at the *instant of first submit*
+(observed: injection at 03:37:14 → `New session - 2026-07-27T03:37:14.577Z`). So there is **no session id
+addressable over HTTP before the first turn** — which is precisely why any id-based approach cannot start
+a TUI worker. `--prompt` does not create one either (§14).
+
+**2. Which global session belongs to THIS port's TUI? — NOT DISCOVERABLE, and NOT NEEDED. [V]**
+I searched all **162 paths** in the live OpenAPI spec: there is **no per-server "current session"
+endpoint**. `/api/session` and `/api/session/active` are global-store reads. `GET /api/event` on the
+worker's port yields **only `server.connected`** — no `sessionID` for the TUI's own turns, with or
+without `?directory=` (96 bytes of stream across two attempts) **[V]**. `POST /tui/select-session`
+returns `true` but does **not** redirect the turn into the given session **[V]** — same law as (A).
+
+**The reframe that dissolves the problem: address workers by PORT, not by session id.** `/tui/*` is
+port-scoped, and `port → worker` is a 1:1 mapping the launcher already owns and already records. The
+manager never needs the session id to start work or to send follow-ups.
+
+**3. Does injection work once a turn has started? — YES, admitted mid-turn. [V]**
+Fired a long counting turn, then injected `STOP counting. Reply only: MIDTURN-STEER-OK` at +6s; the
+directive was admitted and appears in the conversation. **Caveat, stated honestly:** the counting turn
+finished at 8.0s, so I could **not** distinguish *interrupts the current turn* from *queues behind it*.
+For guaranteed mid-turn interruption the verified mechanism is still the prior spike's
+`POST /api/session/{id}/prompt {"delivery":"steer"}` — which needs a session id, so it applies to
+**headless** workers, not TUI workers. For TUI workers, treat `/tui/*` as *at-least-queued*.
+
+**4. Is there a flag that runs an initial prompt? — NO. [V]** `--prompt` is accepted, appears in `argv`,
+and is **inert**: no session, no messages, TUI sits on the splash. The `/tui/*` pair is the mechanism.
+
+## C. THE TRAP — `/tui/*` returns `true` unconditionally
+
+**`true` is not an acknowledgement. It means "event published", not "a TUI received it".** This is what
+makes the failure look like success, and it is the single thing most likely to cost another round.
+
+Proof **[V]**: `POST /tui/execute-command` returned `true` for `session_interrupt`, `interrupt`, `abort`,
+`session_abort`, `app_exit` **and `messages_abort`** — six strings, at least some pure nonsense, all
+`true`. There is no validation and no delivery guarantee anywhere on `/tui/*`.
+
+**The real failure was a race, not a bug.** Identical injections:
+
+| Attempt | Timing | `true`? | Turn ran? |
+|---|---|---|---|
+| Worker `t2`, ~10s after spawn | early | `true` | **NO** — 0 messages, TUI on splash |
+| Worker `t2`, same commands minutes later | warm | `true` | **YES** |
+| Worker `t4`, **after readiness gate** | gated | `true` | **YES, first try** |
+
+`GET /api/health` returns `{"healthy":true}` **before the TUI client has attached** — the HTTP server
+comes up first, the TUI connects after. Injecting in that window is silently discarded. **This is almost
+certainly what bit the four production tabs.**
+
+## D. The readiness gate (the missing piece) — VERIFIED
+
+A TUI client attaches to its own server over loopback. So *"is a TUI attached?"* is answerable:
+
+```bash
+ss -tn state established "( sport = :$PORT or dport = :$PORT )" | tail -n +2 | wc -l
+```
+
+| Process | established conns |
+|---|---|
+| `opencode --port N` (TUI worker) | **18–36** |
+| `opencode serve --port N` (headless, no client) | **0** |
+
+Gate on `health == healthy` **AND** `established > 0`. Measured ready **5s** after spawn, and the
+first-try injection then succeeded immediately **[V]**.
+
+## E. THE RECIPE — spawn a tab already working on its ticket, no keystroke
+
+```bash
+# 1. spawn the watchable tab (unchanged, already in production)
+wt.exe -w "${CHARON_WT_WINDOW:-1}" new-tab \
+  --title "$TICKET · $MODEL" --tabColor "$COLOR" --suppressApplicationTitle \
+  wsl.exe -d Ubuntu-24.04 -- bash /home/stack/charon-private/fleet/launch-worker.sh "$TICKET" "$MODEL" "$PORT"
+
+# 2. READINESS GATE — health alone is NOT enough
+for i in $(seq 1 60); do
+  h=$(curl -s --max-time 2 "http://127.0.0.1:$PORT/api/health" 2>/dev/null)
+  n=$(ss -tn state established "( sport = :$PORT or dport = :$PORT )" 2>/dev/null | tail -n +2 | wc -l)
+  [ "$h" = '{"healthy":true}' ] && [ "$n" -gt 0 ] && break
+  sleep 1
+done
+sleep 2                    # small settle after the client attaches
+
+# 3. inject the opening prompt INTO THE TUI (port-addressed; no session id anywhere)
+curl -s -X POST "http://127.0.0.1:$PORT/tui/append-prompt" \
+     -H 'content-type: application/json' \
+     -d "$(python3 -c 'import json,sys;print(json.dumps({"text":sys.argv[1]}))' "$PROMPT")"
+curl -s -X POST "http://127.0.0.1:$PORT/tui/submit-prompt" \
+     -H 'content-type: application/json' -d '{}'
+
+# 4. VERIFY — never trust the `true`
+sleep 8
+curl -s "http://127.0.0.1:$PORT/api/session?directory=$DIR" \
+  | python3 -c 'import sys,json,time;d=json.load(sys.stdin)["data"];now=time.time()*1000;print("started" if any(now-s["time"]["created"]<60000 for s in d) else "NOT STARTED — retry")'
+```
+
+Verified end to end **[V]**: gate reported ready at 5s, one `append`+`submit`, and the tab rendered
+`Reply with exactly: FIRSTTRY-OK` → `FIRSTTRY-OK` → `Build · deepseek-v4-flash · 1.8s`, with **no
+keystroke**. Repeated successfully on a second worker (`TUIPROMPTWORKS`, 2.3s).
+
+Step 4 matters because the gate is a heuristic: on a miss, re-run step 3 (it is safely repeatable — a
+dropped injection leaves no state). Prefer verify-then-retry over a longer blind sleep.
+
+## F. Changes to make
+
+1. **`session-ctl.sh`: `launch` must not be used on TUI workers.** Either make it port-addressed
+   (`append-prompt` + `submit-prompt` + verify) or rename it `launch-headless` and add
+   `start <port> <prompt>` for TUI workers. As written it silently manufactures orphan sessions.
+2. **`spawn-worker.sh`: add the readiness gate and the post-injection verify.** Without both, spawn is a
+   race that fails silently and looks like success.
+3. **Two worker classes, two control paths — do not mix them:**
+
+   | | **TUI worker** (`opencode --port N`) | **Headless worker** (`opencode serve`) |
+   |---|---|---|
+   | Operator can watch | **yes** | no |
+   | Addressed by | **port** | session id |
+   | Start work | `/tui/append-prompt` + `/tui/submit-prompt` | `POST /api/session` → `POST …/prompt` |
+   | Follow-up | same pair (at-least-queued) | `{"delivery":"steer"}` — verified mid-turn |
+   | Hard stop | not verified via `/tui/*` | `POST …/interrupt` — verified |
+
+4. **Open, worth one cheap test later:** whether any `/tui/execute-command` string performs a real
+   interrupt. Because the endpoint returns `true` for everything, discovering the valid command names
+   requires reading opencode's TUI command registry in source — not probing. Until then, a TUI worker has
+   **no verified hard-stop**, which is the one genuine capability gap versus headless workers.
+
+## G. Clean-up
+
+Killed all four test workers (ports 47901/47902/47903/47904) and my private `tmux -L cp2` server;
+no residual processes on 479xx. The operator's worker (pid 4102750, `--port 47099`) was confirmed intact
+afterwards. Test sessions created during this addendum remain as inert rows in the global store.
