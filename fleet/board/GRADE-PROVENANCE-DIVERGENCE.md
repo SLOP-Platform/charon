@@ -2,7 +2,7 @@ repo: charon-private
 tier: strong
 difficulty: 2
 work_class: rig-meta
-priority: 1
+priority: 0
 branch: fix/grade-provenance-divergence
 depends_on: SW-PHASE0-GRADE-READ
 real-dep: SW-PHASE0-GRADE-READ — build prereq and shared single-owner of fleet/capability/grades.py.
@@ -32,7 +32,11 @@ note: |
   decisions rest on evidence; a grade that cannot state the strength of its own evidence is the same
   silent-failure class as the inert meter and the dead read — it looks healthy and is not
   distinguishable. A flag that is set and never read is indistinguishable from no flag at all.
-  It is NOT release-blocking: grades-with-unknown-provenance beat no grades. Sequence, do not rush.
+  RAISED TO P0 by the operator 2026-07-26, immediately after SW-PHASE0-GRADE-READ landed. The reason
+  the priority moved: Phase-0 turned the ranking ON. Grades now flow into assign.py and promote/demote
+  for the first time — so from this moment every routing decision is made on evidence whose strength
+  is UNKNOWABLE. A dormant defect became a live one the instant the read started working. Landing
+  Phase-0 without this is shipping a ranking that cannot say how much to trust itself.
 
   ## SCOPE
   Propagate `fallback_admit` through `_rows_for()` into `Grade` so a consumer can tell controlled from
