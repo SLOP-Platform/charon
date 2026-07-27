@@ -115,7 +115,8 @@ cat <<'RESTART'
 cat /home/stack/charon-private/fleet/SESSION-HANDOFF-*.md
 bash /home/stack/charon-private/fleet/status.sh
 bash /home/stack/charon-private/fleet/validate_board.sh
-session-bridge_board(repo="charon")
+# fleet board via HTTP control plane (replaces session-bridge_board):
+bash /home/stack/charon-private/fleet/session-ctl.sh -R /home/stack/charon-private/fleet/session-registry.tsv board
 # pick unused Jedi name, register, then work tickets
 
 **********************************************************************
