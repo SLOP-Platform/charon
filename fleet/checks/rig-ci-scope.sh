@@ -99,6 +99,17 @@ CI_SUITES=(
                             # violation / inert meter (#167) / parked-served + parked-attempted
                             # (#188) / stray-`standard` tier / unserved head model, and proves the
                             # canary goes RED on each then GREEN on revert. ~5s.
+  verify-restart-cmds.test.sh # hermetic: fixture registries + fixture scripts under mktemp -d,
+                            # VERIFY_UNITS_DIR pinned to an empty temp dir, and a STUB verify for
+                            # the monit-selfwatch cases (SELFWATCH_VERIFY). No network, no sudo, no
+                            # monit, nothing installed. Its one real-file touch is a text-only
+                            # --static-only pass over the committed service-registry.tsv. Guards
+                            # the monit PRE-ENABLE gate: re-seeds all four original broken
+                            # restart_cmds (missing systemd unit / `systemctl --user` as root /
+                            # relative path with cwd=/ / ~/.ssh Host alias + remote sudo) and
+                            # proves verify REDs on each, that a zero-row or malformed registry is
+                            # never a silent pass, and that the `enable --now monit` line is not
+                            # even PRINTED while verify is RED. ~2s.
 )
 
 VALID_WORK_CLASSES="bugfix ci-infra design-review docs frontend generalist greenfield-feature money-path refactor rig-meta routing tests"
