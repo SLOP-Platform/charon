@@ -54,6 +54,17 @@ CI_SUITES=(
                             # the real claim.sh. The single canary a revert to "alphabetical
                             # first" or a drop of the revdep field fails. ~2s.
   rig-ci.test.sh            # this gate's own fail-on-revert tests
+  tier-drift.test.sh        # hermetic: isolated temp fleets under mktemp -d (own
+                            # validate_board.sh + capability/ + checks/ + a 2-ticket board
+                            # copied from the real one), no network, ~1s. Red-proofs the
+                            # validate_board "2f" TIER-DRIFT gate on every path it shipped
+                            # broken: the RED-set file is present AND git-tracked (without it
+                            # the gate cannot go RED in any configuration), a mis-tiered
+                            # security ticket drives rc 3 -> RED preflight end to end, a
+                            # MISSING or rc-2-exiting classifier is RED instead of silently
+                            # green (fail-closed), a zero-item scan is RED not a confident
+                            # pass, and SEC_RE stays anchored so d1 docs are not routed to
+                            # the most expensive frontier chain.
   work-lease.test.sh        # hermetic: real work-lease.sh/claim.sh/_lib.sh copied into a temp
                             # FLEET + REAL git worktrees under mktemp -d, no network. Red-proofs
                             # the DISPATCH double-claim gate, the single (claims) store shared

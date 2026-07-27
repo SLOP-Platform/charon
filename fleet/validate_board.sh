@@ -227,6 +227,53 @@ for t, d in tickets.items():
             red.append(f"difficulty-invalid: {t} difficulty '{diff_raw}' "
                        f"is not a valid integer 1-5")
 
+# 2f. TIER DRIFT: declared `tier:` vs the rule-derived tier (work->tier classifier,
+# fleet/capability/tier_classify.py). Root cause of tier drift was that `tier` was
+# free text, hand-set, validated for NOTHING — so an author's wrong guess routed real
+# work/spend onto a wrong-capability model (assign.py filters eligible models by the
+# ticket's declared tier). This re-derives tier from signals already validated on every
+# ticket (work_class/difficulty/owns) and flags mismatches: WARN by default, RED for the
+# configurable set in fleet/state/tier-drift-red.txt. REUSE the classifier — the rule
+# table lives in ONE place.
+#
+# FAIL CLOSED. This block previously accepted rc in (0, 2) as "the check ran fine", but
+# `python3 <missing-file>` ALSO exits 2 and argparse exits 2 on an unknown subcommand —
+# so moving/renaming tier_classify.py (or the `drift` subcommand) deleted the entire
+# check with no RED, no WARN and no stderr surfaced: the fail-quiet class that
+# GATE-CREATION-STANDARD S5 names. Now:
+#   * the classifier path is asserted to EXIST before it is invoked;
+#   * "RED drift found" has its OWN sentinel rc (tier_classify.DRIFT_RED_RC == 3);
+#   * every OTHER non-zero rc — 2 included — is a HARD FAILURE of the check itself.
+_TIER_DRIFT_RED_RC = 3  # MUST equal tier_classify.DRIFT_RED_RC
+_tc_path = os.path.join(fleet, "capability", "tier_classify.py")
+if not os.path.exists(_tc_path):
+    red.append(f"tier-drift-check-missing: {_tc_path} does not exist — the tier-drift gate "
+               f"cannot run, so the board is UNVERIFIED (fail-closed, never silently green)")
+else:
+    try:
+        _td = subprocess.run(
+            ["python3", _tc_path, "drift"],
+            capture_output=True, text=True, timeout=20
+        )
+        _saw_red = False
+        for _line in _td.stdout.splitlines():
+            _line = _line.strip()
+            if _line.startswith("RED "):
+                red.append(_line[4:].strip())
+                _saw_red = True
+            elif _line.startswith("WARN "):
+                warn.append(_line[5:].strip())
+        if _td.returncode == _TIER_DRIFT_RED_RC:
+            if not _saw_red:
+                red.append("tier-drift-check-failed: tier_classify.py drift signalled RED "
+                           f"(rc {_TIER_DRIFT_RED_RC}) but emitted no RED line")
+        elif _td.returncode != 0:
+            red.append(f"tier-drift-check-failed: tier_classify.py drift exited {_td.returncode} "
+                       f"(expected 0=clean or {_TIER_DRIFT_RED_RC}=RED; rc 2 means the script "
+                       f"itself is missing or its CLI changed) — {_td.stderr.strip()[:200]}")
+    except Exception as e:
+        red.append(f"tier-drift-check-failed: could not run tier_classify.py — {e}")
+
 # 4. owns partition. A collision is only a LAUNCH RISK if >=2 of the owners are
 # not-done (could still run concurrently). Done/done or done/live pairs already
 # sequenced by merge order -> historical, reported INFO not RED.
