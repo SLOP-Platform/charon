@@ -224,6 +224,17 @@ def load_config(
     # ``--config charon.toml`` file is operator-managed and trusted, so overriding
     # a preset's base there stays a first-class feature (route_from_spec docstring).
     _enforce_allowlist = toml_path is None
+
+    # SW-STATIC-LEGS-RETIRE: ``enabled: false`` filtering is RETIRED from
+    # build_routes_and_pools (ADR-0011) and moved here — the operator's explicit
+    # disable intent is respected at the config-load layer rather than as a
+    # silent membership filter in the routing policy.  The /charon/disable
+    # endpoint writes this flag; the gateway layer enforces it.
+    _disabled = {mid for mid, spec in registry.items()
+                 if isinstance(spec, dict) and spec.get("enabled") is False}
+    for mid in _disabled:
+        registry.pop(mid, None)
+
     routes, pools, _ = routing_policy.build_routes_and_pools(
         registry, pool_map, providers_cfg, enforce_preset_allowlist=_enforce_allowlist)
     for vid, chain in routing_policy.tier_pools(
