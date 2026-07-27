@@ -23,6 +23,7 @@ import logging
 import pytest
 
 from charon.litellm_plane.metering import (
+    _cost_from_hidden,
     charon_cost,
     check_divergence,
     classify_and_crosscheck,
@@ -204,6 +205,154 @@ class TestNoCorruption:
         as_obj = type("R", (), {"usage": type("U", (), {"cost": cost})})()
         as_dict = {"usage": {"cost": cost}}
         assert litellm_cost(as_obj) == pytest.approx(litellm_cost(as_dict))
+
+
+# ============================================================================
+# (3a) _HIDDEN_PARAMS COST — branch-edge coverage for _cost_from_hidden + litellm_cost
+# ============================================================================
+
+
+class TestHiddenParamsCost:
+    """Pin every branch edge of the _cost_from_hidden path introduced by
+    6782236, plus the zero-sentinel (FIX 2) and total_cost symmetry (FIX 3).
+
+    FAIL-ON-REVERT: every test here names one specific branch edge.  Reverting
+    the corresponding logic in metering.py turns the test RED.
+    """
+
+    # -- _cost_from_hidden direct unit tests ---------------------------------
+
+    def test_hidden_dict_with_cost(self):
+        """Edge: _hidden_params dict, response_cost present non-zero -> returned."""
+        hidden = {"response_cost": 0.0042}
+        assert _cost_from_hidden(hidden) == pytest.approx(0.0042)
+
+    def test_hidden_dict_key_absent(self):
+        """Edge: _hidden_params dict, response_cost key absent -> None (fallback)."""
+        hidden = {"other": 1}
+        assert _cost_from_hidden(hidden) is None
+
+    def test_hidden_dict_malformed_value(self):
+        """Edge: _hidden_params dict, response_cost non-numeric -> None (fallback)."""
+        hidden = {"response_cost": "not-a-number"}
+        assert _cost_from_hidden(hidden) is None
+
+    def test_hidden_object_with_cost_attr(self):
+        """Edge: _hidden_params object, response_cost attr present -> returned."""
+        hidden = type("H", (), {"response_cost": 0.0099})()
+        assert _cost_from_hidden(hidden) == pytest.approx(0.0099)
+
+    def test_hidden_object_attr_absent(self):
+        """Edge: _hidden_params object, no response_cost attr -> None."""
+        hidden = type("H", (), {})()
+        assert _cost_from_hidden(hidden) is None
+
+    def test_hidden_none(self):
+        """Edge: hidden is None -> None."""
+        assert _cost_from_hidden(None) is None
+
+    # -- FIX 2: zero sentinel -------------------------------------------------
+
+    def test_zero_response_cost_is_sentinel(self):
+        """FIX 2: _cost_from_hidden returns None when response_cost is 0.0,
+        letting the caller fall through to usage.cost.
+
+        FAIL-ON-REVERT: if the zero-sentinel is removed, _cost_from_hidden
+        returns 0.0 instead of None and this test goes RED."""
+        hidden = {"response_cost": 0.0}
+        assert _cost_from_hidden(hidden) is None
+
+    def test_litellm_cost_zero_hidden_falls_back_to_usage_object(self):
+        """FIX 2: _hidden_params.response_cost=0.0 with usage.cost=0.5
+        -> falls through to usage.cost (0.5), not 0.0."""
+        obj = type("R", (), {})()
+        obj._hidden_params = {"response_cost": 0.0}
+        obj.usage = type("U", (), {"cost": 0.5})()
+        assert litellm_cost(obj) == pytest.approx(0.5)
+
+    def test_litellm_cost_zero_hidden_falls_back_to_usage_dict(self):
+        """FIX 2: dict response with _hidden_params.response_cost=0.0
+        and usage.cost=0.6 -> falls through to 0.6."""
+        resp = {
+            "_hidden_params": {"response_cost": 0.0},
+            "usage": {"cost": 0.6, "prompt_tokens": 3, "completion_tokens": 2},
+        }
+        assert litellm_cost(resp) == pytest.approx(0.6)
+
+    def test_genuine_zero_preserved_via_usage(self):
+        """FIX 2: a genuinely-$0.00 request where usage.cost is also 0.0
+        still reports 0.0 — zero is not lost, just routed through usage."""
+        obj = type("R", (), {})()
+        obj._hidden_params = {"response_cost": 0.0}
+        obj.usage = type("U", (), {"cost": 0.0})()
+        assert litellm_cost(obj) == 0.0
+
+    # -- litellm_cost branch edges (objects) ----------------------------------
+
+    def test_litellm_cost_object_prefers_hidden_params(self):
+        """Edge: object with _hidden_params.response_cost=0.001 and
+        usage.cost=0.99 -> returns 0.001 (hidden wins)."""
+        obj = type("R", (), {})()
+        obj._hidden_params = {"response_cost": 0.001}
+        obj.usage = type("U", (), {"cost": 0.99})()
+        assert litellm_cost(obj) == pytest.approx(0.001)
+
+    def test_litellm_cost_object_falls_back_usage(self):
+        """Edge: object _hidden_params without response_cost key -> falls
+        back to usage.cost."""
+        obj = type("R", (), {})()
+        obj._hidden_params = {"other": 1}
+        obj.usage = type("U", (), {"cost": 0.007})()
+        assert litellm_cost(obj) == pytest.approx(0.007)
+
+    def test_litellm_cost_object_no_hidden_params_at_all(self):
+        """Edge: object with no _hidden_params attr -> usage.cost."""
+        obj = type("R", (), {"usage": type("U", (), {"cost": 0.003})()})()
+        assert litellm_cost(obj) == pytest.approx(0.003)
+
+    # -- litellm_cost branch edges (dicts) ------------------------------------
+
+    def test_litellm_cost_dict_prefers_hidden_params(self):
+        """Edge: dict with _hidden_params.response_cost -> returned."""
+        resp = {"_hidden_params": {"response_cost": 0.0025},
+                "usage": {"cost": 0.99, "total_tokens": 5}}
+        assert litellm_cost(resp) == pytest.approx(0.0025)
+
+    def test_litellm_cost_dict_fallback_usage_cost(self):
+        """Edge: dict with no _hidden_params, usage.cost present -> returned."""
+        resp = {"usage": {"cost": 0.008, "prompt_tokens": 10}}
+        assert litellm_cost(resp) == pytest.approx(0.008)
+
+    def test_litellm_cost_dict_fallback_total_cost(self):
+        """Edge: dict with usage missing 'cost' but having 'total_cost' ->
+        total_cost used."""
+        resp = {"usage": {"total_cost": 0.004, "total_tokens": 5}}
+        assert litellm_cost(resp) == pytest.approx(0.004)
+
+    def test_litellm_cost_dict_no_usage(self):
+        """Edge: dict with no usage key -> 0.0."""
+        assert litellm_cost({"id": "x"}) == 0.0
+
+    # -- FIX 3: total_cost symmetry -------------------------------------------
+
+    def test_object_total_cost_fallback(self):
+        """FIX 3: object branch now falls back from cost to total_cost,
+        matching the dict branch."""
+        obj = type("R", (), {})()
+        obj.usage = type("U", (), {"total_cost": 0.0033})()
+        assert litellm_cost(obj) == pytest.approx(0.0033)
+
+    def test_object_total_cost_with_cost_takes_cost_first(self):
+        """FIX 3: when both cost and total_cost are present on object,
+        cost is preferred (same as dict branch)."""
+        obj = type("R", (), {})()
+        obj.usage = type("U", (), {"cost": 0.015, "total_cost": 0.0033})()
+        assert litellm_cost(obj) == pytest.approx(0.015)
+
+    def test_dict_total_cost_with_cost_takes_cost_first(self):
+        """Dict branch: cost present, total_cost also present -> cost wins."""
+        resp = {"usage": {"cost": 0.020, "total_cost": 0.001}}
+        assert litellm_cost(resp) == pytest.approx(0.020)
 
 
 # ============================================================================
