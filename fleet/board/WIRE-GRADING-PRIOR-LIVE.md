@@ -22,6 +22,25 @@ source: SG-readiness review 2026-07-24 — the industry-benchmark preflight PRE-
   is BUILT (grades_import.py, #186) but INERT: the live gateway builds a bare empty CapabilityMatrix
   (gateway.py:493), seed_matrix() is imported NOWHERE in src/, and reconcile_with_real() has ZERO callers.
   So SG routes with no pre-grade and no real-work update — a direct hit on "SG does good work."
+research-2026-07-26: |
+  Operator decision 32: WIRE FIRST, refresh second. Research (RESEARCH-SEED-PRIOR-SOURCES-2026-07-26.md,
+  470 lines) CONFIRMED this ticket is the blocker for the whole grading plane, and corrected several
+  facts — do NOT re-derive these:
+  * INERT CONFIRMED: SEED_PRIOR / seed_matrix() have ZERO production consumers; the gateway builds a
+    BARE EMPTY CapabilityMatrix(). Corroborated independently: src/charon/capability/ is imported only
+    by lifecycle.py and decompose_effort.py — never the forwarder. Until this lands, refreshing the
+    seed data would only keep a DEAD table fresh.
+  * The prior has 43 entries (not 33) covering only 9 MODELS, across 6 work classes
+    (reasoning, coding, translation, creative, analysis, general) — NOT the rig's 12 ticket
+    work_class values, which are a different axis. Do not conflate them when wiring.
+  * COVERAGE GAPS to expect once live: deepseek-v4-flash, minimax-m2.5, minimax-m3, devstral and
+    mistral have NO prior entry; llama-4-405b and claude-opus-4.5 are present but are not routed.
+  * DATA-INTEGRITY RED: 19 of the 43 entries claim `models-dev` or `aider-polyglot` provenance that
+    the source data CANNOT support (aider-polyglot has been frozen since 2025-10-03 and grades none
+    of our current models). Treat existing provenance strings as SUSPECT — wiring them in propagates
+    unfounded provenance into routing decisions. Flag or correct as part of this ticket.
+  * Note gateway.py line drift: the note below says :493, current tree reads ~:549. Locate by symbol
+    (`CapabilityMatrix()`), not by line number.
 note: |
   Wire the two ALREADY-BUILT+TESTED halves of grades_import.py into the LIVE gateway [[charon-silent-downgrade-leak]]:
   1. SEED: at gateway.py:493 call seed_matrix() (the cold-start external-benchmark prior — curated
