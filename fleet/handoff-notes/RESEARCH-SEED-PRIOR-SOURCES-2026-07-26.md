@@ -67,12 +67,13 @@ Other verified in-repo facts:
 | # | Source | Quality signal | Per-class fit to our 6 | Coverage of our models | Licence | Verdict |
 |---|---|---|---|---|---|---|
 | **1** | **LMArena `leaderboard-dataset`** — `text` **+ `agent`** configs | Elo + CI + votes; **`agent` gives a true agentic score** | **5 of 6 directly, 6th by proxy** | **11 of 12** (all but devstral) | **CC-BY-4.0** ✅ | **ADOPT — vendor + opt-in refresh** |
-| 2 | **LiveBench** | 0-100 per task | **6 of 6, sharpest coding** | 8 of 12 | ❌ **UNLICENSED** | runtime-fetch only, never vendor |
-| 3 | **Artificial Analysis** | intelligence + coding index | coding/math only | high | ⚠️ no redistribution grant | optional, user's own key |
-| 4 | **Epoch.ai `benchmarks.csv`** | raw scores | math/reasoning only | ~6 of 12 | **CC-BY** ✅ | corroboration only |
-| 5 | **models.dev** | **NONE** | — | **best (12 of 12)** | **MIT** ✅ | **catalog/join spine, not quality** |
-| 6 | **LiteLLM `model_prices…json`** | **NONE** | — | high | MIT (already a dep) | pricing only — do NOT over-claim |
-| 7 | **Aider polyglot** | pass-rate | coding only | **0 of 12 current models** | Apache-2.0 ✅ | licence-clean but **coverage-dead** |
+| **2** | **Terminal-Bench 2.1** (`harbor-framework/terminal-bench-2-1`) | accuracy + stderr + pass@k + **cost + latency + reward-hacks** | agentic-coding only | ~3 of 12 (frontier-closed heavy) | **Apache-2.0** ✅ | **ADOPT as 2nd provenance** — richest schema, current |
+| 3 | **LiveBench** | 0-100 per task | **6 of 6, sharpest coding** | 8 of 12 | ❌ **UNLICENSED** | runtime-fetch only, never vendor |
+| 4 | **Artificial Analysis** | intelligence + coding index | coding/math only | high | ⚠️ no redistribution grant | optional, user's own key |
+| 5 | **Epoch.ai `benchmarks.csv`** | raw scores | math/reasoning only | ~6 of 12 | **CC-BY** ✅ | corroboration only |
+| 6 | **models.dev** | **NONE** | — | **best (12 of 12)** | **MIT** ✅ | **catalog/join spine, not quality** |
+| 7 | **LiteLLM `model_prices…json`** | **NONE** | — | high | MIT (already a dep) | pricing only — do NOT over-claim |
+| 8 | **Aider polyglot** | pass-rate | coding only | **0 of 12 current models** | Apache-2.0 ✅ | licence-clean but **coverage-dead** |
 | — | HF Open LLM Leaderboard | stale 16 months | — | ~0 | apache-2.0 | **DEAD — do not use** |
 
 ---
@@ -87,7 +88,7 @@ Other verified in-repo facts:
 - **Format:** JSON rows (REST) / parquet (mirror). `text/latest` split = 25,056 rows.
 - **Schema (VERIFIED, exact field names):**
   `model_name, organization, license, rating, rating_lower, rating_upper, variance, vote_count, rank, category, leaderboard_publish_date`
-- **Cadence:** dataset `lastModified 2026-07-25`; latest `leaderboard_publish_date` = **2026-07-21**. ~weekly. **5 days stale at time of writing — the freshest source found.**
+- **Cadence:** dataset `lastModified 2026-07-25`; latest `leaderboard_publish_date` = **2026-07-21**. ~weekly. **5 days stale at time of writing — the freshest of any *usably-licensed* source.** (SWE-bench-Live is one day fresher but is unlicensed and scaffold-keyed — see §2.10.)
 - **LICENCE: `cc-by-4.0`** — VERIFIED from the HF API (`tags: ['license:cc-by-4.0']`, `cardData.license: cc-by-4.0`). **Attribution only → SAFE to vendor a derived snapshot into the PUBLIC MIT repo**, provided we credit LMArena in the data file header + NOTICE. This is the only high-coverage source that is unambiguously vendorable.
 - **Categories (VERIFIED, 29 sampled across the split):**
   `overall, coding, creative_writing, math, hard_prompts, hard_prompts_english, expert, instruction_following, longer_query, multi_turn, exclude_ties, english, non_english, chinese, japanese, korean, french, german, spanish, russian, polish, industry_software_and_it_services, industry_mathematical, industry_legal_and_government, industry_medicine_and_healthcare, industry_life_and_physical_and_social_science, industry_business_and_management_and_financial_operations, industry_entertainment_and_sports_and_media, industry_writing_and_literature_and_language`
@@ -106,7 +107,7 @@ Other verified in-repo facts:
   | mistral | ✅ (14 ids) | `mistral-large-3`, … |
   | **devstral** | ❌ **0 rows** | — |
 
-  → **11 of 12 model families covered. Only `devstral` is absent** (it is absent from *every* source found — see §4).
+  → **11 of 12 model families covered. Only `devstral` is absent** (graded only by licence-blocked sources — see §3.3).
 - **Scraping needed?** No. Structured REST + parquet. GOOD.
 
 #### ★★ The `agent` config is the best single signal found — use it (VERIFIED)
@@ -229,7 +230,61 @@ Same dataset, same CC-BY-4.0 licence, different config:
 - **llm-stats.com** `https://api.llm-stats.com/v1/models` — 85 entries, routing/pricing only (`context_length, input_price, output_price, quantization_type, routing_providers, tier`). Not a benchmark aggregator. `llm-stats.com/api/models` → 404.
 - **Vals AI** — SPA; `/api/leaderboard` → 404. Scrape-only → BAD.
 
-*(SWE-bench / Terminal-Bench / LiveCodeBench / BigCodeBench / EvalPlus / SWE-rebench — see §2.10.)*
+### 2.10 The agentic-coding benchmark cluster (all VERIFIED by fetch)
+
+#### ★ Terminal-Bench 2.1 — the strongest COMPLEMENT; Apache-2.0 and current
+
+- **The repo moved:** `github.com/laude-institute/terminal-bench` → **301** → **`github.com/harbor-framework/terminal-bench`** (the org rebranded to Harbor; all `laude-institute/*` repos are frozen at 2025). Any doc still citing laude-institute is stale.
+- **Data URL (per-submission JSON):**
+  `https://raw.githubusercontent.com/harbor-framework/terminal-bench-2-1/main/leaderboard/submissions/<file>.json`
+  listing via `https://api.github.com/repos/harbor-framework/terminal-bench-2-1/contents/leaderboard/submissions` — **20 result files**. Filename is itself the key: `YYYY-MM-DD-<org>-<model>-<effort>-<agent>.json`.
+- **Dead ends (VERIFIED empty/404, do not chase):** `tbench.ai/api/leaderboard` → 404 (site is Next.js RSC, no JSON API) · `laude-institute/terminal-bench-2-leaderboard` = LICENSE+README only · `harbor-framework/terminal-bench-2/leaderboard/submissions` = **0 files** · `harbor-framework/harbor-index/leaderboard/submissions` = **0 files** · `leaderboard/leaderboard.yaml` is a **JSON-Schema config, not results** (points at a `visibility: private` hosted hub).
+- **Schema — the richest of any source found:**
+  `source_filter{agent, agent_version, model_name, reasoning_effort}` ·
+  `metadata{agent_display, agent_org, model_display, model_org, date, reasoning_effort, pr_url}` ·
+  `metrics{accuracy, accuracy_stderr, n_trials, pass_at_2..5, uncached_input_tokens, cached_input_tokens, output_tokens, total_cost_usd, avg_trial_duration_sec, reward_hacks}` · `trials[]`, `disqualified_trials[]`
+- **Why it matters beyond quality:** `avg_trial_duration_sec` + `total_cost_usd` + `reward_hacks` feed directly into *latency-is-a-failure-class* and the cost meter — no other source carries these.
+- **Model-keyed AND agent-keyed in SEPARATE fields** (`source_filter.model_name` vs `source_filter.agent`), so **the scaffold can be marginalised out** — the thing SWE-bench Verified gets wrong. `trials[]` allows per-task breakdown.
+- **LICENCE: ✅ Apache-2.0** (LICENSE file fetched). **Vendorable.**
+- **Cadence:** active, most recent entry **2026-07-11** (15 days).
+- **Coverage: frontier-closed-heavy, OSS-thin.** ✅ `gemini-3-pro-preview`, `gemini-3.1-pro-preview`, `gpt-5.5`, `gpt-5.6-*`, `glm-5.1-max`, `grok-4.5`, claude-*. ❌ **NO deepseek (any), kimi, minimax, qwen3-coder, devstral, mistral, glm-5.2.**
+  → ~3 of our 12. **Cannot stand alone as the prior; excellent as a second provenance for the models it does cover.**
+
+#### SWE-bench / SWE-bench-Verified — stale AND licence-blocked
+
+- **Aggregate file is NOT in `SWE-bench/experiments`** (that repo is `license: null` → all-rights-reserved, pushed 2026-03-29). It is in the website repo:
+  `https://raw.githubusercontent.com/SWE-bench/swe-bench.github.io/master/data/leaderboards.json` — **7,323,841 B**, VERIFIED. (`https://www.swebench.com/data/leaderboards.json` → **404**; GitHub raw only.)
+- **LICENCE: ❌ CC BY-NC 4.0 (NonCommercial)** on `swe-bench.github.io` — VERIFIED by fetching the LICENSE. **Hard blocker**: NC poisons downstream commercial use of a public product repo. `SWE-bench/experiments` having *no* licence is worse.
+- **Cadence:** boards run 2023-10 → **2026-02-26**; ~5 months stale and decaying.
+- **Keying — cuts both ways:** the `Verified` board (180 entries) is **SCAFFOLD-keyed** (`mini-SWE-agent + Claude 4.5 Opus (high reasoning)`) — string surgery required. The **`bash-only` board (48 entries)** pins one scaffold and varies only the model, carrying structured `tags` with `Model:`/`Org:` — **genuinely model-keyed and the one worth reading**.
+- `per_instance_details` (instance_id → resolved/cost/api_calls) would allow per-repo work-class breakdowns.
+- **Coverage of `bash-only` (118 distinct Model tags):** ✅ `deepseek-v3.2`, `glm-5`/`glm-4.6`, `kimi-k2.5`, `minimax-m2`/`m2.5`, `Qwen3-Coder-480B`/`30B`, **`devstral-2512`/`devstral-small-2512`** (the ONLY quality data found anywhere for devstral), gpt-5.x, gemini-3-pro/flash-preview. ❌ no deepseek-v4, glm-5.2, kimi-k2.6, minimax-m3.
+- **Verdict: read-only reference, DO NOT VENDOR.** Its devstral rows are tantalising but NC-licensed.
+
+#### SWE-bench-Live — freshest data, but unlicensed and scaffold-keyed
+
+- `https://raw.githubusercontent.com/SWE-bench-Live/swe-bench-live.github.io/main/reports-0605.jsonl` — 413,734 B, **142 rows**, JSONL. (Filename says `0605`; contents run to **2026-07-16** — the freshest of any source.)
+- Schema is thin: `{name, set, total, resolved, date, logo, url}`. **`set` gives a real language axis** (`go, tsjs, java, rust, lite, windows`) — routing signal unavailable elsewhere.
+- **SCAFFOLD-keyed and badly:** `name` is free text (`"Slingshot + GPT-5.5 (Medium)"`); the model must be regex'd out with no separate field.
+- **LICENCE: ❌ none** (`license: null`) → blocking. Upstream `microsoft/SWE-bench-Live` is MIT but that is the harness, not the results.
+- Coverage: frontier-closed only; **none of our OSS models.**
+
+#### SWE-rebench — best OSS coverage anywhere, worst access
+
+- **No API.** VERIFIED 404 on `/api/leaderboard`, `/leaderboard.json`, `/api/results`, `/api/models`, `/data/leaderboard.json`. 25 Next.js chunks grepped: **zero fetch endpoints**. Data is embedded in a **13,148,905-byte RSC payload** in the page HTML → scraping only. **BAD.**
+- **TRAP (worth flagging):** HF dataset `nebius/SWE-rebench-leaderboard` (cc-by-4.0, lastModified 2026-06-01) is **misleadingly named — it is the TASK dataset, not scores.** Features are `repo, instance_id, base_commit, patch, test_patch, problem_statement, FAIL_TO_PASS, …`. **No model column, no score column.** Do not build on the name.
+- Coverage (grepped from HTML): `DeepSeek-V4`, `GLM-5.2`, `GLM-5.1`, `Qwen3.6-*`, `Qwen3-Coder-Next/480B/30B`, `MiniMax`, `Kimi`, `Devstral-Small-2505`, gpt-5.1…5.5, claude-4.x. Monthly, contamination-free.
+- **Verdict: exactly the models we care about, delivered by exactly the mechanism we refuse to adopt.** Revisit only if they publish an API.
+
+#### LiveCodeBench / BigCodeBench / EvalPlus — all three DEAD
+
+- **LiveCodeBench:** runner repo MIT but pushed **2025-07-16**, and **contains no results file at all**. Site repo pushed 2025-08-01, `license: null`. HF Space `livecodebench/leaderboard` `lastModified 2024-06-07`. `LiveCodeBench/submissions` holds per-model 5.7 MB raw per-problem dumps with **no aggregate score field**, newest model `Claude-Opus-4`. Contamination-windowing means any self-computed score is meaningless without the window — and the window metadata isn't published. **Skip.**
+- **BigCodeBench:** `bigcode-project/bigcodebench` is **`archived: true` (2026-01-03)**. Backing HF result datasets last modified **2025-04-17**; ELO variants stop 2025-01-14. **Dead — do not use.**
+- **EvalPlus:** results file DOES exist and is clean —
+  `https://raw.githubusercontent.com/evalplus/evalplus.github.io/main/results.json` (34,305 B, Apache-2.0, model-keyed, schema `{model: {link, open-data, prompted, size, "pass@1":{humaneval, humaneval+, mbpp, mbpp+}}}`, 125 models).
+  **But the site repo last pushed 2024-12-26 — 19 months dead**, and the 125 models are `OpenCoder-8B`, `gemma-2b`, `Phi-3-mini`, `stable-code-3B`. **Zero models from our list.** Nice schema, museum content.
+- **Multi-SWE-bench:** Apache-2.0 but pushed 2025-12-18; `ByteDance-Seed/Multi-SWE-bench` → 404. No refreshed feed.
+- **Community evals (Kilo / Cline / RooCode): nothing structured.** `Kilo-Org/kilocode` very active but ships no eval data; `cline/cline` → 404; `RooCodeInc/Roo-Code` has **removed** its `evals/` directory. **Skip the whole category.**
 
 ---
 
@@ -265,6 +320,20 @@ p = percentile of model's `rating` among all models in that category at max(publ
 p >= 90 -> A    p >= 70 -> B    p >= 45 -> C    p >= 20 -> D    else F
 ```
 
+**Status of this banding scheme: PROPOSED, NOT YET VALIDATED.** I pulled the full `coding` category
+successfully once (1,013 rows in 11 paged requests, ~30 s) and read the ratings, but a second full
+pull to validate the percentile bands end-to-end **hit repeated `HTTP 504 Gateway Time-out` from
+`datasets-server.huggingface.co`**. Do not treat the band cut-points as tested — validating them is
+literally step 1 of the spike.
+
+**Operational finding from that failure (important, and it argues FOR the adopt):** the HF
+datasets-server is **intermittently slow and 504s under repeated paging**. Any refresher must
+therefore retry with backoff and fall back to last-good — which is *exactly* what
+`catalog_refresh.py` already does (`try/except` per source → log red → keep last-good, never raise).
+This is a concrete reason to reuse that module rather than write a fresh fetch loop. It is also a
+reason to prefer the tiny `agent` config (38 rows, 1 request) over the 25k-row `text` split where
+the two overlap.
+
 Guards that keep this honest:
 - Require `vote_count >= N` (e.g. 500) or emit **no** entry — low-vote Elo is noise. Never emit `F` from thin data; emit nothing and let the matrix return `"unknown"`.
 - Carry `rating_lower`/`rating_upper`: if the CI straddles a band boundary, **round toward the worse band** (a prior that over-promotes costs money; one that under-promotes costs a little latency).
@@ -273,7 +342,7 @@ Guards that keep this honest:
 
 ### 3.3 What STAYS MANUAL (honest statement)
 
-1. **`devstral` has no quality coverage in ANY source found.** models.dev knows it exists; nothing grades it. It stays `operator-curated` or `unknown` forever until we grade it ourselves.
+1. **`devstral` has no quality coverage in any source we can legally use.** models.dev knows it exists but publishes no quality signal. The *only* graded devstral data found anywhere is SWE-bench's `bash-only` board (`devstral-2512`, `devstral-small-2512`) — and that is **CC BY-NC 4.0, which we cannot vendor**. SWE-rebench also lists `Devstral-Small-2505` but is scrape-only. So devstral stays `operator-curated`/`unknown` until we grade it ourselves. (Correction to an earlier framing: it is a *licence* gap, not a total data gap.)
 2. **Model-id reconciliation.** LMArena uses arena display names (`glm-5.2 (max)`, `kimi-k2.6-thinking`, `gpt-5.4-high`) — variant suffixes for thinking-mode/effort that our normalised ids do not carry. An **alias map is unavoidable and must be hand-maintained**; it should be a small checked-in JSON, reviewed when new models are added. This is the single biggest ongoing manual cost — budget for it honestly rather than pretending fuzzy matching solves it.
 3. **The `translation` and `analysis` mappings** are judgement calls (§3.1) and should be re-reviewed, not treated as measurements.
 4. **Whether a mapping is still sane** after LMArena changes its category set — needs a cheap assertion, not a human, but a human decides the fix.
@@ -283,20 +352,25 @@ Guards that keep this honest:
 
 ## 4. COVERAGE MATRIX — our routed models × sources (VERIFIED)
 
-| model family | LMArena | LiveBench | Epoch | Aider | models.dev | OpenLLM |
-|---|---|---|---|---|---|---|
-| deepseek-v4-pro / flash | ✅ | ✅ | ❌ (V3 only) | ❌ | ✅ | ❌ |
-| minimax-m2.5 / m2.7 | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
-| minimax-m3 | ✅ | ✅ | ❌ | ❌ | ✅ | ❌ |
-| glm-5.2 | ✅ | ✅ | ✅ (to 5.1) | ❌ | ✅ | ❌ |
-| kimi-k2.6 | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ |
-| gemini-3.x | ✅ | ✅ | ~ | ❌ | ✅ | ❌ |
-| gpt-5.x | ✅ | ✅ | ✅ | ~ (gpt-5 only) | ✅ | ❌ |
-| qwen (3.x) | ✅ | ✅ | ✅ | ~ (Qwen3 235B) | ✅ | ~ (1.5-era) |
-| qwen3-coder | ~ | ❌ | ❌ | ❌ | ✅ | ❌ |
-| devstral | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ |
-| mistral | ✅ | ❌ | ✅ | ❌ | ✅ | ~ |
-| **totals (of 12)** | **11** | **8** | **6** | **~1** | **12** | **~1** |
+Licence key: ✅ = present & vendorable · 🚫 = present but licence-blocked · ❌ = absent
+
+| model family | LMArena (CC-BY) | TB 2.1 (Apache) | LiveBench (no lic) | SWE-bench bash-only (NC) | SWE-rebench (scrape) | Epoch (CC-BY) | Aider (Apache) | models.dev (MIT) |
+|---|---|---|---|---|---|---|---|---|
+| deepseek-v4-pro / flash | ✅ | ❌ | 🚫 | ❌ (v3.2 only) | 🚫 | ❌ (V3 only) | ❌ | ✅ (no quality) |
+| minimax-m2.5 / m2.7 | ✅ | ❌ | ❌ | 🚫 (m2/m2.5) | 🚫 | ❌ | ❌ | ✅ |
+| minimax-m3 | ✅ | ❌ | 🚫 | ❌ | 🚫 | ❌ | ❌ | ✅ |
+| glm-5.2 | ✅ | ❌ (5.1-max only) | 🚫 | ❌ (glm-5/4.6) | 🚫 | ✅ (to 5.1) | ❌ | ✅ |
+| kimi-k2.6 | ✅ | ❌ | 🚫 | 🚫 (k2.5) | 🚫 | ✅ | ❌ | ✅ |
+| gemini-3.x | ✅ | ✅ | 🚫 | 🚫 | ❌ | ~ | ❌ | ✅ |
+| gpt-5.x | ✅ | ✅ | 🚫 | 🚫 | 🚫 | ✅ | ~ (gpt-5 only) | ✅ |
+| qwen (3.x) | ✅ | ❌ | 🚫 | 🚫 | 🚫 | ✅ | ~ (Qwen3 235B) | ✅ |
+| qwen3-coder | ~ | ❌ | ❌ | 🚫 (480B/30B) | 🚫 | ❌ | ❌ | ✅ |
+| **devstral** | ❌ | ❌ | ❌ | 🚫 **(only source)** | 🚫 | ❌ | ❌ | ✅ |
+| mistral | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ |
+| **vendorable ✅ (of 12)** | **11** | **~3** | **0** | **0** | **0** | **6** | **~1** | **12 (no quality)** |
+
+The column that matters is "vendorable" — 🚫 entries cannot go into a public repo regardless of how
+good the data is. **LMArena is the only source with both broad coverage and a usable licence.**
 
 **Per constraint #3 (coverage before precision), LMArena wins outright** — and it happens to also be
 the only high-coverage source with a clean, vendorable licence.
@@ -363,9 +437,21 @@ no new dependency).
 **Do NOT do in the spike:** wire the refresher, add LiveBench, add an Artificial Analysis key, or
 touch `matrix.py`. Those are separate tickets.
 
+**Immediately after (not in the spike): fold in Terminal-Bench 2.1.** It is Apache-2.0, current
+(2026-07-11), model-keyed with the scaffold in a separate field, and 20 small JSON files — a cheap
+second provenance for the ~3 families it covers, and the only source carrying `total_cost_usd`,
+`avg_trial_duration_sec` and `reward_hacks`. Where TB2.1 and LMArena disagree, TB2.1 wins for
+`coding` (it measures real agentic task completion; LMArena measures human preference).
+
 ### Licence verdict, one line each
 - **LMArena — CC-BY-4.0 — ✅ VENDOR OK** with attribution in the data file header + NOTICE.
+- **Terminal-Bench 2.1 — Apache-2.0 — ✅ VENDOR OK** with attribution.
 - **models.dev — MIT — ✅ VENDOR OK.**
+- **SWE-bench (`swe-bench.github.io`) — CC BY-**NC**-4.0 — ❌ DO NOT VENDOR.** NonCommercial poisons downstream use. `SWE-bench/experiments` has NO licence — worse.
+- **SWE-bench-Live — no licence — ❌ DO NOT VENDOR.**
+- **SWE-rebench — no API, site ToS — ❌ scrape-only, do not adopt.**
+- **EvalPlus — Apache-2.0 — ✅ technically vendorable, but content is a 2024 museum piece (zero of our models).**
+- **BigCodeBench — archived 2026-01-03 · LiveCodeBench — no results file exists — do not use.**
 - **Epoch.ai — CC-BY — ✅ VENDOR OK** with credit (but low value for us).
 - **Aider — Apache-2.0 — ✅ VENDOR OK** but the data is 10 months stale and covers none of our models.
 - **LiveBench — ❌ NO LICENCE — DO NOT VENDOR.** Runtime-fetch + attribution only.
@@ -377,3 +463,8 @@ touch `matrix.py`. Those are separate tickets.
 - `Provenance = "models-dev"` on 13 seed entries is **unsupportable** — models.dev publishes no quality data. Re-label to `operator-curated`.
 - `Provenance = "aider-polyglot"` on 6 entries is **stale** — aider has not graded any model we currently route.
 - The brief's "33 entries / 12 work classes" is wrong: it is **43 entries / 6 work classes**. Any ticket written off the brief's numbers needs correcting first.
+- The brief states `catalog_refresh.py` "gates on `{"enabled": true}`". **It does not** — there is no `enabled` key in that file. The real gate is `maybe_start()` + presence of `providers.json`. Mirror the real one.
+- **`Provenance` vocabulary should change** to reflect what is actually adoptable:
+  drop `models-dev` (publishes no quality data) and `aider-polyglot` (grades nothing we route);
+  add `lmarena-agent` and `terminal-bench`. Keep `lmarena`, `artificial-analysis`, `operator-curated`.
+- The prior currently grades `claude-opus-4.5` and `llama-4-405b` — one is never routed via SG, the other is not in the fleet. Drop both when regenerating.
