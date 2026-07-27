@@ -41,6 +41,17 @@ note: |
   Scope for (c): derive pass/fail and score from the ticket's ACTUAL outcome (gate result / review
   verdict / whether the PR merged), and record BLOCK when it did not. Do not invent a scoring model —
   record what happened. Related: [[benchmark-not-a-valid-ranker]], [[scorecard-live-lane-is-the-ledger]].
+  LIVE DEMONSTRATION 2026-07-26 — defect (a) fired in production, observed by the manager.
+  Closing WATCHDOG-RESTART-CMDS-VERIFY, done.sh printed:
+    "verified MERGED PR #270 touched WATCHDOG-RESTART-CMDS-VERIFY's owns files (branch-drift tolerant)"
+  **PR #270 was the 4lom-canary-service PR — not this ticket's work.** The real work was merged
+  directly to master at a46b80a with no PR at all. The close was CORRECT by accident: done.sh cited
+  evidence that had nothing to do with the change it was closing, and would have closed the ticket
+  just as happily had nothing been merged.
+  ALSO OBSERVED, same run: "WARN — NO model-used provisional found; scorecard will NOT record this
+  outcome." Manager-landed work is invisible to the ledger, so the scorecard only ever sees
+  droid-run tickets — a sampling bias in the data that drives model ranking. Worth folding into the
+  (c) scope: an outcome that is not recorded is indistinguishable from one that never happened.
 accept: |
   (a) ``merged_pr_touching_owns`` (fallback (c)) is tightened to only match a merged PR whose
   HEAD BRANCH matches the ticket's recorded ``branch:`` prefix/pattern, OR whose PR title/body
