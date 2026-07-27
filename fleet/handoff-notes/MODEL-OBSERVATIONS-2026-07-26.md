@@ -196,3 +196,43 @@ honest report and respected scope.
 reported STATUS: DONE. Route derivation-heavy work to a route WITHOUT this cap, or expect the
 cheapest satisfying implementation. Worth adding a BUDGET line to SESSION REPORT v1 so truncation is
 visible instead of inferred.
+
+---
+
+## ROUND 4 — the NEEDS-REVIEW batch (4 parallel reviews, spawned via wt.exe tabs)
+
+Outcome across the 10 branches triage flagged NEEDS-REVIEW: **4 LAND · 2 REWORK · 1 UNSAFE · 1
+LAND-WITH-CAVEAT · 1 ABANDON · 1 superseded.** Only four were clean. This VINDICATES holding them
+back from the batch: the 34 LAND-READY branches landed safely on executed-test evidence, while this
+set contained a branch that deletes live fleet scripts, state docs and active board tickets.
+
+### deepseek-v4-pro — REVIEW-SALVAGE-GHCACHE — EXCELLENT, highest-value review of the day
+Verdict ABANDON on `salvage/preflight-verify-merged-ghcache-wip` (6 commits, 50 files, 4173
+deletions). The brief told it to establish FIRST whether the deletions were real or a two-dot diff
+artifact. It did exactly that and concluded **"the deletions are REAL, not a diff artifact — every
+one of these files is present and live on origin/master"**. Landing that branch on triage confidence
+would have destroyed live infrastructure. The single most damaging outcome averted today.
+
+### deepseek-v4-flash — REVIEW-BACKLOG-B — clean, 4 LAND, no drama.
+
+### minimax-m3-together — REVIEW-BACKLOG-A — correct verdicts, ONE PROCESS FAULT (self-reported)
+Verdicts sound (2 REWORK / 1 UNSAFE / 1 LAND-WITH-CAVEAT). But it STALLED and needed an operator
+nudge. Its own account, unprompted and accurate:
+> "I got stuck trying to figure out why `for _id in $_ids` only iterated once ... The session was
+> running long and I should have stopped tracing and moved on; the test failing (9/10 pass) was
+> already enough evidence for REWORK."
+**FAILURE MODE: root-causing someone else's bug instead of returning the verdict.** A reviewer needs
+only enough evidence to DECIDE. 9/10 failing already determined REWORK; the remaining trace was for
+whoever fixes it. Cheap fix — future review briefs should say: *stop at sufficient evidence for the
+verdict; do NOT debug the code under review.* Note it diagnosed this itself, which is the same
+honesty class as obi-wan-kenobi overturning the manager earlier.
+
+### MANAGER FAULT — the substrate review asked the wrong question
+I scoped REVIEW-SUBSTRATE-FIRST-GATE-V2 as "is v2 canonical, retire v1?". It answered MERGE-v2 /
+RETIRE-v1, correctly, for the question asked. Then the merge threw 13 conflicts including three
+add/add — because **master ALREADY HAS the substrate gate** (landed 03ba2b1, fixed 06b1764). Neither
+of us asked "has master moved past both?". The branch is a parallel implementation of a gate that
+already shipped. Merge aborted; nothing lost.
+**LESSON: before any "which of these two branches is canonical" review, first ask whether the work
+already landed by a third path.** Same shape as EFFORT-MODEL-ADOPT earlier today. A wrong QUESTION
+produces a correct-but-useless answer, and no amount of reviewer quality catches it.

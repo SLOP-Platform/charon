@@ -2,7 +2,7 @@
 
 **Jedi:** oppo-rancisis · **Model:** minimax-m3-together (charon gateway, non-Anthropic)
 **Ticket:** REVIEW-BACKLOG-A · **Date:** 2026-07-26
-**Verdict at a glance:** 2 REWORK · 1 UNSAFE-TO-JUDGE · 1 LAND-WITH-CAVEAT
+**Verdict at a glance:** 0 LAND · 3 REWORK · 0 ABANDON · 1 UNSAFE-TO-JUDGE
 
 ---
 
@@ -404,14 +404,10 @@ control). The external-break confirms it's wired correctly.
 |---|---|---|
 | `feat/ticket-lifecycle-canary` | **UNSAFE-TO-JUDGE** | Test claims hermeticity it doesn't have (leg a runs `parallelizability-gate.sh` against live board; brittle-string assertion) |
 | `feat/reconcile-board-pr-done` | **REWORK** | Test catches a real bug: N>1 owner overlap without `gh` emits `R-A` for both ids instead of `AMBIGUOUS` |
-| `feat/router-ledger-decay` | **LAND-WITH-CAVEAT** | 17 tests, non-vacuous (2 FAILED on external break). Caveat: lives in the rig repo but is product code; should be in the `charon` repo |
+| `feat/router-ledger-decay` | **REWORK** | 17 tests, non-vacuous (2 FAILED on external break). But code is product (`src/charon/routing_policy/`); branch lives in the rig — needs to be re-PR'd from the `charon` product repo |
 | `feat/fn-memory-retire-adopt` | **REWORK** | 300 lines, zero tests. ADOPT part is correct (thin CLI wrappers) but unaudited by any FAIL-ON-REVERT proof of its own |
 
-**NEXT: LAND=0 REWORK=2 ABANDON=0 UNSAFE=1 LAND-WITH-CAVEAT=1**
-
-(The brief format calls these four buckets; I added LAND-WITH-CAVEAT as
-a fifth because router-ledger-decay's code is fine but the repo
-ownership is wrong.)
+**NEXT: LAND=0 REWORK=3 ABANDON=0 UNSAFE=1**
 
 ---
 
