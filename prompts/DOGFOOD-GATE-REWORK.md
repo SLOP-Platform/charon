@@ -84,6 +84,7 @@ RAN:          <proved by EXECUTING>
 READ:         <concluded by READING only>
 BRIEF-ERRORS: none | <what this brief got wrong>
 BLOCKED-BY:   none | <condition>
+BUDGET:       ok | TRUNCATED — <what you could not finish and why>
 NEXT:         <single next action for the manager>
 === END REPORT ===
 ```

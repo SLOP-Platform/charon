@@ -22,6 +22,7 @@ RAN:          <what you proved by EXECUTING, one line>
 READ:         <what you concluded by READING only, one line>
 BRIEF-ERRORS: none | <what the brief got factually wrong>
 BLOCKED-BY:   none | <ticket or condition>
+BUDGET:       ok | TRUNCATED — <what you could not finish and why (request cap, timeout, context)>
 NEXT:         <the single thing the manager should do next>
 === END REPORT ===
 ```
@@ -42,6 +43,11 @@ NEXT:         <the single thing the manager should do next>
   nonexistent files in an OWNS clause, a ticket whose work already existed, a wrong premise about
   `upstream_model`, and a command that could not run. **The brief is wrong more often than the
   session is.** Silence here loses that signal.
+- **BUDGET** — added 2026-07-26. A session hit `ResourceExhausted: Worker local total request limit
+  reached (48/48)` and reported `STATUS: DONE`. A hard per-session request ceiling silently converts
+  "derive it" into "assert it": the cheapest satisfying implementation wins when budget is short, and
+  nothing in the report says so. If you ran out of anything — requests, context, time — say
+  TRUNCATED and name what you skipped. A shortcut you declare is a finding; one you hide is a defect.
 - **BLOCKED-BY / NEXT** — turns a report into a dispatch decision without a follow-up round-trip.
 
 ## RULES

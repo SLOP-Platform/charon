@@ -10,11 +10,11 @@ body="$(cat "$src")"
 grep -q '=== SESSION REPORT v1 ===' <<<"$body" || {
   echo "check-session-report: no 'SESSION REPORT v1' block found — a missing report is a RED, not a pass" >&2; exit 1; }
 missing=()
-for f in TICKET SESSION STATUS COMMIT FILES OWNS-OK GATE TESTS RED-PROOF OBSERVABLE RAN READ BRIEF-ERRORS BLOCKED-BY NEXT; do
+for f in TICKET SESSION STATUS COMMIT FILES OWNS-OK GATE TESTS RED-PROOF OBSERVABLE RAN READ BRIEF-ERRORS BLOCKED-BY BUDGET NEXT; do
   grep -qE "^${f}:" <<<"$body" || missing+=("$f")
 done
 if [ ${#missing[@]} -gt 0 ]; then
   printf 'check-session-report: MISSING FIELD: %s\n' "${missing[@]}" >&2
   exit 1
 fi
-echo "check-session-report: OK — all 15 fields present"
+echo "check-session-report: OK — all 16 fields present"

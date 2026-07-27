@@ -74,6 +74,7 @@ RAN:          <what you proved by EXECUTING>
 READ:         <what you concluded by READING only>
 BRIEF-ERRORS: none | <what this brief got factually wrong>
 BLOCKED-BY:   none | <ticket or condition>
+BUDGET:       ok | TRUNCATED — <what you could not finish and why>
 NEXT:         <the single thing the manager should do next>
 === END REPORT ===
 ```
