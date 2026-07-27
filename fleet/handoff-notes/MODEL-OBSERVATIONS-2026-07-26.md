@@ -184,3 +184,15 @@ obi-wan-kenobi overturning the manager with evidence; the 630s heartbeat wait). 
 signal, not a model-quality verdict: **gate-building is where they under-perform**, because "write a
 check that catches X" is satisfiable by asserting X directly. Route gate work with an explicit
 external red-proof spec, or expect this failure.
+
+### FAIRNESS CORRECTION — deepseek-v4-flash / INERT-STARTUP-CHECK
+That session terminated with `ResourceExhausted: Worker local total request limit reached (48/48)`.
+A 48-request ceiling plausibly explains the shortcut: deriving inertness needs reading forwarder.py's
+full invocation surface plus proxy_server.py wiring — many tool calls — whereas a hardcoded frozenset
+is one write. It may have been BUDGET-TRUNCATED rather than lazy, and it still emitted a complete,
+honest report and respected scope.
+**Operational finding, not a model finding:** a hard per-session request cap silently converts
+"derive it" into "assert it". Sessions do not report hitting the ceiling as a constraint — this one
+reported STATUS: DONE. Route derivation-heavy work to a route WITHOUT this cap, or expect the
+cheapest satisfying implementation. Worth adding a BUDGET line to SESSION REPORT v1 so truncation is
+visible instead of inferred.
