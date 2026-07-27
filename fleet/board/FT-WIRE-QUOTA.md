@@ -3,14 +3,32 @@ tier: frontier
 difficulty: 4
 work_class: money-path
 branch: feat/ft-wire-quota
-parked: true
+unparked: |
+  UNPARKED 2026-07-26 by operator. Free-tier limits are DOCUMENTED (fleet/state/FREE-TIER-LIMITS.tsv,
+  19 rows) but NOTHING ENFORCES THEM: routing_policy/free_tier_gate.py does not exist, so we only
+  learn a free tier is exhausted by receiving a 429. That is how nanogpt hit its monthly cap and how
+  four legs died in an hour on 2026-07-26. This ticket is the enforcement half.
+  STILL BLOCKED on 2 of 7 deps (FT-CATALOG-SEED, GATEWAY-NONTOKEN-METERING) — unparking makes it
+  LIVE and visible, not dispatchable.
+  COLLISION WARNING: it owns src/charon/gateway.py, now claimed by 4 tickets and carrying the 11-line
+  operator-intent filter landed by SW-STATIC-LEGS-RETIRE (see gateway-py-handoff notes). Sequence
+  behind the current wave; do not co-write.
 note: |
   SUPERSEDED / PARKED 2026-07-21 (operator-approved). Free-tier-quota intent FOLDED into
   GATEWAY-LITELLM-ADOPT (litellm.Router routing config); do not rebuild the hand-rolled forwarder
   version. This ticket owned the hand-rolled forwarder.py + gateway.py free-tier injection that the
   litellm.Router adopt replaces — un-parking it would owns-collide the adopt. Parked to clear the
   collision and let GATEWAY-LITELLM-ADOPT / GATEWAY-GRADE-ORDER-MVP go live.
-depends_on: FT-QUOTA-ENGINE, FT-CONFIG-SURFACE, FT-CATALOG-SEED, FAIL-LOUD-CONTRACT, FORWARDER-RECONCILE, PROVIDER-PROBE-FIX, GATEWAY-NONTOKEN-METERING
+depends_on: FT-QUOTA-ENGINE, FT-CONFIG-SURFACE, FT-CATALOG-SEED, FAIL-LOUD-CONTRACT, FORWARDER-RECONCILE, PROVIDER-PROBE-FIX, GATEWAY-NONTOKEN-METERING, WIRE-GRADING-PRIOR-LIVE, GW-CUTOVER-LIVE-WIRE, ORDER-A-COST-PRIMARY-LAND, SW-P2-CONTEXT-ADMIT
+real-dep: WIRE-GRADING-PRIOR-LIVE — shared single-owner of src/charon/gateway.py. Added 2026-07-26 on
+  unpark; without it validate_board flags a live owns-collision. This ticket lands LAST of the
+  gateway.py writers because it is blocked on 2 other deps anyway — sequencing costs nothing here.
+real-dep: GW-CUTOVER-LIVE-WIRE, ORDER-A-COST-PRIMARY-LAND, SW-P2-CONTEXT-ADMIT — all three share
+  single-ownership of src/charon/forwarder.py with this ticket. Free-tier enforcement wires INTO the
+  forwarder's selection path, so it must land on top of the cost-ordering and context-admit changes,
+  never beside them: a quota gate inserted next to a concurrently-rewritten selection path is exactly
+  the silent-divergence class this wave exists to close. dep-kind: build.
+dep-kind: build
 dep-kind: build
 serial_justified: cohesive single wiring — all logic lives in the new free_tier_gate.py; the forwarder.py + gateway.py edits are one minimal injection call each and must land together as one activation.
 real-dep: |
