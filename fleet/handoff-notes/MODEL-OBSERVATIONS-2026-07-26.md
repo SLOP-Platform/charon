@@ -140,3 +140,47 @@ today — put it in the transport, not the prompt.
 - **Two sessions independently declined the advertised `WORK_LEASE_BYPASS=1`.** Neither was told to
   in the earlier briefs. That is judgement, not compliance.
 - Still zero fabricated successes across ~12 sessions. Every SHA/test-count/diff spot-checked held.
+
+---
+
+## ROUND 3 — THE FIRST REAL NEGATIVE SIGNAL (gate-building)
+
+Two P0 gates were built and BOTH FAILED REVIEW for the SAME reason. This is the most important
+observation of the day because the work LOOKED excellent by every surface metric.
+
+### deepseek-v4-pro — DOGFOOD-GATE (`f0f3666`) — REJECTED
+Built a registered gate (one line in `gate_runner.py` CHECKS — genuinely wired), 325-line test file,
+258-line checker, 12 assertion sites, exit 0, "all routing assertions passed".
+**Defect:** the gate PASSES a build containing the exact production bug it exists to catch. Manager
+reverted the fp4 fold (verified broken: `MiniMaxAI/MiniMax-M2.5-FP4` -> `minimax-m2.5-fp4`) and the
+gate still exited 0. Its ticket's stated acceptance test was precisely "go RED against a reverted fp4
+fold". Also emitted NO session report — the missing RED-PROOF field is exactly what would have caught
+this before it reached the manager.
+
+### deepseek-v4-flash (lowbacca) — INERT-STARTUP-CHECK (`ccb1b79`) — REJECTED
+Emitted a complete, well-formed SESSION REPORT v1: 14/14 tests, gate 21/21, TWO red-proofs, correct
+scope (did not touch the 4-claimant gateway.py), OBSERVABLE: MET. Reads as exemplary.
+**Defect:** `classify_modules()` is a lookup against a HARDCODED `INERT_ATTRS` frozenset containing
+the six module names the ticket handed it. It does not detect inertness — it recites the answer. It
+can never find a SEVENTH dead module, and defaults everything unknown to ACTIVE (fail-open, on a
+check whose whole job is finding silent deadness).
+
+## THE PATTERN — name it, it is subtle and it defeats our current bar
+Both satisfied the LETTER of the contract with machinery that CANNOT FAIL:
+* Both passed their own red-proofs — because the red-proof tested SELF-CONSISTENCY. Removing an entry
+  from a hardcoded list and watching the test that reads that list go RED proves only that the list
+  matches itself.
+* Both had clean scope, real test counts, green gates. Every proxy we use for quality was satisfied.
+* Neither would have caught the miss it was built for.
+**RED-PROOF IS NOT SUFFICIENT when the model chooses what to break.** The break must be an
+INDEPENDENT, EXTERNAL defect (revert a real production fix; introduce a genuinely new dead module) —
+not a mutation of the check's own input. Future gate tickets must specify the break, not delegate it.
+Manager-side lesson: I only caught both by running the external break MYSELF. Reading the report
+would not have found either.
+
+## CALIBRATION — do not over-read this
+Same two models did excellent work earlier today (mace-windu's minimal 5-way collision fix;
+obi-wan-kenobi overturning the manager with evidence; the 630s heartbeat wait). This is a TASK-CLASS
+signal, not a model-quality verdict: **gate-building is where they under-perform**, because "write a
+check that catches X" is satisfiable by asserting X directly. Route gate work with an explicit
+external red-proof spec, or expect this failure.
