@@ -4,9 +4,10 @@ FAILS when observable routing effects are absent.
 The 2026-07-26 miss: three tickets merged with done-contracts requiring live
 gateway proof; none delivered it and nothing noticed. The unit-test equivalent
 of the defect is a routing path that is never exercised with a real config —
-this gate exercises the real ``load_pools`` → ``choose_from_pool`` path with
-every assertion pegged to an observable surface (pool ordering, selection
-decision, exhaustion, code-safe filtering).
+this gate exercises the real ``CatalogCache.registry_and_pool_map`` →
+``load_pools`` → ``choose_from_pool`` path with every assertion pegged to an
+observable surface (fp4 fold, capacity-tier fold, preview-alias fold, pool
+ordering, selection decision, exhaustion, code-safe filtering).
 
 Each test runs the real `tools/check_dogfood.py` script as a subprocess — if
 it is not wired into CHECKS or its script path is wrong, the test fails.
@@ -63,36 +64,112 @@ def test_gate_runs_and_passes() -> None:
     )
 
 
-# ── RED-PROOF: break each asserted effect → gate goes RED naming it ──
+# ── RED-PROOF #1: the 2026-07-26 acceptance test ──
+# Revert the fp4 fold in proxy.py and verify the gate goes RED naming the
+# fp4 case. This is the test the prior run failed to deliver.
 
-def _run_custom(code: str) -> subprocess.CompletedProcess:
-    """Run a custom Python snippet that imports the gate's dependencies and
-    tests one assertion path in isolation."""
-    wrapped = (
-        f"import sys; sys.path.insert(0, {str(REPO_ROOT)!r}); "
-        f"sys.path.insert(0, {str(REPO_ROOT / 'src')!r})\n"
-        + code
-    )
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-        f.write(wrapped)
-        tmp_path = f.name
+def test_red_fp4_fold_revert_is_fail() -> None:
+    """The fp4 fold MUST be observable: a real advertised id like
+    ``MiniMaxAI/MiniMax-M2.5-FP4`` and its base ``MiniMaxAI/MiniMax-M2.5`` MUST
+    collapse to the SAME routable pool id ``minimax-m2.5`` with BOTH members,
+    and there MUST be no orphan ``minimax-m2.5-fp4`` pool. With the fold
+    reverted, the base pool holds only one member and ``minimax-m2.5-fp4``
+    forms its own orphan — the gate MUST go RED naming the fp4 case."""
+    proxy_path = REPO_ROOT / "src" / "charon" / "proxy.py"
+    original = proxy_path.read_text()
     try:
-        return subprocess.run(
-            [sys.executable, tmp_path],
-            cwd=REPO_ROOT, capture_output=True, text=True,
+        # Revert the fp4 fold: drop ``fp4`` from the quant-suffix regex.
+        reverted = original.replace("fp4|fp8|fp16", "fp8|fp16")
+        assert reverted != original, (
+            "could not revert fp4|fp8|fp16 → fp8|fp16 in proxy.py — the test "
+            "cannot simulate the regression"
+        )
+        proxy_path.write_text(reverted)
+        proc = _run_gate()
+        assert proc.returncode != 0, (
+            f"gate exited {proc.returncode} (expected NON-ZERO) with the "
+            "fp4 fold reverted — the gate that cannot fail on the very "
+            "regression it exists to catch is the theater this ticket "
+            "exists to end.\nstderr: {proc.stderr}\nstdout: {proc.stdout}"
+        )
+        combined = proc.stdout + proc.stderr
+        assert "fp4" in combined.lower(), (
+            "gate did not name the fp4 case in its RED output — a gate that "
+            "fails generically on the fold regression hides which fold "
+            "actually broke. Combined output:\n" + combined
         )
     finally:
-        Path(tmp_path).unlink(missing_ok=True)
+        proxy_path.write_text(original)
 
 
-def test_red_empty_catalog_is_fail() -> None:
-    """The vacuum check: an empty catalog must produce RED."""
+# ── RED-PROOF #2: the tier fold (a second asserted effect) ──
+
+def test_red_tier_fold_revert_is_fail() -> None:
+    """The capacity-tier fold MUST be observable: every tier
+    ``:low|:medium|:high|:max`` MUST resolve to the base id ``claude-opus-4``
+    with all 4 tier members in that one pool. With the tier regex reverted,
+    no ``claude-opus-4`` base pool exists at all."""
+    proxy_path = REPO_ROOT / "src" / "charon" / "proxy.py"
+    original = proxy_path.read_text()
+    try:
+        reverted = original.replace(
+            ":(?:free|nitro|online|low|medium|high|max)", ":free")
+        assert reverted != original, (
+            "could not revert tier regex in proxy.py"
+        )
+        proxy_path.write_text(reverted)
+        proc = _run_gate()
+        assert proc.returncode != 0, (
+            f"gate exited {proc.returncode} (expected NON-ZERO) with the tier "
+            "fold reverted — the second asserted effect does not gate.\n"
+            f"stderr: {proc.stderr}\nstdout: {proc.stdout}"
+        )
+        combined = proc.stdout + proc.stderr
+        assert ("claude-opus-4" in combined
+                or "capacity-tier" in combined.lower()
+                or "tier" in combined.lower()), (
+            "gate did not name the tier family in its RED output. Combined:\n"
+            + combined
+        )
+    finally:
+        proxy_path.write_text(original)
+
+
+# ── NON-VACUOUS: zero inputs must be RED ──
+
+def test_non_vacuous_empty_catalog_red() -> None:
+    """The vacuum check: an empty catalog must produce RED. With nothing
+    discovered, the catalog cache has no fold-asserted pools — the fold
+    assertions all fail, the gate exits non-zero."""
+    probe = (
+        "import sys\n"
+        f"sys.path.insert(0, {str(REPO_ROOT)!r})\n"
+        f"sys.path.insert(0, {str(REPO_ROOT / 'src')!r})\n"
+        "import tools.check_dogfood as g\n"
+        "# Monkey-patch _put so the cache stays empty — simulates zero providers\n"
+        "g._put = lambda *a, **kw: None\n"
+        "sys.exit(g.run())\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    )
+    assert proc.returncode != 0, (
+        f"empty-cache gate exited {proc.returncode}, expected NON-ZERO — "
+        "a gate that silently passes on zero providers is the theater this "
+        "ticket exists to end\nstderr: {proc.stderr}\nstdout: {proc.stdout}"
+    )
+
+
+def test_non_vacuous_missing_model_is_loud() -> None:
+    """An empty models.json with a pools.json naming a nonexistent model
+    MUST raise PoolConfigError — a gate that swallows misconfiguration is
+    silent theater."""
     code = """
 import json, sys, tempfile
 from pathlib import Path
 from charon.pools import load_pools, PoolConfigError
 
-# NON-VACUOUS: empty catalog with broken pool → RED
 with tempfile.TemporaryDirectory() as td:
     d = Path(td)
     (d / "models.json").write_text("{}")
@@ -105,187 +182,21 @@ with tempfile.TemporaryDirectory() as td:
         print("VACUUM-PROOF-OK: empty catalog raised as expected", file=sys.stderr)
         sys.exit(1)
 """
-    proc = _run_custom(code)
-    assert proc.returncode == 1, (
-        f"empty-catalog test exited {proc.returncode}, expected 1\n"
-        f"stderr: {proc.stderr}"
-    )
-    assert "VACUUM-PROOF-OK" in proc.stderr
-
-
-def test_red_missing_model_is_fail() -> None:
-    """The missing-model check: prove the assertion EXISTS in the gate source."""
-    source = _CHECK_SCRIPT.read_text()
-    assert "VACUUM-PROOF-MISSING-MODEL" in source, (
-        "VACUUM-PROOF-MISSING-MODEL assertion is absent from the gate — "
-        "a pool naming an absent model would not be caught"
-    )
-
-
-def test_red_free_not_first_is_fail() -> None:
-    """Break the free-first assertion: monkey-patch the pool sorter so free
-    does NOT sort first, then verify the gate detects the wrong order."""
-    code = """
-import json, sys, tempfile
-from pathlib import Path
-from charon.pools import load_pools, choose_from_pool, PoolEntry
-
-# Write config where the ONLY model is paid (no free), then override pool
-# sorting to put a free model LAST — the gate's assertion that the sorted
-# order starts with a free model would fail.
-with tempfile.TemporaryDirectory() as td:
-    d = Path(td)
-    models = {
-        "paid-only": {"agent": "opencode", "cost_tier": "flat",
-                      "cost_input": 0.000001, "cost_output": 0.000003,
-                      "code_safe": True, "free": False},
-    }
-    pools = {"coder": ["paid-only"]}
-    (d / "models.json").write_text(json.dumps(models))
-    (d / "pools.json").write_text(json.dumps(pools))
-    result = load_pools(d)
-    order = [e.model for e in result["coder"]]
-    if order and order[0] == "paid-only":
-        # No free model in the pool — the operator configured zero free models
-        print("POOL-ORDER-FREE-FIRST-FAILURE: no free model in pool", file=sys.stderr)
-        sys.exit(1)
-    # If somehow it sorts "free-first" with no free model, that's wrong too
-    print("unexpected: order =", order, file=sys.stderr)
-    sys.exit(0)
-"""
-    proc = _run_custom(code)
-    assert proc.returncode == 1, (
-        f"no-free-model test exited {proc.returncode}, expected 1\n"
-        f"stderr: {proc.stderr}"
-    )
-    assert "POOL-ORDER-FREE-FIRST" in proc.stderr, (
-        "did not name POOL-ORDER-FREE-FIRST in output"
-    )
-
-
-def test_red_exhaustion_silent_is_fail() -> None:
-    """Make exhaustion silently return a wrong entry instead of raising —
-    the exact defect that would hide a fully-dry pool."""
-    code = """
-import json, sys, tempfile
-from pathlib import Path
-from charon.pools import load_pools, choose_from_pool
-
-with tempfile.TemporaryDirectory() as td:
-    d = Path(td)
-    models = {
-        "a": {"agent": "opencode", "cost_tier": "flat",
-              "cost_input": 0.000001, "cost_output": 0.000003,
-              "code_safe": True, "free": False},
-        "b": {"agent": "opencode", "cost_tier": "flat",
-              "cost_input": 0.000002, "cost_output": 0.000006,
-              "code_safe": True, "free": False},
-    }
-    pools = {"coder": ["a", "b"]}
-    (d / "models.json").write_text(json.dumps(models))
-    (d / "pools.json").write_text(json.dumps(pools))
-    pool = load_pools(d)["coder"]
-    allkeys = {e.key for e in pool}
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+        f.write(code)
+        tmp_path = f.name
     try:
-        choose_from_pool(pool, exclude=allkeys)
-        # Should have raised — this is the defect
-        print("ROUTE-EXHAUSTED-FAILURE: exhausted pool did not raise", file=sys.stderr)
-        sys.exit(1)
-    except RuntimeError:
-        print("ROUTE-EXHAUSTED-OK: exhausted pool raised RuntimeError", file=sys.stderr)
-        sys.exit(1)  # exit 1 to signal "assertion works as designed"
-"""
-    proc = _run_custom(code)
-    assert proc.returncode == 1, (
-        f"exhaustion test exited {proc.returncode}, expected 1\n"
-        f"stderr: {proc.stderr}"
-    )
-    assert "ROUTE-EXHAUSTED" in proc.stderr, (
-        "did not name ROUTE-EXHAUSTED in output"
-    )
-
-
-def test_red_code_safe_is_fail() -> None:
-    """Break code-safe filtering: monkey-patch _entry_from_registry so the
-    free (unsafe) model reports as code_safe. The gate's code_safe_only
-    assertion then picks the wrong model."""
-    code = """
-import json, sys, tempfile
-from pathlib import Path
-import charon.pools as _pools
-_orig = _pools._entry_from_registry
-
-def _lying_entry(model_id, spec, metered_costs=None):
-    spec = dict(spec)
-    spec["code_safe"] = True  # lie — unsafe models claim to be safe
-    return _orig(model_id, spec, metered_costs)
-_pools._entry_from_registry = _lying_entry
-
-with tempfile.TemporaryDirectory() as td:
-    d = Path(td)
-    models = {
-        "free-unsafe": {"agent": "opencode", "cost_tier": "free",
-                        "code_safe": False, "free": True},
-        "paid-safe": {"agent": "opencode", "cost_tier": "flat",
-                      "cost_input": 0.000001, "cost_output": 0.000003,
-                      "code_safe": True, "free": False},
-    }
-    pools = {"coder": ["paid-safe", "free-unsafe"]}
-    (d / "models.json").write_text(json.dumps(models))
-    (d / "pools.json").write_text(json.dumps(pools))
-    pool = _pools.load_pools(d)["coder"]
-    choice = _pools.choose_from_pool(pool, code_safe_only=True)
-    # Both now report code_safe=True, so the free model (sorted first) wins.
-    # That is WRONG — the free model is NOT actually code_safe.
-    if choice.model == "free-unsafe" and not models["free-unsafe"]["code_safe"]:
-        # The gate caught it: the model ordered first is not code_safe in config
-        print("ROUTE-CODE-SAFE-FAILURE: code_safe_only picked an unsafe model",
-              file=sys.stderr)
-        sys.exit(1)
-    # If it somehow avoided it (maybe the lie made it look safe to the config too):
-    if choice.code_safe:
-        print("ROUTE-CODE-SAFE-FAILURE: unsafe model disguised as safe was selected",
-              file=sys.stderr)
-        sys.exit(1)
-    print(f"code_safe_only picked {choice.model} (code_safe={choice.code_safe})",
-          file=sys.stderr)
-    sys.exit(1)
-"""
-    proc = _run_custom(code)
-    assert proc.returncode == 1, (
-        f"code-safe test exited {proc.returncode}, expected 1\n"
-        f"stderr: {proc.stderr}"
-    )
-    assert "ROUTE-CODE-SAFE" in proc.stderr, (
-        "did not name ROUTE-CODE-SAFE in output"
-    )
-
-
-# ── NON-VACUOUS: zero inputs must be RED ──
-
-def test_non_vacuous_empty_catalog_red() -> None:
-    """Run the gate against an empty catalog directory. It MUST go RED."""
-    probe = (
-        "import sys, tempfile, json\n"
-        "from pathlib import Path\n"
-        "d = Path(tempfile.mkdtemp())\n"
-        "(d / 'models.json').write_text('{}')\n"
-        "(d / 'pools.json').write_text(json.dumps({'coder': ['nonesuch']}))\n"
-        "from charon.pools import load_pools, PoolConfigError\n"
-        "try:\n"
-        "    load_pools(d)\n"
-        "    sys.exit(0)  # should have raised — this is the BUG\n"
-        "except PoolConfigError:\n"
-        "    sys.exit(1)  # expected: loud error\n"
-    )
-    proc = subprocess.run(
-        [sys.executable, "-c", probe],
-        cwd=REPO_ROOT, capture_output=True, text=True,
-    )
-    assert proc.returncode == 1, (
-        f"empty-catalog pool load exited {proc.returncode}, expected 1 — "
-        "a pool naming nonexistent models must be RED"
-    )
+        proc = subprocess.run(
+            [sys.executable, tmp_path],
+            cwd=REPO_ROOT, capture_output=True, text=True,
+        )
+        assert proc.returncode == 1, (
+            f"missing-model probe exited {proc.returncode}, expected 1\n"
+            f"stderr: {proc.stderr}"
+        )
+        assert "VACUUM-PROOF-OK" in proc.stderr
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
 
 
 # ── The gate is WIRED into the runner ──
@@ -322,4 +233,35 @@ def test_gate_is_registered_in_gates_json() -> None:
     )
     assert entry["min_work_units"] >= 1, (
         f"dogfood-gate min_work_units={entry.get('min_work_units')} must be >= 1"
+    )
+
+
+def test_gate_asserts_observable_pool_effects() -> None:
+    """The gate must assert observable pool effects for the three production
+    fold families (fp4, capacity tiers, preview alias) — its source must
+    contain the assertion labels that name each regression. A gate whose
+    assertions are absent cannot fire on the regression."""
+    source = _CHECK_SCRIPT.read_text()
+    for label in (
+        "FOLD-FP4-BOTH-MEMBERS",
+        "FOLD-FP4-NO-ORPHAN",
+        "FOLD-CAPACITY-TIERS",
+        "FOLD-PREVIEW-ALIAS",
+    ):
+        assert label in source, (
+            f"{label} assertion is absent from the gate — a fold "
+            "regression would not be named in RED output"
+        )
+
+
+def test_gate_uses_repo_local_src() -> None:
+    """The gate must put the worktree's src/ at the FRONT of sys.path so
+    `import charon` resolves to THIS checkout, not whatever `charon` an
+    editable install made shadow it. Without this, a gate run inside a
+    worktree silently exercises a different tree's fold logic — the exact
+    defect this ticket exists to catch."""
+    source = _CHECK_SCRIPT.read_text()
+    assert "sys.path.insert(0, str(_REPO_SRC))" in source, (
+        "gate does not insert its own src/ at the FRONT of sys.path — "
+        "a worktree run could exercise a different checkout's fold logic"
     )
