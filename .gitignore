@@ -96,6 +96,12 @@ fleet/provider-exhaustion-ledger.tsv
 fleet/model-scorecard.tsv
 # ...and the reachability audit (REACHABILITY-GATE analysis; referenced by handoffs).
 !fleet/state/REACHABILITY-AUDIT.md
+# ...and the SG-ISSUE-CONTROL-PLANE design of record (SG-ISSUE-CONTROL-PLANE ticket `owns:` this
+# path). Tracked deliberately, not force-added: with no negation the file was INVISIBLE to
+# `git status`, which is exactly how a 639-line revision silently REPLACED the 109-line design
+# of record without a reviewable diff (PR #257 review F1). A design git cannot see is not a
+# design of record. See the doc's §7 for the location decision and the alternatives rejected.
+!fleet/state/DESIGN-SG-ISSUE-CONTROL-PLANE.md
 
 # regenerable code map (rebuilt by the wired graphify-freshness gate) — do not track (matches product)
 graphify-out/
