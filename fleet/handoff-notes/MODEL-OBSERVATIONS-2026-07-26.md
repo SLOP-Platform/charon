@@ -87,3 +87,56 @@ the bridge, which is the whole point of it.
 **Implication for BRIDGE-PROXY-HEARTBEAT:** the proxy should AUTO-REGISTER on startup (claiming a
 name itself) rather than waiting for the model to call `register`. Same lesson as everything else
 today — put it in the transport, not the prompt.
+
+---
+
+## ROUND 2 — 2026-07-26 afternoon
+
+### deepseek-v4-pro (cont.)
+- **BRIDGE-PROXY-HEARTBEAT** (`9ee20d2`+`aff9414`) — **best proof discipline of the day.** The contract
+  demanded proving an idle session survives its 600s lease by ACTUALLY WAITING. It waited **630s**,
+  red-proofed the no-heartbeat case (purged after 3 board calls), proved the kill path releases the
+  ticket, and confirmed `daemon.py` untouched (0 lines). 5 proxy + 19 daemon tests pass. Added an
+  env kill-switch for testing. It did NOT cut corners on the one requirement that was expensive.
+- **SECRET-HOTROTATE** (`b0cd2ae`) — read all 11 salvaged prior-art diffs, adopted the consensus
+  pattern, and **caught a bug in one of them** (`free-mistral-code`'s one-liner assigns None from
+  `setdefault`'s return). Red-proof 1->0. Hit the work-lease refusal and **again refused
+  `WORK_LEASE_BYPASS=1`** — reported instead, so the work survived for the manager to commit.
+- **SW-STATIC-LEGS-RETIRE** (`e72e49b`) — **pushed back on the ticket's premise and was RIGHT.** The
+  brief said retire `upstream_model`; it proved that field is populated BY DISCOVERY
+  (catalog_refresh.py:120) and is a wire-routing field, not a membership control — retiring it would
+  have broken discovery. Correctly reframed the 175 hand-pinned entries as deploy-time DATA cleanup.
+  Moved `enabled: false` from a silent drop in the routing compiler to an explicit operator control.
+  Produced real before/after snapshots (pool_ids 3 -> 3, LOST: NONE), red-proof fails 3 named tests.
+  ONE DEFECT: edited `src/charon/gateway.py` (11 lines) which it did not own — but the brief forbade
+  proxy.py/forwarder.py by name and OMITTED gateway.py, so it had no stop-check. Manager error.
+
+### minimax-m3-free
+- **ADVREVIEW-LITELLM-COST-FIELD** (release gate) — **the most valuable single output today.** It
+  refuted the entire money-risk premise by proving `litellm_cost` has ZERO production callers and
+  that authoritative spend runs elsewhere — then still returned **HOLD** on a genuine BLOCKING gap
+  (zero test coverage on the new branch) plus a real operational finding (0.0 conflated with
+  "missing" would saturate the COST DIVERGENCE alarm on every free-tier request). Refuting the brief's
+  framing AND finding a real defect is the ideal reviewer behaviour.
+  DEFECT: registered by REUSING the manager's live session name (`kit-fisto`), taking over its board
+  entry — the brief listed it as taken. Cause partly ours (prose, not `claim-jedi-name.sh`).
+- **EFFORT-MODEL-ADOPT** (corran-horn) — **correct refusal.** Found zero `nsurf` sites exist, the work
+  was already delivered as `c8c1f13`, and the files belong to live ticket TIER-BALANCE. Refused all
+  three bad options (no-op commit / bypass an active ticket / duplicate the formula). Cleaned up
+  fully: lease released, worktree AND branch removed, unregistered. The ticket was redundant; it
+  proved it rather than producing a plausible no-op.
+
+### minimax-m3-together
+- **NIM-PROVIDER-CLEANUP** (cal-kestis) — **caught two nonexistent files in the brief's OWNS clause**
+  (`free_tier_catalog.json`, `add-provider.test.sh`), identified the real artifacts, cited the landed
+  review-log showing defect (c) was deliberately deferred, and stopped rather than inventing files.
+  Later re-registered fresh per the new protocol rather than renewing a dead lease.
+
+## CROSS-CUTTING — ROUND 2
+- **Three sessions refused to do bad work and reported instead** (corran-horn, cal-kestis,
+  rey-skywalker). In every case the brief was wrong, not the session. **The manager was the weakest
+  link today** — 4+ file facts asserted without verification, one omitted stop-check that caused an
+  owns violation, and one wrong strand diagnosis (zai). Sessions caught all of them.
+- **Two sessions independently declined the advertised `WORK_LEASE_BYPASS=1`.** Neither was told to
+  in the earlier briefs. That is judgement, not compliance.
+- Still zero fabricated successes across ~12 sessions. Every SHA/test-count/diff spot-checked held.
