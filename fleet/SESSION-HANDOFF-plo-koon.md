@@ -1,16 +1,24 @@
 # HANDOFF — plo-koon (2026-07-27) — READ THIS FIRST
 
 ## STATE (all clean/pushed as of writing)
-rig `55a62f2` · product `f87d4ae` · board GREEN · 4-LOM on **v0.6.1**, all 4 deferred observables PROVEN LIVE.
+rig **`d391f46`** · product `f87d4ae` · board GREEN · 4-LOM on **v0.6.1**, all 4 deferred observables PROVEN LIVE.
+(If this SHA is stale, trust `git -C /home/stack/charon-private log --oneline -1`, not this file.)
 
 ## RUNNING RIGHT NOW
-- `:47205` REVIEW-SUBSTRATE-SUPERSEDED (verdict pending) — prompt `prompts/REVIEW-SUBSTRATE-SUPERSEDED.md`
-- `:47908` kill/focus research worker (subagent-owned)
+- `:47205` REVIEW-SUBSTRATE-SUPERSEDED — **DONE, verdict NOTHING-SURVIVES** (report written). Tab idle, closeable.
+- `:47908` research worker — **GONE** (research completed).
+- ⚠️ Two dead tabs need manual Ctrl+D: `FOCUSTEST-A`, `FOCUSTEST-C` (window 1, idx 2-3).
 - Check: `bash fleet/fleet-idle.sh` · `ps -eo pid,etime,args | grep '[o]pencode --'`
 
-## THE ONE THING IN FLIGHT
-Research agent owes: **focus variant "C"** (spawns a tab WITHOUT stealing focus — operator confirmed it worked, exact command not yet captured), plus SIGTERM-before-SIGKILL ladder, dead-tab `closeOnExit`, tmux comparison. Report: `fleet/handoff-notes/RESEARCH-SESSION-SPAWN-2026-07-27.md`.
-**Next action:** wire C into `fleet/spawn-worker.sh`, then countdown-test while operator types.
+## IN FLIGHT — NOTHING. Both research strands COMPLETE and WIRED.
+Full report: `fleet/handoff-notes/RESEARCH-SESSION-SPAWN-2026-07-27.md` (1023 lines).
+- **Focus fix WIRED** into `spawn-worker.sh`: `wt -w 1 new-tab ... ';' focus-tab -t "${CHARON_WT_HOME_TAB:-0}"`. The `';'` MUST be a quoted standalone arg. ~40-90ms residual, holds across a 4-spawn fan-out. Fails only if the operator types in a DIFFERENT wt window.
+- **`fleet/stop-worker.sh <PORT>` NEW**: verified ladder port->PID->`kill -INT`->`-TERM`->`-KILL`. INT/TERM exit 0 in <1s, port refuses, **WT tab auto-closes**. SIGKILL exits 9 and LEAVES TAB LITTER — fallback only. Verifies pid-gone AND http-000.
+- **There is NO HTTP stop.** `/tui/execute-command` is inert even with real dot-form ids (`app.exit`, `session.interrupt`). Question CLOSED — do not re-investigate.
+- **Hard kill is SAFE**: store is SQLite+WAL, reads cleanly after mid-turn kill; siblings unaffected; only the in-flight turn is lost.
+- **tmux-in-one-WT-tab verified structurally better** (`new-window -d` = ZERO focus change, `capture-pane` = free progress probe, no tab litter) but costs tab ergonomics. Recorded as the fallback if focus-C ever regresses.
+
+**NEXT ACTION:** operator wants a countdown-then-launch test of the focus fix WHILE THEY TYPE. Ask first (see rules).
 
 ## OPERATOR RULES SET TODAY (hard)
 - **ASK BEFORE LAUNCHING ANY TAB.** No spawning while they type.
@@ -40,6 +48,13 @@ Research agent owes: **focus variant "C"** (spawns a tab WITHOUT stealing focus 
 - BACKLOG-A: 2 REWORK, 1 UNSAFE, 1 LAND-WITH-CAVEAT. BACKLOG-B: 4 LAND — not yet landed.
 - P0 open: GRADE-PROVENANCE-DIVERGENCE, MONIT-INSTALL-ENABLE (unblocked), CLIENT-MODEL-LIST-CONVERGE, BRANCH-SPRAWL-ROOT-CAUSE, SEED-PRIOR-REFRESH (gated on WIRE-GRADING-PRIOR-LIVE).
 - Bridge Phase 2 (migrate 5 remaining consumers, then delete 3073 LOC) not started.
+
+## ⚠️ TWO HAZARDS FOUND (unactioned)
+1. Workers spawn a `scoop install opencode@1.18.5` child that **SURVIVES a process-group kill**. `stop-worker.sh` kills the listener pid only — the stray may persist. Check `pgrep -f scoop` after stops.
+2. **`~/.local/share/opencode/opencode.db` is 6.5 GB.** Unmanaged growth, no rotation. Nobody has looked at why. Worth a ticket.
+
+## SUBSTRATE BRANCHES — RESOLVED
+`ADVREVIEW-SUBSTRATE-SUPERSEDED.md`: **NOTHING-SURVIVES.** Master's landed gate (`03ba2b1`+`06b1764`) covers everything. **Both `feat/substrate-first-gate` and `-v2` can be ABANDONED** — ~4000 lines of merge risk deleted. Do NOT attempt that merge (13 conflicts, 3 add/add).
 
 ## MODEL OBSERVATIONS
 `fleet/handoff-notes/MODEL-OBSERVATIONS-2026-07-26.md` — TEMPORARY, delete when SW-PHASE0-GRADE-READ + DONE-SH(c) land. Key: **red-proof is NOT sufficient when the model picks the break** — both P0 gates passed self-chosen red-proofs and caught nothing. SPECIFY the break externally.
