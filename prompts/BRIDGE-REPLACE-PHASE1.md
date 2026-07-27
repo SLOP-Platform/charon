@@ -68,3 +68,19 @@ re-derive the verbs — they are already VERIFIED.
 ```
 bash /home/stack/charon-private/fleet/work-lease.sh acquire BRIDGE-REPLACE-PHASE1
 ```
+
+## Dependencies & sequence
+- **Depends on: D24-SESSION-CTL-SPIKE** — build prereq; it owns `fleet/session-ctl.sh`, the file this
+  ticket lands and extends. Do not re-create it.
+- **Concurrency safety:** owns the new adapter, the UNOWNED `fleet/summary.sh`, and a new test.
+  Deliberately does NOT touch `fleet-droid.sh` (5 owners), `end-session.sh` (4), `droid-bridge.sh` (2)
+  or `handoff.sh` (1) — those migrate inside their own owners' tickets in a later phase. If the work
+  appears to need any of them, STOP and report.
+- **Blocks:** BRIDGE-REPLACE-PHASE2 and eventual deletion of the bridge.
+- **Wave:** migration lane, P0 — but fire it in a QUIET WINDOW (see below).
+
+## ⚠ FIRE ONLY IN A QUIET WINDOW
+This ticket exercises `stop`/`interrupt` against real opencode sessions. Do NOT run it while the
+fleet is busy: an interrupt aimed at the wrong session id kills live work. Before starting, confirm
+with `ps -eo pid,etime,args | grep '[o]pencode --model'` and only proceed when the fleet is idle or
+the operator has explicitly cleared the window. List PIDs before and after and prove none were touched.

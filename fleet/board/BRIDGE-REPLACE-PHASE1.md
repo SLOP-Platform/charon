@@ -4,7 +4,11 @@ difficulty: 3
 work_class: rig-meta
 priority: 0
 branch: feat/bridge-replace-phase1
-depends_on:
+depends_on: D24-SESSION-CTL-SPIKE
+real-dep: D24-SESSION-CTL-SPIKE — TRUE build prereq and shared single-owner of fleet/session-ctl.sh.
+  This ticket LANDS the very file that spike produced (spike/session-ctl @ c74e85b); it is a
+  continuation, not a parallel writer. Land the spike first, then build on it.
+dep-kind: build
 owns: fleet/session-ctl.sh, fleet/summary.sh, fleet/tests/session-ctl.test.sh
 prompt: /home/stack/charon-private/prompts/BRIDGE-REPLACE-PHASE1.md
 serial_justified: |
