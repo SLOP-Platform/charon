@@ -51,6 +51,7 @@ CHECKS: list[tuple[list[str], str]] = [
     (["python3", "tools/check_coverage_ssot.py"], "coverage-ssot"),
     (["python3", "tools/check_no_vacuous.py"], "no-vacuous"),
     (["python3", "tools/check_fail_loud.py"], "fail-loud"),
+    (["python3", "tools/check_dogfood.py"], "dogfood"),
     (["python3", "-m", "pytest", "-q"], "pytest"),
     # docs/REVIEW-LOG.md is gitignored (generated artifact from the per-ticket
     # fragments in docs/review-log/). Running in generate mode is idempotent
