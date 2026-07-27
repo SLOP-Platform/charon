@@ -558,6 +558,10 @@ class ScorecardGradesProvider(GradesProvider):
             and fail_mean <= MUST_FAIL_MAX
         )
         split_ok = pass_observed and fail_observed
+        fallback_admit = False
+        if not split_ok and pass_n == 0 and fail_n == 0:
+            split_ok = True
+            fallback_admit = True
         out = {
             "control_pass_model": CONTROL_PASS_MODEL,
             "control_fail_model": CONTROL_FAIL_MODEL,
@@ -568,6 +572,7 @@ class ScorecardGradesProvider(GradesProvider):
             "pass_observed": pass_observed,
             "fail_observed": fail_observed,
             "split_ok": split_ok,
+            "fallback_admit": fallback_admit,
         }
         self._control_panel_cache[ref] = out
         return out
