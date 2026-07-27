@@ -25,6 +25,19 @@ cross-ref: |
   disposition rationale requirement) must land in both or the two halves certify by different
   rules. Read that ticket's PART 2 (E4 exemptions, E6 non-vacuous) before changing this
   detector's contract.
+detector-blind-spot-2026-07-26: |
+  CONFIRMED FALSE NEGATIVE, found by the DEAD-GATEWAY-MODULES audit
+  (fleet/handoff-notes/DEAD-GATEWAY-MODULES-RULING.md): `tools/check_inert_code.py` does NOT flag any
+  of SIX genuinely-dead gateway modules (RequestInspector, SessionAffinity, Observability,
+  SpeculativeExecutor, ConsensusRouter, VirtualKeyManager). It sees their `_MODULE_SPECS` registration
+  and treats them as reachable.
+  THE DEFECT IN ONE LINE: **reachability-via-registry is not reachability-on-the-request-path.**
+  All six are constructed in gateway.py, stored on the server by proxy_server.py:562-586, and then
+  NEVER invoked — `forwarder.py` (the only place a request reaches a module) wires six OTHER modules
+  and none of these. A detector that clears registry-registered-but-unwired code gives false comfort
+  about exactly the class it exists to catch, which is worse than not running it.
+  SCOPE ADDED: the detector must distinguish CONSTRUCTED/REGISTERED from INVOKED-ON-A-REQUEST-PATH.
+  Use these six as the fixture — a detector change that does not flag all six is not fixed.
 owns: tools/check_inert_code.py, tools/inert-code-disposition.json, tests/test_inert_instance_detect.py
 serial_justified: check_inert_code.py and inert-code-disposition.json are one detector + its own schema
   unit, not two independent surfaces — the detector's classification logic is written against the
