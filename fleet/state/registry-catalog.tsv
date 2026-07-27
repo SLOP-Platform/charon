@@ -1,0 +1,33 @@
+# registry-catalog.tsv — META-CATALOG: a REGISTRY OF REGISTRIES (KS29 primitive applied
+# recursively; Backstage software-catalog pattern). REGISTRY-META-CATALOG ticket, 2026-07-24.
+#
+# HARD OPERATOR CONSTRAINT — INDEX, NOT CONTAINER:
+#   This file lists the registries THEMSELVES, never their contents. Each registry's data
+#   stays in its own file. This file grows with the NUMBER of registries (~a dozen), NEVER
+#   with their entries — so it CANNOT become a god-file, and editing a registry's DATA never
+#   touches this file. fleet/tests/registry-catalog.test.sh asserts NO data-value column
+#   (anti-god-file guard) and that no catalogued registry's data value leaks in here.
+#
+# SCHEMA (exactly 6 metadata/pointer columns — no data-value column, structurally):
+#   name             short id of the registry
+#   purpose          one-line what-it-is
+#   path             repo-root-relative pointer to the registry file (NOT its contents)
+#   schema           the registry's OWN column list (metadata about its shape, not its data)
+#   owner            ticket/component that owns the registry
+#   conformance_gate the check that keeps that registry honest (or '-' if none yet)
+#
+# AUTO-DISCOVERY (fail-closed): fleet/checks/discover-registries.sh scans the tree for
+# registry files by convention (*-registry.tsv, *-register.tsv, *-pool.{txt,tsv},
+# case-insensitive) and reconciles them against this index. A convention-named registry on
+# disk but ABSENT here -> the discovery leg FAILS CLOSED (exit non-zero). Non-convention
+# registries (e.g. tier-models.tsv) are seeded here so they are findable; extra rows are fine.
+#
+# name	purpose	path	schema	owner	conformance_gate
+service-registry	fleet services + their liveness watchdog contract	fleet/state/service-registry.tsv	name|kind|alive_probe|freshness_probe|ttl|restart_cmd|owner	SERVICE-LIVENESS-WATCHDOG	fleet/watchdog/discover-services.sh
+tier-models	per-tier GATEWAY model failover chain for the off-Claude executor	fleet/tier-models.tsv	tier|model|order|notes	TIER-MODELS	fleet/checks/config-ssot-gate.sh
+plane-canary	plane -> canary-script + dogfood-test wiring map	fleet/plane-canary-registry.tsv	plane|canary_script|dogfood_test|wired_in|owner_ticket	PLANE-CANARY-WIRE	fleet/tests/plane-canary.test.sh
+rule-registry	one row per enforceable MANAGER-OPERATING-RULES rule (coverage meta-gate)	fleet/state/RULE-REGISTRY.tsv	rule_id|surface|enforcer|test	RULE-COVERAGE	fleet/checks/rule-coverage.sh
+rule-sync-register	bidirectional rule-coverage audit across slop/ksf/charon	fleet/state/RULE-SYNC-REGISTER.tsv	rule_id|slop|ksf|charon	RULE-SYNC	fleet/checks/rule-sync.sh
+config-sources	SSOT registry of config sources reconciled by config-drift	fleet/state/CONFIG-SOURCES.tsv	sid|kind|read_cmd_template|note	CONFIG-SSOT	fleet/checks/config-ssot-gate.sh
+jedi-name-pool	session-name pool (no-reuse allocator draws from here)	fleet/state/jedi-name-pool.txt	name	HANDOFF-NAME-ALLOCATOR	fleet/tests/claim-jedi-name.test.sh
+lens-registry	durable store of the session lenses (goal + linked tickets + status)	fleet/state/lens-registry.tsv	lens|goal|linked_tickets|status|why	LENS-REGISTRY-AND-REPORT	-

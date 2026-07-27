@@ -30,6 +30,9 @@ fleet/state/*
 # every supervised service. fleet/watchdog/ renders monit config + evaluates liveness FROM it;
 # it is version-controlled config, NOT ephemeral runtime state, so it must survive the blanket ignore.
 !fleet/state/service-registry.tsv
+# ...except the registry META-CATALOG (REGISTRY-META-CATALOG ticket) — the durable INDEX of
+# registries (index-only, not their data); reconciled by fleet/checks/discover-registries.sh.
+!fleet/state/registry-catalog.tsv
 # ...except the BENCH-PROVISIONAL-SCORING design of record (#20 — operator-led
 # deep-dive 2026-07-16). Durable design artifact, sibling to PATH-C-DOGFOOD-EVAL
 # / EVAL-TAXONOMY / EVAL-PIPELINE-DESIGN / S8-GRACEFUL-DEGRADE-DESIGN above;
