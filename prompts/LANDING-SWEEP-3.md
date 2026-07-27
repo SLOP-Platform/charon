@@ -54,6 +54,15 @@ triaged it. Assume this pile contains both kinds.
 - If a branch contains anything that looks like a SECRET or a key, report THAT first and do not
   reproduce the value.
 
+- **USE THE RIGHT DIFF — the two-dot form LIES.** `git diff origin/master..<branch>` renders
+  master's additions since the branch forked as if the BRANCH deleted them. It has already produced
+  false "this branch deletes board tickets" readings.
+  * What the branch actually changes: `git diff --stat origin/master...<branch>` (THREE dots)
+  * Is that content already on master (squash-merge safe):
+    `P=$(git diff --name-only origin/master...<branch>); git diff --stat origin/master <branch> -- $P`
+    An EMPTY result means master already has it. Commit-count NEVER proves this — a squash-merged
+    branch reports unlanded commits forever.
+
 ## RULES
 - **READ-ONLY. No commits, no pushes, no deletions, no worktree changes, no `git checkout`.**
 - Do not touch `/home/stack/code/charon` or `/home/stack/charon-private` working trees.
