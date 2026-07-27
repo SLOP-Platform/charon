@@ -236,3 +236,23 @@ already shipped. Merge aborted; nothing lost.
 **LESSON: before any "which of these two branches is canonical" review, first ask whether the work
 already landed by a third path.** Same shape as EFFORT-MODEL-ADOPT earlier today. A wrong QUESTION
 produces a correct-but-useless answer, and no amount of reviewer quality catches it.
+
+---
+
+## ROUTING FACT — `deepseek-v4-flash` carries a hard 48-request session cap (NOT ours)
+
+Third sighting on 2026-07-27, all on **deepseek-v4-flash**:
+`ResourceExhausted: Worker local total request limit reached (48/48)`
+1. INERT-STARTUP-CHECK — hit the cap; produced a hardcoded-list shortcut instead of a derivation.
+2. KILLTEST-47901 — hit it on BOTH injected prompts, including a trivial "reply CMDPROBE-OK".
+3. (earlier instance already recorded above)
+
+**The cap is UPSTREAM, not ours.** `docker logs charon-gateway-1 --since 2h | grep -ci "request limit|ResourceExhausted"` = **0**. The gateway is relaying provider language, not imposing a limit. "Worker local" is the upstream's own wording.
+
+**Why it matters more than a rate limit:** it does not fail the session, it silently TRUNCATES it. A capped session still reports `STATUS: DONE`. It converts "derive the answer" into "assert the answer" — the cheapest satisfying implementation wins when budget runs out, and nothing in the output says so. That is exactly how a hardcoded frozenset shipped as an inertness "check".
+
+**Routing consequence:**
+* Do NOT use `deepseek-v4-flash` for DERIVATION-HEAVY work (AST analysis, multi-file reads, wide audits). It will produce a plausible shortcut.
+* It is fine for bounded work: single-file reviews, triage with a fixed branch list, short verifications.
+* `deepseek-v4-pro` and `minimax-m3-together` showed no cap across long sessions today — prefer them for anything open-ended.
+* The `BUDGET` field in SESSION REPORT v1 exists to surface this. It only works if sessions fill it honestly; a capped session that reports `BUDGET: ok` is indistinguishable from an uncapped one, so treat deepseek-v4-flash output with extra scrutiny regardless.
