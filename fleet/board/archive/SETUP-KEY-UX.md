@@ -1,3 +1,4 @@
+repo: charon
 tier: strong
 difficulty: 3  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
 work_class: bugfix

@@ -1,3 +1,4 @@
+repo: charon
 tier: standard
 difficulty: 3
 work_class: refactor-decompose

@@ -1,3 +1,4 @@
+repo: charon
 tier: strong
 difficulty: 3
 work_class: refactor

@@ -1,3 +1,4 @@
+repo: charon
 tier: frontier
 difficulty: 5  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
 rebase-after: PROXY-FAILOVER-FIX (parked 2026-07-08 to let the Phase-1 failover fix land solo on proxy_server.py; un-park + rebase on top after it merges)

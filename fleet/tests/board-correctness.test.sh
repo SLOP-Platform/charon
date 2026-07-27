@@ -35,6 +35,7 @@ mk_fleet(){
 mk_ticket(){
   local d="$1" id="$2" branch="$3" deps="${4:-}" build="${5:-}"
   {
+    echo "repo: charon"
     echo "tier: economy"
     echo "difficulty: 1"
     echo "work_class: docs"
