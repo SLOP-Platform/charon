@@ -721,3 +721,303 @@ dropped injection leaves no state). Prefer verify-then-retry over a longer blind
 Killed all four test workers (ports 47901/47902/47903/47904) and my private `tmux -L cp2` server;
 no residual processes on 479xx. The operator's worker (pid 4102750, `--port 47099`) was confirmed intact
 afterwards. Test sessions created during this addendum remain as inert rows in the global store.
+
+---
+
+# ADDENDUM 2 — STOPPING a TUI worker, and the FOCUS-STEAL fix (2026-07-27, third round)
+
+Scope: how a manager reliably STOPS a spawned opencode TUI worker; plus the newly-raised
+requirement that a spawn must not steal the operator's keyboard focus.
+Method: every claim below was produced on workers **I spawned myself** on ports 47901/47902/
+47904/47905/47906/47907/47908/47911. The operator's live workers (47201-47205, 47099) were never
+signalled. `[V]` = verified by execution, `[I]` = inferred, stated as such.
+
+## H. The `/tui/execute-command` question is CLOSED — and the answer is NO
+
+The previous round could not enumerate valid command names because every string returns `true`.
+They are now enumerated **from the binary**, not probed:
+
+```bash
+strings -n 6 /home/stack/.local/lib/node_modules/opencode-ai/bin/opencode.exe \
+  | grep -oE 'app_exit:"app.exit".{0,4500}' | tr ',' '\n'
+```
+
+This dumps opencode's whole keybind→command map. The canonical ids are **dot-separated**, not
+underscore: `app.exit`, `session.interrupt`, `session.new`, `prompt.submit`, `session.compact`,
+`session.export`, `model.list`, … (~150 entries). Every string the previous round tried
+(`app_exit`, `session_interrupt`, `messages_abort`) was the **keybind name**, not the command id —
+which is why they all silently no-op'd.
+
+**But the correct ids do not work either. [V]** On worker 47901:
+
+| Sent to `/tui/execute-command` | Response | Actual effect |
+|---|---|---|
+| `app.exit` (canonical id) | `true` | **none** — pid alive, port still listening, 3 attempts |
+| `app.exit` after `/tui/clear-prompt` | `true` | **none** (rules out the "input must be empty" keybind guard) |
+| `app_exit`, `app.quit`, `quit`, `exit` | `true` | none |
+| `session.interrupt` mid-turn | `true` | **none** — the turn ran on for a further ~110s to completion |
+| `session.new` | `true` | none observable |
+| `prompt.submit` (with text staged) | `true` | **none** — no turn started; `/tui/submit-prompt` is what works |
+
+**Conclusion [V]: `/tui/execute-command` is inert on opencode 1.18.6. There is NO HTTP stop —
+neither a quit nor a turn-interrupt — for a TUI worker.** `/tui/append-prompt` + `/tui/submit-prompt`
+remain the only `/tui/*` endpoints with demonstrated effect. Stop must be done at the OS level.
+This closes the open question from Addendum §F.4; do not spend another round probing it.
+
+## I. THE STOP LADDER — verified, and it is the simple answer
+
+Port→PID→signal. Nothing fancier is needed or better.
+
+```bash
+stop_worker() {                       # $1 = worker port
+  local P="$1" PID
+  PID=$(ss -lptnH "sport = :$P" | grep -oP 'pid=\K[0-9]+' | head -1)
+  [ -n "$PID" ] || { echo "no listener on $P — already stopped"; return 0; }
+
+  kill -INT  "$PID"                                   # 1. graceful — the TUI's own ctrl+c path
+  for i in $(seq 1 5); do sleep 1; kill -0 "$PID" 2>/dev/null || break; done
+  kill -0 "$PID" 2>/dev/null && kill -TERM "$PID"     # 2. still graceful, also exits 0
+  for i in $(seq 1 5); do sleep 1; kill -0 "$PID" 2>/dev/null || break; done
+  kill -0 "$PID" 2>/dev/null && kill -KILL "$PID"     # 3. last resort — leaves a dead tab
+
+  sleep 1                                             # 4. VERIFY — both conditions, never one
+  local code; code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 \
+                     "http://127.0.0.1:$P/api/health")
+  if ! kill -0 "$PID" 2>/dev/null && [ "$code" = "000" ]; then
+    echo "STOPPED port=$P pid=$PID (pid gone, connection refused)"
+  else
+    echo "STOP FAILED port=$P pid=$PID alive=$(kill -0 "$PID" 2>/dev/null && echo y || echo n) http=$code"
+    return 1
+  fi
+}
+```
+
+Measured behaviour, one worker per signal, each spawned by me:
+
+| Signal | Died in | Exit code | Port after | Own `proxy.py` child | WT tab |
+|---|---|---|---|---|---|
+| `kill -INT`  (47905) | **<1s** [V] | **0** [V] | refused (`000`) [V] | reaped [V] | **closes** [V] |
+| `kill -TERM` (47901, 47902 mid-turn, 47906, 47907, 47908) | **<1s** [V] | **0** [V] | refused (`000`) [V] | reaped [V] | **closes** [V] |
+| `kill -KILL` (47904) | <1s [V] | 9 (as WSL reports it) [V] | refused [V] | reaped, but see §K | **stays** at `[process exited with code 9] … press Enter to restart` [V] |
+
+Exit codes were captured by running the identical wrapper under a pty
+(`setsid script -qc "bash run.sh; echo EXITCODE=\$? >> f" /dev/null`) and signalling it — so the
+`0` is opencode's real exit status, not a guess. **SIGTERM is sufficient; SIGKILL was never needed
+in any test.** SIGKILL should be the timeout fallback only, and its use is self-announcing because
+it is the only case that leaves tab litter.
+
+Tab behaviour is now VERIFIED, not inferred: after the test run, window 1 contained **zero**
+KILLTEST tabs (all SIGTERM/SIGINT, exit 0 → auto-closed) while the two tabs whose payload was
+SIGTERM'd `sleep` (exit 143) **remained** at the dead-shell prompt. The rule is
+`closeOnExit`, whose WT default is `graceful` = *close iff exit code 0*; the operator's
+`settings.json` (…`Microsoft.WindowsTerminal_8wekyb3d8bbwe/LocalState/settings.json`, 3251 bytes)
+contains **no `closeOnExit` key**, so the default is in force. **`closeOnExit` is a PROFILE setting
+with no `wt new-tab` CLI equivalent [I, from schema + absence of any accepted flag], so per-spawn
+control is not available — but it is also not needed: exit 0 already closes the tab.** The correct
+fix for dead-tab litter is therefore "use the ladder, don't lead with `kill -9`", not a settings change.
+
+### Is a hard kill safe? YES — established, not assumed [V]
+
+* State lives in **`~/.local/share/opencode/opencode.db` — SQLite in WAL mode** (`opencode.db-wal`
+  18 MB, `-shm` present). WAL is crash-atomic by construction; an untrapped kill is exactly the case
+  it is designed for.
+* After a mid-turn SIGTERM **and** a SIGKILL, a freshly started `opencode serve` read the store
+  cleanly: `GET /api/session` returned all **50** sessions including the killed worker's row, with
+  valid JSON and no error. No repair, no corruption. [V]
+* The **other four live workers on 47201-47204 kept serving throughout** — all still `LISTEN`,
+  all still healthy. Killing one worker does not disturb siblings sharing the db. [V]
+* What IS lost: the **in-flight turn**. The killed session's row shows `tokens {0,0,0}` and
+  `cost 0` — the partial assistant output was never committed. A completed turn on the same worker
+  had recorded `output: 8914, cost: 0.0038`. So: **a kill loses the current turn and nothing else.**
+  Cheap to redo; not a data-integrity risk.
+
+### Do NOT use `pkill -f`
+`pkill -f -- "--port 47901"` matches on the port string, which looks precise, but the pattern also
+matches any wrapper/`script`/shell whose argv contains it, and a mistyped port silently matches
+nothing (exit 1) — indistinguishable from "already dead". `ss`→PID→`kill` gives you the pid to
+verify against. Prefer it. [I, reasoned; not required in testing because the ladder always worked]
+
+### Process groups / `setsid` — not needed
+Each worker already **is** its own process-group and session leader: `PGID == SID == PID`
+(e.g. pid 183807 → pgid 183807, sid 183807), because `wsl.exe -d … -- bash wrapper` gets a fresh
+session per interop invocation. So `kill -- -$PID` is available for free as a group sweep with no
+pidfile and no wrapper change. It was **not necessary** — SIGTERM to the leader already reaped the
+`proxy.py` child in every test. Keep it in reserve, see §K.
+
+## J. Consuming the bridge's liveness signal instead of growing a second one
+
+Per the coordinator's correction, this section does **not** propose a new liveness mechanism.
+What was verified:
+
+* `/api/event` (SSE) on an **actively-working TUI worker** emits **only `server.connected`** — 45 s
+  of capture across a live turn produced 1 event. It is not a progress channel. [V]
+* `GET /api/session/{id}/message` returns `{"data":[]}` **even for a session with 54 481 output
+  tokens**, on every port tried. Message/part counts are not obtainable. [V]
+* A session's `tokens` and `time.updated` **freeze for the whole duration of a turn** and jump only
+  at turn end (observed: frozen at `out 647 / dt 53958` for 40 s while a turn ran, then jumped to
+  `out 8914 / dt 181111`). So the session record is a *completion* signal, never a *progress* one. [V]
+* **`GET /api/session` is GLOBAL, not per-port.** Every worker serves the same shared
+  `opencode.db`, so a session list fetched from port X includes sessions created on ports Y and Z.
+  Any "is *my* worker busy" logic built on it is wrong by construction. [V]
+* Therefore the port-based API offers **no reliable working/idle/stuck discriminator**. Stated
+  plainly, as requested: a verified *we cannot tell from the port*.
+
+**The gap is registration, not detection. [V]** `board(repo=charon)` during this session returned
+exactly **2** sessions — both manager sessions — while **five** opencode workers were live on
+47201-47205. None of the spawned TUI workers appear on the board, so the bridge's existing
+`stall_seconds` / `stalled` / `lease_expires_at` / auto-nudge machinery — which
+`fleet/board/DROID-LIFECYCLE-REAP.md` documents working correctly on a 12.6-hour-dead manager —
+simply has nothing to act on for them.
+
+The mechanism to reuse is already wired and already correct:
+
+* Every worker runs `session-bridge/proxy.py` as a child (`~/.config/opencode/opencode.json` →
+  `mcp.session-bridge`), so the control path exists on every spawn. [V]
+* `proxy.py` registers `atexit` plus **`SIGTERM` and `SIGINT` handlers** (`proxy.py:185-192`) whose
+  `_cleanup` calls `unregister`. So the §I ladder's graceful rungs are exactly the ones that let a
+  worker **release its board row and its ticket on the way out**; `kill -9` skips cleanup and leaves
+  the row to expire via the bridge's own lease TTL. Another reason not to lead with SIGKILL. [V]
+* Registration is **model-elective** and models don't do it — a worker instructed by injected prompt
+  to call `register` produced a session titled "KILLTEST-BRIDGE registration for charon" yet never
+  appeared on the board. [V]
+
+**Recommendation (single liveness notion, per DROID-LIFECYCLE-REAP):** have **`spawn-worker.sh`
+register the worker on the operator's behalf at spawn time** — the harness registering, not the
+model — carrying `session_id`, `pid`, port and ticket. Everything downstream (stall detection,
+nudges, expiry, and any future reaper deciding *whether* to run the §I ladder) then consumes the
+bridge signal that already exists. Do **not** build a port-poller. No second liveness notion.
+
+## K. Two incidental hazards found while killing things
+
+1. **opencode spawns a Windows `scoop install opencode@1.18.5` child.** Seen on worker 47904:
+   `/bin/sh /mnt/c/Users/…/scoop/shims/scoop install opencode@1.18.5` as a direct child of the
+   worker — an auto-update that would *downgrade* the running 1.18.6. It runs in **its own process
+   group**, so it survives `kill -9 $PID` *and* `kill -- -$PGID`; after the kill it reparented and
+   kept running a PowerShell install. I killed it manually. **A stop routine should sweep for
+   `[s]coop.*opencode` strays after stopping a worker**, and the auto-updater is worth disabling
+   outright. [V]
+2. **`~/.local/share/opencode/opencode.db` is 6.9 GB.** Shared by every worker. Not implicated in
+   any failure here, but it is on the critical path of every spawn and every session read. [V]
+
+## L. FOCUS STEAL — measured, and fixed
+
+### The measurement rig (reusable)
+Windows Terminal sets its **window title to the active tab's title**, so the foreground *tab* is
+readable programmatically via `GetForegroundWindow` + `GetWindowText`. A 40 ms-resolution PowerShell
+sampler makes focus steal an objective measurement instead of an opinion. This is how A/B/C were
+separated; keep the technique.
+
+### Results
+
+| Variant | Form | Steal measured | Operator verdict |
+|---|---|---|---|
+| **A** | `wt -w 1 new-tab …` (today's `spawn-worker.sh`) | new tab foreground for **≥1.5 s** [V] | steals — unusable |
+| **B** | spawn into a *separate* window `-w charonw`, then `SetForegroundWindow(orig)` from PowerShell | **750 ms–1.25 s** [V] | steals |
+| **C** | `wt -w 1 new-tab … ';' focus-tab -t <IDX>` — one invocation | **one 40 ms sample per spawn** [V] | **"did not steal the focus"** |
+
+**Why C works and A/B do not — the mechanism, not the syntax.** `wt.exe` executes a chained action
+list **inside a single invocation, in the target window, before the window settles**. `new-tab`
+selects the new tab and `focus-tab -t IDX` re-selects the operator's tab as part of the same
+command, so the new tab is never the input target for a perceptible interval. B fails for a
+different reason: it targets a **different window**, so the cost is a *window activation* — a
+Win32-level focus change that an out-of-process `SetForegroundWindow` can only undo *after* the
+fact, hence the ~1 s hole. A fails because nothing restores focus at all.
+Note the corollary: **C's guarantee only holds when the operator is in the SAME window being
+targeted (`-w 1`).** If they are typing in a *different* WT window, `-w 1` raises window 1 and C
+degrades to the B failure mode. The operator does keep more than one WT window open — this is the
+known limit of C. [V/I]
+
+### Back-to-back fan-out — tested, 4 spawns in immediate succession [V]
+40 ms sampling across ~625 samples: **exactly 5 samples showed a FANTEST tab focused** (one per
+spawn, one spawn showing two), at t=1905/1995/2089/2135/2182 ms — i.e. ~40-90 ms each, and focus
+was back on the operator's tab between every spawn and at the end. **The refocus does not lose the
+race under a 4-tab fan-out.** It is **not** literally zero: a keystroke landing inside that ~40-90 ms
+window would go to the new tab. Honest ceiling, ~1 keystroke per spawn in the worst case.
+*Not tested:* the operator actively typing at the instant of spawn, and the operator switching tabs
+mid-sequence — neither is simulable from here. Both should be exercised once in real use.
+
+### How C learns the index — the fragile part, stated explicitly
+`focus-tab -t` takes an **absolute, 0-based index within the `-w` window**. It is not relative and
+there is no "previous"/MRU form that reliably means *the tab the operator was on*. In testing,
+index `0` happened to be the operator's tab, which is why C looked perfect.
+The manager can **enumerate** the map — `wt -w 1 focus-tab -t $k` then read the foreground title,
+for k=0,1,2,… (indices past the last tab are no-ops, which is how you find the count) — but that
+**flips through the operator's tabs visibly** and is not acceptable on the spawn path. So:
+make it configuration, default 0, e.g. `CHARON_WT_HOME_TAB` set once by the operator.
+Tabs are always **appended at the end**, so a low home index stays stable as workers are added.
+
+### Exact line for `fleet/spawn-worker.sh`
+Replace the final `"$WT" …` invocation with:
+
+```bash
+"$WT" -w "$WINDOW" new-tab --title "$NAME" --tabColor "$COLOR" --suppressApplicationTitle \
+      wsl.exe -d Ubuntu-24.04 -- bash "$RUN" \
+      ';' focus-tab -t "${CHARON_WT_HOME_TAB:-0}"
+```
+
+The `';'` must be a **quoted, standalone argv element** — unquoted, bash eats it; unseparated,
+`wt` folds it into the payload. Everything already won is preserved: tab lands in the operator's
+existing window, named, coloured, `--suppressApplicationTitle`, running `opencode --port N --model
+charon/M` via the wrapper, and injectable after the Addendum-§D readiness gate.
+
+## M. tmux-in-one-WT-tab — the option that removes the focus mechanism entirely [V]
+
+Re-evaluated on the corrected topology (ONE WT tab → one tmux session → workers as tmux *windows*),
+and it tests better than its earlier ranking implied. tmux **3.4** is installed. `libtmux` is **not**
+installed (`import libtmux` → ImportError); plain `tmux` CLI was sufficient for everything below, so
+adopting libtmux would be adding a dependency for no verified gain.
+
+```bash
+tmux new-session -d -s workers -n manager 'bash -i'
+tmux new-window -d -n "W-47911" \
+     "cd /home/stack/charon-private && exec /home/stack/.local/bin/opencode --port 47911 --model charon/deepseek-v4-flash"
+tmux setw -t W-47911 window-status-style 'fg=colour196,bold'   # per-window colour
+tmux attach -t workers                                          # operator watches; Ctrl-b <n> to switch
+```
+
+Verified [V]:
+* **`new-window -d` = zero focus change.** `display-message -p '#{window_index}:#{window_name}'`
+  read `0:manager` before the spawn, immediately after it, and after the worker came up. There is
+  no flicker to measure because nothing at the Windows level is created. This *eliminates* the
+  mechanism rather than narrowing the window to 40 ms.
+* opencode's TUI runs correctly inside tmux — readiness gate passed at **4 s** with **18**
+  established loopback connections (a real TUI client attached).
+* `/tui/append-prompt` + `/tui/submit-prompt` worked unchanged; `capture-pane -p -t W-47911` showed
+  the prompt rendered and `TMUXWORKS` answered. **`capture-pane` is also a free progress probe that
+  the WT topology does not have.**
+* Stop: `kill -INT $PID` (or `tmux kill-window -t W-47911`) → pid gone, `health=000`, and the tmux
+  window **vanished from `list-windows`** — no dead-tab litter, ever.
+* Per-window colour works via `window-status-style`.
+
+Honestly LOST vs WT tabs: at-a-glance overview (one status line instead of a row of coloured tabs),
+native mouse/click-to-switch and Windows-native copy/paste (tmux needs mouse mode and its own
+copy-mode), independent per-tab scrollback, and the operator must learn `Ctrl-b` navigation. All
+workers also die with the single WT tab unless the operator re-attaches — though `tmux` surviving a
+detach is strictly *better* than today, where closing the tab is fatal.
+
+## N. Ranked recommendation
+
+1. **Stopping — `kill -INT` → `kill -TERM` → `kill -KILL`, discovered by port, verified by
+   `pid gone AND http 000`** (§I). Graceful at rungs 1-2, exits 0, closes the tab, lets `proxy.py`
+   unregister from the bridge, loses only the in-flight turn, cannot corrupt the WAL store.
+   Port→PID + `kill` **is** the whole answer; nothing more elegant is warranted. There is no HTTP
+   stop and no plugin hook to wait for.
+2. **Focus — variant C** (§L): one `wt` invocation, `new-tab … ';' focus-tab -t ${CHARON_WT_HOME_TAB:-0}`.
+   Operator-confirmed; ~40-90 ms residual per spawn; holds under a 4-way fan-out; degrades only when
+   the operator is typing in a *different* WT window.
+3. **tmux-in-one-WT-tab** (§M) is the structurally cleaner answer to both problems at once — zero
+   focus steal by construction, litter-free kill, plus `capture-pane` as a progress probe. It costs
+   the operator's tab ergonomics. Worth a deliberate trial if C's residual steal or its
+   multi-window limitation bites in practice.
+4. **Liveness — register at spawn, consume the bridge** (§J). Do not build a port-poller.
+
+## O. Clean-up statement
+
+All test workers stopped and verified: nothing listening on 479xx. `tmux -L charontest` server
+killed. The `scoop install opencode@1.18.5` stray was killed. PowerShell probes removed from
+`C:\Users\<user>\`. The operator's workers (47201-47205, 47099) were never signalled and were
+confirmed still listening afterwards.
+**Two tabs remain for the operator to close manually — `FOCUSTEST-A` and `FOCUSTEST-C`** (window 1,
+indices 2 and 3). Their payload was a `sleep` I SIGTERM'd, so they exited 143 and `closeOnExit:
+graceful` correctly kept them — the same rule §I documents. Press Ctrl+D or Enter in each.
+Test sessions remain as inert rows in the shared store.

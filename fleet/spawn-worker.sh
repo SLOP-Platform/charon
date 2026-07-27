@@ -49,8 +49,14 @@ RUN=$(mktemp /tmp/spawn-worker-XXXXXX.sh)
 } > "$RUN"
 chmod +x "$RUN"
 echo "spawn-worker: tab='$NAME' model=$MODEL port=$PORT window=$WINDOW cwd=$WORKDIR"
+# FOCUS FIX (verified): a bare `new-tab` STEALS FOCUS and eats the operator's keystrokes.
+# Chain a focus-tab back to the home tab in the SAME wt invocation. The ';' must be a QUOTED
+# STANDALONE ARG or wt swallows it as a shell separator. Residual steal ~40-90ms; holds across a
+# 4-spawn fan-out. Only fails if the operator is typing in a DIFFERENT wt window (cross-window
+# activation can only be undone after the fact).
 "$WT" -w "$WINDOW" new-tab --title "$NAME" --tabColor "$COLOR" --suppressApplicationTitle \
-      wsl.exe -d Ubuntu-24.04 -- bash "$RUN"
+      wsl.exe -d Ubuntu-24.04 -- bash "$RUN" \
+      ';' focus-tab -t "${CHARON_WT_HOME_TAB:-0}"
 
 # ---------------------------------------------------------------------------------------------
 # OPTIONAL: inject the opening prompt so the worker starts WITHOUT a human keystroke.
