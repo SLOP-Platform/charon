@@ -5,6 +5,16 @@ work_class: rig-meta
 priority: 0
 branch: design/branch-sprawl-root-cause
 depends_on:
+root-cause-evidence-2026-07-26: |
+  ⚠ A PRIME SUSPECT IS ALREADY IDENTIFIED — start here, do not re-derive it.
+  The RIG-BRANCH-16-DEEPDIVE review evidenced the `-v2`/`-rederive` duplication pattern at
+  **`fleet/land.sh:151-161` — the EXISTING-BRANCH GUARD**. When land.sh refuses to reuse an existing
+  branch, people cut `<name>-v2` instead of continuing the original. That single guard plausibly
+  explains five of the duplicate pairs in the 16-branch cohort (substrate-first-gate,
+  coverage-meta-gate, stranded-work-detect, github-limits-hardening, session-end-push-gate).
+  VERIFY this against the wider 50-branch population before concluding — one cohort is not the fleet.
+  If it holds, fixing that guard is worth more than any number of reaps: it stops NEW duplicates being
+  created, which is the only thing that ends the cleanup treadmill.
 owns: fleet/state/BRANCH-SPRAWL-ROOT-CAUSE.md
 serial_justified: |
   ONE root-cause investigation producing ONE ruling. Owns no code deliberately: the fix is unknown
