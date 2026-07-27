@@ -20,6 +20,12 @@ note: |
     escapes that set (prints empty / an id outside the candidates) instead of staying within it.
   b1/c1 (static-chain fallback when no live data, and when no candidate has any live evidence)
   already PASS — the fallback path is correct; only the real-outcome-driven pick path is broken.
+grading-candidacy-2026-07-26: |
+  OPERATOR DESIGN DECISION — see fleet/state/GRADING-CANDIDACY-DESIGN.md (binding).
+  GRADED and ROUTING-CANDIDATE are SEPARATE axes. Manager outcomes on NON-Anthropic models
+  must be RECORDED (they are silently skipped today). Anthropic models MAY be graded as a
+  deliberate LITMUS TEST / reference ceiling, but are EXCLUDED from routing candidacy via an
+  operator-controlled SWITCH that FAILS CLOSED. [[sg-never-anthropic]] is unchanged.
 accept: |
   fleet/tests/assign-dispatch.test.sh (already exists, do not rewrite it — the fix must make THIS
   test green): assign.py's real-outcome pick (a) leads the resolved candidate chain when live

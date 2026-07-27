@@ -52,6 +52,12 @@ note: |
   outcome." Manager-landed work is invisible to the ledger, so the scorecard only ever sees
   droid-run tickets — a sampling bias in the data that drives model ranking. Worth folding into the
   (c) scope: an outcome that is not recorded is indistinguishable from one that never happened.
+grading-candidacy-2026-07-26: |
+  OPERATOR DESIGN DECISION — see fleet/state/GRADING-CANDIDACY-DESIGN.md (binding).
+  GRADED and ROUTING-CANDIDATE are SEPARATE axes. Manager outcomes on NON-Anthropic models
+  must be RECORDED (they are silently skipped today). Anthropic models MAY be graded as a
+  deliberate LITMUS TEST / reference ceiling, but are EXCLUDED from routing candidacy via an
+  operator-controlled SWITCH that FAILS CLOSED. [[sg-never-anthropic]] is unchanged.
 accept: |
   (a) ``merged_pr_touching_owns`` (fallback (c)) is tightened to only match a merged PR whose
   HEAD BRANCH matches the ticket's recorded ``branch:`` prefix/pattern, OR whose PR title/body
