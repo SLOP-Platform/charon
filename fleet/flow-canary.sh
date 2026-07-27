@@ -13,13 +13,20 @@
 # inert meter, or a dead-no-op exclusion CANNOT produce:
 #   1. ROUTE   — X-Charon-Provider is a provider IN the tier model's pool, the
 #                resolved upstream model is real (and never Anthropic), and the
-#                SERVED leg is a funded-FREE class (free-first respected).
+#                served leg is the highest-priority NON-parked/keyed leg per the
+#                LIVE SSOT funding_class_order (free-first respected — NO cry-wolf
+#                on a sanctioned class-3 drain-then-park leg).
 #   2. METER   — the served provider's observer counter ADVANCES (served +>=1)
 #                and the meter records a priced amount for the request. An
-#                inert meter (#167) leaves the counter flat -> RED.
+#                inert meter (#167) leaves the counter flat -> RED. The
+#                cost-delta backstop asserts >0 for a DRAINING (class-3 / drained)
+#                leg — a near-un-failable >=0 was decorative and so is dropped.
 #   3. PARK    — no parked/drained provider appears anywhere in the served path
 #                (served leg OR any attempted failover leg). A dead-no-op
 #                exclusion (#188) that lets a parked provider be attempted -> RED.
+#                A positive-GREEN when providers ARE parked confirms at least one
+#                excluded provider was actually a CANDIDATE in the head-model pool
+#                (else the "EXCLUDED" claim is vacuous).
 #   4. CONFIG  — the tier set is canonical per `charon tier ranks`
 #                (economy<strong<frontier, ranks 1/2/3, and NO stray `standard`),
 #                the tier's head model is served, its providers are keyed.
@@ -44,6 +51,10 @@
 #     fleet/env-registry.sh:parse_tier_chain.
 #   • tier canonicality: `charon tier ranks` (src/charon/cli.py:_tier_ranks) —
 #     the SSOT for what a tier name means. Never re-derive tier ranks here.
+#   • funding-class priority (free-first): the SSOT
+#     `charon.routing_policy._FUNDING_CLASS_ORDER` (ordering 1<3<2<4). Never
+#     re-derive the order — that is what CRY-WOLFED the canary on a sanctioned
+#     class-3 drain leg. Read live via _funding_order_json.
 #   • observable state: the gateway's own /charon/status snapshot
 #     (proxy_server.py:status_snapshot) — providers[*].{served,cost}, usage,
 #     and balance[*].{funding_class,parked,drained}. One source, not a second
@@ -75,6 +86,19 @@ FC_PROMPT="${FC_PROMPT:-reply with the single word: PONG}"
 FC_MAX_TOKENS="${FC_MAX_TOKENS:-16}"
 FC_REQ_TIMEOUT_S="${FC_REQ_TIMEOUT_S:-45}"
 FC_STATUS_TIMEOUT_S="${FC_STATUS_TIMEOUT_S:-8}"
+# Funding-class priority SSOT. The free-first invariant is defined by
+# `charon.routing_policy._FUNDING_CLASS_ORDER` (lower = preferred; see
+# routing_policy/__init__.py). The canary MUST NOT reimplement the order —
+# like `charon tier ranks` for tier names, it reads the SSOT live. Two overridable
+# hooks so the hermetic dogfood can pin a deterministic order without a `charon`
+# install in the box:
+#   FC_FUNDING_ORDER_JSON  a JSON {fc_str: rank} blob to use INSTEAD of the import
+#                          (the test sets this to the known-good order).
+#   FC_FUNDING_ORDER_CMD   a shell command that STDOUTs the JSON blob (default:
+#                          import charon.routing_policy and dump it).
+# When both are unset, the SSOT is read via the live `charon` module. If the
+# import fails AND no override is set, the free-first stage errors out (RED) —
+# never silently falls back to a reimplementation.
 
 # Scratch dir for JSON snapshots + response capture. JSON is ALWAYS passed to
 # python by FILE PATH (never embedded in a -c string — the status payload is
@@ -101,6 +125,31 @@ try:
 except Exception:
     pass
 " 2>/dev/null
+}
+
+# ── funding-class priority SSOT (charon.routing_policy._FUNDING_CLASS_ORDER) ──
+# Returns a JSON {fc_str: rank_int} object on stdout, or 'ERR' + a reason.
+# MUST NOT reimplement the order; the live `charon` module is the SSOT. The
+# hermetic dogfood pins FC_FUNDING_ORDER_JSON so it never depends on `charon`
+# being importable in the test box. Defaulting (the hardcode that caused the
+# cry-wolf) is intentionally NOT done — a missing SSOT is a RED, not a guess.
+_funding_order_json(){
+  if [ -n "${FC_FUNDING_ORDER_JSON:-}" ]; then
+    printf '%s' "$FC_FUNDING_ORDER_JSON"
+    return 0
+  fi
+  local cmd="${FC_FUNDING_ORDER_CMD:-}"
+  if [ -z "$cmd" ]; then
+    cmd='python3 -c "from charon.routing_policy import _FUNDING_CLASS_ORDER as o; import json; print(json.dumps({str(k):v for k,v in o.items()}))"'
+  fi
+  local out
+  out="$(eval "$cmd" 2>/dev/null)" || true
+  if [ -n "$out" ]; then
+    printf '%s' "$out"
+  else
+    printf 'ERR:funding_class_order SSOT unreadable (charon import failed and no FC_FUNDING_ORDER_JSON override)'
+    return 1
+  fi
 }
 
 # ── tier chain from tier-models.tsv (env-registry.sh:parse_tier_chain) ──────
@@ -267,28 +316,107 @@ except Exception: print('err')
   else
     _pass "route: resolved upstream model '$resolved_model' is real and non-Anthropic"
   fi
-  # FREE-FIRST: the served leg must be a funded-free class (fc 1 or 2). A paid
-  # (fc 3) leg serving is the free-first break.
+  # FREE-FIRST: the served leg must be the HIGHEST-PRIORITY NON-parked/keyed
+  # leg in the pool per the live SSOT `charon.routing_policy._FUNDING_CLASS_ORDER`
+  # (order 1<3<2<4 → free-recurring first, then class-3 drain-then-park, then
+  # flat-sub, then PAYG). The prior check hardcoded `fc∈{1,2}=free` — that
+  # reimplementation CRY-WOLFED on a legitimate class-3 (sanctioned
+  # drain-then-park) leg serving. A proactive guard that false-REDs on normal
+  # operation is worse than none, so we read the SSOT, not a guess, and we
+  # compare against the BEST non-parked candidate the forwarder would have
+  # picked, thresholding on parking (not funding_class) — exactly what the
+  # forwarder's order-then-exclude routing does.
   if [ -n "$provider" ]; then
-    local fc
-    fc="$(python3 -c "
-import json,sys
-try: print((json.load(open(sys.argv[1])).get('balance') or {}).get(sys.argv[2],{}).get('funding_class'))
-except Exception: print('None')
-" "$after_file" "$provider" 2>/dev/null)"
-    if [ "$fc" = "1" ] || [ "$fc" = "2" ]; then
-      _pass "route/free-first: served leg '$provider' is funding_class $fc (funded-free) — a free leg served before any paid leg"
-    else
-      _red "route/free-first: served leg '$provider' is funding_class $fc (NOT free 1/2) — free-first ordering violated (a paid leg served)"
-    fi
+    local order_json
+    order_json="$(_funding_order_json)" || {
+      _red "route/free-first: $order_json"
+      return
+    }
+    local ff
+    ff="$(python3 - "$after_file" "$head_model" "$provider" "$order_json" <<'PYEOF'
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception as exc:
+    print("ERR:status snapshot unreadable: %s" % exc); sys.exit(0)
+head, served, order_raw = sys.argv[2], sys.argv[3], sys.argv[4]
+pool = (d.get("pools") or {}).get(head) or []
+bal = d.get("balance") or {}
+try:
+    order = {int(k) if k != "None" else None: int(v) for k, v in json.loads(order_raw).items()}
+except Exception as exc:
+    print("ERR:funding-class order unreadable: %s" % exc); sys.exit(0)
+
+def fc_of(p):
+    v = bal.get(p)
+    if not isinstance(v, dict):
+        return None
+    fc = v.get("funding_class")
+    try:
+        return int(fc) if fc is not None else None
+    except Exception:
+        return None
+
+def is_excluded(p):
+    v = bal.get(p)
+    if not isinstance(v, dict):
+        return False
+    return bool(v.get("parked")) or bool(v.get("drained"))
+
+# Candidates the forwarder would consider from this pool: keyed (in balance)
+# and NOT parked/drained. Unknown funding_class → None → order 5 (sort last),
+# matching `funding_class_order`. The PROOF that the served leg was the
+# free-first pick is: served == the BEST candidate by SSOT order (ties broken
+# arbitrarily — the snapshot cannot expose drain-remaining, so we treat a tie
+# as acceptable; parking/exclusion is the load-bearing signal).
+candidates = [(p, order.get(fc_of(p), 5)) for p in pool
+              if p in bal and not is_excluded(p)]
+served_fc = fc_of(served)
+served_order = order.get(served_fc, 5)
+if not candidates:
+    print("ERR:pool '%s' has no keyed/non-excluded candidates to free-first against (pool=%s)" % (head, ",".join(pool)))
+    sys.exit(0)
+best_order = min(o for _, o in candidates)
+# If the served leg isn't a candidate at all (e.g. it was served anyway
+# because every leg was parked — the never-strand fallback) we don't have a
+# free-first violation: the forwarder's never-strand fallback explicitly
+# serves the original chain when no live leg exists.
+best_candidates = [p for p, o in candidates if o == best_order]
+if is_excluded(served):
+    # served an EXCLUDED leg — STAGE 3 catches that as a PARK/dead-no-op; here
+    # we don't double-count it as a free-first break (different failure mode).
+    print("OK:skip served an excluded leg; park stage reports it")
+elif served in best_candidates:
+    print("OK:%s (fc=%s, order=%d) is the highest-priority non-parked candidate in the pool (best=%s, orders=%s)" % (
+        served, served_fc, served_order, ",".join(best_candidates),
+        ",".join(str(o) for _, o in sorted(candidates, key=lambda c: c[1]))))
+elif served_order < best_order:
+    print("OK:%s (fc=%s, order=%d) outranks the other candidates (best=%d)" % (
+        served, served_fc, served_order, best_order))
+else:
+    ranked = ",".join("%s(fc=%s,o=%d)" % (p, fc_of(p), o) for p, o in sorted(candidates, key=lambda c: c[1]))
+    print("BAD:%s (fc=%s, order=%d) served while a higher-priority non-parked candidate was skipped: %s" % (
+        served, served_fc, served_order, ranked))
+PYEOF
+)"
+    case "$ff" in
+      OK:*)    _pass "route/free-first: ${ff#OK:} — the SSOT free-first ordering was respected (no cry-wolf on a sanctioned class-3 drain leg)" ;;
+      ERR:*)  _red "route/free-first: ${ff#ERR:}" ;;
+      BAD:*)  _red "route/free-first: ${ff#BAD:} — free-first ordering violated (a lower-priority leg served before a higher-priority non-parked one)" ;;
+      *)      _red "route/free-first: unexpected analysis output: $ff" ;;
+    esac
   fi
+  _info "funding-class order SSOT: ${order_json}"
 
   # ── STAGE 2: METER ────────────────────────────────────────────────────────
   # Observable, concurrency-robust: the SERVED provider's observer counter must
   # advance by >= 1 (other live traffic only adds). A flat counter = inert meter
-  # (#167). The priced amount is the observer's own recorded cost-delta (the
-  # meter of record); a funded-free leg legitimately prices at ~0, so the
-  # load-bearing anti-inert signal is the served-count advance.
+  # (#167). The cost-delta is a DRAINING-leg backstop ONLY: a funded-free leg
+  # legitimately prices at ~0, so a blanket `cost >= 0` was near-un-failable
+  # (decorative). A class-3 / drained leg is a PAYING leg, so its cost-delta MUST
+  # be > 0 — that proves the leg actually drew against its balance (a no-op drain
+  # would leave cost flat). The served-count advance remains the load-bearing
+  # anti-inert signal for every other class.
   _stage "STAGE 2 — METER (served-by=$provider)"
   if [ -z "$provider" ]; then
     _red "meter: no served provider known — cannot assert a meter delta"
@@ -314,12 +442,32 @@ print(f'{sa-sb} {ca-cb}')
     else
       _red "meter: observer 'served' for '$provider' did NOT advance (delta=$dserved) — INERT METER (#167 class)"
     fi
-    local costok
-    costok="$(python3 -c "print('yes' if float('$dcost') >= 0 else 'no')" 2>/dev/null)"
-    if [ "$costok" = "yes" ]; then
-      _pass "meter: observer recorded a priced cost-delta ($dcost, >=0) for this request"
+    # Draining leg backstop: a class-3 (drain-then-park) or any drained leg is
+    # a PAYING leg — its cost-delta MUST be > 0, or the meter recorded a free
+    # ride on a balance it should have drawn against. A funded-free leg may
+    # legitimately price at ~0, so we DO NOT assert > 0 there (that was the
+    # decorative >=0 trap). The funding-class is read from the snapshot.
+    local sv_fc sv_drained
+    sv_fc="$(python3 -c "
+import json,sys
+try: print((json.load(open(sys.argv[1])).get('balance') or {}).get(sys.argv[2],{}).get('funding_class'))
+except Exception: print('None')
+" "$after_file" "$provider" 2>/dev/null)"
+    sv_drained="$(python3 -c "
+import json,sys
+try: print('yes' if (json.load(open(sys.argv[1])).get('balance') or {}).get(sys.argv[2],{}).get('drained') else 'no')
+except Exception: print('no')
+" "$after_file" "$provider" 2>/dev/null)"
+    if [ "$sv_fc" = "3" ] || [ "$sv_drained" = "yes" ]; then
+      local drain_ok
+      drain_ok="$(python3 -c "print('yes' if float('$dcost') > 0 else 'no')" 2>/dev/null)"
+      if [ "$drain_ok" = "yes" ]; then
+        _pass "meter: draining leg '$provider' (fc=$sv_fc, drained=$sv_drained) recorded a positive cost-delta ($dcost, >0) — balance was drawn, not a free ride"
+      else
+        _red "meter: draining leg '$provider' (fc=$sv_fc, drained=$sv_drained) recorded a zero/negative cost-delta ($dcost) — a PAYING leg took a free ride (decorative >=0 would have passed this)"
+      fi
     else
-      _red "meter: observer cost-delta is negative ($dcost) — the meter went backwards"
+      _info "meter: served leg '$provider' is fc=$sv_fc (not a draining/payg leg) — cost-delta backstop not applicable (served-count advance is the load-bearing signal)"
     fi
   fi
 
@@ -355,7 +503,34 @@ print(('SERVED:'+sv if served_excluded else '') + '|' + ','.join(bad) + '|' + ',
   elif [ -z "$all_excluded" ]; then
     _pass "park: no provider is currently parked/drained — exclusion not exercised on this run (positive firing proven in the dogfood)"
   else
-    _pass "park: parked/drained providers [$all_excluded] were EXCLUDED from the served path"
+    # FIX-4 (minor): the positive-GREEN "X was EXCLUDED" is only meaningful if
+    # at least one of the parked/drained providers was actually a CANDIDATE in
+    # the head-model pool — else the EXCLUDED claim is vacuous (the provider was
+    # never going to be considered). A provider that isn't even in the pool being
+    # "excluded" proves nothing about the exclusion path. The pool is the
+    # head-model's pool from the snapshot; a candidate is a keyed (in balance)
+    # member of it. We don't RED on a vacuous-park positive (it's a weak signal,
+    # not a silent break), but we downgrade it from a passing assertion to an
+    # info note so the GREEN verdict can't be misread as "exclusion proven".
+    local pool_csv
+    pool_csv="$(python3 -c "
+import json,sys
+try: print(','.join((json.load(open(sys.argv[1])).get('pools') or {}).get(sys.argv[2],[])))
+except Exception: print('')
+" "$after_file" "$head_model" 2>/dev/null)"
+    local excluded_in_pool
+    excluded_in_pool="$(python3 - "$pool_csv" "$all_excluded" <<'PYEOF'
+import sys
+pool = set(p for p in sys.argv[1].split(',') if p)
+excluded = set(p for p in sys.argv[2].split(',') if p)
+print(','.join(sorted(pool & excluded)) or '')
+PYEOF
+)"
+    if [ -n "$excluded_in_pool" ]; then
+      _pass "park: parked/drained providers [$all_excluded] were EXCLUDED from the served path; [$excluded_in_pool] were head-model pool candidates — exclusion is non-vacuous"
+    else
+      _red "park: parked/drained providers [$all_excluded] were none of them candidates in the '$head_model' pool — the EXCLUDED positive-GREEN is VACUOUS (proves nothing; exclusion must fire against a real candidate to be load-bearing)"
+    fi
   fi
 }
 
