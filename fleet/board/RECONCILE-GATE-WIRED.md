@@ -3,7 +3,7 @@ tier: strong
 difficulty: 3
 priority: 0
 work_class: rig-meta
-branch: feat/reconcile-gate-wired
+branch: fix/reconcile-gate-wired-v2
 owns: fleet/checks/reconcile-gate-wired.sh, fleet/tests/reconcile-gate-wired.test.sh
 serial_justified: The check and its fail-on-revert test are one invariant — a meta-gate that
   detects built-but-inert checks must ship with the fixture proving it goes RED when a check is
