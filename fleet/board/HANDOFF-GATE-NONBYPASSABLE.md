@@ -5,7 +5,7 @@ priority: 0
 work_class: rig-meta
 branch: feat/handoff-gate-nonbypassable
 owns: fleet/land.sh, fleet/checks/rig-ci-scope.sh
-depends_on: RECONCILE-WIRING
+depends_on: RECONCILE-WIRING, MERGE-DROP-RATCHET
 real-dep: RECONCILE-WIRING shared fleet/land.sh GATE_PARTS surface — merge-order so the conditional
   handoff-check.sh wiring COMPOSES with (does not clobber) the reconciler wiring RECONCILE-WIRING adds
   to land.sh. rig-ci-scope.sh half (public-product CI backstop) is independent.
