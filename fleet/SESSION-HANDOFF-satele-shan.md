@@ -121,6 +121,30 @@ would likely find more. *Class question:* the handoff is the ONLY artifact carry
 across the boundary and it has no red-proof. What would a fail-on-revert test for a handoff even
 look like? That is the same "detector with no test" class as 5a.
 
+**5e. SECRET DETECTION FIRES TOO LATE — a key nearly entered a committed handoff.**
+*Measured, not assumed:* a gateway API key was inlined into a re-measure command in this handoff.
+It was caught **by accident** — `handoff-check.sh` flagged it as an unknown SHA, a name collision in
+an unrelated check.
+Then verified empirically: `gitleaks` IS installed and DOES detect that exact 32-hex string in a
+`.md` file (`gitleaks detect` on a fixture repo -> `leaks found: 1`). **So detection is not the gap.**
+The gap is WHEN it runs: `.github/workflows/gitleaks.yml` fires in CI, i.e. on push/PR — *after* the
+secret is already in local git history, where blocking a merge no longer removes it.
+*Class questions to answer:*
+  - Is there ANY local/pre-commit secret gate, or does every secret reach git history first?
+    (`board-lock.sh` and `land.sh` are the two chokepoints every commit passes — neither scans.)
+  - What is `gitleaks.yml`'s actual path scope? Does it cover `fleet/*.md`, `fleet/state/`,
+    `fleet/handoff-notes/`? A grep for `paths`/`args` in that workflow returned NOTHING — scope
+    UNVERIFIED.
+  - Is `.gitleaks.toml` absent on purpose? Defaults may miss this rig's key shapes (bare 32-hex,
+    no provider prefix).
+  - **Outside the box:** the near-miss was caught by a gate looking for something else entirely.
+    How many other real defects are being caught incidentally rather than by design — and what is
+    the population of checks whose true coverage nobody has measured?
+*Blast radius:* HIGH and irreversible-ish — a committed secret needs key rotation plus history
+rewriting, and this rig mirrors to a PUBLIC GitHub repo.
+*Do not close this by adding a gate before answering the scope question — `gitleaks` may already
+cover it and simply run at the wrong moment.*
+
 **DONE-WHEN:** each has a written verdict, and any that changes a ticket's premise re-scopes it.
 
 ---
