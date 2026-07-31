@@ -10,17 +10,23 @@
 # Safe to run multiple times (idempotent): already-migrated notes are skipped.
 #
 # USAGE:
-#   fleet/memory/migrate-frontmatter.sh [--project <name>] [--dry-run]
+#   fleet/memory/migrate-frontmatter.sh [--project <name>] [--apply] [--dry-run]
 #
 #   --project   basic-memory project name (default: the default project)
-#   --dry-run   show what would change without writing
+#   --apply     actually write changes (DEFAULT IS DRY-RUN — this vault is live)
+#   --dry-run   explicit no-op form; same as the default
 #   -h|--help   print this header
 #
 # Env:
 #   BM  basic-memory CLI path (default: basic-memory, must be on PATH)
 set -uo pipefail
 BM="${BM:-basic-memory}"
-DRY_RUN=0
+# DRY-RUN BY DEFAULT. This script mutates the operator's REAL basic-memory vault via
+# `basic-memory tool edit-note`. Its sibling fleet/memory/curation.sh and the repo's
+# fleet/branch-reaper.sh both default to dry-run and require an explicit --apply; a
+# one-shot migration over live memory must not be the one exception. Running it bare
+# used to write to every note in the vault.
+DRY_RUN=1
 PROJECT=()
 
 usage() { sed -n '2,/^$/s/^# \?//p' "${BASH_SOURCE[0]}"; exit 0; }
@@ -29,6 +35,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --project) PROJECT=(--project "$2"); shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
+    --apply)   DRY_RUN=0; shift ;;
     -h|--help) usage ;;
     *) echo "unknown: $1"; usage ;;
   esac
@@ -114,5 +121,5 @@ except: print('no')
 done
 
 echo "== done: $migrated migrated, $skipped already-caught up, $failed failed =="
-[ "$DRY_RUN" -eq 1 ] && echo "(dry-run — no changes written)"
+if [ "$DRY_RUN" -eq 1 ]; then echo "== DRY-RUN: no changes written. Pass --apply to act. =="; fi
 exit $failed
