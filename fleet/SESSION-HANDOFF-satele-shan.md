@@ -137,16 +137,16 @@ d6267c3 land: DOGFOOD-GATE — e2e gate that fails on a broken fold (external re
 
 > Auto-emitted machine state is under `## Auto-generated state` below. Fill `### Manager's first actions (priority order)
 
-1. **Check `RECONCILE-GATE-MERGE` (:47361)** — a worker is resolving a REAL conflict on
+1. **[MOOT — PR #285 LANDED at 7b2908b; ticket archived; the worktree no longer exists]** ~~Check `RECONCILE-GATE-MERGE`~~ — a worker is resolving a REAL conflict on
    `fix/reconcile-gate-wired-v2` (PR #285, `mergeable_state=dirty`; GitHub update-branch returns
    422). It was told: take master's `fleet/preflight.sh` as base and RE-APPLY the wiring on top;
    and to STOP and report if master already wired that gate by another route. Verify which it did
    before landing. If the tab is gone, its work is in `/home/stack/charon-private-wt/RECONCILE-GATE-WIRED`.
 2. **Land the 4 remaining triage LANDs** (8 of 12 are in): ADR-0021 (product worktree
    `/home/stack/charon-wt/LITELLM-CAPABILITY-ADOPTION`, commit `0cd6b6d`, docs+test only, zero
-   runtime risk — do this first), then `feat/fixture-bypass-gate`, `feat/ticket-lifecycle-canary`,
+   runtime risk — do this first), then `feat/fixture-bypass-gate` (⚠ HAS NO BOARD TICKET — mint one before landing or land.sh will refuse), `feat/ticket-lifecycle-canary`,
    `review/reconcile-gate-design`.
-3. **`feat/substrate-first-gate-v2` LAST** — it needs a rebase over **419 commits** of master
+3. **`feat/substrate-first-gate-v2` LAST** — it needs a rebase over **~450 commits and RISING — measure, do not trust this number** of master
    drift. Content is verified good (see Gotcha 2).
 4. **Stage tickets 2-6** (operator-approved, unstaged): CATALOG-COMPLETENESS ->
    SPAWN-VIA-CAPABILITY -> ENGINE-CONVERGE -> PRICING-FEED -> ORCHESTRATION-RE-RUN. Scope notes in
@@ -289,6 +289,11 @@ fake-green (~15), self-report-lie (~12, no gate).
 **8 landed this session.** Full reports: `fleet/handoff-notes/CLUSTER-TRIAGE-LANE-*.md`.
 CAVEAT: the lanes inspected LOCAL worktrees only — `reconcile-gate-wired` had DIVERGED from origin
 (origin carried ~313k lines of accidentally-committed `graphify-out/`), invisible to that triage.
+
+> **NUMBERS THAT DRIFT — RE-MEASURE, DO NOT CITE.** The substrate-gate-v2 drift count was written
+> as 419, an adversarial review measured 444, and a re-check minutes later gave 451. Any
+> master-relative count in this file is stale the moment master moves. Always run:
+> `git -C <worktree> rev-list --count master...HEAD`. This applies to every count below.
 
 ## WHY LOCAL MASTER KEPT DIVERGING (root cause found — do NOT re-derive)
 
