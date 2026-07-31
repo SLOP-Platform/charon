@@ -422,9 +422,41 @@ backed by executed trials proving no external tool fills the gap.
 | Fills KNOWN GAP | With composition bridge | No | No | No | No |
 | Replace vs fill | Fills VIEW GAP | Fills PM GAP | Fills STRUCTURE GAP | Fills SELF-HOST GAP | Fills EXECUTION GAP |
 
-## Appendix: Candidates Researched But Not Shortlisted
+## Appendix A: Candidates Researched But Not Shortlisted
 
 **Rejected with reasons:**
+- **Vellum** (vellum.ai) — MIT, 984 stars, 28.5k commits. Real work-management *substrate*:
+  priority-tiered task queue (templates + work items, 4 statuses), scheduling (cron/RRULE,
+  one-shot/recurring/heartbeats/watchers), playbooks (trigger-action rules), subagents
+  (parallel fan-out), 8-type persistent memory. Consumes MCP (tools registerable) but is
+  NOT an MCP server itself. Integrates with Linear. BUT: no dependency graph, no file
+  ownership, no multi-ticket relationships, no board view — personal assistant task list,
+  not project manager. EXTRACT: scheduling/heartbeat/watcher/subagent patterns are worth
+  adopting as fleet automation substrate (periodic preflight, scheduled graphify refresh,
+  watchers polling GitHub for stale PRs/tickets). Below shortlist; WATCH as execution
+  substrate.
+- **pyscn** (ludo-technologies/pyscn) — MIT, 1k stars, Go + tree-sitter. Has MCP server
+  (`pyscn-mcp`) + Claude Code plugin + agent skills. Python code quality analyzer:
+  dead code, duplicate detection (Type 1-4 clones), complexity (cyclomatic/cognitive),
+  module/directory hotspots, architecture (circular imports, layer rules, community
+  detection), class design (CBO coupling, LCOM4 cohesion). 100k+ lines/sec. EXTRACT:
+  NOT for PM layer — this is a CI code-quality gate candidate. It would sit alongside
+  Semgrep/bandit in our CI required-checks, with MCP integration for agent-driven
+  refactoring. The MCP server lets agents query code quality on demand ("find duplicate
+  code and help me refactor it"). A cheap ADOPT for CI — zero infra, `uvx pyscn check .`
+  as a one-liner. See §Appendix B for full CI-tool extraction.
+- **Devin** (Cognition) — Closed-source commercial AI coding agent. No API, no MCP,
+  no self-hosting. Single-agent coder, not a work manager. REJECT.
+- **OpenHands** — 82.7k stars, MIT. Agent canvas with automations + scheduling. Runs
+  Claude Code/Codex/Gemini via ACP. Has Slack/GitHub/Linear integrations. But: trigger-
+  action scripts on issues, not PM — no ticket dependency model, no file ownership, no
+  work prioritization beyond issue triage. Agent runner UI, not PM layer. Already listed
+  as "whole-replacement fallback" in WORKLOOP-INTEGRITY-RESEARCH.md. REJECT.
+- **gentleman-guardian-angel** — 1.1k stars, MIT, pure Bash. Provider-agnostic pre-commit
+  code review gate. Supports Claude/Gemini/Codex/OpenCode/Ollama. No MCP. EXTRACT: NOT
+  for PM layer — this is a code-review enforcement pattern. The agent-agnostic review-
+  against-AGENTS.md pattern is worth adopting into our pre-commit pipeline. Below
+  shortlist; pattern donor only.
 - **Jira** — No MCP server found. Wrong posture (enterprise, heavyweight). Overkill for solo.
 - **OpenProject** — No MCP server found. REST API exists but no agent-native integration.
 - **Taiga** — No MCP server found. REST API exists but maintenance is slow.
@@ -433,10 +465,184 @@ backed by executed trials proving no external tool fills the gap.
 - **Backlog.md** — No MCP, markdown-based only, no PM features.
 - **Vibe-Kanban** — SUNSETTING. 27.6k stars but product is shutting down.
 - **Temporal** — No MCP (agent-tempo uses it as infra), DAG-of-activities engine, overkill.
-- **Prefect** — Official MCP but read-only, pipeline orchestrator not work manager.
-- **Dagster** — MCP exists (official + community) but data-pipeline abstraction.
+- **Prefect** — Official MCP (read-only), pipeline orchestrator, not work manager.
+  EXTRACT: the official Prefect MCP server pattern (read-only monitoring + docs proxy
+  for guidance on mutations) is worth adopting if we ever build a fleet-status MCP tool.
+- **Dagster** — MCP exists (official + community dagster-mcp with 27 tools incl. writes)
+  but data-pipeline abstraction is wrong for ticket work management.
 - **Kestra** — No MCP, JVM-based, YAML workflow engine.
 - **Airflow** — No MCP, overkill by definition for solo.
-- **Nx** — Strong MCP, but for builds not tickets. Category error.
+- **Nx** — Strong MCP (`nx mcp`, CI self-healing, AI-agent config). For builds not
+  tickets. EXTRACT: the `nx mcp` CI tool surface (`ci_information`, `ci_task_output`,
+  `update_self_healing_fix`) is a pattern to watch for our own fleet CI MCP tools.
+  The `configure-ai-agents` workflow (auto-generating CLAUDE.md/AGENTS.md) is worth
+  adopting if we ever need multi-repo groundings.
 - **Turborepo** — No MCP, JS/TS ecosystem lock-in, category error.
 - **Bazel** — No MCP, extreme learning curve, category error.
+
+## Appendix B: Extracted Improvements from Rejected Candidates
+
+Not every candidate fits the PM-layer brief, but several have capabilities that would
+improve Charon's fleet in their own lane. These are carve-outs — adopt the useful
+piece without adopting the whole tool.
+
+### B1. pyscn — Python code-quality MCP tool for CI (ranked HIGH leverage)
+
+**What it does:** Static analysis of Python codebases at 100k+ lines/sec. Five angles:
+dead code, duplicate detection (Type 1-4 clones), complexity (cyclomatic + cognitive),
+module/directory hotspots, architecture (circular imports, layer rules, community
+detection), class design (CBO coupling, LCOM4 cohesion).
+
+**MCP:** `pyscn-mcp` server + Claude Code plugin + agent skills (works with Claude Code,
+Cursor, Codex, Gemini CLI).
+
+**How we'd use it:**
+- CI required-check: `uvx pyscn check .` with thresholds. Catches regressions the
+  hand-rolled `check_inert_code.py` can't detect (duplicate code, architecture violations).
+- Agent-driven refactoring: "find duplicate code and help me refactor it" — the MCP
+  server lets agents query code quality on demand.
+- PR review: `pyscn check --select deps .` catches circular imports before merge.
+
+**Gap it fills:** Our current code-quality gate suite is Semgrep (security patterns) +
+bandit (SAST) + ruff (lint/format) + hand-rolled `check_inert_code.py` (dead code
+reachability). pyscn fills: duplicate-code detection, cognitive complexity,
+architecture-layer enforcement, module community analysis, class coupling/cohesion.
+None of these gaps are covered today.
+
+**Cost:** Zero infra. One `uvx pyscn` command in CI. MIT license. Go binary, no Python dep.
+
+**Risk:** Overlap with ruff (some complexity rules). The 100k+ lines/sec speed means it's
+cheap enough to run on every commit.
+
+**Recommendation:** ADOPT as CI required-check. Worth a dedicated ticket.
+
+### B2. Vellum — scheduling/heartbeat/watcher patterns for fleet automation
+
+**What's extractable (not the whole tool):**
+- **Heartbeats** — periodic background checklist that only surfaces when attention needed.
+  Equivalent: our `preflight.sh` already runs before launches, but doesn't run *proactively*
+  on a timer and doesn't suppress green output. A heartbeat pattern would run
+  `preflight.sh` every hour and only notify on RED.
+- **Watchers** — polling-based monitors for external services. Equivalent: a watcher that
+  polls `gh pr list` for PRs >N days old and surfaces staleness, or polls `git branch -r`
+  for branches with no board ticket. These are ~20-line bash scripts, not a platform.
+- **Recurring schedules with modes** — execute (run script), notify (alert only), script
+  (shell command, no LLM). Equivalent: cron + our existing `notify.sh` pattern.
+- **Subagents** — parallel fan-out with results streaming back. Equivalent: our existing
+  worktree-per-ticket model already does this. Vellum's contribution is the "spawn in
+  parallel and report back" UX, not a new capability.
+
+**Recommendation:** Do not adopt Vellum. Adopt the *patterns* in our own rig:
+- `fleet/cron/heartbeat-preflight.sh` — runs preflight every hour, notifies only on RED
+- `fleet/cron/watch-stale-prs.sh` — polls GitHub for PRs >48h, opens a ticket if found
+- Add `--background` mode to `preflight.sh` that suppresses GREEN output
+
+Cost: ~100 LOC of bash. Zero infra.
+
+### B3. Prefect MCP server pattern — read-only monitoring + docs proxy
+
+**What's extractable:** Prefect's official MCP server has a clean split: read-only
+tools for dashboard overviews, deployment queries, flow runs, logs; plus a docs proxy
+that guides agents to use the `prefect` CLI for mutations. This "MCP reads state, CLI
+does mutations" pattern is clean and worth emulating if we ever build a fleet-status
+MCP tool.
+
+**Recommendation:** Pattern donor. Our fleet-status MCP tools should follow this
+read-only-via-MCP, mutate-via-CLI split.
+
+### B4. Nx MCP — CI self-healing pattern
+
+**What's extractable:** Nx's `ci_information` MCP tool surfaces CI pipeline status,
+task output, and self-healing fixes. Its `update_self_healing_fix` tool lets agents
+propose and apply CI fixes. This "agent reads CI status, proposes fixes, applies them"
+loop is exactly what a fleet-automation agent should do.
+
+**Recommendation:** Pattern donor. If we build a fleet-status MCP tool, include
+"read CI status" and "self-heal known failure patterns" tools.
+
+### B5. Dagster's dagster-mcp — comprehensive community MCP as reference
+
+**What's extractable:** The community `dagster-mcp` (27 tools, read + write, 6 categories:
+runs, assets, jobs, schedules/sensors, instance health, write actions). This is the
+most complete MCP-over-an-API-bridge in any orchestration tool. The architecture:
+a thin MCP wrapper over an existing GraphQL API, with tool categories mirroring the
+domain model.
+
+**Recommendation:** Pattern donor. Our GitHub Projects v2 sync bridge should follow
+this architecture: thin MCP wrapper over GraphQL, tool categories mirroring our board
+domain (tickets, waves, dependencies, owns-collisions).
+
+### B6. taskcrew — mechanical verification pattern
+
+**What's extractable:** taskcrew's pipeline compares per-test results across rounds.
+If a test passed in round N and fails in round N+1, that's a REVISE (wrong impl). If
+all tests pass in round N but the acceptance criterion isn't satisfied, that's a
+REPLACE (wrong approach). If the requirement seems wrong, that's an outer-loop
+escalation. The hard denial list (disallowed tools enforced by code, not prompts) is
+also noteworthy.
+
+**Recommendation:** Pattern donor. Adopt the REVISE/REPLACE/ESCALATE classification
+in our `fleet-droid.sh` verify step: a test regression = REVISE (same approach, fix
+the bug), no regression but acceptance unsatisfied = REPLACE (different approach).
+
+### B7. FlowGate — typed document pipeline pattern
+
+**What's extractable:** R → T → TR (Requirement → Task → Task Report) typed pipeline
+with review gates at each transition. Auto-numbering, grouping, chaining. Continuous
+work chains with scoped continuation tokens.
+
+**Recommendation:** Pattern donor. Our board already has this shape (prompt → ticket
+→ CLAIM/SUBMIT/DONE markers) but the transitions are implicit. FlowGate's explicit
+typed documents + review-gate-at-each-transition would make the lifecycle machine-
+enforceable.
+
+### B8. TASKPLAN — deterministic code-side selector pattern
+
+**What's extractable:** "Moves the decision out of the prompt and into code." Easy
+tasks exhausted globally before any medium task. `large` and `special` tasks never
+autonomous. Unclassified tasks invisible to the solver. The selector returns `None`
+(honest no-op) when nothing is selectable. Deterministic, auditable, no LLM in the
+selection loop.
+
+**Recommendation:** HIGH LEVERAGE. This is the single most important pattern for our
+claim/schedule code. Today `claim.sh`/`assign.py` picks the next ticket by model-
+eligible rules, but the *ordering* is mostly FIFO. Adopting TASKPLAN's deterministic
+code-side selector would: (a) exhaust economy-eligible tickets before strong-eligible,
+(b) never auto-claim frontier or unclassified work, (c) return honest-no-op when
+nothing is eligible. This is a ~50 LOC change to `assign.py`, not a new tool.
+
+### B9. Omnigent — three-level policy stack pattern
+
+**What's extractable:** Server-wide (admin) → per-agent (developer) → per-session (you)
+policy enforcement. Hard enforcement at tool level (deny before execution), not prompt-
+based. Stackable: a session can only be MORE restrictive than its agent, which can only
+be MORE restrictive than the server.
+
+**Recommendation:** Pattern donor. Our board already has `tier:` (economy/strong/frontier)
+and `work_class:` that restrict which model can claim which ticket. Omnigent's stackable
+policy pattern would formalize this: rig-level defaults (never `sudo`), ticket-level
+overrides (this ticket needs `docker`), session-level caps (this session limited to
+`economy` model).
+
+### B10. Archon — YAML DAG workflows with approval gates
+
+**What's extractable:** Deterministic YAML DAG definitions with node types: prompt nodes,
+bash nodes, loop nodes (AI loops with `until:` conditions), interactive approval gates
+(`interactive: true` pauses for human input).
+
+**Recommendation:** Pattern donor. Our `fleet-droid.sh` launch path is effectively a
+hardcoded DAG (claim → checkout → run → verify → submit). Archon's YAML DAG format
+would let us define different workflow shapes for different ticket types (bugfix vs
+greenfield vs refactor) without hardcoding each path.
+
+### Summary: What's worth acting on NOW vs LATER
+
+| Priority | Item | Action | Effort |
+|---|---|---|---|
+| **NOW** | TASKPLAN deterministic selector in `assign.py` | ~50 LOC change | Hours |
+| **NOW** | pyscn CI required-check | One `uvx pyscn check .` in CI | Minutes |
+| **NOW** | Heartbeat preflight (cron + notify-on-RED) | ~20 LOC bash | Minutes |
+| **LATER** | Stale-PR watcher | ~30 LOC bash | Minutes |
+| **LATER** | REVISE/REPLACE/ESCALATE classification in fleet-droid | ~80 LOC | Hours |
+| **LATER** | Stackable tier/work_class policy in claim.sh | ~100 LOC | Hours |
+| **LATER** | DAG workflow definitions for ticket types | Design first | Days |
