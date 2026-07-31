@@ -7,6 +7,15 @@ branch: fix/worker-lifecycle-detect
 owns: fleet/fleet-idle.sh, fleet/stop-worker.sh, fleet/spawn-worker.sh, fleet/tests/worker-lifecycle.test.sh
 depends_on:
 dep-kind:
+serial_justified: |
+  ONE process lifecycle contract: spawn -> detect -> stop. The three surfaces are the three
+  verification points of the SAME guarantee ("the fleet can see and control its own workers"),
+  and every one of them was found broken in the same way — a check structurally incapable of
+  observing the thing it claimed to verify. Splitting them ships a fleet that can start a worker
+  it cannot see, or see one it cannot stop, and the shared regression suite (worker-lifecycle.test.sh)
+  cross-checks all three against one another: the spawn verifier's fixtures are the same stub
+  surfaces the idle detector and stop verifier use. Landing them separately would mean three
+  partial suites and no single run that proves the lifecycle end to end.
 work_class_note: every fleet session depends on these three scripts being honest — fleet-idle says "safe to interrupt" while a worker is mid-turn, stop-worker reports a successful stop as FAILED, and spawn-worker silently drops its injected prompt on every 3-tab fan-out. Each defect is a verification path that is structurally incapable of observing the thing it claims to verify — the same class.
 note: |
   LIVE-EVIDENCE (already proven by the manager, see fleet/state/agent-briefs/WORKER-LIFECYCLE-FIX.md):
