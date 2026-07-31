@@ -1,3 +1,4 @@
+repo: charon-private
 repurpose-2026-07-10: grade REAL tasks (reds-replay + sub-session actuals), NOT synthetic S0-S6; write VERSIONED frozen scorecard artifacts consumed via freeze-ring (GATEWAY-PROGRAM).
 priority: 0
 tier: frontier
