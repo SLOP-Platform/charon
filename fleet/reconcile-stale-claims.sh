@@ -13,7 +13,7 @@
 #   • Old format: `<droid-id> <iso-ts>` (claim.sh line-1 printf). Liveness = PID.
 #   • Bridge format: multi-line key=value (session-bridge MCP). Liveness = `heartbeat:` field.
 #   The claim_field() helper transparently reads either, adopting the same dual-format strategy
-#   as work-lease.sh:claim_epoch() (work-lease.sh:126-130).
+# as work-lease.sh:claim_epoch() (work-lease.sh:126-130).
 #
 # ADOPT-FIRST (no second merge-check, no second PID-check):
 #   • DEAD/ALIVE — `<tier>-<pid>` parse + `kill -0` for old format (reap-orphans.sh:82-90
@@ -28,18 +28,35 @@
 #
 # WORKTREE GUARDS (CLAIM-RECONCILE-INERT accept-3):
 #   A claim whose worktree has uncommitted changes or unpushed commits is NEVER released — the
-#   same invariants as branch-reaper.sh's _rp_keep_reason / _lg_wt_target_ok. A claim file that
-#   already has a terminal done-marker (state/done/<id>) AND whose branch is landed in master
-#   is released DIRECTLY (no done.sh re-invocation).
+# same invariants as branch-reaper.sh's _rp_keep_reason / _lg_wt_target_ok. A claim file that
+# already has a terminal done-marker (state/done/<id>) AND whose branch is landed in master
+# is released DIRECTLY (no done.sh re-invocation).
 #
-# Usage:  fleet/reconcile-stale-claims.sh [--apply]
+# Usage:  fleet/reconcile-stale-claims.sh [--apply] [--orphans]
 #   default = DRY-RUN (classify every claim, PREVIEW merged/held via verify-merged.sh; no writes).
 #   --apply = for each DEAD claim: merged -> retire; unmerged -> HOLD.
 # LIVE claims are NEVER touched (same invariant as reap-orphans.sh).
+#   --orphans = ORPHAN CLASSIFICATION MODE (ORPHAN-CLAIM-FORENSICS):
+#     walks state/{claims,submitted,done}/<id> and classifies EVERY marker whose ticket ID
+#     matches NO board ticket (orphan-marker REDs) into one of three buckets:
+#       residue-safe-to-clear  — has merge-proof (sha/PR/override) OR a branch tip that's an
+#                                ancestor of master; work is provably landed; SAFE under --apply.
+#       work-at-risk           — has unlanded commits OR a dirty / unpushed worktree; NEVER cleared,
+#                                surfaced to operator with the branch path so they can decide to
+#                                land or retire.
+#       unknown                — no branch, no proof, no worktree path; fail closed — NEVER cleared.
+#     Default is DRY-RUN (print classification). With `--orphans --apply`, ONLY residue files are
+#     removed (work-at-risk + unknown are NEVER auto-touched — same RED LINE as the rest of this
+#     script). The legacy claim-walk loop is unchanged — `--orphans` is a SEPARATE operation that
+#     runs in ADDITION to the stale-claim walk (still DRY-RUN by default; --apply operates BOTH).
 #
 # Env (test seams, all honoured by the tools we drive — we add NO new seam):
 #   RECONCILE_FLEET_DIR   override the fleet DATA dir (board/state) for test isolation.
 #   RECONCILE_STALE_S     staleness threshold for heartbeat-based liveness (default 900).
+#   RECONCILE_CHAON_REPO  CHaon (charon / product) repo path for orphan ancestor-of-master checks
+#                         (default /home/stack/code/charon, set CHARON_REPO to override globally).
+#   RECONCILE_RIG_REPO    rig (charon-private) repo path for orphan ancestor-of-master checks
+#                         (default /home/stack/charon-private, set this to override).
 #   VERIFY_MERGED_FIXTURE / DONE_MERGED_SRC / DONE_CHARON_REPO — the EXISTING verify-merged.sh /
 #     done.sh offline hooks; set them and this reconciler is fully hermetic (see the .test.sh).
 set -uo pipefail
@@ -47,13 +64,16 @@ FLEET="${RECONCILE_FLEET_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BOARD="$FLEET/board"; STATE="$FLEET/state"; CLAIMS="$STATE/claims"
 STALE_S="${RECONCILE_STALE_S:-900}"
+CHARON_REPO="${RECONCILE_CHARON_REPO:-${CHARON_REPO:-/home/stack/code/charon}}"
+RIG_REPO="${RECONCILE_RIG_REPO:-/home/stack/charon-private}"
 
-APPLY=0
+APPLY=0; ORPHANS=0
 for arg in "$@"; do
   case "$arg" in
     --apply) APPLY=1 ;;
+    --orphans) ORPHANS=1 ;;
     -h|--help) sed -n '2,/^set -uo/p' "$0" | sed 's/^# \?//; /^set -uo/d'; exit 0 ;;
-    *) echo "reconcile-stale-claims: unknown arg '$arg' (expected --apply)" >&2; exit 2 ;;
+    *) echo "reconcile-stale-claims: unknown arg '$arg' (expected --apply/--orphans)" >&2; exit 2 ;;
   esac
 done
 
@@ -107,18 +127,165 @@ _has_unpushed(){
   [ "$ahead" -gt 0 ] 2>/dev/null
 }
 
-n_live=0; n_retired=0; n_held=0; n_skipped=0; n_would_retire=0; n_would_hold=0
+# ════════════════════════════════════════════════════════════════════════════
+# ORPHAN CLASSIFIER (--orphans mode)
+# Used by both the default loop (informational line at top of output) and
+# the dedicated orphan walker when `--orphans` is passed. The taxonomy:
+#   residue-safe-to-clear : merge-proof (done-marker) OR branch tip ancestor of master
+#   work-at-risk          : worktree with uncommitted OR unpushed commits
+#   unknown               : default for any case that cannot be determined
+# ────────────────────────────────────────────────────────────────────────────
 
-if [ "$APPLY" -eq 1 ]; then echo "reconcile-stale-claims: APPLY mode (merged->retire via done.sh; unmerged->HOLD)"
-else echo "reconcile-stale-claims: DRY-RUN (pass --apply to retire merged / flag held claims)"; fi
-echo "reconcile-stale-claims: fleet=$FLEET claims_dir=$CLAIMS stale_threshold=${STALE_S}s"
+# _repo_search_branches <id> -> "<repo> <branch> <sha>" of the first matching branch,
+# searching both CHARON_REPO and RIG_REPO.  Match is ref-name substring (case-insensitive)
+# because orphan slugs are NOT reliably verbatim ticket ids (e.g. BOUNCE-1 →
+# feat/bounce-1-egress-canary-realsut). Returns 1 if nothing found.
+_repo_search_branches(){
+  local id="$1" hit repo="" br="" sha=""
+  for repo in "$CHARON_REPO" "$RIG_REPO"; do
+    [ -d "$repo/.git" ] || continue
+    hit="$(git -C "$repo" for-each-ref --format='%(refname:short) %(objectname:short)' refs/heads 2>/dev/null \
+            | awk -v IGNORECASE=1 -v id="$id" 'tolower($1) ~ tolower(id) {print $1, $2; exit}')"
+    [ -n "$hit" ] && { echo "$repo $hit"; return 0; }
+  done
+  return 1
+}
+
+# _sha_ancestor_of_master <repo> <sha> -> 0 if sha is an ancestor of the repo's master, 1 otherwise.
+_sha_ancestor_of_master(){
+  local repo="$1" sha="$2"
+  [ -d "$repo/.git" ] || return 1
+  command -v git >/dev/null 2>&1 || return 1
+  git -C "$repo" merge-base --is-ancestor "$sha" master 2>/dev/null
+}
+
+# _worktree_repo <wt> -> echoes the worktree's git toplevel (the repo it lives in),
+# empty if unknown.  This is the authoritative repo for ancestry checks on a per-worktree
+# basis — orphan claims may point to a worktree in a repo OTHER than the configured
+# CHARON_REPO / RIG_REPO (e.g. a worktree from a different fixture in tests, or an
+# operator's ad-hoc checkout of a product commit).  The classifier MUST try this repo
+# before falling back to the env-var roots.
+_worktree_repo(){ git -C "$1" rev-parse --show-toplevel 2>/dev/null; }
+
+# classify_marker <bucket> <id>
+#   bucket: 'claims' | 'submitted' | 'done'
+#   Prints one of: RESIDUE / WORK-AT-RISK / UNKNOWN and an evidence note on STDERR.
+#   Returns 0 on RESIDUE, 10 on WORK-AT-RISK, 20 on UNKNOWN.
+classify_marker(){
+  local sub="$1" id="$2"
+  case "$sub" in
+    done)
+      # merge-proof is decisive: 'merged:*' (sha or #PR) OR 'override:<reason>'.
+      # The done-marker itself is the operator's INTENT for retirement — the
+      # ticket file vanishing is the only RED this addresses.
+      local marker="$STATE/done/$id" proof
+      if [ ! -f "$marker" ]; then
+        echo "UNKNOWN:done:$id:done-marker file vanished mid-classify — fail closed" >&2
+        return 20
+      fi
+      proof="$(awk -F'\t' 'NR==1{print $2; exit}' "$marker" 2>/dev/null)"
+      case "$proof" in
+        merged:*|override:*)
+          echo "RESIDUE:done:$id:merge-proof: $proof" >&2
+          return 0 ;;
+        *)
+          echo "UNKNOWN:done:$id:no merge-proof in done-marker (got '${proof:-EMPTY}') — fail closed" >&2
+          return 20 ;;
+      esac
+      ;;
+    submitted)
+      # A submitted marker = a PR was filed for the ticket. If the matching
+      # branch tip is ancestor of master, the work landed (merge-drop erased
+      # the ticket file). Otherwise it's work-in-flight and the ticket-loss
+      # is OPERATOR-INVESTIGATION-REQUIRED: fail closed.
+      local hit
+      if hit="$(_repo_search_branches "$id" 2>/dev/null)"; then
+        local repo br sha
+        repo="${hit%% *}"; rest="${hit#* }"; br="${rest%% *}"; sha="${rest#* }"
+        if _sha_ancestor_of_master "$repo" "$sha"; then
+          echo "RESIDUE:submitted:$id:branch $br@$sha ancestor of master in $repo" >&2
+          return 0
+        fi
+        echo "WORK-AT-RISK:submitted:$id:branch $br@$sha exists in $repo but NOT yet ancestor of master — in-flight" >&2
+        return 10
+      fi
+      echo "UNKNOWN:submitted:$id:no matching branch across repos; bare submitted timestamp; operator must investigate" >&2
+      return 20
+      ;;
+    claims)
+      local cf="$STATE/claims/$id" wt=""
+      [ -f "$cf" ] && wt="$(claim_field worktree "$cf" 2>/dev/null)"
+      if [ -n "$wt" ] && [ -d "$wt" ]; then
+        if ! _has_dirty "$wt"; then
+          local dirty_ex; dirty_ex="$(git -C "$wt" status --porcelain 2>/dev/null | tr '\n' ',')"
+          echo "WORK-AT-RISK:claims:$id:worktree $wt has uncommitted changes ($dirty_ex)" >&2
+          return 10
+        fi
+        local wt_sha; wt_sha="$(git -C "$wt" rev-parse HEAD 2>/dev/null)"
+        for repo in "$CHARON_REPO" "$RIG_REPO" "$(_worktree_repo "$wt")"; do
+          [ -d "$repo/.git" ] || continue
+          if _sha_ancestor_of_master "$repo" "$wt_sha"; then
+            echo "RESIDUE:claims:$id:worktree clean; HEAD $wt_sha ancestor of master in $repo" >&2
+            return 0
+          fi
+        done
+        # Worktree clean and clean of unpushed (not flagging unpushed separately
+        # would miss the contract — use the SAME --not --remotes semantic as the
+        # legacy _has_unpushed so that a commit pushed to ANY remote counts).
+        if _has_unpushed "$wt"; then
+          echo "WORK-AT-RISK:claims:$id:worktree $wt has unpushed commits (HEAD $wt_sha)" >&2
+          return 10
+        fi
+        # Worktree clean + fully-pushed + not on master anywhere = stranded.
+        echo "WORK-AT-RISK:claims:$id:worktree $wt (HEAD $wt_sha) clean + pushed but NOT ancestor of master — stranded" >&2
+        return 10
+      fi
+      # No worktree path. Fall back to the BRANCH search: maybe the worktree was
+      # reaped but the branch still exists with all commits on master.
+      local hit
+      if hit="$(_repo_search_branches "$id" 2>/dev/null)"; then
+        local repo br sha
+        repo="${hit%% *}"; rest="${hit#* }"; br="${rest%% *}"; sha="${rest#* }"
+        if _sha_ancestor_of_master "$repo" "$sha"; then
+          echo "RESIDUE:claims:$id:no live worktree, but branch $br@$sha ancestor of master in $repo" >&2
+          return 0
+        fi
+        echo "WORK-AT-RISK:claims:$id:no live worktree; branch $br@$sha exists in $repo but NOT yet ancestor of master" >&2
+        return 10
+      fi
+      echo "UNKNOWN:claims:$id:no worktree + no matching branch — fail closed" >&2
+      return 20
+      ;;
+  esac
+  echo "UNKNOWN:$sub:$id:unclassified subdir — fail closed" >&2
+  return 20
+}
+
+n_live=0; n_retired=0; n_held=0; n_skipped=0; n_would_retire=0; n_would_hold=0
+n_orphan_residue=0; n_orphan_held=0; n_orphan_walked=0
+n_orphan_would_retire=0; n_orphan_would_hold=0
+
+if [ "$APPLY" -eq 1 ]; then echo "reconcile-stale-claims: APPLY mode (merged->retire via done.sh; unmerged->HOLD; orphans->RESIDUE removed only)"
+else echo "reconcile-stale-claims: DRY-RUN (pass --apply to retire merged / flag held claims / remove residue)"; fi
+echo "reconcile-stale-claims: fleet=$FLEET claims_dir=$CLAIMS stale_threshold=${STALE_S}s orphan_mode=$ORPHANS"
 echo
 
-if [ ! -d "$CLAIMS" ]; then echo "reconcile-stale-claims: no claims dir ($CLAIMS) — nothing to do."; exit 0; fi
-shopt -s nullglob
-files=( "$CLAIMS"/* )
-shopt -u nullglob
-[ "${#files[@]}" -gt 0 ] || { echo "reconcile-stale-claims: no claims present — nothing to do."; exit 0; }
+if [ ! -d "$CLAIMS" ]; then
+  echo "reconcile-stale-claims: no claims dir ($CLAIMS) — nothing to do."
+  # Still run the orphan walker if --orphans is set; it operates on submitted/done.
+  if [ "$ORPHANS" -ne 1 ]; then exit 0; fi
+  files=()
+else
+  shopt -s nullglob
+  files=( "$CLAIMS"/* )
+  shopt -u nullglob
+  [ "${#files[@]}" -gt 0 ] || {
+    echo "reconcile-stale-claims: no claims present — nothing to do."
+    # Still run the orphan walker if --orphans is set; it operates on submitted/done.
+    if [ "$ORPHANS" -ne 1 ]; then exit 0; fi
+    files=()
+  }
+fi
 
 for cf in "${files[@]}"; do
   [ -f "$cf" ] || continue
@@ -223,6 +390,33 @@ for cf in "${files[@]}"; do
 
   # ── resolve canonical board id ─────────────────────────────────────────
   if ! id="$(canon "$id_raw" 2>/dev/null)"; then
+    # ORPHAN-MARKER path — the board ticket is missing for THIS claim. This is the
+    # case --orphans is designed to classify. Surface classification output if
+    # the operator asked for it; otherwise the existing 'HOLD' behavior remains.
+    if [ "$ORPHANS" -eq 1 ]; then
+      if classify_marker "claims" "$id_raw" 2>/dev/null; then
+        # RESIDUE — work landed; safe to clear under --apply (this is the only
+        # bucket that may be auto-removed).
+        if [ "$APPLY" -eq 1 ]; then
+          rm -f "$cf"
+          echo "ORPHAN-RETIRED claims:$id_raw droid=$droid_id — residue; cleared (merge-proof/branch-ancestor)"
+          n_orphan_residue=$((n_orphan_residue+1))
+        else
+          echo "would ORPHAN-RETIRE claims:$id_raw droid=$droid_id — residue"
+        fi
+      else
+        # WORK-AT-RISK OR UNKNOWN — never auto-cleared (RED LINE), held loud.
+        classify_marker "claims" "$id_raw" >&2
+        if [ "$APPLY" -eq 1 ]; then
+          echo "!!!!!! ORPHAN-HOLD claims:$id_raw droid=$droid_id — work-at-risk/unknown; claim HELD, NOT released" >&2
+          n_orphan_held=$((n_orphan_held+1))
+        else
+          echo "would ORPHAN-HOLD claims:$id_raw droid=$droid_id — work-at-risk/unknown"
+        fi
+      fi
+      continue
+    fi
+    # Legacy path (--orphans not requested): hold loud, identical to before.
     echo "!! HOLD  $id_raw  droid=$droid_id (DEAD) — no board/archive ticket; cannot merge-prove -> HELD, NOT released" >&2
     n_held=$((n_held+1)); continue
   fi
@@ -255,6 +449,50 @@ for cf in "${files[@]}"; do
   fi
 done
 
+# ════════════════════════════════════════════════════════════════════════════
+# ORPHAN MARKER WALKER (--orphans mode)
+# Walks state/{submitted,done}/<id> for orphan markers. The state/claims/<id>
+# orphans are caught in the legacy loop above (the canon-failed branch). This
+# block handles ONLY the non-claims subdirs: submitted and done.
+# ────────────────────────────────────────────────────────────────────────────
+if [ "$ORPHANS" -eq 1 ]; then
+  for sub in submitted done; do
+    [ -d "$STATE/$sub" ] || continue
+    shopt -s nullglob
+    orphans_in_sub=( "$STATE/$sub"/* )
+    shopt -u nullglob
+    [ "${#orphans_in_sub[@]}" -gt 0 ] || continue
+    for f in "${orphans_in_sub[@]}"; do
+      [ -f "$f" ] || continue
+      id="$(basename "$f")"
+      # Skip markers whose ticket is on the board — not actually an orphan.
+      if canon "$id" >/dev/null 2>&1; then continue; fi
+      n_orphan_walked=$((n_orphan_walked+1))
+      if classify_marker "$sub" "$id" 2>/dev/null; then
+        # RESIDUE — merge-proof / branch-ancestor; safe to clear under --apply.
+        if [ "$APPLY" -eq 1 ]; then
+          rm -f "$f"
+          echo "ORPHAN-RETIRED $sub:$id — residue; cleared"
+          n_orphan_residue=$((n_orphan_residue+1))
+        else
+          echo "would ORPHAN-RETIRE $sub:$id — residue"
+          n_orphan_would_retire=$((n_orphan_would_retire+1))
+        fi
+      else
+        # WORK-AT-RISK OR UNKNOWN — never auto-cleared; held loud.
+        classify_marker "$sub" "$id" >&2
+        if [ "$APPLY" -eq 1 ]; then
+          echo "!!!!!! ORPHAN-HOLD $sub:$id — work-at-risk/unknown; marker HELD, NOT released" >&2
+          n_orphan_held=$((n_orphan_held+1))
+        else
+          echo "would ORPHAN-HOLD $sub:$id — work-at-risk/unknown"
+          n_orphan_would_hold=$((n_orphan_would_hold+1))
+        fi
+      fi
+    done
+  done
+fi
+
 echo
 echo "reconcile-stale-claims: done ($([ "$APPLY" = 1 ] && echo 'applied' || echo 'dry-run'))"
 echo "  live (untouched): $n_live"
@@ -267,4 +505,15 @@ else
   echo "  held (unresolved):$n_held"
 fi
 [ "$n_skipped" -gt 0 ] && echo "  skipped (no PID): $n_skipped"
+if [ "$ORPHANS" -eq 1 ]; then
+  echo "  --orphans:"
+  echo "    walked:    $n_orphan_walked"
+  if [ "$APPLY" -eq 1 ]; then
+    echo "    residue:   $n_orphan_residue   (cleared)"
+    echo "    held:      $n_orphan_held   (work-at-risk + unknown NEVER auto-cleared)"
+  else
+    echo "    residue:   ${n_orphan_would_retire:-0}   (would-clear under --apply)"
+    echo "    held:      ${n_orphan_would_hold:-0}   (would-HOLD)"
+  fi
+fi
 exit 0
