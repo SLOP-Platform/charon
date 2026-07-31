@@ -8,6 +8,7 @@
 
 ---
 
+
 ## Bootstrap (copy-paste into next session)
 
 ```
@@ -16,6 +17,111 @@ Read and fully follow /home/stack/charon-private/fleet/SESSION-HANDOFF-satele-sh
 
 ### Context discipline (always on)
 See MANAGER-OPERATING-RULES.md §9 (token-economy is DEFAULT) and §13 (startup budget gate). Key: auto-compact ON; sub-sessions write/don't-dump; read big docs in slices once; keep-alive = light heartbeat folded into real work, NOT a 4-min wakeup loop.
+
+---
+
+# ⛔ EXECUTE THIS SEQUENCE IN ORDER. EACH GATE BLOCKS THE NEXT.
+
+Do not skim ahead and cherry-pick. The prior session's approved work was dropped by exactly that
+habit: items were approved, restated as "next", and never done. **A gate is not complete until its
+DONE-WHEN line is literally true.**
+
+---
+## GATE 0 — RE-MEASURE. MANDATORY. NOTHING BELOW IS TRUSTWORTHY UNTIL THIS IS DONE.
+
+Five numbers drive the tickets below. They came from lane reports that were spot-checked, NOT
+re-derived. One session already shipped a count three different ways (419 -> 444 -> 451 in minutes).
+**Run these. Write the answers into this file. If a number differs, RE-SCOPE the ticket that uses it
+before building.**
+
+```
+# 1. catalog context coverage  (drives CATALOG-COMPLETENESS)
+ssh -i ~/.ssh/4lom stack@10.0.1.60 'C=$(docker ps -q --filter name=charon|head -1); docker exec $C python -c "
+import json;d=json.load(open(\"/data/models.json\"));k=[x for x in d.values() if isinstance(x,dict)]
+print(len([x for x in k if any(f in x for f in (\"context\",\"context_window\",\"max_tokens\"))]),\"of\",len(k))"'
+# 2. opencode client model list vs gateway  (drives SPAWN-VIA-CAPABILITY + every model choice)
+python3 -c "import json;print(len(json.load(open('/home/stack/.config/opencode/opencode.json'))['provider']['charon']['models']))"
+K=$(python3 -c "import json;print(json.load(open('/home/stack/.config/opencode/opencode.json'))['provider']['charon']['options']['apiKey'])" 2>/dev/null || echo MISSING)
+curl -s -H "Authorization: Bearer $K" http://10.0.1.60:8080/v1/models | python3 -c "import sys,json;print(len(json.load(sys.stdin)['data']))"
+# 3. litellm Router params used vs available  (drives LITELLM-CAPABILITY-ADOPTION)
+python3 -c "import inspect,litellm;print(len([p for p in inspect.signature(litellm.Router.__init__).parameters if p!='self']))"
+grep -n "return Router(" -A8 /home/stack/code/charon/src/charon/litellm_plane/litellm_router.py
+# 4. KSF gates available vs registered  (drives KSF-LOAD-BEARING)
+ls /home/stack/code/keystone/ksf/gates/*.py | wc -l ; cat /home/stack/code/charon/.ksf/manifest.toml
+# 5. two capability engines  (drives ENGINE-CONVERGE)
+wc -l /home/stack/charon-private/fleet/capability/*.py | tail -1
+wc -l /home/stack/code/charon/src/charon/capability/*.py /home/stack/code/charon/src/charon/engine/*.py | tail -1
+```
+**DONE-WHEN:** all five results are written into this section with today's date, and any ticket whose
+premise changed is re-scoped or marked BLOCKED.
+
+---
+## GATE 1 — ORPHAN-CLAIM-FORENSICS. THE BOARD IS RED; NOTHING CAN LAND.
+`fleet/board/ORPHAN-CLAIM-FORENSICS.md`. 39 claim markers whose ticket exists nowhere.
+**FORENSICS BEFORE ANY SWEEP** — deleting a claim you cannot account for is how work is destroyed.
+**DONE-WHEN:** `bash fleet/validate_board.sh | grep -c "^  RED"` prints `0`.
+
+---
+## GATE 2 — LAND THE BACKLOG (blocked by GATE 1)
+4 remaining triage LANDs, in this order:
+1. **ADR-0021** — `/home/stack/charon-wt/LITELLM-CAPABILITY-ADOPTION` @ `0cd6b6d`, docs+test, zero risk
+2. `feat/ticket-lifecycle-canary`
+3. `review/reconcile-gate-design`
+4. `feat/fixture-bypass-gate` — ⚠ **HAS NO BOARD TICKET. Mint one first or land.sh refuses.**
+5. `feat/substrate-first-gate-v2` **LAST** — large rebase; RE-MEASURE the drift, do not trust any
+   number in this file. A prior review wrongly condemned this branch from a two-dot diff; its
+   content is verified good (+1,662/-38 three-dot).
+**DONE-WHEN:** all 5 merged, or each has a written reason it was not.
+
+---
+## GATE 3 — STAGE THE APPROVED-BUT-UNWRITTEN TICKETS (these were APPROVED and DROPPED)
+Scope notes are in "Operator-approved but UNSTAGED" below. Write them as board tickets:
+CATALOG-COMPLETENESS · SPAWN-VIA-CAPABILITY (must cover AD-HOC BRIEFS, not just tickets) ·
+ENGINE-CONVERGE · **PRICING-FEED** · ORCHESTRATION-RE-RUN.
+**PRICING-FEED additions the operator supplied that exist ONLY here — do not lose them:**
+pricepertoken.com ships a **Price-Per-Token MCP** (live pricing + benchmarks, ~3 lines to wire).
+**MCP-first is the preferred integration shape** — check EVERY candidate for one. And for EXTERNAL
+reference data prefer **MULTIPLE corroborating sources**, not SSOT: cross-validation, availability,
+coverage, and *disagreement between feeds is itself a signal*. SSOT applies to data we OWN; it is a
+category error for facts we OBSERVE. Multiple sources feeding ONE derived store, with declared
+precedence.
+**DONE-WHEN:** 5 tickets exist and `validate_board.sh` is 0 RED.
+
+---
+## GATE 4 — READ THE TWO MEMORY REPORTS AND REPORT TO THE OPERATOR
+`fleet/handoff-notes/LETTA-REVIEW.md` and `MEMORY-LAYER-REVIEW.md` were commissioned by the operator,
+completed, and **never read or reported**. Summarise verdicts and ADOPT-CANDIDATES.
+Benchmark them against this real incident: *would this tool have surfaced LAND-SH-SAFE-SYNC when a
+session touched land.sh's sync refusal?* That is sharper than anything in their briefs.
+**DONE-WHEN:** the operator has the verdicts.
+
+---
+## GATE 5 — THE FOUR UNCERTAINTIES. TREAT EACH AS A CLASS, NOT AN ITEM.
+The prior manager flagged these as low-confidence. Apply the standing lenses: **blast radius ·
+fix the CLASS not the instance · never ignore a pre-existing red · get to the ROOT CAUSE ·
+think outside the box.**
+
+**5a. `inert_code` was never proven to catch `litellm_plane`.** Both runs died; the claim rests on a
+docstring. It is the BENCHMARK for KSF-LOAD-BEARING, so if it is wrong that ticket is mis-scoped.
+*Class question:* how many other gates in this rig are trusted on their docstring rather than a
+watched RED? Audit that population — a gate believed-but-never-observed is the fake-green class
+(~15 incidents, the corpus's #1).
+
+**5b. The 39 orphan claims.** *Class question:* what process CREATES a claim whose ticket then
+vanishes? Fixing 39 markers without answering that guarantees a 40th. Root-cause it.
+
+**5c. KSF-LOAD-BEARING may be the wrong call.** The audit said "gates only itself, never ran in CI,
+16 commits, 3 weeks stale". The prior manager chose FIX over ABANDON. *Outside-the-box:* the class
+register (`fleet/handoff-notes/KSF-CLASS-CORPUS.md` — 15 classes, 10 ungated) is the durable value
+and does **not** need KSF. Ask honestly whether anything should be built on KSF at all, or whether
+the register should drive adoption of something already load-bearing.
+
+**5d. This handoff itself.** It passed one adversarial review that found 6 blockers — so a second
+would likely find more. *Class question:* the handoff is the ONLY artifact carrying a session
+across the boundary and it has no red-proof. What would a fail-on-revert test for a handoff even
+look like? That is the same "detector with no test" class as 5a.
+
+**DONE-WHEN:** each has a written verdict, and any that changes a ticket's premise re-scopes it.
 
 ---
 
