@@ -116,10 +116,30 @@ register (`fleet/handoff-notes/KSF-CLASS-CORPUS.md` — 15 classes, 10 ungated) 
 and does **not** need KSF. Ask honestly whether anything should be built on KSF at all, or whether
 the register should drive adoption of something already load-bearing.
 
-**5d. This handoff itself.** It passed one adversarial review that found 6 blockers — so a second
-would likely find more. *Class question:* the handoff is the ONLY artifact carrying a session
-across the boundary and it has no red-proof. What would a fail-on-revert test for a handoff even
-look like? That is the same "detector with no test" class as 5a.
+**5d. CORRECTED BY THE PRIOR MANAGER — DO NOT ACT ON THE ORIGINAL CLAIM.**
+The first draft of this gate asserted "the handoff has no red-proof". **That was FALSE** — the
+manager's fifth unverified assertion of the session, caught only because the operator asked whether
+a red-proof should be added.
+
+VERIFIED: `fleet/tests/handoff-generated-state.test.sh` and `fleet/tests/handoff-mechanize.test.sh`
+BOTH exist, and `handoff` appears in `fleet/checks/rig-ci-scope.sh`'s CI allowlist. Empirically,
+`handoff-check.sh` caught THREE real defects in this handoff alone: a STALE provenance stamp, a
+PATH NOT FOUND, and an inlined API key (flagged as an unknown SHA). **Do NOT build a red-proof for
+handoff-check. It has one, and it demonstrably fires.**
+
+THE REAL GAP, which is narrower: `handoff-check` proves STRUCTURE and REFERENCE ACCURACY — sections
+present, SHAs resolve, paths exist, provenance matches, not stale. **Nothing proves USEFULNESS** —
+whether the next session can actually succeed with it. No unit test can assert that.
+
+**THE FIX IS A FEEDBACK LOOP, NOT A TEST.** The red-proof for a handoff is the NEXT session's
+experience. When YOU get stranded on something this handoff should have carried, append a row to
+`fleet/state/GATE-GAP-LEDGER.tsv` — the existing append-only ledger of "every gate was green and a
+real issue shipped anyway" — with the ROOT CLASS. That is the only measurement of what actually
+matters, it reuses a mechanism that already exists, and it costs one line.
+
+**DONE-WHEN:** either a GATE-GAP-LEDGER row exists for every handoff miss you hit, or you record
+"no handoff misses" explicitly. Silence is NOT an acceptable outcome here — a feedback loop nobody
+feeds is the inert-detector class this whole corpus is about.
 
 **5e. SECRET DETECTION FIRES TOO LATE — a key nearly entered a committed handoff.**
 *Measured, not assumed:* a gateway API key was inlined into a re-measure command in this handoff.
