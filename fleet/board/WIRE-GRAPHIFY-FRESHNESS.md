@@ -5,6 +5,12 @@ priority: 1
 work_class: ci-infra
 branch: feat/graphify-nocaller-ledger
 owns: fleet/checks/graphify-freshness.sh, fleet/tests/graphify-freshness.test.sh, fleet/state/ON-DEMAND-TOOL-LEDGER.tsv, fleet/wci-contention.sh
+serial_justified: |
+  ONE freshness contract: the check, its regression test, the on-demand tool ledger entry that
+  makes it discoverable, and the contention surface that schedules it are the four halves of a
+  single guarantee ("the code graph is never silently stale"). A check that lands without its
+  ledger entry is undiscoverable, and one that lands without the contention wiring never runs —
+  both are the inert-tool defect this ticket closes [[dynamic-tools-never-on-demand]].
 depends_on: WCI-CONTENTION-TEETH
 dep-kind: build
 priority-why: |

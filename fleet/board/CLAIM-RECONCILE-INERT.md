@@ -5,7 +5,15 @@ priority: 1
 work_class: rig-meta
 branch: fix/claim-reconcile-inert
 owns: fleet/reconcile-stale-claims.sh, fleet/tests/reconcile-stale-claims.test.sh, fleet/preflight.sh
-depends_on:
+depends_on: RECONCILE-WIRING
+dep-kind: merge-order
+real-dep: |
+  MERGE-ORDER edge, NOT a build prerequisite [[disjoint-owns-not-no-dependency]]. This ticket
+  appends ONE line to preflight.sh's scan case so the reconciler actually runs — without it the
+  fix is inert, which is the exact defect this ticket exists to close [[gates-must-actually-run]].
+  RECONCILE-WIRING is the declared owner of preflight.sh's reconcile cadence and is currently
+  UNCLAIMED and UNLANDED, so there is no concurrent writer; this is a sequencing edge so the
+  collision is ordered rather than silent. RECONCILE-WIRING rebases onto the landed one-liner.
 source: STALE-CLAIM-RECONCILE shipped BUT is never invoked — 15 stale claims, zero live workers, zero reconciler runs. Phase 1 triage: recon-191.
 note: |
   ## Root cause: inert (never invoked)
