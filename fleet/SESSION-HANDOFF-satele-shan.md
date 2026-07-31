@@ -55,6 +55,29 @@ wc -l /home/stack/code/charon/src/charon/capability/*.py /home/stack/code/charon
 **DONE-WHEN:** all five results are written into this section with today's date, and any ticket whose
 premise changed is re-scoped or marked BLOCKED.
 
+### RE-MEASURED 2026-07-31 by session tott-doneeta — ALL FIVE PREMISES HOLD. No ticket re-scoped.
+
+| # | Drives | Measured 2026-07-31 | Handoff claimed | Verdict |
+|---|---|---|---|---|
+| 1 | CATALOG-COMPLETENESS | **216 of 859** carry a context field | 216 of 859 | EXACT — premise holds |
+| 2 | SPAWN-VIA-CAPABILITY | **36 listed / 2570 served** | 36 / 2,567 | drifted +3 served; premise holds (worse) |
+| 3 | LITELLM-CAPABILITY-ADOPTION | **6 of 52** Router params passed | 52 available, 5 used | **used is 6, not 5** — see below |
+| 4 | KSF-LOAD-BEARING | **10 gates on disk / 5 registered / 0 modules** | 9 gates, 5 registered, 0 modules | drifted +1 on disk; premise holds |
+| 5 | ENGINE-CONVERGE | rig **3295** / product **3621** LOC | 3,295 / 3,621 | EXACT — premise holds |
+
+**#3 correction (the only substantive one).** `litellm_router.py:363-370` passes **six** params, not five:
+`model_list`, `cooldown_time`, `allowed_fails`, `num_retries`, `retry_after`, `set_verbose`.
+The 46-unused / 52-available framing is unchanged, so ADR-0021's disposition (28 ADOPT / 14 DECLINE /
+16 DEFER) is NOT affected — but anything quoting "5 of 52" should say 6.
+
+**#4 note.** `.ksf/manifest.toml` states in its own comment that "Charon has no KSF module.toml
+registrations, so modules.list is empty" — the 0-modules finding is now self-documented in the
+manifest, not merely audited. The gates-on-disk count moved 9 -> 10, so KSF is still gaining gates
+while charon registers 5 of them. The KSF-LOAD-BEARING premise ("gates only itself") is unchanged.
+
+**Numbers 2 and 4 are LIVE and will drift again** — re-run before quoting. 1, 3 and 5 are
+source-derived and stable until the code changes.
+
 ---
 ## GATE 1 — ORPHAN-CLAIM-FORENSICS. THE BOARD IS RED; NOTHING CAN LAND.
 `fleet/board/ORPHAN-CLAIM-FORENSICS.md`. 39 claim markers whose ticket exists nowhere.
