@@ -55,6 +55,62 @@ note: |
     d. ANTI-OVER-BLOCK: a normal live claim is still untouched
   Then run against the real fleet and show the board reaching 0 RED, or say precisely why not.
 
+  ## PRIOR FORENSICS — verified by session tott-doneeta 2026-07-31 (START HERE; corrects FACTS above)
+  Re-measured. **39 REDs, not 40.** Split by marker directory:
+    - `state/claims/`    14
+    - `state/submitted/`  4
+    - `state/done/`      21
+
+  **CORRECTION to the FACTS block above.** It asserts the ticket exists "nor as
+  `fleet/state/done/<id>`". That is FALSE for the 21 `done/` orphans — for those the marker IS
+  `state/done/<id>`, and every one carries real completion proof, e.g.
+  `FLEET-DEMAND-BROKER -> merged:#264`, `BRIDGE-REPLACE-PHASE1 -> merged:3b7d9a5`,
+  `CLAIM-INTEGRITY-TOOL-ADOPT -> override:RED-LINE ...`. **These are LANDED work, not residue.**
+  Any rule that treats a `done/` marker with merge proof as sweepable is wrong.
+
+  **The "residue from a dropped wave" hypothesis is NOT supported.** For every one of the 39,
+  `git log --all -- fleet/board/<id>.md fleet/board/archive/<id>.md` finds the ticket file
+  (ever_in_git >= 1 for all 39; 2-6 commits for many). They existed.
+
+  **The disappearance mechanism is a MERGE, not a delete.** Sampled DOGFOOD-GATE,
+  FLEET-DEMAND-BROKER, WCI-CONTENTION-TEETH, SECRET-HOTROTATE:
+    - the ADD commits (`6e94e0d`, `859e3b9`) and the archive RENAME (`1c974cc`, R100
+      `board/ -> board/archive/`) are ALL ancestors of master;
+    - the files are absent from master's tree NOW;
+    - `git log --full-history --diff-filter=D` finds **ZERO deleting commits**;
+    - every commit touching the path under `--full-history` is a **merge commit**.
+  A board file added on master, never deleted by any commit, yet absent from master's tree =
+  dropped by merge resolution. This is the same divergence-by-construction the handoff already
+  root-caused (`board-lock.sh commit` writes bare onto local master; origin wraps the same content
+  in a merge; a later merge resolves board state to the side that lacks the file).
+  **This is the answer to handoff gate 5b ("what process CREATES a claim whose ticket vanishes")
+  and it means a 40th orphan is guaranteed until the merge path stops dropping board files.**
+
+  **`state/claims/` bucket is NOT uniform — do not treat it as one class.** Markers are
+  work-leases (`ticket:/session:/worktree:/heartbeat:`). Of the 14:
+    - **provably retire-able** — the work LANDED on product master today:
+      `DOGFOOD-GATE` (d6267c3), `INERT-STARTUP-CHECK` (6ab6035).
+    - **provably work-at-risk** — a live product worktree still holds unlanded commits:
+      `SECRET-HOTROTATE`, `SW-IDENTITY-FOLD`, `SW-STATIC-LEGS-RETIRE`,
+      `LITELLM-CAPABILITY-ADOPTION`, `PREFLIGHT-GATE-REGISTRY`, `PREFLIGHT-OWNS-ARBITRATE`,
+      `RIG-BRANCH-16-DEEPDIVE`, `SW-PHASE0-GRADE-READ`, `BRIDGE-MIGRATE-DROID-CLIENT`,
+      `REGISTRY-META-CATALOG`, `LAND-GATE-RIG-SUITE`, `WORK-LEASE-WORKTREE-RESOLVE`
+      (cross-check each against `git worktree list` before acting — this list is from the
+      2026-07-31 handoff's stranded-work scan, RE-MEASURE it).
+  So the classifier needs at least: landed-proof -> retire · unlanded-commits -> work-at-risk ·
+  neither -> unknown/fail-closed. **Do not ship a classifier that only looks at `fleet/board/`.**
+
+  **REMAINS OPEN for this ticket (not done by the prior forensics):**
+    - per-marker verdict for all 39 (the above is a sample + a bucket count);
+    - encoding the rule in `reconcile-stale-claims.sh` with the RED-then-GREEN contract below;
+    - whether the merge-drop mechanism should be gated separately (likely a sibling ticket —
+      surface it, do not silently widen this one).
+
+  **UNRELATED RED found while doing this (surface, do not fix here):**
+  `fleet/claim-jedi-name.sh` dies — `pool file not found: fleet/state/jedi-name-pool.txt`. The
+  file was added in `5d42cd5` and is absent from the working tree. Same disappearance shape as the
+  board tickets above. Needs its own ticket.
+
 D&S — Deps & Sequence:
   - Depends on: nothing. BLOCKS EVERYTHING — the board is RED until this lands.
   - Do FIRST, before the 2 unlanded commits (a1d9ce8, 60b9a89) and the 4 remaining triage LANDs.
