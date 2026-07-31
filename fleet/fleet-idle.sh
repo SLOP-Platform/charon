@@ -21,8 +21,22 @@ echo "=== live opencode sessions ==="
 #     like `grep opencode` has no `--model` substring -> never matches, and a path like
 #     `.../opencode/spawn-worker.sh` doesn't reach `--model` either.
 #   * FLEET_IDLE_PS overrides ps for the test suite to drive fake argvs hermetically.
-ps_cmd="${FLEET_IDLE_PS:-ps -eo pid,etime,args}"
-sessions="$("$ps_cmd" 2>/dev/null | grep -E '[o]pencode.*--model' || true)"
+#
+# THE SEAM MUST NOT BREAK THE DEFAULT. A previous version of this fix wrote:
+#     ps_cmd="${FLEET_IDLE_PS:-ps -eo pid,etime,args}"; "$ps_cmd" ...
+# Quoting a MULTI-WORD default as a single word makes bash look for a command
+# literally named `ps -eo pid,etime,args`; it fails with "command not found",
+# `|| true` swallows it, and $sessions is ALWAYS empty — so fleet-idle reported
+# IDLE with three live workers running. That is the ORIGINAL bug reintroduced in
+# a worse form (silently, rather than by a wrong pattern). Every test passed,
+# because every test SET FLEET_IDLE_PS to a single-word stub path and so never
+# exercised the default branch at all.
+# Keep the default as a REAL command invocation, not a string to be re-parsed.
+if [ -n "${FLEET_IDLE_PS:-}" ]; then
+  sessions="$("$FLEET_IDLE_PS" 2>/dev/null | grep -E '[o]pencode.*--model' || true)"
+else
+  sessions="$(ps -eo pid,etime,args 2>/dev/null | grep -E '[o]pencode.*--model' || true)"
+fi
 if [ -n "$sessions" ]; then
   echo "$sessions"
   n=$(printf '%s\n' "$sessions" | grep -c .)

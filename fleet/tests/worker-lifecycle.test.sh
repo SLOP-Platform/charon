@@ -224,6 +224,30 @@ grep -qF IDLE "$D/a-red.out" \
   && ok "a-RED the OLD regex misses the spawned form (proves the fix is load-bearing)" \
   || bad "a-RED the OLD regex unexpectedly matched (RED demo failed: $(cat "$D/a-red.out"))"
 
+# ── ASSERTION (a0): THE DEFAULT ps PATH ACTUALLY WORKS ─────────────────────
+# Every other fleet-idle case sets FLEET_IDLE_PS to a stub, so NONE of them
+# exercise the production code path. That blindspot let a regression ship green:
+# the default was written as a quoted multi-word string, bash could not exec it,
+# and fleet-idle reported IDLE with three live workers. This case runs
+# fleet-idle.sh with NO override against a REAL process whose argv matches the
+# spawned form, so the default `ps` invocation itself is under test.
+echo "== (a0) fleet-idle DEFAULT ps path detects a REAL process (no override) =="
+# exec -a sets argv[0], so ps shows the spawned form. No network, no opencode.
+bash -c 'exec -a "opencode --port 65099 --model charon/test-fixture" sleep 30' &
+FAKE_PID=$!
+sleep 1
+# PATH="$REAL_PATH" is REQUIRED here: this suite exports a stub `ps` onto PATH
+# (line ~72) for every other case. Without restoring the real PATH, this case
+# would silently exercise the stub — i.e. it would be one more test that cannot
+# see the production path, which is the exact blindspot it exists to close.
+PATH="$REAL_PATH" FLEET_IDLE_SKIP_WT_CHECK=1 bash "$SRC/fleet-idle.sh" > "$D/a0.out" 2>&1
+rc=$?
+kill "$FAKE_PID" 2>/dev/null
+check "a0-1 fleet-idle exits 1 (BUSY) via the DEFAULT ps path" "$rc" "1"
+# Assert on the FIXTURE's own marker, never on a session COUNT: real workers may
+# legitimately be running on this host, which would make any fixed count wrong.
+has "a0-2 the real process is detected by the default ps path" "65099" "$D/a0.out"
+
 # ── ASSERTION (b): legacy form still detected ───────────────────────────────
 echo "== (b) fleet-idle DETECTS legacy form (opencode --model X) =="
 STUB_PS_ARGS="opencode --model charon/x" \
