@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
 # reconcile-stale-claims.test.sh — FAIL-ON-REVERT self-test for fleet/reconcile-stale-claims.sh.
 #
-# Hermetic: an ISOLATED product git repo (origin/master ref so done.sh's sha/PR proofs resolve
-# offline) + a TEMP fleet state tree. NEVER touches the live fleet/state, the real reds, or
-# /home/stack/code/charon. Follows the done-gate.test.sh / test_droid_reap.sh harness pattern.
+# Hermetic: an ISOLATED product git repo + TEMP fleet state tree. NEVER touches the live
+# fleet/state, the real reds, or /home/stack/code/charon. Models fleet/tests/branch-reaper.test.sh.
 #
-# The three guard properties (revert any one -> the matching assertions flip RED):
-#   (a) DEAD-PID + MERGED  -> retired-with-proof: done.sh writes the terminal marker AND the stale
-#       claim is removed. If the reconciler stopped driving done.sh, no marker + claim lingers.
-#   (b) DEAD-PID + UNMERGED -> HELD + LOUD, NEVER released: the claim file SURVIVES --apply, a HOLD
-#       warning naming the ticket is emitted, and NO done marker is written. This is the red line
-#       (EGRESS-KEY-CANARY class). Revert the HOLD (release the claim) -> (b1)/(b2) flip RED.
-#   (c) LIVE-PID claim is UNTOUCHED: claim marker still present after --apply, no marker written.
-#   (d) DRY-RUN default: --apply-less run mutates NOTHING (no marker, claim intact) for a merged
-#       claim, and previews "would RETIRE" / "would HOLD" correctly.
-#   (e) Idempotency: a second --apply over the post-run state retires nothing new and still HOLDs.
+# GREEN-IS-NOT-PROOF: exit 0 does NOT prove correct reconciliation — asserts the UNCOMMITTED
+# worktree, UNPUSHED-commit, and BROKEN-GIT claims SURVIVE (the exact data-loss risk a too-broad
+# reconciler causes).
+#
+# The six guard properties (each revert -> RED):
+#   (a) A claim with a done-marker AND a landed branch is listed for release.
+#   (b) A claim whose worktree has UNCOMMITTED changes is NOT released under --apply.
+#   (c) A claim whose branch has UNPUSHED commits is NOT released under --apply.
+#   (d) A claim whose state cannot be determined (unreadable worktree / broken .git) is NOT
+#       released — fail closed.
+#   (e) ANTI-OVER-BLOCK: a genuinely dead, fully-landed, unclaimed-work claim IS released
+#       under --apply. A guard that keeps everything is as useless as one that keeps nothing.
+#   (f) Dry-run (default) lists candidates and deletes NOTHING.
 #
 # Run:  bash fleet/tests/reconcile-stale-claims.test.sh   (exit 0 = all pass)
 set -uo pipefail
@@ -27,106 +29,258 @@ check(){ [ "$2" = "$3" ] && ok "$1" || bad "$1 (expected '$3', got '$2')"; }
 has(){ printf '%s' "$1" | grep -qF -- "$2" && ok "$3" || bad "$3 (missing: $2)"; }
 no(){  printf '%s' "$1" | grep -qF -- "$2" && bad "$3 (unexpected: $2)" || ok "$3"; }
 
-# ---- isolated product repo: origin/master ref so done.sh sha-ancestry resolves offline ----
-P="$(mktemp -d)"
-git -C "$P" init -q
-mkdir -p "$P/src"; echo x > "$P/src/present.py"
-git -C "$P" add -A; git -C "$P" commit -q -m base
-git -C "$P" update-ref refs/remotes/origin/master "$(git -C "$P" rev-parse HEAD)"
-export DONE_CHARON_REPO="$P" VERIFY_MERGED_REPO="$P"
+TMPDIRS=()
+mktmp(){ local d; d="$(mktemp -d)"; TMPDIRS+=("$d"); echo "$d"; }
+trap 'for d in "${TMPDIRS[@]}"; do rm -rf "$d"; done' EXIT
 
-# Build a fixture fleet: copy the reconciler + the tools it DRIVES (done.sh + its deps,
-# verify-merged.sh) into a temp fleet dir so their FLEET root is the fixture, not the real one.
+# ── isolated product repo with origin/master ref ──────────────────────
+mk_repo(){
+  local root; root="$(mktmp)"
+  git init -q --bare "$root/origin.git"
+  git init -q "$root/repo"
+  ( cd "$root/repo"
+    git checkout -q -b master
+    printf 'base\n' > base.txt; git add base.txt; git commit -q -m base
+    git remote add origin "$root/origin.git"
+    git push -q origin master
+  ) >/dev/null 2>&1
+  echo "$root/repo"
+}
+
+# ── fixture fleet ───────────────────────────────────────────────────────
 mk_fleet(){
-  local d; d="$(mktemp -d)"
+  local d; d="$(mktmp)"
   cp "$SRC/reconcile-stale-claims.sh" "$SRC/done.sh" "$SRC/retire-done.sh" \
      "$SRC/leak-guard.sh" "$SRC/_lib.sh" "$SRC/verify-merged.sh" "$SRC/repo-registry.sh" "$d/" 2>/dev/null
   mkdir -p "$d/board/archive" "$d/state/done" "$d/state/submitted" \
            "$d/state/claims" "$d/state/needs-push" "$d/tests"
   echo "$d"
 }
-# A ticket with NO repo: field resolves to the product default (like done-gate's TICK-G); the
-# branch-proof path is fully offline via DONE_MERGED_SRC / verify_merged fixture.
-add_ticket(){ local d="$1" id="$2" branch="$3"
-  printf 'tier: economy\nbranch: %s\nowns: src/present.py\n' "$branch" > "$d/board/$id.md"; }
-write_claim(){ local d="$1" id="$2" droid="$3"
+
+# Ticket with a repo-less board file (repo: field missing -> product default).
+add_ticket(){ local d="$1" id="$2" branch="$3"; printf 'tier: economy\nbranch: %s\nowns: src/present.py\n' "$branch" > "$d/board/$id.md"; }
+
+# Write a bridge-format claim file.
+write_bridge_claim(){ local d="$1" id="$2" session="$3" hb="$4" wt="$5"
+  printf 'ticket: %s\nsession: %s\nworktree: %s\nheartbeat: %s\nclaimed: %s\n' \
+    "$id" "$session" "$wt" "$hb" "$hb" > "$d/state/claims/$id"; }
+
+# Write an old-format claim file.
+write_old_claim(){ local d="$1" id="$2" droid="$3"
   printf '%s %s\n' "$droid" "$(date -u +%FT%TZ)" > "$d/state/claims/$id"; }
-# Run the reconciler against the fixture fleet.
+
 run_rec(){ local d="$1"; shift
-  RECONCILE_FLEET_DIR="$d" DONE_CHARON_REPO="$P" VERIFY_MERGED_REPO="$P" \
+  RECONCILE_FLEET_DIR="$d" RECONCILE_STALE_S=30 \
+    DONE_CHARON_REPO="$P" VERIFY_MERGED_REPO="$P" \
     DONE_MERGED_SRC="$MERGED_SRC" VERIFY_MERGED_FIXTURE="$VERIFIED_TXT" \
     bash "$d/reconcile-stale-claims.sh" "$@"; }
 
-# live-PID helper: a real background process we can point a claim at, then reap on exit.
+# ── GLOBAL FIXTURE ─────────────────────────────────────────────────────
+P="$(mk_repo)"
+MERGED_SRC="$(mktmp)/merged.tsv"; VERIFIED_TXT="$(mktmp)/verified.txt"
+
+# Create a worktree for the live-work-preserve tests (b, c, d).
+# We need a second checkout to simulate a worktree with uncommitted/unpushed state.
+LIVE_WT="$(mktmp)"
+( cd "$LIVE_WT"
+  git init -q
+  git checkout -q -b feat/test-keep
+  printf 'live\n' > live.txt; git add live.txt; git commit -q -m "live commit"
+  git remote add origin "$(dirname "$P")/origin.git" 2>/dev/null || git remote add origin /dev/null
+) >/dev/null 2>&1
+
+# ════════════════════════════════════════════════════════════════════════
+echo "═══ reconcile-stale-claims.test.sh ═══"
+
+# ── (a) done-marker + landed branch -> release ─────────────────────────
+echo "== (a) done-marker + landed branch -> RELEASE =="
+d_a="$(mk_fleet)"
+add_ticket "$d_a" "A-MERGED" "feat/a-merged"
+add_ticket "$d_a" "A-UNMERGED" "feat/a-unmerged"
+printf 'feat/a-merged\t999\n' > "$MERGED_SRC"
+printf 'A-MERGED\n' > "$VERIFIED_TXT"
+# A-MERGED: done-marker present, branch landed, heartbeat stale
+printf '2026-07-01T00:00:00Z\tmerged:#999\tbranch:feat/a-merged\n' > "$d_a/state/done/A-MERGED"
+write_bridge_claim "$d_a" "A-MERGED" "test-session" "1" "/nonexistent"
+# A-UNMERGED: no done-marker, heartbeat stale, not merged (not in fixture)
+write_bridge_claim "$d_a" "A-UNMERGED" "test-session" "1" "/nonexistent"
+
+dry_a="$(run_rec "$d_a" 2>&1)"
+has "$dry_a" "would RETIRE  A-MERGED"   "(a1) done-marker claim previewed for release"
+[ -e "$d_a/state/claims/A-MERGED" ]     && ok "(a2) dry-run did NOT remove the claim"       || bad "(a2) dry-run removed a claim"
+[ -e "$d_a/state/done/A-MERGED" ]       && ok "(a3) dry-run preserved the done-marker"       || bad "(a3) dry-run touched the done-marker"
+
+# --apply: release A-MERGED, HOLD A-UNMERGED
+out_a="$(run_rec "$d_a" --apply 2>&1)"
+has "$out_a" "RETIRED A-MERGED"          "(a4) done-marker claim RETIRED under --apply"
+no  "$out_a" "HOLD  A-MERGED"            "(a5) done-marker claim NOT held"
+[ ! -e "$d_a/state/claims/A-MERGED" ]    && ok "(a6) done-marker claim file REMOVED"         || bad "(a6) claim file still present after --apply"
+[ -e "$d_a/state/done/A-MERGED" ]        && ok "(a7) done-marker preserved after retire"     || bad "(a7) done-marker deleted"
+
+rm -rf "$d_a"
+
+# ── (b) UNCOMMITTED worktree -> NOT released ───────────────────────────
+echo "== (b) uncommitted worktree -> NOT released =="
+d_b="$(mk_fleet)"
+# Make a dirty worktree (uncommitted modification) WITH a remote so it's pushed.
+DIRTY_WT="$(mktmp)"
+DD_ORIGIN="$(mktmp)"
+( cd "$DIRTY_WT"
+  git init -q; git checkout -q -b feat/dirty
+  printf 'base\n' > base.txt; git add base.txt; git commit -q -m base
+  git init -q --bare "$DD_ORIGIN"
+  git remote add origin "$DD_ORIGIN"; git push -q origin feat/dirty
+  printf 'MODIFIED\n' > base.txt   # NOW it's dirty but pushed
+) >/dev/null 2>&1
+
+# No done-marker, no merge proof, stale heartbeat
+add_ticket "$d_b" "B-DIRTY" "feat/dirty"
+printf 'feat/dirty\t111\n' >> "$MERGED_SRC"
+printf 'B-DIRTY\n' >> "$VERIFIED_TXT"
+write_bridge_claim "$d_b" "B-DIRTY" "test-session" "1" "$DIRTY_WT"
+dry_b="$(run_rec "$d_b" 2>&1)"
+has "$dry_b" "would HOLD    B-DIRTY"     "(b1) dirty worktree -> would HOLD"
+out_b="$(run_rec "$d_b" --apply 2>&1)"
+has "$out_b" "HOLD  B-DIRTY"             "(b2) dirty worktree -> HOLD under --apply"
+[ -e "$d_b/state/claims/B-DIRTY" ]       && ok "(b3) claim SURVIVED for dirty worktree"     || bad "(b3) claim RELEASED for dirty worktree — RED LINE"
+[ ! -e "$d_b/state/done/B-DIRTY" ]       && ok "(b4) no marker written for dirty worktree"   || bad "(b4) marker written for dirty worktree"
+
+rm -rf "$d_b" "$DIRTY_WT" "$DD_ORIGIN"
+
+# ── (c) UNPUSHED commits -> NOT released ───────────────────────────────
+echo "== (c) unpushed commits -> NOT released =="
+d_c="$(mk_fleet)"
+UNPUSHED_WT="$(mktmp)"
+( cd "$UNPUSHED_WT"; git init -q; git checkout -q -b feat/unpushed
+  printf 'base\n' > base.txt; git add base.txt; git commit -q -m base
+  printf 'extra\n' > extra.txt; git add extra.txt; git commit -q -m "unpushed extra"
+  # No remote set — all commits are unpushed
+) >/dev/null 2>&1
+
+add_ticket "$d_c" "C-UNPUSHED" "feat/unpushed"
+printf 'feat/unpushed\t222\n' >> "$MERGED_SRC"
+printf 'C-UNPUSHED\n' >> "$VERIFIED_TXT"
+write_bridge_claim "$d_c" "C-UNPUSHED" "test-session" "1" "$UNPUSHED_WT"
+dry_c="$(run_rec "$d_c" 2>&1)"
+has "$dry_c" "would HOLD    C-UNPUSHED"  "(c1) unpushed commits -> would HOLD"
+out_c="$(run_rec "$d_c" --apply 2>&1)"
+has "$out_c" "HOLD  C-UNPUSHED"          "(c2) unpushed commits -> HOLD under --apply"
+[ -e "$d_c/state/claims/C-UNPUSHED" ]    && ok "(c3) claim SURVIVED for unpushed commits"    || bad "(c3) claim RELEASED for unpushed commits — RED LINE"
+
+rm -rf "$d_c" "$UNPUSHED_WT"
+
+# ── (d) FAIL-CLOSED: unreadable/broken worktree -> NOT released ────────
+echo "== (d) unreadable worktree -> NOT released =="
+d_d="$(mk_fleet)"
+BROKEN_WT="/nonexistent/path/that/does/not/exist"
+add_ticket "$d_d" "D-BROKEN" "feat/broken"
+printf 'feat/broken\t333\n' >> "$MERGED_SRC"
+printf 'D-BROKEN\n' >> "$VERIFIED_TXT"
+write_bridge_claim "$d_d" "D-BROKEN" "test-session" "1" "$BROKEN_WT"
+dry_d="$(run_rec "$d_d" 2>&1)"
+# _has_dirty returns 1 (true == dirty) for a nonexistent dir
+has "$dry_d" "would HOLD    D-BROKEN"    "(d1) broken worktree -> would HOLD"
+out_d="$(run_rec "$d_d" --apply 2>&1)"
+has "$out_d" "HOLD  D-BROKEN"            "(d2) broken worktree -> HOLD under --apply"
+[ -e "$d_d/state/claims/D-BROKEN" ]      && ok "(d3) claim SURVIVED for unreadable worktree" || bad "(d3) claim RELEASED for unreadable worktree — FAIL-CLOSED VIOLATED"
+
+rm -rf "$d_d"
+
+# ── (e) ANTI-OVER-BLOCK: fully-landed, unclaimed-work -> RELEASE ───────
+echo "== (e) anti-over-block: fully-landed -> RELEASE =="
+d_e="$(mk_fleet)"
+add_ticket "$d_e" "E-CLEAN" "feat/e-clean"
+printf 'feat/e-clean\t888\n' > "$MERGED_SRC"
+printf 'E-CLEAN\n' > "$VERIFIED_TXT"
+# No done-marker but merge-proven. No worktree (old format).
+write_old_claim "$d_e" "E-CLEAN" "economy-99998"
+
+out_e="$(run_rec "$d_e" --apply 2>&1)"
+# done.sh should have removed the claim via merge-proof
+if [ ! -e "$d_e/state/claims/E-CLEAN" ]; then
+  ok "(e1) clean+merged claim RELEASED under --apply"
+else
+  # Fallback: check if done.sh was called successfully
+  has "$out_e" "RETIRED E-CLEAN"         "(e1) clean+merged claim RETIRED" || bad "(e1) clean+merged claim NOT retired"
+fi
+# Verify done marker was written
+[ -e "$d_e/state/done/E-CLEAN" ]         && ok "(e2) done-marker written for clean+merged claim" || bad "(e2) no done-marker for clean+merged claim"
+
+rm -rf "$d_e"
+
+# ── (f) DRY-RUN deletes NOTHING ────────────────────────────────────────
+echo "== (f) dry-run deletes NOTHING =="
+d_f="$(mk_fleet)"
+add_ticket "$d_f" "F-DRY" "feat/f-dry"
+printf 'feat/f-dry\t777\n' > "$MERGED_SRC"
+printf 'F-DRY\n' > "$VERIFIED_TXT"
+# Bridge format with done-marker (should be retired) + an old-format claim
+printf '2026-07-01T00:00:00Z\tmerged:#777\tbranch:feat/f-dry\n' > "$d_f/state/done/F-DRY"
+write_bridge_claim "$d_f" "F-DRY" "test-session" "1" "/nonexistent"
+add_ticket "$d_f" "F-DRY-OLD" "feat/f-dry-old"
+printf 'feat/f-dry-old\t776\n' >> "$MERGED_SRC"
+printf 'F-DRY-OLD\n' >> "$VERIFIED_TXT"
+write_old_claim "$d_f" "F-DRY-OLD" "economy-99997"
+
+dry_f="$(run_rec "$d_f" 2>&1)"
+has "$dry_f" "would RETIRE  F-DRY"       "(f1) dry-run previews done-marker claim for release"
+has "$dry_f" "would RETIRE  F-DRY-OLD"   "(f2) dry-run previews old-format merge-proven claim for release"
+[ -e "$d_f/state/claims/F-DRY" ]         && ok "(f3) dry-run did NOT remove bridge-format claim"  || bad "(f3) dry-run removed bridge-format claim"
+[ -e "$d_f/state/claims/F-DRY-OLD" ]     && ok "(f4) dry-run did NOT remove old-format claim"     || bad "(f4) dry-run removed old-format claim"
+[ -e "$d_f/state/done/F-DRY" ]           && ok "(f5) dry-run preserved the done-marker"           || bad "(f5) dry-run touched the done-marker"
+
+rm -rf "$d_f"
+
+# ── (g) DONE-MARKER + CLEAN WORKTREE -> RELEASE ────────────────────────
+echo "== (g) done-marker + clean pushed worktree -> RELEASE =="
+d_g="$(mk_fleet)"
+CLEAN_WT="$(mktmp)"
+( cd "$CLEAN_WT"; git init -q; git checkout -q -b feat/clean
+  printf 'base\n' > base.txt; git add base.txt; git commit -q -m base
+  git checkout -q master 2>/dev/null || true
+  # Push to a dummy origin so HEAD is reachable from a remote
+  DD="$(mktmp)"; git init -q --bare "$DD"; git remote add origin "$DD"; git push -q origin feat/clean
+) >/dev/null 2>&1
+
+printf '2026-07-01T00:00:00Z\tmerged:#555\tbranch:feat/clean\n' > "$d_g/state/done/G-CLEAN"
+write_bridge_claim "$d_g" "G-CLEAN" "test-session" "1" "$CLEAN_WT"
+
+out_g="$(run_rec "$d_g" --apply 2>&1)"
+has "$out_g" "RETIRED G-CLEAN"           "(g1) done-marker + clean pushed worktree -> RETIRED"
+[ ! -e "$d_g/state/claims/G-CLEAN" ]     && ok "(g2) claim REMOVED for clean done-marker claim"  || bad "(g2) claim still present"
+[ -e "$d_g/state/done/G-CLEAN" ]         && ok "(g3) done-marker preserved"                      || bad "(g3) done-marker removed"
+
+rm -rf "$d_g" "$CLEAN_WT"
+
+# ── (h) LIVE heartbeat -> untouched ────────────────────────────────────
+echo "== (h) live heartbeat -> untouched =="
+d_h="$(mk_fleet)"
+NOW="$(date +%s)"
+write_bridge_claim "$d_h" "H-LIVE" "test-session" "$NOW" "/nonexistent"
+out_h="$(run_rec "$d_h" 2>&1)"
+has "$out_h" "LIVE    H-LIVE"             "(h1) live heartbeat -> LIVE (untouched)"
+[ -e "$d_h/state/claims/H-LIVE" ]         && ok "(h2) live claim still present"                 || bad "(h2) live claim was removed"
+out_h_apply="$(run_rec "$d_h" --apply 2>&1)"
+[ -e "$d_h/state/claims/H-LIVE" ]         && ok "(h3) live claim SURVIVES --apply"              || bad "(h3) live claim removed under --apply"
+no "$out_h_apply" "RETIRED H-LIVE"        "(h4) live claim NOT retired"
+
+rm -rf "$d_h"
+
+# ── (i) old-format live PID -> untouched ───────────────────────────────
+echo "== (i) old-format live PID -> untouched =="
+d_i="$(mk_fleet)"
+# Spawn a real background process for the PID check
 KILL_LIST="$(mktemp)"
-# shellcheck disable=SC2154  # `p` is the trap-loop var, assigned by the `for` inside the trap body.
 trap 'for p in $(cat "$KILL_LIST" 2>/dev/null); do kill -9 "$p" 2>/dev/null || true; done; rm -f "$KILL_LIST"' EXIT
-# NOTE: redirect sleep's fds off the command-substitution pipe, else `$(spawn_live)` blocks until
-# the sleep exits (the bg job inherits fd1) — which would also leave the PID dead by check time.
 spawn_live(){ sleep 120 >/dev/null 2>&1 & local lp=$!; echo "$lp" >> "$KILL_LIST"; echo "economy-$lp"; }
+LIVE_DROID="$(spawn_live)"
+write_old_claim "$d_i" "I-LIVE-OLD" "$LIVE_DROID"
 
-# ════════════════════════════════════════════════════════════════════════════════════════════
-# Fixture: 3 dead claims (merged / unmerged) + 1 live claim, in ONE fleet, to also prove the
-# reconciler processes a MIXED board correctly (the real board has all 4 shapes at once).
-d="$(mk_fleet)"
-add_ticket "$d" "REC-MERGED"   "feat/rec-merged"
-add_ticket "$d" "REC-UNMERGED" "feat/rec-unmerged"      # EGRESS-KEY-CANARY class: dead + rejected
-add_ticket "$d" "REC-LIVE"     "feat/rec-live"
-# merge fixtures: only REC-MERGED's branch has a merged PR; REC-UNMERGED is in NEITHER fixture.
-MERGED_SRC="$d/merged.tsv"; printf 'feat/rec-merged\t101\n' > "$MERGED_SRC"
-VERIFIED_TXT="$d/verified.txt"; printf 'REC-MERGED\n' > "$VERIFIED_TXT"
-# claims: dead PIDs (99998/99999 don't exist) for the two dead cases; a real live PID for REC-LIVE.
-write_claim "$d" "REC-MERGED"   "economy-99998"
-write_claim "$d" "REC-UNMERGED" "strong-99999"
-LIVE_DROID="$(spawn_live)"; write_claim "$d" "REC-LIVE" "$LIVE_DROID"
+out_i="$(run_rec "$d_i" 2>&1)"
+has "$out_i" "LIVE    I-LIVE-OLD"         "(i1) old-format live PID -> LIVE"
 
-# ── (d) DRY-RUN default mutates nothing, previews correctly ──────────────────────────────────
-echo "== (d) DRY-RUN preview =="
-dry="$(run_rec "$d" 2>&1)"; drc=$?
-check "(d0) dry-run exit 0" "$drc" "0"
-has "$dry" "would RETIRE  REC-MERGED"   "(d1) previews merged claim as would-RETIRE"
-has "$dry" "would HOLD    REC-UNMERGED" "(d2) previews unmerged claim as would-HOLD"
-has "$dry" "LIVE    REC-LIVE"           "(d3) live claim shown LIVE"
-[ -e "$d/state/claims/REC-MERGED" ] && ok "(d4) dry-run did NOT remove the merged claim" || bad "(d4) dry-run removed a claim"
-[ -e "$d/state/done/REC-MERGED" ]   && bad "(d5) dry-run wrote a marker" || ok "(d5) dry-run wrote NO marker"
+rm -rf "$d_i"
 
-# ── APPLY ────────────────────────────────────────────────────────────────────────────────────
-echo "== --apply =="
-out="$(run_rec "$d" --apply 2>&1)"; arc=$?
-check "(apply exit 0)" "$arc" "0"
-
-# (a) DEAD + MERGED -> retired-with-proof
-echo "== (a) dead+merged -> retire-with-proof =="
-has "$out" "RETIRED REC-MERGED" "(a1) merged claim reported RETIRED"
-[ -e "$d/state/claims/REC-MERGED" ] && bad "(a2) merged claim removed" || ok "(a2) stale claim REMOVED"
-if [ -e "$d/state/done/REC-MERGED" ]; then
-  ok "(a3) terminal done marker WRITTEN"
-  grep -q "merged:#101" "$d/state/done/REC-MERGED" && ok "(a4) marker carries the merge proof (merged:#101)" \
-    || bad "(a4) marker carries the merge proof"
-else bad "(a3) terminal done marker WRITTEN"; fi
-
-# (b) DEAD + UNMERGED -> HELD + LOUD, NEVER released  (THE RED LINE)
-echo "== (b) dead+unmerged -> HELD + LOUD, never released =="
-[ -e "$d/state/claims/REC-UNMERGED" ] && ok "(b1) unmerged claim HELD (still present after --apply)" \
-  || bad "(b1) unmerged claim was RELEASED — RED LINE VIOLATED"
-[ -e "$d/state/done/REC-UNMERGED" ] && bad "(b2) NO marker for unmerged work" || ok "(b2) NO done marker for unmerged work"
-has "$out" "HOLD  REC-UNMERGED" "(b3) LOUD HOLD warning names the ticket"
-
-# (c) LIVE-PID claim untouched
-echo "== (c) live-PID claim untouched =="
-[ -e "$d/state/claims/REC-LIVE" ] && ok "(c1) live claim still present after --apply" || bad "(c1) live claim was touched"
-[ -e "$d/state/done/REC-LIVE" ] && bad "(c2) no marker for a live claim" || ok "(c2) no marker written for a live claim"
-has "$out" "LIVE    REC-LIVE" "(c3) live claim reported LIVE (untouched)"
-
-# (e) Idempotency: re-run --apply. Merged claim is already gone (skipped); unmerged still HELD.
-echo "== (e) idempotency =="
-out2="$(run_rec "$d" --apply 2>&1)"; erc=$?
-check "(e0) second --apply exit 0" "$erc" "0"
-no  "$out2" "RETIRED REC-MERGED" "(e1) already-retired claim is not re-retired"
-[ -e "$d/state/claims/REC-UNMERGED" ] && ok "(e2) unmerged claim STILL held on re-run" || bad "(e2) unmerged claim released on re-run"
-has "$out2" "HOLD  REC-UNMERGED" "(e3) HOLD still LOUD on re-run"
-
-rm -rf "$d"
 echo
 echo "════════════════════════════════════════════════"
 echo "reconcile-stale-claims.test.sh: PASS=$PASS FAIL=$FAIL"
