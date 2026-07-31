@@ -1,4 +1,3 @@
-repo: charon
 tier: frontier
 difficulty: 5
 work_class: refactor

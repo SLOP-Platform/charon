@@ -2,7 +2,6 @@ repo: charon-private
 tier: strong
 difficulty: 2
 work_class: bugfix
-priority: 2
 branch: fix/bandit-preexisting-findings
 depends_on:
 owns: fleet/benchmark/lib/charon_cost.py, fleet/benchmark/selftest/run_isolation_selftest.py, fleet/benchmark/selftest/session_cost_selftest.py

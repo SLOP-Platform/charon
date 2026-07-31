@@ -1,4 +1,4 @@
-tier: frontier
+tier: strong
 difficulty: 3
 work_class: money-path
 branch: feat/price-refresher

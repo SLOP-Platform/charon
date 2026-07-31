@@ -2,7 +2,6 @@ repo: charon-private
 tier: strong
 difficulty: 4
 work_class: ci-infra
-priority: 2
 branch: feat/work-gate-universal
 depends_on:
 owns: fleet/checks/work-gate.sh, fleet/hooks/pretooluse-work-gate.sh, fleet/tests/work-gate.test.sh

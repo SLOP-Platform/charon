@@ -2,28 +2,7 @@ repo: charon-private
 tier: strong
 difficulty: 3
 work_class: rig-meta
-priority: 2
-priority-why: |
-  P:2 (assigned 2026-07-24; the field was ABSENT until then) — the P:2 band is "standalone,
-  biggest blast-radius", and this is the largest such piece on the board: 4 tickets list it in
-  depends_on (the highest reverse-dep count among the unprioritised set) and it owns the widest
-  seam (gh-cache.sh + done.sh + large-file-guard + land pacing). NOT P:0/P:1: it is PROACTIVE
-  hardening against limits we have not hit, not operator-escalated or attached-CG work, and a 39th
-  P:0 on a 38-P:0 board is no priority at all.
 branch: feat/github-limits-hardening
-stranded-content-2026-07-26: |
-  ⚠ THIS TICKET HAS UNLANDED WORK SITTING ON A BRANCH. Found by the adversarial review of
-  RIG-BRANCH-16-DEEPDIVE (fleet/handoff-notes/ADVREVIEW-RIG-BRANCH-16.md), NOT by anyone tracking it.
-  `feat/github-limits-hardening` and `feat/github-limits-hardening-v2` carry REAL content that is NOT
-  on master: the large-file-guard wire-up. On master the guard is still a MANUALLY-INVOKED CHECK —
-  i.e. the hardening this ticket exists to deliver is written but not in effect.
-  The reap correctly SKIPPED both branches. Nothing was lost. But it went 3+ days unnoticed, and this
-  ticket is on the critical path: FOUR tickets depend on it, and it is the sole remaining blocker for
-  DONE-SH-INTEGRITY-FIX defect (c) — the hardcoded MERGE/pass/score=100 that makes every scorecard row
-  identical and model ranking non-discriminating.
-  ACTION: start from the existing branches. Do NOT rebuild from scratch — verify what is there,
-  rebase onto master, and land it. Check BOTH branches; the -v2 duplication is itself a symptom (see
-  BRANCH-SPRAWL-ROOT-CAUSE, land.sh:151-161 EXISTING-BRANCH GUARD).
 owns: fleet/gh-cache.sh, fleet/done.sh, fleet/checks/large-file-guard.sh, fleet/tests/test_github_limits.sh
 serial_justified: One cohesive proactive-hardening pass against GitHub's limits (search-API + large-file + land pacing) sharing the gh-cache seam; splitting fragments the batching contract.
 depends_on: VERIFY-MERGED-REPO-AWARE

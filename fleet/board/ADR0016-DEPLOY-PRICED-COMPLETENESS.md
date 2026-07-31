@@ -2,7 +2,6 @@ repo: charon
 tier: strong
 difficulty: 3
 work_class: money-path
-priority: 1
 branch: feat/adr0016-priced-completeness-guard
 owns: src/charon/routing_policy/cost_rank.py, tests/test_priced_completeness.py
 serial_justified: One deploy-safety guard on the cost-selection path + its test; cohesive money-path change.

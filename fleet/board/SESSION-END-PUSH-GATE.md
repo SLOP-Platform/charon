@@ -2,16 +2,8 @@ repo: charon-private
 tier: strong
 difficulty: 2
 work_class: ci-infra
-priority: 2
 branch: feat/session-end-push-gate
-depends_on: HANDOFF-GOTCHA-VERIFIABLE
-real-dep: HANDOFF-GOTCHA-VERIFIABLE — shared fleet/end-session.sh surface. That branch
-  (fix/handoff-gotcha-verifiable) is BUILT and one commit from landing; it adds 3 lines to
-  end-session.sh's generated handoff FIXTURE so the fixture still satisfies handoff-check.sh's now
-  non-vacuous [claims] gate. This ticket rewrites end-session.sh's CLOSE-REFUSAL logic — a different
-  function, so the two edits COMPOSE in this order but would clobber in the other. Merge-order only;
-  costs no schedule time (this ticket is not started). Added 2026-07-24 by the board repair that
-  ticketed that branch.
+depends_on:
 owns: fleet/end-session.sh, fleet/tests/end-session-push.test.sh
 accept: |
   GAP found 2026-07-15 (cere-junda): end-session.sh commits ONLY the handoff FILE and NEVER pushes or checks for unpushed

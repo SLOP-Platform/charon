@@ -1,4 +1,3 @@
-repo: charon
 tier: economy
 difficulty: 1  # auto-seeded from tier (D1 hybrid); refine when purpose is fresh
 eval-role: SMOKE-TEST-ONLY — non-discriminating (2026-07-13). Confirmed by

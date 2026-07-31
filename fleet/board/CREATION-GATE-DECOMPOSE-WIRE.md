@@ -1,6 +1,5 @@
 repo: charon-private
 tier: strong
-priority: 2
 difficulty: 3
 work_class: rig-meta
 branch: feat/creation-gate-decompose-wire

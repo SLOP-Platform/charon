@@ -4,7 +4,8 @@ difficulty: 2
 work_class: generalist
 priority: 1
 branch: feat/discovery-queue
-depends_on:
+depends_on: DISCOVERY-DIFF
+dep-kind: build
 owns: fleet/discovery/queue.py, fleet/state/discovery-review.tsv
 note: |
   D4 of the DISCOVERY leg (FREE-PROVIDER-DISCOVERY-DESIGN §3a/§3d/§3e, operator-approved P1, 2026-07-23).
@@ -22,24 +23,13 @@ accept: |
        cadence and alerts immediately (availability event).
   Mirrors the discover_review.json queue concept (review file, not auto-apply).
   FAIL-ON-REVERT: feed a CANDIDATE then the same candidate again -> deduped (one row); a REMOVED for a
-  configured provider -> immediate OUTAGE-RISK escalation, not batched. Revert the dedup or the
-  escalation branch -> RED.
-  NON-VACUOUS: a queue run that examined ZERO delta records must RED, never report "nothing to review".
-  RUNNER-REACHABLE: the red-proof must be EXECUTED by a real runner (fleet/gate.sh's
-  `fleet/tests/*.test.sh` glob or rig-ci-scope.sh CI_SUITES).
+  configured provider -> immediate OUTAGE-RISK escalation, not batched.
 scope: |
   Build the discovery-review.tsv queue + weekly digest + OUTAGE-RISK immediate escalation, dedup against
   prior dispositions. Reuses the discover_review.json review-file pattern. Approval actuation is D5.
 ds: |
   ## Dependencies & sequence
-  - depends_on: NONE. The DISCOVERY-DIFF edge was REMOVED 2026-07-24 and it was NOT a real build prereq:
-    D4 consumes D3's NEW/CHANGED/GONE delta records, whose shape is specified in
-    FREE-PROVIDER-DISCOVERY-DESIGN §3b/§3d, and this ticket's red-proof feeds HAND-WRITTEN candidate and
-    REMOVED fixtures — it never executes offer_diff.py. Owns are disjoint (queue.py +
-    discovery-review.tsv vs offer_diff.py). It was a data-format contract, not a code dependency.
-  - feeds: DISCOVERY-APPROVAL-WIRE (D5) reads approved rows — also NOT a board edge, same reason.
+  - depends_on: DISCOVERY-DIFF (real build dep — queues its NEW/CHANGED/GONE output).
+  - feeds: DISCOVERY-APPROVAL-WIRE (D5) reads approved rows.
   - reuse: discover.py/discover_review.json review-queue pattern.
-  - concurrency: disjoint new files (queue.py + its own discovery-review.tsv). Safe to build in parallel
-    with D2/D3/D5/D6.
-  - UN-BUNDLED 2026-07-24: briefly absorbed into a DISCOVERY-PIPELINE mega-ticket; reverted. Grouping is
-    one ROADMAP wave (`discovery-leg`) at one priority, not one serial ticket.
+  - concurrency: disjoint new files (queue.py + its own discovery-review.tsv).

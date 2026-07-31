@@ -2,7 +2,7 @@ repo: charon-private
 tier: strong
 difficulty: 2
 work_class: bugfix
-priority: 0
+priority: 1
 branch: fix/flow-canary-freefirst
 depends_on:
 serial_justified: the canary fix and its dogfood rewrite are one unit — FIX-1 changes the assertion, FIX-2 changes the test that must prove it; splitting ships a fixed canary with a fake-green test or vice versa.

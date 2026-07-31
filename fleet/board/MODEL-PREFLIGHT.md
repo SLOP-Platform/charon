@@ -1,7 +1,6 @@
 tier: frontier
-priority: 3
 difficulty: 4
-work_class: design-review
+work_class: ci-infra
 branch: feat/model-preflight
 repo: charon-private
 depends_on: BENCH-OOB-GRADING

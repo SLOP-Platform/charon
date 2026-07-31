@@ -1,4 +1,3 @@
-repo: charon-private
 tier: frontier
 difficulty: 4
 work_class: design-review

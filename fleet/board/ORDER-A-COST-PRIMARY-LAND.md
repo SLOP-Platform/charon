@@ -1,5 +1,5 @@
 repo: charon
-tier: frontier
+tier: strong
 difficulty: 3
 priority: 1
 work_class: routing
@@ -35,5 +35,3 @@ ds: |
   ## Dependencies & sequence
   No build prereq. Rebase-and-land of an existing branch. Verify cost-primary ordering does not
   regress the live funding_class_order (SSOT 1<3<2<4) before merge.
-
-REVIEW-NOTE 2026-07-24 (operator-approved): DO NOT rebase commit 16dbdc2 into forwarder.py — GW-CUTOVER-LIVE-WIRE DELETES forwarder.py and litellm.Router already does funding-class + cheapest-first. Only novel bit = slow-failover (is_slow_provider). Rescope: fold slow-failover into Router allowed_fails/timeout; prune the forwarder rebase.

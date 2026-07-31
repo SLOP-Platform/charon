@@ -1,4 +1,3 @@
-repo: charon-private
 tier: economy
 difficulty: 1
 work_class: ci-infra

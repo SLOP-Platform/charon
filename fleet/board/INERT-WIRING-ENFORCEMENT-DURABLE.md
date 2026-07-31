@@ -2,7 +2,6 @@ repo: charon-private
 tier: strong
 difficulty: 3
 work_class: design-review
-priority: 2
 branch: fix/inert-wiring-enforcement-durable
 depends_on:
 owns: fleet/state/INERT-WIRING-ENFORCEMENT-DESIGN.md

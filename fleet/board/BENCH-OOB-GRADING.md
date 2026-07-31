@@ -1,4 +1,3 @@
-repo: charon-private
 repurpose-2026-07-10: grade REAL tasks (reds-replay + sub-session actuals), NOT synthetic S0-S6; write VERSIONED frozen scorecard artifacts consumed via freeze-ring (GATEWAY-PROGRAM).
 priority: 0
 tier: frontier
@@ -39,5 +38,3 @@ scope: #26 (P0 INTEGRITY — the top fix; nothing the benchmark says is trustwor
 note: SUPERSESSION VERIFIED FALSE (2026-07-23, adversarial) — KEEP. EVAL-* is a ledger CONSUMER that ASSUMES the OOB grader; BENCH-OOB IS the tamper-proof substrate (grader-daemon + 3 invariants) it sits on. NOT superseded (also clears the MODEL-PREFLIGHT/GRADER-SECFIX flag). Remaining: (a) human sign-off verification (daemon DEPLOYED), (b) STAGE-FAILCLOSED default flip. Line-410 fixed by STAGE-DEMUX. Prior: HELD pending supersession review - reorg audit (WORK-REORG-PROPOSAL.md) flags this + MODEL-PREFLIGHT + GRADER-SECFIX likely SUPERSEDED by the merged EVAL-* pipeline. Verify before any build; do not route to a tab yet.
 
 Q1-RESOLVED 2026-07-09: substrate = A (dedicated bench-grader unix user on LOCAL WSL box, answer-keys mode 0700). Still parked for BUILD pending: (1) proper #26/#25 design review, (2) build-after #20 (BENCH-PROVISIONAL-SCORING) resolution. Keep parked: true until both clear.
-
-SG-READY-NOTE 2026-07-24 (P0): gate RED on PR #193 (5835/33) — likely new gate unregistered in tools/gates.json + version bump; fix green, then merge

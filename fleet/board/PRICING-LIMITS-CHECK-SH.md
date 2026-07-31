@@ -1,7 +1,6 @@
 tier: strong
 difficulty: 2
 work_class: money-path
-priority: 1
 branch: feat/pricing-limits-check-sh
 repo: charon-private
 parent: PRICING-LIMITS-CHECKER

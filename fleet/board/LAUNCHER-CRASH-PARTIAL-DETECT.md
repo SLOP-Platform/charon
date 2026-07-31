@@ -6,12 +6,7 @@ work_class: rig-meta
 branch: feat/launcher-crash-partial-detect
 serial_justified: One cohesive exit-handling change in the launcher's droid-stand-down path; the detection + labeling + PR-status are a single decision point.
 owns: fleet/fleet-droid.sh, fleet/tests/test_launcher_crash_partial.sh
-depends_on: DROID-LIFECYCLE-REAP, FLEET-DEMAND-BROKER
-real-dep: FLEET-DEMAND-BROKER — shares fleet/fleet-droid.sh. That branch
-  (feat/FLEET-DEMAND-DRIVEN-ROUTING-avail-cap @ 2ab0518) is BUILT and adds ~242 lines to the same
-  launcher; sequenced after it so this ticket's stand-down/exit-handling edit applies to the landed
-  version. Costs no schedule time — already blocked on DROID-LIFECYCLE-REAP, which
-  FLEET-DEMAND-BROKER also sits behind. Added 2026-07-24 by the board repair that ticketed that branch.
+depends_on: DROID-LIFECYCLE-REAP
 dep-kind: build
 real-dep: both edit fleet/fleet-droid.sh stand-down/cleanup path; must sequence onto DROID-LIFECYCLE-REAP's landed version.
 work_class_note: lifecycle-safety; a crash-partial PR mistaken for complete work ships half-done code.

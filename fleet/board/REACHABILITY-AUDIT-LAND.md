@@ -1,6 +1,5 @@
 repo: charon-private
 tier: strong
-priority: 3
 difficulty: 2
 work_class: ci-infra
 branch: feat/reachability-audit-land

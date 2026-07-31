@@ -55,13 +55,7 @@ verified):**
 - **Public product repo ONLY:** additionally use native branch-protection + CODEOWNERS (free on public)
   as defense-in-depth. Private rig relies on the marker+check.
 - Reuse `ReviewerCircuitBreaker` (`src/charon/failover.py:73-142`) so a review→fix→review doom-loop
-  TRIPS (fingerprint the approach, not the args) instead of looping. Concretely: the review-gate
-  subprocess wraps its `(fetch-review-verdict)` call in a `ReviewerCircuitBreaker` instance keyed by
-  `(ticket-id, head-sha)`; the BREAK is `subsequent_review_failures ≥ threshold=3` on the SAME
-  (approach = reflected SHA unchanged AND same flagged-hash fingerprint), not on any review error.
-  Trip → refuse with a `cooldown`-behaving marker and require either a substantive reframe (new
-  approach fingerprint) or operator override. This is the doom-loop primitive EVAL-REGISTRY #61
-  already ADOPT-REUSE confirmed.
+  TRIPS (fingerprint the approach, not the args) instead of looping.
 
 **Adopt-first consult (recorded, AP-12/hand-roll-never-default apply):** GitHub required-reviews =
 adopt on public, unavailable on private (paywall). CODEOWNERS = adopt on public. Danger = already
@@ -131,3 +125,5 @@ self-reported SUCCESS). Fine for `doc`/`tooling` until it earns higher tiers.
 6. `GRADE-BACKFILL` — the two rows above, via the new capture paths (after 3–4 exist).
 
 Each carries its own EVAL-REGISTRY consult + adversarial review (dogfooding consumer A). Do NOT mass-build.
+```
+```

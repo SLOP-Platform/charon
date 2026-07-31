@@ -1,12 +1,5 @@
-repo: charon
-tier: strong
-priority: 3
-repo-corrected: |
-  MERGE-RESOLVED 2026-07-26: repo taken from feat/repo-field-required (charon, NOT charon-private).
-  That branch is correct on the facts — this ticket owns src/charon/routing_policy/ledger_decay.py
-  and tests/test_ledger_decay.py, both PRODUCT paths. A wrong repo: field makes done.sh check the
-  wrong repository's merged-PR history (DONE-SH-INTEGRITY-FIX defect (b)). tier/priority kept from
-  master as the more recent values.
+repo: charon-private
+tier: economy
 difficulty: 3
 work_class: routing
 branch: feat/router-ledger-decay

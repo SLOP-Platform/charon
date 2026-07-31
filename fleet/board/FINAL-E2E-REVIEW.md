@@ -1,7 +1,6 @@
 tier: frontier
 difficulty: 3
-work_class: design-review
-priority: 5
+work_class: ci-infra
 branch: audit/final-e2e-review
 repo: charon-private
 depends_on: DECOMPOSE-DEFAULT-GATE, MODEL-PREFLIGHT

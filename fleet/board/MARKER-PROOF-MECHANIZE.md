@@ -1,35 +1,14 @@
 repo: charon-private
 tier: strong
 difficulty: 3
-priority: 2
 work_class: rig-meta
 branch: feat/marker-proof-mechanize
-depends_on: DONE-SH-INTEGRITY-FIX, GITHUB-LIMITS-HARDENING, VERIFY-MERGED-REPO-AWARE, FOREMAN-WIRE, REPO-MAP-CONVERGE
+depends_on: DONE-SH-INTEGRITY-FIX, GITHUB-LIMITS-HARDENING, FOREMAN-WIRE, REPO-MAP-CONVERGE, BENCH-OOB-GRADING
 real-dep: DONE-SH-INTEGRITY-FIX — shared single-owner of fleet/done.sh, and the DIRECT predecessor:
   it fixes how done.sh MATCHES proof (loose owns-touch false-close, wrong-repo resolution). This
   ticket fixes whether done.sh may write a marker with NO proof at all. Requiring proof before the
   matcher is trustworthy would only harden a matcher that still names the WRONG PR. Land that first,
   then require. Single-writer sequencing — rebase onto it, never co-write.
-unbundle: |
-  UN-BUNDLED 2026-07-24. A bundling pass had ABSORBED DONE-SH-INTEGRITY-FIX into this ticket as a
-  "LAYER 0". That was REVERTED: bundling means GROUP AT ONE PRIORITY IN ONE WAVE so the work reads as
-  one effort — it does NOT mean fuse two tickets into one serial branch. The two tickets are restored
-  as two, and the DONE-SH-INTEGRITY-FIX edge is restored as a REAL edge: they genuinely co-own
-  fleet/done.sh and the matcher genuinely must be right before proof is required, so this is a
-  sequencing constraint that the board must express as an edge, not as a merge.
-  [[decomposed-by-design-not-reactive]] [[optimize-execution-wallclock-tokens]]
-  KEPT FROM THE BUNDLING PASS (genuine improvements, not reverted):
-   - `priority: 2` (PRIORITY-LADDER band "standalone, biggest blast-radius") — this ticket previously
-     carried NO priority: field at all. Matches DONE-SH-INTEGRITY-FIX's band so the pair reads as one
-     wave, which is what grouping actually means.
-   - the BENCH-OOB-GRADING edge stays DROPPED as FALSE (below).
-   - the VERIFY-MERGED-REPO-AWARE provenance real-dep line.
-  REMOVED EDGE (a) FALSE: MARKER-PROOF-MECHANIZE -> BENCH-OOB-GRADING. Its own justification said
-  the owns strings "do not textually collide" — because BENCH-OOB-GRADING's `preflight.sh` is
-  fleet/benchmark/preflight.sh, a DIFFERENT FILE from fleet/preflight.sh (verified 2026-07-24 by
-  `find . -name preflight.sh` -> ./fleet/preflight.sh, ./fleet/benchmark/preflight.sh). There is no
-  shared surface and no build prereq; the edge was never real. WCI-CONTENTION-TEETH's own ds
-  block already recorded that these are different paths.
 real-dep: GITHUB-LIMITS-HARDENING — also owns fleet/done.sh (routes its gh calls through
   gh-cache.sh). The write-time proof check calls the same gh seam; running as a concurrent second
   writer of done.sh would re-introduce the direct-gh call sites that ticket is removing.
@@ -39,9 +18,8 @@ real-dep: REPO-MAP-CONVERGE — also owns fleet/preflight.sh AND fleet/checks/*.
   surfaces this ticket extends. Its repo-map check establishes the `repo:`-resolution the marker
   gate must reuse to decide WHICH repo a marker's proof sha belongs to; a marker gate that
   resolved the wrong repo would fail valid markers.
-real-dep: VERIFY-MERGED-REPO-AWARE (DONE) — it established fleet/done.sh's repo-aware
-  merge-verification path that DONE-SH-INTEGRITY-FIX tightens and this ticket builds on. Already
-  landed; recorded for provenance.
+real-dep: BENCH-OOB-GRADING — owns `preflight.sh` (unprefixed) in the benchmark tree; declared to
+  keep preflight single-writer even where the two owns strings do not textually collide.
 owns: fleet/done.sh, fleet/preflight.sh, fleet/checks/marker-proof.sh, fleet/tests/marker-proof.test.sh, .gitignore
 serial_justified: The three layers are ONE invariant ("a done-marker without proof cannot exist"),
   not three independent builds. Write-time refusal without the gate leaves the existing backlog
@@ -115,25 +93,15 @@ accept: |
 scope: |
   Rig-only, no product change [[product-vs-build-rig-boundary]]. This is the integrity of the ONE
   mechanism that marks work done and unblocks dependents: an unprovable marker is indistinguishable
-  from a fabricated one, and the board's entire dependency graph is downstream of it. This ticket is
-  proof EXISTENCE (LAYERS 1-3); proof MATCHING is DONE-SH-INTEGRITY-FIX, its own ticket, its own
-  branch, landing first. Same wave, same priority, two agents — grouped, not fused.
+  from a fabricated one, and the board's entire dependency graph is downstream of it. Pairs with
+  DONE-SH-INTEGRITY-FIX (proof MATCHING) — this ticket is proof EXISTENCE.
 ds: |
   ## Dependencies & sequence
-  UN-BUNDLED 2026-07-24: a bundling pass had absorbed DONE-SH-INTEGRITY-FIX into this ticket as a
-  "LAYER 0"; reverted. The edge is RESTORED and it is REAL on two counts — the two tickets co-own
-  fleet/done.sh (shared-file single-writer), and the matcher must be correct before proof is
-  required, or this ticket only hardens a matcher that still names the WRONG PR. Grouping the pair
-  is done in ROADMAP.tsv (project FLEET, wave `done-marker-integrity`, both `priority: 2`), which is
-  what "bundle" means; fusing them into one branch would have cost a second agent's parallelism for
-  no schedule gain.
-  KEPT: DONE-SH-INTEGRITY-FIX (shared fleet/done.sh + real correctness ordering — see real-dep);
-  GITHUB-LIMITS-HARDENING (owns fleet/done.sh — BUILT + pushed on feat/github-limits-hardening,
-  UNLANDED; clears by LANDING); REPO-MAP-CONVERGE and FOREMAN-WIRE (own fleet/preflight.sh);
-  VERIFY-MERGED-REPO-AWARE (DONE, provenance only).
-  DROPPED as FALSE: BENCH-OOB-GRADING — its `preflight.sh` is fleet/benchmark/preflight.sh, a
-  different file (see bundle: above).
-  WAVE: after GITHUB-LIMITS-HARDENING and the preflight wave land. Rebase onto master, never co-write a shared file from a parallel branch.
+  depends_on: DONE-SH-INTEGRITY-FIX, GITHUB-LIMITS-HARDENING (both own fleet/done.sh);
+  FOREMAN-WIRE, REPO-MAP-CONVERGE, BENCH-OOB-GRADING (all own preflight.sh). Every dep is a
+  SHARED-OWNS single-writer sequencing dep, not a speculative one — see the `real-dep:` lines.
+  WAVE: after the done.sh wave (DONE-SH-INTEGRITY-FIX, GITHUB-LIMITS-HARDENING) and the preflight
+  wave land. Rebase onto master, never co-write a shared file from a parallel branch.
   CONCURRENCY-SAFETY: sole owner of fleet/checks/marker-proof.sh and
   fleet/tests/marker-proof.test.sh (both new — no other live ticket or open PR claims them, and
   branch feat/marker-proof-mechanize is unused). `.gitignore` is owned by no other live ticket but

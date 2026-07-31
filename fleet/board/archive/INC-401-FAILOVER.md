@@ -1,4 +1,3 @@
-repo: charon
 > CLOSED 2026-07-08 — superseded by 307652d (verified). BOTH parts landed:
 >   (1) 401 classification patterns in src/charon/proxy.py:74-75 (_UNSUPPORTED_BODY_PATTERNS:
 >       "not supported" / "no such model" / "model not found" / "unknown model" + more;
