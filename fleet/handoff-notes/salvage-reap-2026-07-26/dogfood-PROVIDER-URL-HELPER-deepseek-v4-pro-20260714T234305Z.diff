@@ -1,0 +1,116 @@
+diff --git a/src/charon/config/keyprobe.py b/src/charon/config/keyprobe.py
+index 2b6abae..184d9e7 100644
+--- a/src/charon/config/keyprobe.py
++++ b/src/charon/config/keyprobe.py
+@@ -6,6 +6,7 @@ import urllib.error
+ import urllib.request
+ 
+ from ..netutil import BROWSER_UA
++from ..providers import chat_url, models_url
+ 
+ _VALIDATE_TIMEOUT = 15.0
+ # Browser-like UA (P5): Cloudflare-fronted providers (groq/cerebras/together)
+@@ -34,12 +35,11 @@ def validate_provider_key(name: str, base_url: str | None, api_key: str) -> dict
+             return None
+ 
+     opener = urllib.request.build_opener(_NoRedirect())
+-    raw_base = base_url.rstrip("/") if base_url else ""
+ 
+     # Probe 1: GET /models — cheap, tells us the key works + model count
+     models_count = 0
+     try:
+-        req = urllib.request.Request(raw_base + "/models", method="GET")
++        req = urllib.request.Request(models_url(base_url or ""), method="GET")
+         req.add_header("User-Agent", _VALIDATE_UA)
+         req.add_header("Authorization", "Bearer " + api_key)
+         resp = opener.open(req, timeout=_VALIDATE_TIMEOUT)
+@@ -58,7 +58,7 @@ def validate_provider_key(name: str, base_url: str | None, api_key: str) -> dict
+             "messages": [{"role": "user", "content": "hi"}],
+             "max_tokens": 1,
+         }).encode()
+-        req = urllib.request.Request(raw_base + "/chat/completions", data=body, method="POST")
++        req = urllib.request.Request(chat_url(base_url or ""), data=body, method="POST")
+         req.add_header("User-Agent", _VALIDATE_UA)
+         req.add_header("Content-Type", "application/json")
+         req.add_header("Authorization", "Bearer " + api_key)
+diff --git a/src/charon/discover.py b/src/charon/discover.py
+index 3d50ce9..8e641b4 100644
+--- a/src/charon/discover.py
++++ b/src/charon/discover.py
+@@ -29,9 +29,9 @@ def discover_provider(base_url: str, api_key: str | None,
+     any error.
+     """
+     if strip_v1:
+-        url = base_url.rstrip("/") + "/models"
++        url = providers.models_url(base_url)
+     else:
+-        url = base_url.rstrip("/") + "/v1/models"
++        url = providers._join_endpoint(base_url, "/v1/models")
+ 
+     req = urllib.request.Request(url, method="GET")
+     req.add_header("User-Agent", BROWSER_UA)
+diff --git a/src/charon/providers.py b/src/charon/providers.py
+index 487029b..d0acda3 100644
+--- a/src/charon/providers.py
++++ b/src/charon/providers.py
+@@ -23,6 +23,21 @@ from urllib.parse import urlsplit
+ from .netutil import BROWSER_UA  # shared browser-like UA (P5 — Cloudflare 1010)
+ from .provider_presets import MERGED_RAW_DATA  # data merged from category modules
+ 
++
++def _join_endpoint(base_url: str, path: str) -> str:
++    """Join a *path* onto *base_url*, stripping trailing slashes from the base."""
++    return base_url.rstrip("/") + path
++
++
++def models_url(base_url: str) -> str:
++    """Return the resolved ``/models`` URL for *base_url*."""
++    return _join_endpoint(base_url, "/models")
++
++
++def chat_url(base_url: str) -> str:
++    """Return the resolved ``/chat/completions`` URL for *base_url*."""
++    return _join_endpoint(base_url, "/chat/completions")
++
+ # ── Upstream wire-format vocabulary (SR-6) ─────────────────────────────────────
+ # The vendor-agnostic gateway/proxy core references these by constant, never by
+ # literal, so it stays product-clean; the vendor vocabulary lives here in the
+@@ -172,7 +187,7 @@ def list_models(name: str, overrides: dict | None = None, *,
+     host = parts.hostname or ""
+     if host.startswith("169.254.") or host == "metadata.google.internal":
+         raise ValueError(f"refusing link-local / metadata host {host!r}")
+-    url = base.rstrip("/") + "/models"
++    url = models_url(base)
+     req = urllib.request.Request(url, method="GET")
+     req.add_header("User-Agent", BROWSER_UA)
+     if api_key:
+diff --git a/tests/test_providers.py b/tests/test_providers.py
+index e250906..9ef7d92 100644
+--- a/tests/test_providers.py
++++ b/tests/test_providers.py
+@@ -178,3 +178,25 @@ def test_extract_pricing_no_pricing_field():
+     entry: dict = {}
+     providers._extract_pricing({"id": "x"}, entry)
+     assert entry == {}
++
++
++# ── URL helpers (dedup) ─────────────────────────────────────────────
++
++def test_models_url_normal_base():
++    assert providers.models_url("https://api.openai.com/v1") == "https://api.openai.com/v1/models"
++
++
++def test_models_url_base_with_path_segment():
++    assert providers.models_url("https://opencode.ai/zen/v1") == "https://opencode.ai/zen/v1/models"
++
++
++def test_models_url_trailing_slash():
++    assert providers.models_url("https://api.openai.com/v1/") == "https://api.openai.com/v1/models"
++
++
++def test_chat_url_normal_base():
++    assert providers.chat_url("https://api.openai.com/v1") == "https://api.openai.com/v1/chat/completions"
++
++
++def test_chat_url_base_with_path_segment():
++    assert providers.chat_url("https://opencode.ai/zen/go/v1") == "https://opencode.ai/zen/go/v1/chat/completions"

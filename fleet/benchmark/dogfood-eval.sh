@@ -381,11 +381,33 @@ run_one() {
 
   # ---- real-work check: git-diff based (stronger than charon-run.sh's own mtime proxy —
   # our worktree IS a real git checkout) ----
+  #
+  # RFL-3-CAPTURE-FIX: git diff covers ONLY tracked changes. A candidate that creates a
+  # genuinely NEW untracked file (created, never git-add'd) leaves output that is invisible
+  # to git diff, invisible to the scorer, and permanently lost on worktree reap. Capture
+  # untracked files too — they are first-class candidate output. Use `git ls-files --others
+  # --exclude-standard` (read-only, no index mutation; unlike `git add -N`) and append each
+  # as a proper diff via `git diff --no-index /dev/null <file>`.
   local diff_stat diff_files n_changed did_real_work
   diff_stat="$(git -C "$wt" diff --stat 2>/dev/null)"
   diff_files="$(git -C "$wt" diff --name-only 2>/dev/null)"
-  n_changed="$(printf '%s\n' "$diff_files" | grep -c . || true)"
+
+  local untracked_files n_untracked
+  untracked_files="$(git -C "$wt" ls-files --others --exclude-standard 2>/dev/null)"
+  n_untracked="$(printf '%s\n' "$untracked_files" | grep -c . || true)"
+
   git -C "$wt" diff > "$diff_file" 2>/dev/null || true
+
+  if [ "${n_untracked:-0}" -gt 0 ]; then
+    while IFS= read -r uf; do
+      [ -z "$uf" ] && continue
+      git -C "$wt" diff --no-index /dev/null "$uf" >> "$diff_file" 2>/dev/null || \
+        { printf '%s\n' '--- /dev/null' "+++ $uf (unreadable)" >> "$diff_file"; }
+    done <<< "$untracked_files"
+  fi
+
+  diff_files="$(printf '%s\n%s\n' "$diff_files" "$untracked_files" | grep . || true)"
+  n_changed="$(printf '%s\n' "$diff_files" | grep -c . || true)"
   if [ "${n_changed:-0}" -gt 0 ]; then
     did_real_work="real-diff(files=$n_changed)"
   else

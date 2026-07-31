@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# commit-msg hook — Work-Lease gate: refuse un-sanctioned commits in main checkout.
+set -euo pipefail
+FLEET="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd 2>/dev/null)"
+exec bash "$FLEET/work-lease.sh" commit-msg "$@"

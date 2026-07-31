@@ -12,6 +12,10 @@
 # Every subcommand runs foreman.sh report-only (NEVER --fix). Acting stays a
 # manager decision.
 #
+# Every trigger ALSO carries the PLANE-CANARY surface (fleet/plane-canary.sh surface):
+# fail-closed, non-vacuous, rc propagated. See cmd_plane_canary for why it rides all four
+# triggers rather than the `cadence` leg alone.
+#
 # Usage:
 #   bash fleet/foreman-cadence.sh session-start
 #   bash fleet/foreman-cadence.sh post-land
@@ -59,14 +63,72 @@ _run_foreman(){
   esac
 }
 
+# --- plane-canary surface: rides EVERY trigger --------------------------------------
+# WHY HERE, AND WHY NOT BEHIND `cadence` ALONE (PLANE-CANARY-WIRE):
+#   fleet/plane-canary.sh worked, returned 1 correctly, and had ZERO callers — a repo-wide
+#   grep found only the script and its own dogfood. 8 of 10 declared control/money planes
+#   were RED and nobody acted, because nothing surfaced it. Gating that behind `cadence`
+#   would have re-created the same bug one level up: `cadence` has no cron/systemd caller
+#   either. So the CHEAP leg (`surface` = reconcile, pure file+grep checks, no network,
+#   ~50ms) runs on EVERY trigger — session-start, post-land, handoff and cadence — and
+#   rides whichever one actually fires today (`handoff`, via fleet/handoff.sh).
+#
+# FAIL CLOSED — deliberately UNLIKE the graphify/watchdog legs further down, which do
+#   `[ -f "$x" ] || { say "not found"; return 0; }`. A detector that is missing or
+#   un-runnable is RED here, never "skipped". A vanished detector must not read as "nothing
+#   wrong" — that is how a deleted gate becomes a silent green.
+#
+# NEVER `|| true` / never piped into `tail`/`head` — that is the precise defect being fixed.
+#   The legs below (graphify, watchdog) each end in `|| true` and throw their callees' exit
+#   codes away, so a failure there is invisible to the caller. This leg uses
+#   capture-then-check and hands its rc to _trigger_rc, which propagates it.
+PLANE_CANARY_SH="$FLEET/plane-canary.sh"
+
+cmd_plane_canary(){
+  local label="${1:-surface}"
+  say "--- plane-canary surface ($label) ---"
+  if [ ! -f "$PLANE_CANARY_SH" ]; then
+    say "████ PLANE-CANARY: RED — detector MISSING at $PLANE_CANARY_SH ████"
+    say "████ fail-closed: an absent detector is NOT a pass. Restore fleet/plane-canary.sh. ████"
+    return 1
+  fi
+  local out rc=0
+  out="$(bash "$PLANE_CANARY_SH" surface 2>&1)" || rc=$?
+  printf '%s\n' "$out"
+  if [ "$rc" -ne 0 ] && [ -z "$out" ]; then
+    say "████ PLANE-CANARY: RED — detector exited $rc with NO output (unrunnable; fail-closed) ████"
+  fi
+  return "$rc"
+}
+
+# ONE verdict per trigger. The plane verdict prints LAST and in banner form on purpose:
+# burying a RED among earlier WARN lines is exactly how 8 REDs went unnoticed.
+# Rc precedence: a foreman DEFECT (rc 2 = board provably malformed) outranks a plane RED,
+# because it is the more specific machine signal — but BOTH are always printed, and a plane
+# RED is never downgraded to 0 just because foreman was happy.
+_trigger_rc(){
+  local label="$1" frc="$2" prc="$3"
+  if [ "$prc" -ne 0 ]; then
+    say "== FOREMAN CADENCE VERDICT ($label): PLANE-RED (rc=$prc) -- a declared control/money plane has NO trustworthy canary (banner above). Triage it; this is tracked work, not a warning. =="
+  fi
+  if [ "$frc" -ne 0 ]; then return "$frc"; fi
+  return "$prc"
+}
+
 cmd_session_start(){
   say "--- foreman session-start ---"
-  _run_foreman "session-start"
+  local frc=0 prc=0
+  _run_foreman "session-start" || frc=$?
+  cmd_plane_canary "session-start" || prc=$?
+  _trigger_rc "session-start" "$frc" "$prc"
 }
 
 cmd_post_land(){
   say "--- foreman post-land ---"
-  _run_foreman "post-land"
+  local frc=0 prc=0
+  _run_foreman "post-land" || frc=$?
+  cmd_plane_canary "post-land" || prc=$?
+  _trigger_rc "post-land" "$frc" "$prc"
 }
 
 cmd_handoff(){
@@ -81,6 +143,28 @@ cmd_handoff(){
   printf '%s\n' "$out"
   say '```'
   say ""
+  # PLANE-CANARY on the handoff surface. `handoff` is currently the ONLY foreman-cadence
+  # leg with a real caller (fleet/handoff.sh), so this is the trigger a next session
+  # actually reads. The heading sits OUTSIDE the fence so a RED renders as its own markdown
+  # section instead of another line of code-block scrollback.
+  local pout prc=0
+  pout="$(cmd_plane_canary "handoff" 2>&1)" || prc=$?
+  if [ "$prc" -ne 0 ]; then
+    say "### >>> PLANE-CANARY RED — declared control/money planes are UNGUARDED <<<"
+  else
+    say "### Plane-canary (auto)"
+  fi
+  say ""
+  say '```'
+  printf '%s\n' "$pout"
+  say '```'
+  say ""
+  # NOTE (reported, not silently absorbed): fleet/handoff.sh:383 invokes this subcommand as
+  # `... foreman-cadence.sh handoff 2>&1 || true`, so this rc IS discarded at that call site
+  # — the same `|| true` class this ticket exists to fix, in a file this ticket does not own.
+  # The rc is returned honestly here so the moment that `|| true` is dropped the signal is
+  # live; until then the markdown heading above is what carries the loudness on this leg.
+  return "$prc"
 }
 
 cmd_cadence(){
@@ -100,7 +184,11 @@ cmd_cadence(){
   fi
   printf '%s' "$now" > "$CADENCE_MARKER"
   say "--- foreman cadence (interval=${interval_minutes}m) ---"
-  _run_foreman "cadence"
+  # `_run_foreman "cadence"` used to be called bare, so its rc was discarded and cmd_cadence
+  # always returned whatever the LAST leg happened to return (0). Captured now — the same
+  # rc-masking class this ticket is fixing for plane-canary.
+  local frc=0 prc=0
+  _run_foreman "cadence" || frc=$?
   # WIRE-GRAPHIFY-FRESHNESS: this is the REAL fired timer entrypoint (cron/systemd ->
   # `foreman-cadence.sh cadence`, per RECONCILE-* tickets' own assumption at :87-104).
   # A sibling `graphify` subcommand that nothing calls would be the exact
@@ -108,6 +196,90 @@ cmd_cadence(){
   # Independently interval-gated (its own marker file), so it never runs more often
   # than GRAPHIFY_CADENCE_INTERVAL regardless of the foreman interval above.
   cmd_graphify_cadence
+
+  # WIRE-SERVICE-WATCHDOG (SERVICE-LIVENESS-WATCHDOG): the fired timer entrypoint. Same
+  # rationale as graphify — a watchdog that nothing calls on a cadence is the built-but-inert
+  # bug this ticket exists to close. Independently interval-gated (own marker).
+  cmd_watchdog_cadence
+
+  # PLANE-CANARY: not interval-gated. `surface` is reconcile-only — file existence + greps,
+  # no network, no subprocess per plane — so there is nothing to rate-limit, and a gate here
+  # would just be one more way for the signal to be absent when someone looks.
+  cmd_plane_canary "cadence" || prc=$?
+  _trigger_rc "cadence" "$frc" "$prc"
+
+  # REGISTRY-META-CATALOG: fire the registry discovery leg on the same cadence backstop.
+  # A meta-catalog nobody reconciles just recreates the "can't find our registries" problem
+  # it exists to solve — so the fail-closed disk->catalog discovery must actually RUN.
+  # MERGE-RESOLVED 2026-07-26: union of two INDEPENDENT cadence backstops. Placed AFTER
+  # _trigger_rc so the plane-canary rc reporting keeps its original operands untouched.
+  cmd_registry_discovery
+}
+
+# --- watchdog cadence: keep monit config in sync + relaunch a dead monit + surface -----
+# The ACTING leg of SERVICE-LIVENESS-WATCHDOG on a timer backstop:
+#   1. re-render monit.d/*.conf from the registry (a new/edited service row takes effect), and
+#      `monit reload` if monit is installed (so monit picks up the render).
+#   2. monit-selfwatch: relaunch monit if it died/hung (who-watches-monit).
+#   3. discover-services: evaluate registered alive+freshness + unregistered discovery, surfacing
+#      any DEAD/STALE/uncovered service to the issue-board (write-if-present).
+# Interval-gated with its own marker so it is independent of the foreman interval.
+WATCHDOG_CADENCE_MARKER="$STATE_DIR/.watchdog-cadence-ts"
+
+cmd_watchdog_cadence(){
+  local interval_minutes="${WATCHDOG_CADENCE_INTERVAL:-15}"
+  case "${1:-}" in --interval-minutes) interval_minutes="$2"; shift 2;; esac
+  _ensure_state_dir
+  local now last_ts
+  now="$(date +%s)"
+  if [ -f "$WATCHDOG_CADENCE_MARKER" ]; then
+    last_ts="$(cat "$WATCHDOG_CADENCE_MARKER" 2>/dev/null || echo 0)"
+    local elapsed=$(( now - last_ts ))
+    local interval_seconds=$(( interval_minutes * 60 ))
+    if [ "$elapsed" -lt "$interval_seconds" ]; then
+      say "watchdog cadence: skipped ($elapsed s since last run, interval=${interval_minutes}m)"
+      return 0
+    fi
+  fi
+  printf '%s' "$now" > "$WATCHDOG_CADENCE_MARKER"
+  say "--- watchdog cadence (interval=${interval_minutes}m) ---"
+  local wdir="$FLEET/watchdog"
+  [ -d "$wdir" ] || { say "watchdog cadence: $wdir not found"; return 0; }
+  say "watchdog cadence: re-rendering monit config from registry..."
+  bash "$wdir/generate-monit-config.sh" 2>&1 || true
+  if command -v monit >/dev/null 2>&1; then bash -c 'monit reload' >/dev/null 2>&1 || true; fi
+  say "watchdog cadence: self-watch (relaunch monit if dead)..."
+  bash "$wdir/monit-selfwatch.sh" 2>&1 || true
+  say "watchdog cadence: evaluating services (alive + freshness + discovery)..."
+  bash "$wdir/discover-services.sh" 2>&1 || true
+}
+
+# --- registry discovery cadence: keep the registry META-CATALOG honest --------------
+# Runs checks/discover-registries.sh so a registry that lands on disk but nobody catalogued
+# is caught (fail-closed) rather than silently drifting. Interval-gated like the others.
+REGISTRY_DISCOVERY_CADENCE_MARKER="$STATE_DIR/.registry-discovery-cadence-ts"
+
+cmd_registry_discovery(){
+  local interval_minutes="${REGISTRY_DISCOVERY_CADENCE_INTERVAL:-30}"
+  case "${1:-}" in --interval-minutes) interval_minutes="$2"; shift 2;; esac
+  _ensure_state_dir
+  local now last_ts
+  now="$(date +%s)"
+  if [ -f "$REGISTRY_DISCOVERY_CADENCE_MARKER" ]; then
+    last_ts="$(cat "$REGISTRY_DISCOVERY_CADENCE_MARKER" 2>/dev/null || echo 0)"
+    local elapsed=$(( now - last_ts ))
+    local interval_seconds=$(( interval_minutes * 60 ))
+    if [ "$elapsed" -lt "$interval_seconds" ]; then
+      say "registry discovery cadence: skipped ($elapsed s since last run, interval=${interval_minutes}m)"
+      return 0
+    fi
+  fi
+  printf '%s' "$now" > "$REGISTRY_DISCOVERY_CADENCE_MARKER"
+  say "--- registry discovery cadence (interval=${interval_minutes}m) ---"
+  local rd="$FLEET/checks/discover-registries.sh"
+  [ -f "$rd" ] || { say "registry discovery cadence: discover-registries.sh not found at $rd"; return 0; }
+  # Report-only from the cadence backstop (surface RED loudly; the manager/preflight acts).
+  REGISTRY_CATALOG_FLEET="$FLEET" bash "$rd" 2>&1 || say "registry discovery cadence: RED — a registry on disk is not in the catalog (see above)"
 }
 
 # --- graphify cadence: keep the code map fresh on a timer backstop ------------------
@@ -147,6 +319,9 @@ case "${1:-help}" in
   handoff)       shift; cmd_handoff "$@" ;;
   cadence)       shift; cmd_cadence "$@" ;;
   graphify)      shift; cmd_graphify_cadence "$@" ;;
+  watchdog)      shift; cmd_watchdog_cadence "$@" ;;
+  plane-canary)  shift; cmd_plane_canary "${1:-manual}" ;;
+  registry-discovery) shift; cmd_registry_discovery "$@" ;;
   help|--help|-h)
     say "Usage: bash foreman-cadence.sh <subcommand> [args]"
     say ""
@@ -156,6 +331,9 @@ case "${1:-help}" in
     say "  handoff                    Emit tier picture for handoff markdown"
     say "  cadence [--interval-min N] Scheduled backstop with interval gate"
     say "  graphify [--interval-min N] Code-map freshness cadence backstop"
+    say "  watchdog [--interval-min N] Service-liveness watchdog cadence (render+selfwatch+eval)"
+    say "  plane-canary               Plane-canary surface only (fail-closed; non-zero on any RED plane)"
+    say "  registry-discovery [--interval-min N] Registry meta-catalog discovery backstop"
     say ""
     say "Env: FOREMAN_FLEET=<dir>     Override fleet root (test seam)"
     say "     FOREMAN_CADENCE_INTERVAL  Minutes between cadence runs (default 30)"

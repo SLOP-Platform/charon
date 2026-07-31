@@ -1,0 +1,54 @@
+severity	class	issue	source_detector	first_seen	age
+YELLOW	inert-pending	9 inert symbol(s) dispositioned wire/delete — pending action	tools/check_inert_code.py	2026-07-24T09:55:42	0
+RED	unwired-plane	plane 'data/serving': unwired canary — wired_in=[ci,preflight] but layer(s) [preflight] do NOT invoke flow-canary.sh/flow-canary.test.sh (FINAL-E2E-REVIEW phantom class; fail-closed)	plane-canary.sh reconcile	2026-07-24T09:55:42	0
+RED	unwired-plane	plane 'failover': unwired canary — wired_in=[ci,preflight] but layer(s) [ci preflight] do NOT invoke failover-canary.sh/failover-canary.test.sh (FINAL-E2E-REVIEW phantom class; fail-closed)	plane-canary.sh reconcile	2026-07-24T09:55:42	0
+RED	unwired-plane	plane 'egress-key': proofless canary — file(s) absent on disk: canary_script=fleet/checks/egress-key-canary.sh dogfood_test=fleet/tests/egress-key-canary.test.sh (untrusted until EGRESS-KEY-CANARY lands them)	plane-canary.sh reconcile	2026-07-24T09:55:42	0
+RED	unwired-plane	plane 'review': proofless canary — file(s) absent on disk: canary_script=fleet/checks/reconcile-review-gate.sh dogfood_test=fleet/tests/review-dispensation-canary.test.sh (untrusted until REVIEW-DISPENSATION-CANARY lands them)	plane-canary.sh reconcile	2026-07-24T09:55:42	0
+RED	unwired-plane	plane 'lifecycle': proofless canary — file(s) absent on disk: dogfood_test=fleet/tests/ticket-lifecycle-canary.test.sh (untrusted until TICKET-LIFECYCLE-CANARY lands them)	plane-canary.sh reconcile	2026-07-24T09:55:42	0
+RED	unwired-plane	plane 'balance': unwired canary — wired_in=[preflight] but layer(s) [preflight] do NOT invoke balance-canary.sh/balance-canary.test.sh (FINAL-E2E-REVIEW phantom class; fail-closed)	plane-canary.sh reconcile	2026-07-24T09:55:42	0
+RED	unwired-plane	plane 'config-ssot': proofless canary — file(s) absent on disk: dogfood_test=fleet/tests/config-ssot-gate.test.sh (untrusted until CONFIG-SSOT-CANARY-REGISTER lands them)	plane-canary.sh reconcile	2026-07-24T09:55:42	0
+RED	unwired-plane	plane 'reconciliation': proofless canary — file(s) absent on disk: canary_script=fleet/checks/reconcile-gate-wired.sh dogfood_test=fleet/tests/reconcile-gate-wired.test.sh (untrusted until UNIFIED-RECONCILIATION-GATE lands them)	plane-canary.sh reconcile	2026-07-24T09:55:42	0
+YELLOW	stale-claim-driftfmt	claim 'DIFF-COVER-MUTMUT-ADOPT' format-drift — unparseable owner, reconciler cannot classify	reconcile-stale-claims.sh	2026-07-24T09:55:42	0
+YELLOW	stale-claim-driftfmt	claim 'ISSUE-BOARD-SURFACE' format-drift — unparseable owner, reconciler cannot classify	reconcile-stale-claims.sh	2026-07-24T09:55:42	0
+YELLOW	stale-claim-driftfmt	claim 'ROUTER-LEDGER-DECAY' format-drift — unparseable owner, reconciler cannot classify	reconcile-stale-claims.sh	2026-07-24T09:55:42	0
+YELLOW	quarantined	ticket 'GRACEFUL-DEGRADE' QUARANTINED by loop-guard (zero-commit spin) — clear once block fixed	loop-guard.sh list	2026-07-24T09:55:42	0
+YELLOW	quarantined	ticket 'LITELLM-CI-DEPS' QUARANTINED by loop-guard (zero-commit spin) — clear once block fixed	loop-guard.sh list	2026-07-24T09:55:42	0
+YELLOW	quarantined	ticket 'STRANDED-WORK-AUDIT' QUARANTINED by loop-guard (zero-commit spin) — clear once block fixed	loop-guard.sh list	2026-07-24T09:55:42	0
+YELLOW	gate-test-skipped	gate-test sensor skipped (BOARD_SKIP_TESTS=1)	issue-board.sh	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'feat/add-provider-mechanize-complete' +1 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'fix/bandit-preexisting-findings' +1 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'design/blast-tier-enforcement' +1 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'feat/bounce-1-egress-canary-realsut' +1 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'feat/claim-ladder-health' +1 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'feat/config-ssot-canary-register' +1 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'feat/discovery-source-adapters' +1 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'fix/dogfood-scorecard-timestamp-collision' +1 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'feat/fixture-bypass-gate' +3 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'fix/flow-canary-freefirst' +1 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'feat/fn-memory-retire-adopt' +1 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'feat/handoff-name-allocator' +3 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'fix/inert-wiring-enforcement-durable' +1 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'feat/inventory-table' +1 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'feat/ks29-discovery-leg' +1 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'feat/landing-gate-register' +1 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'fix/loop-guard-infra-fault-exempt' +1 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'eval/merge-queue' +1 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'salvage/preflight-verify-merged-ghcache-wip' +6 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'feat/price-tracked-inventory-autoswap' +1 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'fix/reaper-apply-wiring' +1 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'feat/reconcile-board-pr-done' +1 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'feat/reconcile-gate-wired' +2 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'feat/reconcile-review-gate' +1 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'feat/repo-field-required' +1 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'feat/review-dispensation-canary' +2 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'review/reconcile-gate-design' +1 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'review/workloop-attempt3' +1 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'fix/rfl3-dogfood-capture' +1 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'feat/sg-issue-control-plane' +1 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'feat/stranded-work-detect' +2 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'feat/stuck-ticket-loud-visibility' +1 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'feat/subagent-worktree-sandbox' +1 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+RED	unpushed	branch 'feat/substrate-first-gate-v2' has 3 local commit(s) NOT on origin (work-loss risk / un-pushed)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+RED	unpushed	branch 'feat/ticket-lifecycle-canary' has 4 local commit(s) NOT on origin (work-loss risk / un-pushed)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'feat/unified-plane-canary-framework' +1 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0
+YELLOW	done-unmerged	branch 'feat/coverage-meta-gate' +1 commit(s) pushed but NOT merged to master (open/unretired)	git rev-list/ls-remote	2026-07-24T09:55:42	0

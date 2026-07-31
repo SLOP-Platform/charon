@@ -2,14 +2,27 @@
 # """": true
 # handoff.sh — generate the machine-state section of SESSION-HANDOFF.md.
 #
-# Usage:  SESSION=mace-windu bash /home/stack/charon-private/fleet/handoff.sh > fleet/SESSION-HANDOFF-mace-windu.md
+# Usage:
+#   SESSION=mace-windu bash /home/stack/charon-private/fleet/handoff.sh > fleet/SESSION-HANDOFF-mace-windu.md
+#   # or, recommended: let handoff.sh auto-claim a fresh Jedi name (pool minus exclusion-set):
+#   bash /home/stack/charon-private/fleet/handoff.sh > fleet/SESSION-HANDOFF-<claimed>.md
 # Then the operator fills in the Human analysis section below the auto-generated block.
 #
-# Per-session handoffs: set $SESSION to your Jedi name. Output goes to
+# Per-session handoffs: SESSION names the Jedi; output goes to
 # SESSION-HANDOFF-<session>.md. Multiple concurrent sessions never collide.
+# If $SESSION is unset, handoff.sh calls claim-jedi-name.sh to ATOMICALLY claim a fresh
+# name (first-available from fleet/state/jedi-name-pool.txt with every previously-used
+# name excluded — live-tree AND git-history). The claimed name is emitted in the
+# Bootstrap block below so the operator reads it instead of free-picking.
+# Override by setting SESSION explicitly; the override still claims-verify
+# (refuses if the chosen name's live file is already present).
 #
-# Contract: this script MUST be idempotent and MUST NOT modify any files — it only
-# reads the current repo state and writes markdown to stdout.
+# Contract: this script MUST be idempotent. It reads the current repo state and
+# writes markdown to stdout. The ONLY side-effect outside stdout is:
+#   * when SESSION is unset, an atomic claim-stub write via claim-jedi-name.sh
+#     into fleet/SESSION-HANDOFF-<claimed-name>.md BEFORE stdout begins (so a
+#     concurrent claim-jedi-name.sh cannot race the same name). The rest of the
+#     output is generated, then the operator commits the populated file.
 #
 # HANDOFF-MECHANIZE: the auto-emitted sections now ALSO contain every section handoff-check.sh
 # requires (Bootstrap / done-SHA / next-action / gotchas / session-bridge) as MECHANIZED BLOCKS
@@ -35,14 +48,34 @@ DATE_HUMAN="$(date -u +%Y-%m-%d)"
 _HS_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 source "$_HS_HERE/handoff-generated-state.sh"
-# ANTI-CLOBBER: SESSION is REQUIRED and must be REAL (not the literal string "unknown") —
-# a copied/placeholder handoff (e.g. seeding a new session's file from a different session's
-# old content, as happened in 3647e0e) is only obviously-wrong if the provenance stamp below
-# actually names the CURRENT session and CURRENT repo state. Previously this line contained an
-# escaped \${SESSION:-unknown} that was NEVER expanded — every generated handoff literally
-# printed the text "${SESSION:-unknown}" instead of the real session name, so a copied file
-# was indistinguishable from a fresh one. Fail loud instead of silently mislabeling.
-SESSION="${SESSION:?SESSION env var required: SESSION=<jedi-name> bash handoff.sh}"
+# ANTI-CLOBBER: SESSION must be REAL (not the literal string "unknown") — a copied/placeholder
+# handoff (e.g. seeding a new session's file from a different session's old content, as happened in
+# 3647e0e) is only obviously-wrong if the provenance stamp below actually names the CURRENT
+# session and CURRENT repo state. Previously this line contained an escaped \${SESSION:-unknown}
+# that was NEVER expanded.
+#
+# HANDOFF-NAME-ALLOCATOR (2026-07-23): SESSION is no longer REQUIRED to be pre-supplied. If unset,
+# handoff.sh now calls claim-jedi-name.sh to atomically claim a fresh Jedi name (pool minus
+# exclusion-set, where exclusion-set unions the live-tree SESSION-HANDOFF-*.md files AND every
+# name ever created in git history — the latter is what would have caught luminara-unduli, the
+# 2026-07-23 stale-handoff incident whose file was deleted from the live tree but persisted in
+# git history until reuse 2 days later). The claimed name is then emitted into the Bootstrap
+# block below so the operator reads it instead of free-picking. Set SESSION explicitly to override
+# (e.g. for a deterministically-named replay session); the override still runs the same
+# claim-verify so reusing a name whose live file is present REFUSES, and reusing one whose file
+# is only-in-git-history is allowed ONLY when no fresh-pool-name remains.
+if [ -z "${SESSION:-}" ]; then
+  CLAIMED_NAME="$(bash "$_HS_HERE/claim-jedi-name.sh")" \
+    || { printf 'handoff.sh: claim-jedi-name.sh refused to claim a name — pool exhausted or allocator broken.\n' >&2; exit 2; }
+  export SESSION="$CLAIMED_NAME"
+else
+  exported_session="$SESSION"
+  if ! bash "$_HS_HERE/claim-jedi-name.sh" --verify "$exported_session" >/dev/null 2>&1; then
+    printf 'handoff.sh: SESSION=%s refused by claim-jedi-name.sh — that name is already in use (live file present). Pass an unused Jedi name, or unset SESSION and let the allocator pick a fresh one.\n' "$exported_session" >&2
+    exit 2
+  fi
+  export SESSION="$exported_session"
+fi
 
 # ANTI-CLOBBER freshness stamp: resolve the REAL upstream per repo (never a hardcoded
 # origin/main — see check_push_status.sh fix) and record behind-count + HEAD sha. A stale

@@ -595,24 +595,86 @@ hold_check(){
   echo "hold-check: $slug#$pr still 'hold'-labelled with NO 'HOLD:' comment"; return 1
 }
 
-# WCI high-contention-file advisory: a file owned by >= N tickets is a DECOMPOSE
-# CANDIDATE (collision metric -> refactor trigger). Informational; never fails preflight.
-# Delegates to wci-contention.sh (fleet/WCI-METHOD.md). Top line surfaced here; run the
-# script directly for the full owner lists.
+# WCI high-contention-file leg: a file owned by >= N tickets is a DECOMPOSE CANDIDATE
+# (collision metric -> refactor trigger). This leg used to PRINT that fact and nothing else;
+# it printed it every session for weeks and nobody ever acted on it, which is what an
+# advisory that mutates nothing and always returns 0 is worth. It now ACTS:
+#   * AUTO-TICKETS each candidate (wci-contention.sh --generate): one board ticket per
+#     contended PATH, priority 1, idempotent, board-valid, self-parking when the contention
+#     goes away. The recommendation becomes tracked work instead of a wall of text.
+#   * FAILS CLOSED: a missing/unrunnable detector, or a detector that REFUSES (rc 2 — bad
+#     input, missing board, zero tickets scanned), AUTO-REGISTERS a blocking tracked red
+#     instead of returning 0. A blind gate must never read as a clean one.
+#
+# WCI_AUTOTICKET   1 = generate (default). Set 0 to SUPPRESS ticket writes for a session
+#                  (e.g. while another session is reorganising the board).
+# WCI_RATCHET_DAYS THE RATCHET SWITCH — 0 = OFF (default). An auto-ticket left open and
+#                  unclaimed beyond this many days escalates to a REAL blocking red.
+#                  ARM IT BY CHANGING THIS ONE DEFAULT (0 -> 7). It ships OFF on purpose:
+#                  fleet/preflight.sh is itself owned by 7 tickets today, so arming it now
+#                  would red preflight for the whole fleet before the first auto-ticket
+#                  could possibly be actioned.
+WCI_AUTOTICKET="${WCI_AUTOTICKET:-1}"
+WCI_RATCHET_DAYS="${WCI_RATCHET_DAYS:-0}"
+WCI_RED_ID="wci-contention-detector-broken"
+WCI_RATCHET_RED_ID="wci-decompose-ticket-ignored"
+_wci_red_open(){   # _wci_red_open <id> <desc> <check_cmd>
+  local st; st="$(_red_status "$1")"
+  if [ -z "$st" ]; then
+    cmd_add "$1" P1 board "$2" "$3" >/dev/null 2>&1 || true
+  elif [ "$st" = closed ]; then
+    local tmp; tmp="$(mktemp)"
+    awk -F"$TAB" -v OFS="$TAB" -v id="$1" \
+      '/^#/{print;next} $1==id{$7="open";$8=""} {print}' "$TSV" > "$tmp" && mv "$tmp" "$TSV"
+  fi
+}
+_wci_red_close(){ [ "$(_red_status "$1")" = open ] && cmd_close "$1" --override "auto: $2" >/dev/null 2>&1 || true; }
 detect_wci_contention(){
   local script="$HERE/wci-contention.sh"
-  [ -x "$script" ] || { echo "wci-contention: detector not found/executable at $script"; return 0; }
-  local out top
-  out="$(bash "$script" 2>/dev/null)"
+  if [ ! -f "$script" ]; then
+    # FAIL-CLOSED (was: `return 0`). A detector that is not there detects nothing; that is
+    # the loudest possible finding, not a pass.
+    _wci_red_open "$WCI_RED_ID" \
+      "wci-contention detector MISSING at $script — the god-file/decompose detector cannot run, so preflight is blind to board contention" \
+      "test -f '$script' && bash '$script' >/dev/null 2>&1"
+    echo "wci-contention: DETECTOR MISSING at $script — AUTO-REGISTERED tracked red '$WCI_RED_ID' (a blind detector is not a clean one)"
+    return 0
+  fi
+  local args=() out rc n
+  [ "$WCI_AUTOTICKET" = 1 ] && args+=(--generate)
+  [ "$WCI_RATCHET_DAYS" -gt 0 ] && args+=(--ratchet "$WCI_RATCHET_DAYS")
+  out="$(bash "$script" ${args[@]+"${args[@]}"} 2>&1)"; rc=$?
+  if [ "$rc" -eq 2 ]; then
+    _wci_red_open "$WCI_RED_ID" \
+      "wci-contention detector REFUSED (rc 2: bad input / missing board / zero tickets scanned) — the contention metric is undefined, not zero" \
+      "bash '$script' >/dev/null 2>&1"
+    echo "wci-contention: DETECTOR REFUSED (rc 2) — AUTO-REGISTERED tracked red '$WCI_RED_ID'"
+    printf '%s\n' "$out" | grep -m3 'RED' | sed 's/^ */    /'
+    return 0
+  fi
+  _wci_red_close "$WCI_RED_ID" "wci-contention detector runs clean"
+  # the teeth: what the detector DID this run (created / already tracked / parked stale).
+  printf '%s\n' "$out" | grep -E 'wci-autoticket: (CREATE|STALE|BLOCKED-STALE|COVERED|RED)' | sed 's/^/    /'
   if printf '%s\n' "$out" | grep -q 'DECOMPOSE CANDIDATE'; then
-    local n
-    n="$(printf '%s\n' "$out" | grep -c 'DECOMPOSE CANDIDATE')"
-    echo "DETECTED (unregistered): wci-contention — $n DECOMPOSE CANDIDATE file(s) (owned by >= 4 tickets)"
+    n="$(printf '%s\n' "$out" | grep -c 'DECOMPOSE CANDIDATE:')"
+    if [ "$WCI_AUTOTICKET" = 1 ]; then
+      echo "wci-contention: $n DECOMPOSE CANDIDATE file(s) (owned by >= 4 tickets) — AUTO-TICKETED at priority 1 (WCI-DEC-*)"
+    else
+      echo "DETECTED (unregistered): wci-contention — $n DECOMPOSE CANDIDATE file(s) (owned by >= 4 tickets); auto-ticketing SUPPRESSED (WCI_AUTOTICKET=0)"
+    fi
     printf '%s\n' "$out" | grep 'DECOMPOSE CANDIDATE:' | head -5 | sed 's/^ */    /'
     [ "$n" -gt 5 ] && echo "    +$((n-5)) more — run: fleet/wci-contention.sh"
-    echo "    -> run the WCI pass BEFORE opening tabs on a backlog (fleet/WCI-METHOD.md)"
   else
     echo "clean: wci-contention (no file owned by >= 4 tickets)"
+  fi
+  if [ "$rc" -eq 1 ] && [ "$WCI_RATCHET_DAYS" -gt 0 ]; then
+    _wci_red_open "$WCI_RATCHET_RED_ID" \
+      "an auto-generated WCI decompose ticket has sat open and unclaimed beyond $WCI_RATCHET_DAYS days — the recommendation is being ignored again" \
+      "bash '$script' --ratchet $WCI_RATCHET_DAYS >/dev/null 2>&1"
+    echo "wci-contention: RATCHET FIRED — AUTO-REGISTERED tracked red '$WCI_RATCHET_RED_ID' (claim or park the WCI-DEC-* ticket)"
+    printf '%s\n' "$out" | grep 'RATCHET ESCALATION' | head -4 | sed 's/^ */    /'
+  elif [ "$WCI_RATCHET_DAYS" -gt 0 ]; then
+    _wci_red_close "$WCI_RATCHET_RED_ID" "no WCI decompose ticket ignored beyond $WCI_RATCHET_DAYS days"
   fi
 }
 
@@ -700,6 +762,23 @@ detect_config_drift(){
   bash "$script" --advisory 2>&1 | grep -E '^(== |  WARN:|  [a-z0-9].*<< DRIFT|DRIFT:|UNREACHABLE:|  NOTE:|  only-in-)' || true
 }
 
+# --- detect_service_watchdog: SERVICE-LIVENESS-WATCHDOG detection leg on every preflight. Runs the
+# monit-independent registry evaluator (alive + freshness) + the unregistered-service discovery leg,
+# so a DEAD or HUNG money-path service (the 9-day-stale-grader incident) surfaces at session start
+# instead of by tripping over the symptom. ADVISORY here (`|| true`): report-only, never blocks a
+# session on a pre-existing dead service (recovery = monit / operator). The config-render drift check
+# also runs so a registry edit that was never re-rendered is caught.
+detect_service_watchdog(){
+  local wd="$HERE/watchdog/discover-services.sh"
+  [ -x "$wd" ] || { echo "service-watchdog: discover-services.sh not found/executable at $wd"; return 0; }
+  echo "-- service-watchdog (liveness + freshness + discovery) --"
+  bash "$wd" --quiet || true
+  local gen="$HERE/watchdog/generate-monit-config.sh"
+  [ -x "$gen" ] && { bash "$gen" --check >/dev/null 2>&1 || echo "service-watchdog: monit.d DRIFT — registry changed but config not re-rendered (run: fleet/watchdog/generate-monit-config.sh)"; }
+  local sw="$HERE/watchdog/monit-selfwatch.sh"
+  [ -x "$sw" ] && { bash "$sw" --check >/dev/null 2>&1 || echo "service-watchdog: monit self-watch reports monit NOT healthy or NOT installed (run: fleet/watchdog/monit-selfwatch.sh)"; }
+}
+
 cmd_detect(){
   local full=0
   case "${1:-}" in --full) full=1;; esac
@@ -714,6 +793,7 @@ cmd_detect(){
   detect_cg_drift
   detect_gateway_token_drift
   detect_config_drift
+  detect_service_watchdog
   echo "--- end detectors ---"
   bash "$HERE/access-check.sh" || true
   return 0
@@ -918,7 +998,7 @@ startup_budget_selftest(){
 # functions above are exposed with NO side effects.
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 case "${1:-scan}" in
-  scan|"") run_sync_checkouts; bash "$HERE/reconcile-merged.sh"; board_gate; executor_gate; coverage_gate; handoff_gate; done_merge_gate; hold_reason_gate; detect_needs_push; startup_budget_gate; graphify_freshness_gate; reconcile_gate_wired_gate; bash "$HERE/retire-done.sh"; cmd_scan; scan_rc=$?; cmd_detect; foreman_advisory; show_operator_actions; exit $scan_rc ;;
+scan|"") run_sync_checkouts; bash "$HERE/reconcile-merged.sh"; bash "$HERE/reconcile-stale-claims.sh"; board_gate; executor_gate; coverage_gate; handoff_gate; done_merge_gate; hold_reason_gate; detect_needs_push; startup_budget_gate; graphify_freshness_gate; reconcile_gate_wired_gate; bash "$HERE/retire-done.sh"; cmd_scan; scan_rc=$?; cmd_detect; foreman_advisory; show_operator_actions; exit $scan_rc ;;
   add)     shift; cmd_add "$@" ;;
   close)   shift; cmd_close "$@" ;;
   list)    shift; cmd_list "$@" ;;

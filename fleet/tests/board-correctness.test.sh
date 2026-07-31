@@ -24,6 +24,10 @@ mk_fleet(){
   local d; d="$(mktemp -d)"
   cp "$SRC/validate_board.sh" "$d/"
   cp -r "$SRC/capability" "$d/capability"
+  # validate_board.sh now invokes checks/gate-parity.sh (and siblings) by relative path — the
+  # hermetic fixture MUST carry the checks/ dir or gate-parity fails "No such file" -> false RED
+  # that silently reds the whole rig CI queue (2026-07-24 fixture-drift fix).
+  cp -r "$SRC/checks" "$d/checks"
   mkdir -p "$d/board/archive" "$d/state/done" "$d/state/claims" "$d/state/submitted" "$d/prompts"
   echo "$d"
 }
@@ -31,6 +35,7 @@ mk_fleet(){
 mk_ticket(){
   local d="$1" id="$2" branch="$3" deps="${4:-}" build="${5:-}"
   {
+    echo "repo: charon"
     echo "tier: economy"
     echo "difficulty: 1"
     echo "work_class: docs"

@@ -54,6 +54,22 @@ CI_SUITES=(
                             # the real claim.sh. The single canary a revert to "alphabetical
                             # first" or a drop of the revdep field fails. ~2s.
   rig-ci.test.sh            # this gate's own fail-on-revert tests
+  tier-drift.test.sh        # hermetic: isolated temp fleets under mktemp -d (own
+                            # validate_board.sh + capability/ + checks/ + a 2-ticket board
+                            # copied from the real one), no network, ~1s. Red-proofs the
+                            # validate_board "2f" TIER-DRIFT gate on every path it shipped
+                            # broken: the RED-set file is present AND git-tracked (without it
+                            # the gate cannot go RED in any configuration), a mis-tiered
+                            # security ticket drives rc 3 -> RED preflight end to end, a
+                            # MISSING or rc-2-exiting classifier is RED instead of silently
+                            # green (fail-closed), a zero-item scan is RED not a confident
+                            # pass, and SEC_RE stays anchored so d1 docs are not routed to
+                            # the most expensive frontier chain.
+  work-lease.test.sh        # hermetic: real work-lease.sh/claim.sh/_lib.sh copied into a temp
+                            # FLEET + REAL git worktrees under mktemp -d, no network. Red-proofs
+                            # the DISPATCH double-claim gate, the single (claims) store shared
+                            # with claim.sh, the un-leased / main-checkout / fail-closed commit
+                            # refusals, and stale-lease reclaim. ~2s.
   substrate-first-gate.test.sh # hermetic: throwaway board + fixture EVAL-REGISTRY under mktemp -d,
                             # no network. Red-proofs the creation-time build-vs-adopt gate on all
                             # its detection paths (requirement / anti-reframe diagnostic /
@@ -94,6 +110,17 @@ CI_SUITES=(
                             # violation / inert meter (#167) / parked-served + parked-attempted
                             # (#188) / stray-`standard` tier / unserved head model, and proves the
                             # canary goes RED on each then GREEN on revert. ~5s.
+  verify-restart-cmds.test.sh # hermetic: fixture registries + fixture scripts under mktemp -d,
+                            # VERIFY_UNITS_DIR pinned to an empty temp dir, and a STUB verify for
+                            # the monit-selfwatch cases (SELFWATCH_VERIFY). No network, no sudo, no
+                            # monit, nothing installed. Its one real-file touch is a text-only
+                            # --static-only pass over the committed service-registry.tsv. Guards
+                            # the monit PRE-ENABLE gate: re-seeds all four original broken
+                            # restart_cmds (missing systemd unit / `systemctl --user` as root /
+                            # relative path with cwd=/ / ~/.ssh Host alias + remote sudo) and
+                            # proves verify REDs on each, that a zero-row or malformed registry is
+                            # never a silent pass, and that the `enable --now monit` line is not
+                            # even PRINTED while verify is RED. ~2s.
 )
 
 VALID_WORK_CLASSES="bugfix ci-infra design-review docs frontend generalist greenfield-feature money-path refactor rig-meta routing tests"
@@ -296,6 +323,22 @@ cmd_suites(){ printf '%s\n' "${CI_SUITES[@]}"; }
 
 cmd_tests(){
   local s rc
+  # REENTRANCY GUARD (RIG-REDS 2026-07-24, [[fleet-selfcheck-forkbomb-class]]).
+  # `cmd_tests` runs fleet/tests/rig-ci.test.sh, and rig-ci.test.sh runs
+  # fleet/checks/rig-ci-scope.sh — a self-referential edge of exactly the class
+  # that produced the ~18,900-proc handoff<->gate fork bomb. It was the LAST
+  # unguarded cycle in the fleet: fleet/checks/selfcheck-cycle.sh reported
+  # `rig-ci-scope -> rig-ci.test -> rig-ci-scope` as UNGUARDED, which is why
+  # selfcheck-cycle.test.sh (1c/1d) was red. Today the inner call happens to use
+  # `syntax`/`board` against a temp COPY, but `run_scope` honours $RIG_CI_SCRIPT,
+  # so nothing structurally stops a future edit from re-entering `tests` here.
+  # Same shape as gate.sh's CHARON_GATE_ACTIVE: the outer run exports the flag,
+  # any nested run short-circuits. Exported so it survives the `bash` below.
+  if [ -n "${RIG_CI_TESTS_ACTIVE:-}" ]; then
+    echo "rig-ci-scope: already inside a suite run (RIG_CI_TESTS_ACTIVE) — skipping nested re-entry" >&2
+    return 0
+  fi
+  export RIG_CI_TESTS_ACTIVE=1
   for s in "${CI_SUITES[@]}"; do
     if [ ! -f "$ROOT/fleet/tests/$s" ]; then
       red "allowlisted suite missing: fleet/tests/$s"

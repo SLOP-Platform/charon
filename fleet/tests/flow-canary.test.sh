@@ -19,10 +19,18 @@
 # Covers (one RED-then-GREEN pair per assertion class the ticket names):
 #   (H)  HEALTHY               -> all four stages GREEN, exit 0            [baseline]
 #   (R1) MIS-ROUTE             -> served leg not in the pool               -> ROUTE RED
-#   (R2) FREE-FIRST VIOLATION  -> a paid (fc3) leg serves                  -> ROUTE RED
+#   (R2a) FREE-FIRST VIOLATION -> a lower-priority leg serves while a      -> ROUTE RED
+#        higher-priority non-parked candidate is skipped (PAYG over class-1)
+#   (R2b) NO CRY-WOLF          -> a sanctioned class-3 drain-then-park leg -> GREEN
+#        serving as the best candidate (the OLD fc-in-{1,2} model false-RED'd
+#        this; the SSOT order 1<3<2<4 ranks class-3 second)
 #   (M)  INERT METER (#167)    -> served counter does not advance          -> METER RED
+#   (M2) DRAINING FREE RIDE    -> a class-3 drain leg advances served but  -> METER RED
+#        cost stays 0 (the OLD >=0 check was decorative; FIX-3 asserts >0)
 #   (P1) PARKED-SERVED (#188)  -> the served leg is itself parked          -> PARK RED
 #   (P2) PARKED-ATTEMPTED(#188)-> a parked leg appears in the failover path-> PARK RED
+#   (P3) VACUOUS-PARK POSITIVE -> a parked provider NOT in the head-model  -> PARK RED
+#        pool claims "EXCLUDED" (vacuous — FIX-4 downgrades it from GREEN)
 #   (C1) STRAY `standard`      -> tier ranks carry a non-canonical tier    -> CONFIG RED
 #   (C2) UNSERVED HEAD MODEL   -> the tier head model is not in any pool   -> CONFIG RED
 # Each REDs, and reverting the single seeded field returns the canary to GREEN
@@ -130,12 +138,15 @@ class H(BaseHTTPRequestHandler):
         served_by = sc.get("served_by", "openrouter")
         reasons = sc.get("failover_reasons", "")
         resolved = sc.get("resolved_model", "minimax/minimax-m3")
-        # advance the meter for the SERVED leg unless the scenario pins it inert
+        # advance the meter for the SERVED leg unless the scenario pins it inert.
+        # `cost_inert` advances the served counter ONLY (for FIX-3: a draining
+        # leg whose cost-delta stays 0 — the fake-green the old >=0 asserted).
         if not sc.get("meter_inert", False):
             st = state()
             cell = st.get(served_by, {"served": 0, "cost": 0.0})
             cell["served"] = cell.get("served", 0) + 1
-            cell["cost"] = round(cell.get("cost", 0.0) + 1e-5, 8)
+            if not sc.get("cost_inert", False):
+                cell["cost"] = round(cell.get("cost", 0.0) + 1e-5, 8)
             st[served_by] = cell
             save_state(st)
         body = json.dumps({
@@ -172,7 +183,7 @@ write_scenario(){ # <json-overrides>
 import json, sys
 base = {
     "head_model": "minimax-m3-free",
-    "pool": ["nvidia", "nanogpt", "openrouter", "cline-pass"],
+    "pool": ["nvidia", "openrouter", "huggingface", "cline-pass"],
     "served_by": "openrouter",
     "failover_reasons": "cline-pass=429",
     "resolved_model": "minimax/minimax-m3",
@@ -191,6 +202,15 @@ with open(sys.argv[1], "w") as f: json.dump(base, f)
 PY
 }
 
+# The funding-class priority SSOT. The canary reads
+# `charon.routing_policy._FUNDING_CLASS_ORDER` live; the hermetic dogfood pins
+# the known-good order (1<3<2<4) so it never depends on a `charon` install in
+# the test box. This is the SAME order the live SSOT defines — re-deriving it
+# here is NOT reimplementation, it is a hermetic pin of the SSOT's value (the
+# canary's _funding_order_json prefers the live import; this override only
+# fires in the dogfood).
+FC_ORDER_JSON='{"1":0,"3":1,"2":2,"4":3,"None":5}'
+
 # run the REAL canary against the fake, ranks stand-in selectable
 run_canary(){ # <ranks-script>
   FC_GATEWAY_URL="http://127.0.0.1:$PORT" \
@@ -198,6 +218,7 @@ run_canary(){ # <ranks-script>
   FC_TIER="strong" \
   FC_TIER_TSV="$TIER_TSV" \
   FC_TIER_RANKS_CMD="bash ${1:-$RANKS_GOOD}" \
+  FC_FUNDING_ORDER_JSON="$FC_ORDER_JSON" \
   FC_NONCE="fixed-nonce" \
   FC_REQ_TIMEOUT_S=10 FC_STATUS_TIMEOUT_S=5 \
     bash "$CANARY" 2>&1
@@ -229,16 +250,44 @@ printf '%s' "$CAP_OUT" | grep -q "MIS-ROUTE" \
   && ok "(R1) mis-route: RED line names MIS-ROUTE (served leg not in pool)" \
   || bad "(R1) mis-route: no MIS-ROUTE red line"
 
-# ── (R2) FREE-FIRST VIOLATION -> a paid fc3 leg serves -> ROUTE RED ─────────
-# 'deepseek' is IN the pool here (so route-membership passes) but funding_class 3.
-write_scenario '{"pool": ["nvidia","openrouter","deepseek"], "served_by": "deepseek", "failover_reasons": ""}'
+# ── (R2a) FREE-FIRST VIOLATION -> class-4 PAYG serves over an available ───
+#   class-1 free leg (a REAL priority-order violation, NOT the old fc-in-{1,2}
+#   model that cried-wolf on a sanctioned class-3 drain leg). 'kobold' is PAYG
+#   (fc4, SSOT order 3); 'nvidia' (fc1, order 0) is in the pool and NOT parked
+#   — a higher-priority non-parked candidate was skipped -> ROUTE RED.
+write_scenario '{"pool": ["nvidia", "kobold"], "served_by": "kobold", "failover_reasons": "", "balance": {
+  "nvidia": {"funding_class": 1, "parked": false, "drained": false},
+  "kobold": {"funding_class": 4, "parked": false, "drained": false}}}'
 cap "$RANKS_GOOD"
-[ "$CAP_RC" -ne 0 ] && ok "(R2) free-first: canary exits non-zero (RED)" \
-                    || bad "(R2) free-first: canary exited 0 — a paid-leg-first was NOT caught
+[ "$CAP_RC" -ne 0 ] && ok "(R2a) free-first: canary exits non-zero (RED)" \
+                    || bad "(R2a) free-first: canary exited 0 — a REAL priority-order violation (PAYG over class-1 free) was NOT caught
 $CAP_OUT"
 printf '%s' "$CAP_OUT" | grep -q "free-first ordering violated" \
-  && ok "(R2) free-first: RED line names the free-first violation (paid fc3 leg served)" \
-  || bad "(R2) free-first: no free-first red line"
+  && ok "(R2a) free-first: RED line names the free-first violation (PAYG fc4 served over an available class-1)" \
+  || bad "(R2a) free-first: no free-first red line"
+
+# ── (R2b) NO CRY-WOLF -> a sanctioned class-3 drain-then-park leg serves ────
+#   while NO higher-priority non-parked candidate exists -> GREEN.
+#   The OLD canary hardcoded `fc∈{1,2}=free` and would RED a class-3 leg here —
+#   a false-RED on a sanctioned drain. The SSOT order (1<3<2<4) ranks class-3
+#   SECOND; 'deepseek' (fc3) is the only keyed/non-parked candidate in this
+#   pool (the class-4 PAYG leg is also non-parked but LOWER priority), so a
+#   class-3 leg serving is the free-first pick — NOT a violation.
+write_scenario '{"pool": ["deepseek", "kobold"], "served_by": "deepseek", "failover_reasons": "", "balance": {
+  "deepseek": {"funding_class": 3, "parked": false, "drained": false},
+  "kobold": {"funding_class": 4, "parked": false, "drained": false}}}'
+cap "$RANKS_GOOD"
+[ "$CAP_RC" -eq 0 ] && ok "(R2b) no-cry-wolf: a sanctioned class-3 drain-then-park leg serving returns GREEN (not false-RED)" \
+                    || bad "(R2b) no-cry-wolf: canary exit $CAP_RC — the canary CRIED-WOLF on a sanctioned class-3 drain leg (the OLD fc-in-{1,2} model re-derived instead of reading the SSOT)
+$CAP_OUT"
+printf '%s' "$CAP_OUT" | grep -q "FLOW-CANARY: GREEN" \
+  && ok "(R2b) no-cry-wolf: prints GREEN verdict for a class-3-serving run" \
+  || bad "(R2b) no-cry-wolf: no GREEN verdict for a sanctioned class-3 leg
+$CAP_OUT"
+printf '%s' "$CAP_OUT" | grep -q "free-first.*highest-priority non-parked candidate" \
+  && ok "(R2b) no-cry-wolf: free-first GREEN line confirms the SSOT order was respected for a class-3 drain leg" \
+  || bad "(R2b) no-cry-wolf: free-first did not confirm the SSOT order applied to a class-3 leg
+$CAP_OUT"
 
 # ── (M) INERT METER (#167) -> served counter flat -> METER RED ──────────────
 write_scenario '{"meter_inert": true}'
@@ -249,6 +298,24 @@ $CAP_OUT"
 printf '%s' "$CAP_OUT" | grep -q "INERT METER" \
   && ok "(M) inert meter: RED line names INERT METER (#167 class)" \
   || bad "(M) inert meter: no INERT METER red line"
+
+# ── (M2) DRAINING-LEG FREE RIDE (#167/ISSUE) -> cost-delta stays 0 on a ─────
+#   class-3 drain-then-park leg while the served counter advances. The OLD
+#   canary's cost-delta check was `>= 0` (decorative) — it would have GREEN'd a
+#   draining leg that took a free ride. FIX-3 asserts `> 0` for a draining (fc3
+#   / drained) leg, so a paying leg with a flat cost now METER-REDs.
+#   Pool is just the fc3 leg (so free-first GREENs — it's the only candidate);
+#   cost_inert=True makes the fake advance served but NOT cost.
+write_scenario '{"pool": ["deepseek"], "served_by": "deepseek", "failover_reasons": "",
+  "cost_inert": true, "balance": {
+    "deepseek": {"funding_class": 3, "parked": false, "drained": false}}}'
+cap "$RANKS_GOOD"
+[ "$CAP_RC" -ne 0 ] && ok "(M2) draining-free-ride: canary exits non-zero (RED)" \
+                    || bad "(M2) draining-free-ride: canary exited 0 — a class-3 leg taking a free ride (cost-delta 0) was NOT caught (the old decorative >=0 would have passed)
+$CAP_OUT"
+printf '%s' "$CAP_OUT" | grep -q "free ride" \
+  && ok "(M2) draining-free-ride: RED line names the draining-leg free-ride (cost-delta not >0)" \
+  || bad "(M2) draining-free-ride: no free-ride red line"
 
 # ── (P1) PARKED-SERVED (#188) -> the served leg is itself parked -> PARK RED ─
 write_scenario '{"served_by": "openrouter", "failover_reasons": "", "balance": {
@@ -275,6 +342,27 @@ $CAP_OUT"
 printf '%s' "$CAP_OUT" | grep -q "exclusion did not fire" \
   && ok "(P2) parked-attempted: RED line names the non-firing exclusion (#188 class)" \
   || bad "(P2) parked-attempted: no exclusion red line"
+
+# ── (P3) VACUOUS-PARK POSITIVE (#188 + FIX-4) -> a parked provider that is ──
+#   NOT a candidate of the head-model pool claims "EXCLUDED" — but the claim is
+#   vacuous (the forwarder never considered it). The OLD canary GREEN'd this;
+#   FIX-4 downgrades the vacuous-park positive to a RED so the "exclusion
+#   proven" verdict can't be misread from a provider that was never a candidate.
+#   Pool = [nvidia(f1),openrouter(f1)]; 'huggingface' is parked but NOT in the
+#   pool. openrouter serves (free-first GREEN); the park positive fires but is
+#   vacuous -> PARK RED.
+write_scenario '{"pool": ["nvidia", "openrouter"], "served_by": "openrouter", "failover_reasons": "",
+  "balance": {
+    "nvidia": {"funding_class": 1, "parked": false, "drained": false},
+    "openrouter": {"funding_class": 1, "parked": false, "drained": false},
+    "huggingface": {"funding_class": 1, "parked": true, "drained": false}}}'
+cap "$RANKS_GOOD"
+[ "$CAP_RC" -ne 0 ] && ok "(P3) vacuous-park: canary exits non-zero (RED)" \
+                    || bad "(P3) vacuous-park: canary exited 0 — a parked-but-not-a-pool-candidate 'EXCLUDED' claim was GREEN'd (vacuous positive)
+$CAP_OUT"
+printf '%s' "$CAP_OUT" | grep -q "VACUOUS" \
+  && ok "(P3) vacuous-park: RED line names the VACUOUS-park positive (excluded provider was not a candidate)" \
+  || bad "(P3) vacuous-park: no VACUOUS red line"
 
 # ── (C1) STRAY `standard` -> non-canonical tier ranks -> CONFIG RED ─────────
 write_scenario '{}'

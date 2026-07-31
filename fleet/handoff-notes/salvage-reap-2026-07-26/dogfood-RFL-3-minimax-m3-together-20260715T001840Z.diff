@@ -1,0 +1,46 @@
+diff --git a/src/charon/forwarder.py b/src/charon/forwarder.py
+index dff1064..30fae57 100644
+--- a/src/charon/forwarder.py
++++ b/src/charon/forwarder.py
+@@ -276,6 +276,41 @@ def forward_with_failover(handler, srv) -> None:
+         )}})
+         return
+ 
++    # ── vision-aware route exclusion (RFL-3) ────────────────────────
++    # Proactive skip of text-only chain entries when the request carries an image.
++    # Unlike the reasoning-capability filter below (which is a soft heuristic that
++    # falls back to the full chain on total exclusion to avoid stranding traffic),
++    # vision is a HARD requirement: a text-only model will 400 upstream on an
++    # image_url part regardless, so silently falling back would just call that
++    # same doomed upstream. If NO entry is vision-capable, we fail clean with a
++    # clear 502 — never call the text-only model.
++    #
++    # Scope is images only; the symmetric ``audio`` hook (and any future media
++    # key in ``model_meta``) is intentionally left open — the same
++    # `hints.has_*` shape would apply, gated on the same `request_inspector`.
++    inspector = getattr(srv, "request_inspector", None)
++    model_meta = getattr(srv, "model_meta", {}) or {}
++    if inspector is not None and chain:
++        hints = inspector.inspect(orig_bj.get("messages") or [])
++        if hints.has_images:
++            vision_only = [
++                r for r in chain
++                if bool(model_meta.get(r.model_id or "", {}).get("vision"))
++            ]
++            if vision_only:
++                chain = vision_only
++            else:
++                # HARD exclusion: NO vision-capable entry. Fail cleanly — do NOT
++                # silently fall back to a chain whose text-only legs will 400 on
++                # the image_url part upstream.
++                srv.observer.observe(requested, 502, {}, {}, count_usage=False)
++                handler._json(502, {"error": {"message": (
++                    f"model {requested!r} has no vision-capable provider in its "
++                    "route chain; cannot forward image-bearing request. "
++                    "Configure a vision-capable upstream or remove the image."
++                )}})
++                return
++
+     # ── capability-based route exclusion ────────────────────────────
+     # R3: proactive skip of known-incapable providers. If every route would be
+     # excluded (strand risk), fall back to the full chain and warn — NEVER strand.

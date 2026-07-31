@@ -1,0 +1,38 @@
+diff --git a/src/charon/forwarder.py b/src/charon/forwarder.py
+index dff1064..c97cd13 100644
+--- a/src/charon/forwarder.py
++++ b/src/charon/forwarder.py
+@@ -268,15 +268,25 @@ def forward_with_failover(handler, srv) -> None:
+         pass
+ 
+     chain = srv.chain_for(requested)
+-    if not chain:
+-        srv.observer.observe(requested, 502, {}, {}, count_usage=False)
+-        handler._json(502, {"error": {"message": (
+-            f"no route for model {requested!r} — no providers configured; "
+-            "run 'charon setup' or open http://127.0.0.1:8080/charon/setup"
+-        )}})
+-        return
++if not chain:
++    srv.observer.observe(requested, 502, {}, {}, count_usage=False)
++    handler._json(502, {"error": {"message": (
++        f"no route for model {requested!r} — no providers configured; "
++        "run 'charon setup' or open http://127.0.0.1:8080/charon/setup"
++    )}})
++    return
++
++# ── vision-aware route exclusion ────────────────────────────
++if srv.request_inspector is not None:
++    hints = srv.request_inspector.inspect(orig_bj.get("messages") or [])
++    if hints.has_images:
++        vision_capable = [r for r in chain if srv.model_meta.get(r.model_id, {}).get("vision")]
++        if not vision_capable:
++            handler._json(502, {"error": {"message": "No vision-capable providers available for image request"}})
++            return
++        chain = vision_capable
+ 
+-    # ── capability-based route exclusion ────────────────────────────
++# ── capability-based route exclusion ────────────────────────────
+     # R3: proactive skip of known-incapable providers. If every route would be
+     # excluded (strand risk), fall back to the full chain and warn — NEVER strand.
+     cap = _required_capability(orig_bj)

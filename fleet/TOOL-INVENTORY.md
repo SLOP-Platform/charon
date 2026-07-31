@@ -67,7 +67,7 @@ One line each (13 checks + registry):
 ## 4. Fleet rig scripts — `/home/stack/charon-private/fleet/*.sh`
 
 - `validate_board.sh` — PREFLIGHT GATE, run before launching ANY wave/opening tabs; exit 0 = safe to launch.
-- `wci-contention.sh` — scans every ticket's `owns:` field; flags files owned by >= N tickets as a god-file DECOMPOSE CANDIDATE.
+- `wci-contention.sh` — scans every ticket's `owns:` field; flags files owned by >= N tickets as a god-file DECOMPOSE CANDIDATE. `--generate` turns each candidate into a tracked `priority: 1` board ticket (`WCI-DEC-*`, one per PATH, idempotent, self-parking); `--strict` is the launch-time collision gate; `--ratchet DAYS` escalates an ignored auto-ticket. Fail-CLOSED: bad args / missing board / zero tickets scanned exit 2.
 - `status.sh` — manager dashboard: ground-truth live droid processes + board/claim age + open PRs/CI (no heartbeat proxies).
 - `report.sh` — renders the ONE canonical roadmap report from `state/ROADMAP.tsv` (edit the TSV, never hand-type status elsewhere).
 - `preflight.sh` — REDS REGISTRY driver (build-rig only): re-verifies every known red deterministically against `reds.tsv`; closes only on a passing `check_cmd`.

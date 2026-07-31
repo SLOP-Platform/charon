@@ -111,7 +111,7 @@ def _post(url: str, session: str | None) -> None:
     req = urllib.request.Request(
         url, data=json.dumps({"model": "m"}).encode(),
         headers=headers, method="POST")
-    urllib.request.urlopen(req, timeout=10).read()
+    urllib.request.urlopen(req, timeout=10).read()  # nosec B310 - test-only loopback http to GatewayProxyServer mock (~127.0.0.1); not network-reachable
 
 
 def main() -> None:

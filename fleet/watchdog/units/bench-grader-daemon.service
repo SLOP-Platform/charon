@@ -1,0 +1,23 @@
+[Unit]
+# bench-grader-daemon.service — the systemd supervisor for the out-of-band grader daemon, the SOLE
+# writer of fleet/model-scorecard.tsv. It died on a reboot with no supervisor and stayed dead for
+# 9 days, silently killing grade->route. This unit is the durable fix for the LAUNCH side; monit
+# (fleet/watchdog/) covers detection + the hung-but-alive case.
+#
+# NOT INSTALLED by the rig — installation needs root. See README.md in this directory.
+# ExecStart mirrors, exactly, how fleet/benchmark/bench-grader-setup.sh launches the daemon today.
+Description=Charon out-of-band bench grader daemon (writes fleet/model-scorecard.tsv)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bench-grader
+ExecStart=/usr/bin/python3 /home/stack/charon-private/fleet/benchmark/grader-daemon.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/tmp/grader-daemon.log
+StandardError=append:/tmp/grader-daemon.log
+
+[Install]
+WantedBy=multi-user.target

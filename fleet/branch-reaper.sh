@@ -23,6 +23,9 @@
 #      untracked changes) => KEEP, and HEAD not reachable from any remote ref
 #      (`git rev-list --count HEAD --not --remotes` > 0) => KEEP. Both probes live in the
 #      SHARED _lg_wt_target_ok (leak-guard.sh) — do NOT write a second copy here.
+#   3b. OPEN-PR GUARD (2026-07-23, REAPER-APPLY-WIRING): a branch with an open PR on GitHub
+#      is NEVER reaped even when pushed+clean+unclaimed. Uses `gh` (GitHub CLI). Fail-closed:
+#      if `gh` is unavailable or the query fails, treat as "has open PR" (do not reap).
 #   4. FAIL-CLOSED UNDECIDABILITY: if the path cannot be resolved, is not a readable git
 #      working tree, or any probe errors, the answer is KEEP. "Could not check" is NEVER
 #      treated as "clean". Consequence, accepted deliberately: an inert non-git leftover
@@ -52,6 +55,7 @@
 #   REAPER_BASE        base ref for merge-check         (default: the registry's base)
 #   REAPER_FLEET_DIR   fleet dir containing state/      (default: this script's dir)
 #   REAPER_PROTECTED   extra protected branches (space) (default: 'main')
+#   REAPER_GH_CMD      gh-compatible command for PR-state queries (default: 'gh')
 # Setting REAPER_REPO or REAPER_WT_GLOB selects LEGACY SINGLE-TARGET mode (REAPER_KEYS ignored).
 #
 # TEST HOOK: set REAPER_* env vars to point at an isolated temp git repo fixture.
@@ -272,6 +276,25 @@ _rp_keep_reason(){
   if ! why="$(_lg_wt_target_ok "$repo" "$real" 2>/dev/null)"; then
     [ -n "$why" ] || why="refused by leak-guard (no reason given — fail-closed)"
     echo "$why"; return 0
+  fi
+  # OPEN-PR GUARD (2026-07-23): a branch with an open PR is NEVER reaped. Push-reachability
+  # (the check above) is NOT evidence of no open PR — the worktree may hold a branch that is
+  # pushed AND has a live PR. Consults `gh` (GitHub CLI). Fail-closed: if `gh` is unavailable
+  # or the query fails, the tree is treated as "has open PR" (KEEP).
+  local gh_branch
+  gh_branch="$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null)" || gh_branch=""
+  if [ -n "$gh_branch" ] && [ "$gh_branch" != "HEAD" ]; then
+    local gh_cmd="${REAPER_GH_CMD:-gh}" gh_count
+    if command -v "$gh_cmd" >/dev/null 2>&1; then
+      gh_count="$("$gh_cmd" pr list --state open --head "$gh_branch" --json number --jq 'length' < /dev/null 2>/dev/null)" || {
+        echo "branch '$gh_branch' has undetermined PR state (gh query failed — fail-closed)"
+        return 0
+      }
+      if [ "$gh_count" -gt 0 ] 2>/dev/null; then
+        echo "branch '$gh_branch' has $gh_count open PR(s)"
+        return 0
+      fi
+    fi
   fi
   # LOW-2: _lg_wt_target_ok just said "fully pushed" ON THE STRENGTH OF THE LOCAL REF CACHE.
   # Refuse to destroy on the strength of a ref whose freshness we cannot vouch for. Both arms

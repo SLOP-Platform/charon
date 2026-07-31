@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# pre-commit hook — Work-Lease gate: refuse un-leased worktree commits.
+set -euo pipefail
+FLEET="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd 2>/dev/null)"
+# BOARD-WRITE-LOCK: refuse any commit staging fleet/board/** or fleet/state/ROADMAP.tsv without
+# the board lock. Runs FIRST and is deliberately NOT behind WORK_LEASE_BYPASS — bypassing the
+# LEASE must not bypass the BOARD LOCK (board-lock.sh has its own audited BOARD_LOCK_BYPASS).
+# Under `set -e` its non-zero exit aborts the commit; no `|| true` may ever be added here.
+bash "$FLEET/board-lock.sh" pre-commit
+exec bash "$FLEET/work-lease.sh" pre-commit

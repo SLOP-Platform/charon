@@ -1,0 +1,180 @@
+diff --git a/src/charon/config/keyprobe.py b/src/charon/config/keyprobe.py
+index 2b6abae..184d9e7 100644
+--- a/src/charon/config/keyprobe.py
++++ b/src/charon/config/keyprobe.py
+@@ -6,6 +6,7 @@ import urllib.error
+ import urllib.request
+ 
+ from ..netutil import BROWSER_UA
++from ..providers import chat_url, models_url
+ 
+ _VALIDATE_TIMEOUT = 15.0
+ # Browser-like UA (P5): Cloudflare-fronted providers (groq/cerebras/together)
+@@ -34,12 +35,11 @@ def validate_provider_key(name: str, base_url: str | None, api_key: str) -> dict
+             return None
+ 
+     opener = urllib.request.build_opener(_NoRedirect())
+-    raw_base = base_url.rstrip("/") if base_url else ""
+ 
+     # Probe 1: GET /models — cheap, tells us the key works + model count
+     models_count = 0
+     try:
+-        req = urllib.request.Request(raw_base + "/models", method="GET")
++        req = urllib.request.Request(models_url(base_url or ""), method="GET")
+         req.add_header("User-Agent", _VALIDATE_UA)
+         req.add_header("Authorization", "Bearer " + api_key)
+         resp = opener.open(req, timeout=_VALIDATE_TIMEOUT)
+@@ -58,7 +58,7 @@ def validate_provider_key(name: str, base_url: str | None, api_key: str) -> dict
+             "messages": [{"role": "user", "content": "hi"}],
+             "max_tokens": 1,
+         }).encode()
+-        req = urllib.request.Request(raw_base + "/chat/completions", data=body, method="POST")
++        req = urllib.request.Request(chat_url(base_url or ""), data=body, method="POST")
+         req.add_header("User-Agent", _VALIDATE_UA)
+         req.add_header("Content-Type", "application/json")
+         req.add_header("Authorization", "Bearer " + api_key)
+diff --git a/src/charon/discover.py b/src/charon/discover.py
+index 3d50ce9..1aa5025 100644
+--- a/src/charon/discover.py
++++ b/src/charon/discover.py
+@@ -15,6 +15,7 @@ from pathlib import Path
+ 
+ from . import config, providers, secrets
+ from .netutil import BROWSER_UA  # shared browser-like UA (P5 — Cloudflare 1010)
++from .providers import models_url  # single seam for /models / /v1/models URL construction
+ 
+ _COST_MAP_FILE = "cost_map.json"
+ 
+@@ -29,9 +30,9 @@ def discover_provider(base_url: str, api_key: str | None,
+     any error.
+     """
+     if strip_v1:
+-        url = base_url.rstrip("/") + "/models"
++        url = models_url(base_url)
+     else:
+-        url = base_url.rstrip("/") + "/v1/models"
++        url = models_url(base_url, "/v1/models")
+ 
+     req = urllib.request.Request(url, method="GET")
+     req.add_header("User-Agent", BROWSER_UA)
+diff --git a/src/charon/providers.py b/src/charon/providers.py
+index 487029b..41ed461 100644
+--- a/src/charon/providers.py
++++ b/src/charon/providers.py
+@@ -74,6 +74,32 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
+ _MAX_MODELS_BYTES = 1_000_000  # cap the /models response (memory-DoS guard)
+ 
+ 
++def join_endpoint(base_url: str, path: str) -> str:
++    """Resolve ``base_url + path`` exactly as the inline ``base.rstrip('/') + path``
++    idiom has across this repo — single seam for "strip trailing slashes, append
++    a leading-slash endpoint". ``path`` MUST start with ``/``; this preserves the
++    existing behavior for bases with a non-trivial path (e.g.
++    ``https://opencode.ai/zen/v1`` + ``"/models`` → ``https://opencode.ai/zen/v1/models``)."""
++    return base_url.rstrip("/") + path
++
++
++def models_url(base_url: str, path: str = "/models") -> str:
++    """Resolve a provider's ``base_url`` to its ``/models`` (or, explicitly,
++    ``/v1/models``) endpoint URL — the single seam that replaces the inline
++    ``base.rstrip("/") + "/models"`` / ``+ "/v1/models"`` sites in ``discover.py``
++    and ``list_models`` here. Default ``path="/models"``; pass ``"/v1/models"`` to
++    preserve the strip_v1=False branch in ``discover.py`` (no collapsing — the
++    two call sites resolve to different suffixes for a reason)."""
++    return join_endpoint(base_url, path)
++
++
++def chat_url(base_url: str) -> str:
++    """Resolve a provider's ``base_url`` to its ``/chat/completions`` endpoint URL —
++    the single seam that replaces the inline ``base.rstrip("/") + "/chat/completions"``
++    site in ``config/keyprobe.py``."""
++    return join_endpoint(base_url, "/chat/completions")
++
++
+ def _is_free(item: dict) -> bool:
+     """Best-effort free detection from an OpenAI-style /models entry: an OpenRouter
+     ``:free`` id suffix, or a ``pricing`` map whose prompt+completion are all 0."""
+@@ -172,7 +198,7 @@ def list_models(name: str, overrides: dict | None = None, *,
+     host = parts.hostname or ""
+     if host.startswith("169.254.") or host == "metadata.google.internal":
+         raise ValueError(f"refusing link-local / metadata host {host!r}")
+-    url = base.rstrip("/") + "/models"
++    url = models_url(base)
+     req = urllib.request.Request(url, method="GET")
+     req.add_header("User-Agent", BROWSER_UA)
+     if api_key:
+diff --git a/tests/test_providers.py b/tests/test_providers.py
+index e250906..b904812 100644
+--- a/tests/test_providers.py
++++ b/tests/test_providers.py
+@@ -4,6 +4,7 @@ from __future__ import annotations
+ import pytest
+ 
+ from charon import gateway, providers
++from charon.providers import chat_url, models_url
+ 
+ 
+ def test_all_presets_have_valid_http_base():
+@@ -178,3 +179,62 @@ def test_extract_pricing_no_pricing_field():
+     entry: dict = {}
+     providers._extract_pricing({"id": "x"}, entry)
+     assert entry == {}
++
++
++# ── PROVIDER-URL-HELPER: URL construction seam ─────────────────────
++
++def test_models_url_strips_trailing_slash():
++    # Normal base with a trailing slash — must be stripped before appending.
++    assert models_url("https://api.openai.com/v1/") == "https://api.openai.com/v1/models"
++
++
++def test_models_url_no_trailing_slash():
++    # Normal base WITHOUT a trailing slash — must still get exactly one ``/models`` suffix.
++    assert models_url("https://api.openai.com/v1") == "https://api.openai.com/v1/models"
++
++
++def test_models_url_base_with_path_segment():
++    # Base with a non-trivial path segment (``/zen/v1``) must preserve the
++    # existing segment AND append ``/models`` — no collapsing, no re-routing.
++    # This locks in the dedup behavior: every provider preset resolves to the
++    # EXACT SAME /models URL after this change as before.
++    assert models_url("https://opencode.ai/zen/v1") == "https://opencode.ai/zen/v1/models"
++    assert models_url("https://opencode.ai/zen/go/v1") == "https://opencode.ai/zen/go/v1/models"
++
++
++def test_models_url_v1_models_path():
++    # The strip_v1=False branch in ``discover.py`` appends ``/v1/models`` —
++    # the helper accepts an explicit path kwarg to preserve that distinction
++    # (no collapsing the /models vs /v1/models sites into one).
++    assert models_url("https://api.example.com", "/v1/models") == \
++        "https://api.example.com/v1/models"
++
++
++def test_models_url_strip_then_collapse_multiple_slashes():
++    # Multiple trailing slashes must collapse to a single ``/models`` join —
++    # mirrors the inline ``base.rstrip("/") + "/models"`` behavior.
++    assert models_url("https://api.example.com/v1///") == "https://api.example.com/v1/models"
++
++
++def test_chat_url_strips_trailing_slash():
++    # Normal base with a trailing slash — must be stripped before appending.
++    assert chat_url("https://api.openai.com/v1/") == \
++        "https://api.openai.com/v1/chat/completions"
++
++
++def test_chat_url_base_with_path_segment():
++    # Base with a non-trivial path segment must preserve the existing segment.
++    # The keyprobe validation probe uses this against e.g.
++    # ``https://opencode.ai/zen/v1`` — the resolved chat URL must NOT collapse
++    # the path segment.
++    assert chat_url("https://opencode.ai/zen/v1") == \
++        "https://opencode.ai/zen/v1/chat/completions"
++    assert chat_url("https://opencode.ai/zen/go/v1") == \
++        "https://opencode.ai/zen/go/v1/chat/completions"
++
++
++def test_chat_url_collapses_multiple_trailing_slashes():
++    # Multiple trailing slashes collapse to a single ``/chat/completions`` join —
++    # mirrors the inline ``base.rstrip("/") + "/chat/completions"`` behavior.
++    assert chat_url("https://api.example.com/v1///") == \
++        "https://api.example.com/v1/chat/completions"

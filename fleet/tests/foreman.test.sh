@@ -122,7 +122,20 @@ rm -rf "$G"
 #   `if printf '%s\n' "$out" | grep -qiE '\[STARVE\]|\[COLLISION\]'; then ... return 1`
 # -> (h1) goes RED (starvation makes every trigger report failure again).
 CAD="$(mkfleet)"; [ -e "$SRC/foreman-cadence.sh" ] && ln -s "$SRC/foreman-cadence.sh" "$CAD/foreman-cadence.sh"
-out_h="$(FOREMAN_CADENCE_FLEET="$CAD" FOREMAN_FLEET="$CAD" bash "$CAD/foreman-cadence.sh" session-start 2>&1)"; rc_h=$?
+# PLANE-CANARY-WIRE: every foreman-cadence trigger now also carries a FAIL-CLOSED plane-canary
+# surface, so a fixture fleet that does not provision the detector is RED BY DESIGN (an absent
+# detector is not a pass — that is the entire point of the wiring). Seed a self-contained GREEN
+# plane via plane-canary.sh's documented PC_* seams so this case keeps measuring what it is
+# actually about: a mere SUPPLY state must not read as a failure.
+[ -e "$SRC/plane-canary.sh" ] && ln -s "$SRC/plane-canary.sh" "$CAD/plane-canary.sh"
+: > "$CAD/fx-canary.sh"; : > "$CAD/fx-canary.test.sh"
+printf 'this layer fires fx-canary.sh\n' > "$CAD/fx-timer-src.sh"
+printf 'fx\tfx-canary.sh\tfx-canary.test.sh\ttimer\tFX-FIXTURE\n' > "$CAD/plane-canary-registry.tsv"
+out_h="$(FOREMAN_CADENCE_FLEET="$CAD" FOREMAN_FLEET="$CAD" \
+         PC_ROOT="$CAD" PC_REGISTRY="$CAD/plane-canary-registry.tsv" \
+         PC_RUNLOG="$CAD/state/pc-runlog.tsv" PC_PLANES="fx" \
+         PC_SRC_TIMER="$CAD/fx-timer-src.sh" \
+         bash "$CAD/foreman-cadence.sh" session-start 2>&1)"; rc_h=$?
 [ "$rc_h" -eq 0 ] && ok "(h1) cadence session-start on a starving board does NOT fail (rc 0)" \
                   || bad "(h1) cadence returned rc $rc_h on a mere supply state"
 has "$out_h" "[STARVE]" "(h2) cadence still surfaces the loud starvation report"

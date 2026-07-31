@@ -51,6 +51,7 @@ for f in sorted(glob.glob(os.path.join(board, "*.md"))):
         "deps": [d.strip() for d in field(f, "depends_on").split(",") if d.strip()],
         "owns": [o.strip() for o in field(f, "owns").split(",") if o.strip()],
         "work_class": field(f, "work_class"),
+        "tier": field(f, "tier"),
         "difficulty": field(f, "difficulty"),
         "note": field(f, "note"),
         "parked_field": field(f, "parked"),
@@ -87,22 +88,92 @@ PRODUCT_REPO = os.environ.get("CHARON_REPO", "/home/stack/code/charon")
 
 # MULTI-REPO: a ticket may name a target repo via `repo:` (see fleet/repo-registry.sh). Map the
 # accepted keys to their checkout roots so owns-paths resolve against the RIGHT tree and an
-# unknown key fails RED. Absent field -> "charon" (product) => unchanged behavior (back-compat).
+# unknown/absent key fails RED. REPO-DEPS:
+#   repo: is now MANDATORY (REPO-FIELD-REQUIRED): an absent field used to SILENTLY default to
+#   "charon" (the PRODUCT repo), which let a rig ticket (REPO-DECL-CENTRAL) be merge-proven by a
+#   product-side commit and gate DESTRUCTIVE actions (worktree deletion) on a wrong-repo proof. The
+#   default is now REMOVED — absent is a HARD RED, not a warning (a warning is what the old default
+#   effectively was). The accepted keys ARE this map; do NOT add a second copy — REPO-MAP-CONVERGE
+#   owns converging the map's duplicates, but the KEYS here are the validator's source of truth for
+#   "is this a known repo" and are re-derived from repo-registry.sh's case arms (kept in lockstep).
 REPO_ROOTS = {
     "charon": PRODUCT_REPO, "product": PRODUCT_REPO,
     "keystone": "/home/stack/code/keystone", "ksf": "/home/stack/code/keystone",
     "charon-private": "/home/stack/charon-private", "rig": "/home/stack/charon-private",
     "fleet": "/home/stack/charon-private",
 }
+# repo_key(d) — the canonical lowercase repo key, or "" if absent. Callers that need a ROOT for
+# owns-path resolution fall back to PRODUCT_REPO ONLY inside repo_root() (a non-failing resolver
+# so the owns-existence WARN check never crashes); the MANDATORY rule below is what actually FAILS
+# on absence. Keeping the resolver non-failing lets the owns check report its WARN BEFORE the hard
+# red exits, which aids diagnosis of a half-written ticket.
+def repo_key(d):
+    return d["repo"].strip().lower()
 def repo_root(d):
-    return REPO_ROOTS.get((d["repo"].strip().lower() or "charon"), PRODUCT_REPO)
+    return REPO_ROOTS.get(repo_key(d) or "charon", PRODUCT_REPO)
 
-# 0. repo: field must name a known repo (else the harness can't resolve it). Live tickets only.
+# Implied repo from a ticket's `owns:` paths (the backfill / consistency rule (a2) derive it the
+# SAME way). Only UNAMBIGUOUS prefixes imply a repo; anything ambiguous (benchmark/, docs/,
+# .github/, top-level files, bare filenames) implies NEITHER so the rule never false-positives on
+# a ticket whose relative owns are intended to live under the declared repo root (e.g. BENCH-OOB-
+# GRADING's `benchmark/graders` answer-keys are RIG-ONLY per its body, yet the path has no `fleet/`
+# prefix). The recurring defect this catches is concrete: a session files a PRODUCT-source fix
+# (e.g. grades.py = src/charon/capability/grades.py) as a RIG ticket — owns `src/charon/*` |
+# `tests/*` | `tools/*` is PRODUCT-ONLY (the rig has no src/, tests/, or tools/ subtree), yet the
+# field reads `repo: charon-private`, so the droid checks out the rig and the fix never lands.
+# Absolute paths under the rig checkout, or ~-prefixed opencode config, or a `fleet/` prefix, are
+# RIG-ONLY (the product has no fleet/ subtree). `docs/` and `.github/` exist in BOTH repos so
+# they do NOT imply (a `docs/` owns is ambiguous, never an inconsistency by itself). A path with
+# whitespace or a leading '(' is prose, not a path. A ticket whose owns span BOTH repos (unam-
+# biguous rig AND unambiguous product prefixes) is a GENUINE finding — the rule SURFACES both
+# rather than silently picking one, exactly as the backfill does.
+RIG_OWNS_PREFIXES = (
+    "/home/stack/charon-private", "~/.config/opencode", "fleet/",
+)
+# These exist ONLY under the product repo (the rig has no src/, tests/, or tools/ subtree). They
+# are the PRODUCT-IMPLYING prefixes — the source-tree prefixes a PRODUCT-code fix owns.
+PRODUCT_OWNS_PREFIXES = ("src/", "tests/", "tools/")
+def implied_repos_from_owns(owns_list):
+    repos = set()
+    for p in owns_list:
+        if not p or " " in p or "\t" in p or p.startswith("("):
+            continue  # prose / descriptive owns, not a real path
+        if p.startswith(RIG_OWNS_PREFIXES):
+            repos.add("charon-private")
+        elif p.startswith(PRODUCT_OWNS_PREFIXES):
+            repos.add("charon")
+        # else: ambiguous (benchmark/, docs/, .github/, bare filename) -> implies neither
+    return repos
+
+# 0. repo: field — REQUIRED, KNOWN, and CONSISTENT with owns (REPO-FIELD-REQUIRED a/a2).
+#    The harness can resolve a ticket ONLY when its repo is explicit + known; an absent field
+#    used to silently default to the product repo (the REPO-DECL-CENTRAL phantom-merge defect).
+#    Live tickets only (parked may be staged without it done/done are retired off the live scan).
+#    (a) ABSENT -> RED; UNKNOWN -> RED (rule 0 already did present-but-unknown; now covers absent).
+#    (a2) INCONSISTENT with owns -> RED: owns src/charon/*|tests/*|docs/* but repo: charon-private,
+#         or owns fleet/* but repo: charon — the exact mis-pointing that recurs when a session files
+#         a PRODUCT-code fix (e.g. grades.py) as a RIG ticket. A ticket whose owns span BOTH repos
+#         is surfaced (reported), not silently picked.
 for t, d in tickets.items():
-    key = d["repo"].strip().lower()
-    if key and key not in REPO_ROOTS and not is_parked(d):
+    if is_parked(d):
+        continue
+    key = repo_key(d)
+    if not key:
+        red.append(f"repo-missing: {t} has no 'repo:' field (required — one of: "
+                   f"{', '.join(sorted(REPO_ROOTS))}). Add the repo the ticket's owns: paths "
+                   f"live in (see fleet/repo-registry.sh).")
+        continue
+    if key not in REPO_ROOTS:
         red.append(f"unknown-repo: {t} repo '{d['repo']}' is not one of "
                    f"{', '.join(sorted(REPO_ROOTS))} (see fleet/repo-registry.sh)")
+        continue  # unknown key => can't check consistency meaningfully
+    implied = implied_repos_from_owns(d["owns"])
+    if implied and key not in implied:
+        # one-sided inconsistency: declared repo vs the single repo owns implies
+        red.append(f"repo-owns-inconsistent: {t} declares repo '{key}' but its owns: paths "
+                   f"imply {', '.join(sorted(implied))} — the field points at the wrong tree "
+                   f"(the droid would check out the wrong repo). Align repo: with owns:, or "
+                   f"move the owns: paths into the declared repo.")
 
 # 1. prompt files exist
 for t, d in tickets.items():
@@ -179,6 +250,41 @@ if _VALID_WORK_CLASSES is not None:
             red.append(f"work-class-invalid: {t} work_class '{wc}' is not one of "
                        f"{', '.join(sorted(_VALID_WORK_CLASSES))}")
 
+# 2f. tier required + valid for every live ticket (REPO-FIELD-REQUIRED a3, added 2026-07-23).
+# A stray `tier: standard` slipped through silently because validate_board checked work_class
+# but NOT tier. Same shape as the work_class rule (2b): required + must be in the canonical set.
+# The canonical set is `charon tier ranks` (src/charon/cli.py:_tier_ranks) — the SSOT for what a
+# tier name means (economy/strong/frontier + the rank aliases low/med/high, haiku/sonnet/opus).
+# We REUSE it as a subprocess (claim.sh:25, flow-canary.sh:73 do the same) and do NOT hardcode a
+# second tier list here — a hardcoded list is exactly the drift class this rule exists to catch.
+# Override: CHARON_TIER_RANKS_CMD swaps the command (tests inject a hermetic stub); an empty
+# result FAILS RED (a missing SSOT must never silently pass every tier). The per-ticket gate runs
+# BELOW (after the `inactive` helper is defined) so it can exempt parked/done tickets the same way
+# the difficulty rule (2e) does; the LOAD happens here, next to the work_class import it mirrors.
+_TIER_RANKS_CMD = os.environ.get("CHARON_TIER_RANKS_CMD", "charon tier ranks")
+_VALID_TIERS = None
+try:
+    _tr = subprocess.run(_TIER_RANKS_CMD, shell=True, capture_output=True,
+                         text=True, timeout=10)
+    if _tr.stdout.strip():
+        _VALID_TIERS = {ln.split()[0].lower() for ln in _tr.stdout.splitlines()
+                        if ln.split()}
+    if _VALID_TIERS:
+        # assert the load-bearing canonicals are present (guard a stub that returns junk)
+        for _canon in ("economy", "strong", "frontier"):
+            if _canon not in _VALID_TIERS:
+                red.append(f"tier-check-failed: `{_TIER_RANKS_CMD}` is missing canonical "
+                           f"tier '{_canon}' — output is not the real tier-ranks table")
+                _VALID_TIERS = None
+                break
+except Exception as e:
+    red.append(f"tier-check-failed: could not run `{_TIER_RANKS_CMD}` — {e}")
+if _VALID_TIERS is None and not any(r.startswith("tier-check-failed") for r in red):
+    # a load arm above already named a failure; if none did (e.g. empty stdout with rc 0) surface
+    # it so the rule never silently passes every tier.
+    red.append(f"tier-check-failed: `{_TIER_RANKS_CMD}` produced no tier ranks — cannot "
+               f"validate the tier field (set CHARON_TIER_RANKS_CMD if `charon` is unavailable)")
+
 # 3. duplicate branches
 seen = {}
 for t, d in tickets.items():
@@ -226,6 +332,68 @@ for t, d in tickets.items():
         except (ValueError, IndexError):
             red.append(f"difficulty-invalid: {t} difficulty '{diff_raw}' "
                        f"is not a valid integer 1-5")
+
+# 2f. TIER DRIFT: declared `tier:` vs the rule-derived tier (work->tier classifier,
+# fleet/capability/tier_classify.py). Root cause of tier drift was that `tier` was
+# free text, hand-set, validated for NOTHING — so an author's wrong guess routed real
+# work/spend onto a wrong-capability model (assign.py filters eligible models by the
+# ticket's declared tier). This re-derives tier from signals already validated on every
+# ticket (work_class/difficulty/owns) and flags mismatches: WARN by default, RED for the
+# configurable set in fleet/state/tier-drift-red.txt. REUSE the classifier — the rule
+# table lives in ONE place.
+#
+# FAIL CLOSED. This block previously accepted rc in (0, 2) as "the check ran fine", but
+# `python3 <missing-file>` ALSO exits 2 and argparse exits 2 on an unknown subcommand —
+# so moving/renaming tier_classify.py (or the `drift` subcommand) deleted the entire
+# check with no RED, no WARN and no stderr surfaced: the fail-quiet class that
+# GATE-CREATION-STANDARD S5 names. Now:
+#   * the classifier path is asserted to EXIST before it is invoked;
+#   * "RED drift found" has its OWN sentinel rc (tier_classify.DRIFT_RED_RC == 3);
+#   * every OTHER non-zero rc — 2 included — is a HARD FAILURE of the check itself.
+_TIER_DRIFT_RED_RC = 3  # MUST equal tier_classify.DRIFT_RED_RC
+_tc_path = os.path.join(fleet, "capability", "tier_classify.py")
+if not os.path.exists(_tc_path):
+    red.append(f"tier-drift-check-missing: {_tc_path} does not exist — the tier-drift gate "
+               f"cannot run, so the board is UNVERIFIED (fail-closed, never silently green)")
+else:
+    try:
+        _td = subprocess.run(
+            ["python3", _tc_path, "drift"],
+            capture_output=True, text=True, timeout=20
+        )
+        _saw_red = False
+        for _line in _td.stdout.splitlines():
+            _line = _line.strip()
+            if _line.startswith("RED "):
+                red.append(_line[4:].strip())
+                _saw_red = True
+            elif _line.startswith("WARN "):
+                warn.append(_line[5:].strip())
+        if _td.returncode == _TIER_DRIFT_RED_RC:
+            if not _saw_red:
+                red.append("tier-drift-check-failed: tier_classify.py drift signalled RED "
+                           f"(rc {_TIER_DRIFT_RED_RC}) but emitted no RED line")
+        elif _td.returncode != 0:
+            red.append(f"tier-drift-check-failed: tier_classify.py drift exited {_td.returncode} "
+                       f"(expected 0=clean or {_TIER_DRIFT_RED_RC}=RED; rc 2 means the script "
+                       f"itself is missing or its CLI changed) — {_td.stderr.strip()[:200]}")
+    except Exception as e:
+        red.append(f"tier-drift-check-failed: could not run tier_classify.py — {e}")
+
+# 2f-per-ticket. tier required + valid (loaded above next to work_class; gated here so it can
+# reuse `inactive`, exactly as the difficulty rule does). A ticket whose tier is absent or not in
+# `charon tier ranks` is RED — e.g. the stray `tier: standard` that slipped through silently.
+if _VALID_TIERS is not None:
+    for t, d in tickets.items():
+        if inactive(t):
+            continue
+        tv = d["tier"]
+        if not tv:
+            red.append(f"tier-missing: {t} has no 'tier:' field (required — one of: "
+                       f"{', '.join(sorted(_VALID_TIERS))}; see `charon tier ranks`)")
+        elif tv not in _VALID_TIERS:
+            red.append(f"tier-invalid: {t} tier '{tv}' is not one of "
+                       f"{', '.join(sorted(_VALID_TIERS))} (see `charon tier ranks`)")
 
 # 4. owns partition. A collision is only a LAUNCH RISK if >=2 of the owners are
 # not-done (could still run concurrently). Done/done or done/live pairs already
