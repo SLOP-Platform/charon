@@ -32,6 +32,27 @@ prompt: /home/stack/charon-private/prompts/fix-thing.md
    (`update`) periodically.
 4. Read any linked design/review doc before starting.
 
+## FACTS (verified) — REQUIRED
+Every line here carries a `file:line` or a command plus its REAL output. Nothing else belongs
+in this section. No characterization, no "as you can see", no summary of someone's conclusion.
+```
+- <claim>            evidence: path/to/file.py:123
+- <claim>            evidence: $ <command>  ->  <actual output, trimmed>
+```
+Why this section is mandatory: a curated framing is a shared-substrate BIAS VECTOR — every agent
+reading this brief inherits it at once, and none can tell a measured fact from the manager's
+guess. This is the DTC protocol's G3 rule applied to manager-authored briefs
+(MANAGER-OPERATING-RULES.md §11). An unsourced manager claim is not a fact.
+
+## FRAMING (hypothesis) — REQUIRED, and explicitly challengeable
+The manager's interpretation, model, or categorization of the facts above. This is NOT evidence.
+
+> **Any manager framing in this brief is a HYPOTHESIS. Test it. If it is wrong, overturn it and
+> say so LOUDLY in your report — an overturned manager premise is a top-value finding, not an
+> inconvenience.** Do not pre-filter your investigation through a category the manager supplied;
+> build your own inventory of the facts first, then map it onto the framing and report where the
+> framing fails.
+
 ## THE TASK
 <what's broken / what's wanted, and why>
 
