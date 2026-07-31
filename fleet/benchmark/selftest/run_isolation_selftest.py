@@ -296,7 +296,7 @@ def part7_bench_sh_fallback_fail_closed() -> None:
         # the STALE-fallback logic this test actually exercises.
         for name in ("sections.sh", "grade_state.py", "charon_cost.py", "detect_model.py"):
             shutil.copy(LIB_DIR / name, lib_dir / name)
-        os.chmod(bench_dir / "bench.sh", 0o755)
+        os.chmod(bench_dir / "bench.sh", 0o700)
 
         # S0 (not some later section) - current_section() walks ALL_SECTIONS
         # in order and returns the first non-finalized one, so with only
