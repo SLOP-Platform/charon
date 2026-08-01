@@ -93,7 +93,7 @@ CI_SUITES=(
                             # the stale-bare-name guard, i.e. the very defect (report success
                             # while publishing NOTHING) this script exists to prevent; it was
                             # unenforced in CI until 2026-07-19.
-  sync-checkouts.test.sh    # hermetic: mktemp git fixtures + a fixture fleet dir. Defends the
+sync-checkouts.test.sh    # hermetic: mktemp git fixtures + a fixture fleet dir. Defends the
                             # SESSION-START path — no silent branch flip, bounded fetches, and
                             # the only test that actually EXECUTES preflight.sh's `scan` dispatch
                             # (every other preflight test sources the file, which the BASH_SOURCE
@@ -123,6 +123,18 @@ CI_SUITES=(
                             # proves verify REDs on each, that a zero-row or malformed registry is
                             # never a silent pass, and that the `enable --now monit` line is not
                             # even PRINTED while verify is RED. ~2s.
+  fixture-bypass.test.sh    # hermetic: synthetic trees under mktemp -d only; no network, no gh,
+                            # no git writes, no fleet/state/ dependency. ~2s. Guards the
+                            # "green over a production path no test ever runs" class — six
+                            # confirmed instances on 2026-07-19. Its deep (mutation) mode is
+                            # reentrancy-guarded and is NOT exercised against any rig suite here;
+                            # the suite mutates only its own throwaway fixtures.
+  gate-integrity.test.sh    # hermetic: synthetic gate trees under mktemp -d only; no network, no
+                            # gh, no git writes, no fleet/state/ dependency. ~2s. Guards THE GATE
+                            # ON THE GATES — the "reads as protection, provides none" class
+                            # (inert gate, false wiring claim, un-allowlisted proof suite). Its
+                            # own gate is reentrancy-guarded and executes no suite, so putting
+                            # this suite in CI cannot recurse.
 )
 
 VALID_WORK_CLASSES="bugfix ci-infra design-review docs frontend generalist greenfield-feature money-path refactor rig-meta routing tests"

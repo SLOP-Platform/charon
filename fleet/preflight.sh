@@ -778,6 +778,36 @@ detect_service_watchdog(){
   local sw="$HERE/watchdog/monit-selfwatch.sh"
   [ -x "$sw" ] && { bash "$sw" --check >/dev/null 2>&1 || echo "service-watchdog: monit self-watch reports monit NOT healthy or NOT installed (run: fleet/watchdog/monit-selfwatch.sh)"; }
 }
+# --- detect_fixture_bypass: the "green over a path never run" class (six instances 2026-07-19).
+# A suite is fully green while the code it claims to cover is broken or ABSENT, because every test
+# takes a fixture/env bypass that returns before the production path is reached. fixture-bypass.sh
+# owns the detection; this is the D1 STATIC scan only — pure file inspection, no suite execution,
+# no network. ADVISORY (`scan` always exits 0): it is a heuristic, and a heuristic that hard-blocks
+# startup is a heuristic that gets disabled [[gates-must-actually-run]]. The hard verdict is
+# `fixture-bypass.sh check`, reserved for a future ratchet once the tree is at zero findings.
+# The expensive D2 mutation mode (`deep`) is NEVER invoked from here — it re-runs whole suites,
+# some of which are hour-long grader runs, and it is reentrancy-guarded against exactly this.
+detect_fixture_bypass(){
+  local script="$HERE/checks/fixture-bypass.sh"
+  [ -x "$script" ] || { echo "fixture-bypass: detector not found/executable at $script"; return 0; }
+  bash "$script" scan 2>&1 | grep -E '^(FIXTURE-BYPASS:|     |fixture-bypass:)' || true
+}
+
+# --- detect_gate_integrity: THE GATE ON THE GATES. Answers "we put in mechanized gates for this —
+# what happened?": a gate can read as protection while providing none (inert, falsely claiming to
+# be wired, or with a test that never runs in CI and has never been seen to fail). Nothing checked
+# that. gate-integrity.sh owns the detection; this is the STATIC scan — no suite is executed, no
+# other gate is invoked, no network. ~2s.
+# ADVISORY here (`scan` always exits 0): the rig carries a real legacy backlog of inert/unproven
+# gates, and a detector that hard-blocks startup on day one is a detector that gets commented out
+# [[gates-must-actually-run]]. The RATCHET verdict is `gate-integrity.sh check`, which reds only on
+# findings outside the frozen GI_BASELINE — i.e. on any NEWLY inert / falsely-claimed / unproven
+# gate. That is the mode CI should adopt once this has ridden a few PRs.
+detect_gate_integrity(){
+  local script="$HERE/checks/gate-integrity.sh"
+  [ -x "$script" ] || { echo "gate-integrity: detector not found/executable at $script"; return 0; }
+  bash "$script" scan 2>&1 | grep -E '^(GATE-INTEGRITY|     |gate-integrity:)' || true
+}
 
 cmd_detect(){
   local full=0
@@ -794,6 +824,8 @@ cmd_detect(){
   detect_gateway_token_drift
   detect_config_drift
   detect_service_watchdog
+  detect_fixture_bypass
+  detect_gate_integrity
   echo "--- end detectors ---"
   bash "$HERE/access-check.sh" || true
   return 0

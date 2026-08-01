@@ -21,8 +21,15 @@
 #     an unreachable 4-LOM is always a HARD RED, not a satisfied source).
 #
 # EXIT: 0 = every source is reachable AND matches the manifest. Non-zero on ANY drift OR an
-# unreachable source (so this script can GATE). Wired into `validate_board.sh` as an advisory
-# (auto-runs on every preflight) and is the contract a build gate calls before launching.
+# unreachable source (so this script can GATE).
+#
+# WIRING (stated honestly — the previous text here was FALSE). This script claimed to be "Wired
+# into validate_board.sh as an advisory (auto-runs on every preflight)". validate_board.sh has
+# ZERO references to it and it does NOT auto-run on preflight. The claim was caught by
+# fleet/checks/gate-integrity.sh (G2 FALSE-CLAIM) on 2026-07-19 and corrected rather than
+# quietly left, because a false wiring claim is worse than no claim: a reader greps the header,
+# sees wiring, and stops looking. Actual caller: fleet/config-sync.sh. Wiring it into preflight
+# is a real change with its own blast radius and is NOT done here.
 #
 # USAGE:  fleet/config-ssot-gate.sh
 #         fleet/config-ssot-gate.sh --advisory    # same output, always exit 0 (advisory mode)
