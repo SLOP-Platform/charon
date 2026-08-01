@@ -21,7 +21,7 @@ substrate-novel: |
   the capture/scorecard substrate wholesale). Leaving a known-RED test unfixed while that is
   debated would be the worse trade. Flagged here so the larger question is not lost:
   the capture-spool + scorecard stack is a candidate for a real adopt-test under the new lens.
-depends_on: SALVAGE-STASH-CHARON-RUN, LEDGER-NO-EVIDENCE-NO-VERDICT
+depends_on: SALVAGE-STASH-CHARON-RUN, LEDGER-NO-EVIDENCE-NO-VERDICT, GRADE-MODEL-PROVIDER-PAIR
 dep-kind: build
 real-dep: |
   both own fleet/charon-run.sh. SALVAGE-STASH-CHARON-RUN landed FIRST (rig PR #83, merged

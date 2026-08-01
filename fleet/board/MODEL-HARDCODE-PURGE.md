@@ -4,7 +4,7 @@ difficulty: 3
 work_class: ci-infra
 priority: 0
 branch: fix/model-hardcode-purge
-depends_on: REVIEWER-TAB-POOL, CAPTURE-WIRING-TIMEOUT-FIX, LEDGER-NO-EVIDENCE-NO-VERDICT
+depends_on: REVIEWER-TAB-POOL, CAPTURE-WIRING-TIMEOUT-FIX, LEDGER-NO-EVIDENCE-NO-VERDICT, GRADE-MODEL-PROVIDER-PAIR
 real-dep: REVIEWER-TAB-POOL owns fleet/review-pool.sh and is in flight closing B3; CAPTURE-WIRING-TIMEOUT-FIX owns fleet/charon-run.sh — both must settle before the purge edits those files
 owns: fleet/checks/no-hardcoded-model.sh, fleet/tests/no-hardcoded-model.test.sh, fleet/review-pool.sh, fleet/session-ctl.sh, fleet/charon-run.sh
 substrate: N/A
