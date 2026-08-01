@@ -86,8 +86,8 @@
 # ($0.077/$0.154) as the reliable backstop behind every free leg. All active ids verified
 # reachable on gateway build 319658f. NanoGPT weekly cap is LIVE — keep a paid leg behind
 # any -free/-ng leg. Base pool ids used so the gateway does its own provider failover.
-frontier	deepseek-v4-pro-ds,deepseek-v4-flash-ds,gpt-oss-120b-groq,deepseek-v4-pro,kimi-k2.6
-strong	deepseek-v4-flash-ds,gpt-oss-120b-groq,free-groq,minimax-m3-free,deepseek-v4-flash
+frontier	deepseek-v4-pro-ds,minimax-m2.5-go,deepseek-v4-flash-ds,gpt-oss-120b-groq,deepseek-v4-pro,kimi-k2.6
+strong	minimax-m2.5-go,deepseek-v4-flash-ds,gpt-oss-120b-groq,free-groq,minimax-m3-free,deepseek-v4-flash
 economy	free-cerebras,free-groq,deepseek-v4-flash-ds,deepseek-v4-flash-free,deepseek-v4-flash
 # TARGET after operator wires ZAI_API_KEY + MORPH_API_KEY + gemini-3.1-flash-lite-or entry:
 # strong    morph-dsv4flash-morph,minimax-m3-free,deepseek-v4-flash,gemini-3.1-flash-lite-or,gpt-5.4-mini
