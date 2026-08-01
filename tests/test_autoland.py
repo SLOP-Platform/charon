@@ -24,8 +24,20 @@ from charon.config import AutoLandConfig
 from charon.land import GitleaksResult
 from charon.ledger import Ledger
 
-
 # --------------------------------------------------------------- helpers
+
+@pytest.fixture
+def git_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "master", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "charon@localhost"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "charon"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit",
+                    "--allow-empty", "-q", "-m", "charon: base"], check=True)
+    return repo
+
+
 def _clean_gitleaks(_repo: str) -> GitleaksResult:
     return GitleaksResult("clean")
 
