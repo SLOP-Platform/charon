@@ -60,8 +60,40 @@ note: |
        Surface findings as new tickets — do NOT fix them here.
     d. Rebase/refresh against master if the branch has drifted (it predates several landings).
 
+  ## ⚠ ROUND 2 — 2026-08-01. THE ONLY REMAINING BLOCKER IS A REBASE.
+  Round 1 delivered. VERIFIED by the manager on the branch worktree:
+    - `gate-integrity.test.sh` -> **22 passed, 0 failed**
+    - `fixture-bypass.test.sh` -> **29 passed, 0 failed**
+    - both wired into `fleet/checks/rig-ci-scope.sh` AND `fleet/preflight.sh`
+    - `gate-integrity.sh scan` runs against the live rig and reports **20 findings**
+  **Do not rebuild any of it.**
+
+  **PR #296 and #297 are `mergeable=false / dirty` — the branch is 504 commits behind master.**
+  That rebase is the whole job now. The manager cannot do it (`git rebase`/`merge` are denied to
+  the manager BY DESIGN — conflict resolution belongs to a worker).
+
+  TASK:
+  1. Rebase `feat/fixture-bypass-gate` onto current `origin/master`. **Use three-dot diffs
+     (`master...HEAD`) to check content** — two-dot diffs render master's later commits as branch
+     DELETIONS and have already nearly destroyed 1,662 lines on another branch in this rig.
+  2. Re-run BOTH suites after the rebase and report the counts. They were 22 and 29 before it.
+  3. Re-run `bash fleet/checks/gate-integrity.sh scan` and report the finding count (was 20).
+  4. Push and get ONE mergeable PR. Close the stale duplicate (#296 or #297, whichever loses).
+
+  ## THE BASELINE QUESTION (operator directive — decide it, do not inherit it)
+  `gate-integrity.sh` currently reports `0 new, 20 baseline` — GREEN while 20 live inert gates
+  sit unfixed, which reproduces the fake-green class this gate exists to detect. The bar is BEST,
+  not defensible [[best-not-defensible]]. Of the 20: **6 are one-line `CI_SUITES` allowlist
+  additions** (`land-gate`, `handoff-mechanize`, `rule-sync`, `selfcheck-cycle`,
+  `claim-loop-guard`, `test_droid_reap`), 2 are wire-or-delete (`selfcheck-cycle.sh`,
+  `dark-work-check.sh` — both have zero callers), 2 are stale prose notes in `land.sh:319-320`.
+  Report whether driving the baseline to ZERO and deleting the baseline mechanism is achievable
+  here. If it is, do it. If adding those 6 suites turns CI red, that is DISCOVERY, not failure —
+  report what they surface and ticket it. Do NOT quietly keep a 20-entry baseline.
+
   ## OUT OF SCOPE
-  Fixing whatever `gate-integrity.sh` flags. Surface, ticket, move on.
+  Fixing whatever `gate-integrity.sh` flags beyond the allowlist wiring above. Surface, ticket,
+  move on.
 
 D&S — Deps & Sequence:
   - Depends on: nothing. The code exists and is pushed; this ticket exists so land.sh will accept it.
