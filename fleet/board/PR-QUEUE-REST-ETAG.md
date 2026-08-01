@@ -4,7 +4,7 @@ priority: 0
 difficulty: 3
 work_class: ci-infra
 branch: feat/pr-queue-rest-etag
-owns: fleet/pr-queue.sh, fleet/tests/pr-queue.test.sh
+owns: fleet/pr-queue.sh, fleet/tests/pr-queue.test.sh, fleet/review-pool.sh
 serial_justified: One queue generator plus its fail-on-revert suite; the suite is what proves the ETag/TTL/lock behaviour actually fires.
 substrate: N/A
 substrate-novel: |
@@ -81,14 +81,22 @@ verified: |
 
 ## Dependencies & Sequence
 
-- **depends_on: (none).** Two NEW files; nothing else is touched.
-- **Sequence: now.** It is a drop-in but NOT yet dropped in — see below.
-- **owns-collision:** none, deliberately. `fleet/review-pool.sh` is owned by REVIEWER-TAB-POOL
-  (PR #346, still open), so this was built as a standalone generator rather than an edit to it.
-- **NOT DONE HERE — the wiring.** Nothing calls `pr-queue.sh` yet; `review-pool.sh`'s `queue_gen()`
-  is still the live path and still burns GraphQL. Cutting it over is a one-line change INSIDE
-  review-pool.sh and therefore belongs to REVIEWER-TAB-POOL / PR #346. Until that lands, the
-  saving is available but unrealised — this ticket is "built", not "firing".
+- **depends_on: (none).**
+- **Sequence: now**, and it is the anchor line for `fleet/review-pool.sh`.
+- **owns-collision:** `fleet/review-pool.sh` is also owned by REVIEWER-TAB-POOL. Resolved by
+  ordering, not by avoidance: REVIEWER-TAB-POOL now `depends_on: PR-QUEUE-REST-ETAG` and rebases
+  onto the cut-over version. (The generator was originally built standalone to dodge the
+  collision; once #346 bounced, dodging it stopped being the cheaper option.)
+- **THE CUTOVER IS NOW IN SCOPE (operator decision 2026-08-01).** Originally deferred because
+  `fleet/review-pool.sh` belongs to REVIEWER-TAB-POOL / PR #346 — but #346 was BOUNCED (it switched
+  B1 to a `CHARON-AUTHOR-DROID` PR-body marker that 0 of 16 PRs carry and no code writes, which
+  would have made the pool review nothing). It is going back for rework, so the owns-block is moot
+  and holding the saving hostage to it is pure loss. REVIEWER-TAB-POOL now sequences BEHIND this
+  ticket and rebases.
+  Built-but-unwired is the exact failure class this session has hit five times; leaving a measured
+  ~100% quota saving sitting unwired would be a sixth.
+  The cutover also closes THREE of review-pool's five known defects at once, because pr-queue.sh
+  already has them: the GraphQL burn, the missing dedup, and the unlocked truncate+append race.
 - **Known gaps, carried forward rather than hidden:**
   (a) ROW ORDER vs the old generator is reasoned, not measured — GraphQL was at 0 all session so no
       side-by-side was possible. `sort=created&direction=desc` matches `gh pr list`'s documented
