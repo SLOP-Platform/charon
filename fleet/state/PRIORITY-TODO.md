@@ -300,3 +300,58 @@ session. Same allocator, same exclusion-set behaviour.
 - ~16 rig worktrees carry 1-4 dirty files each; several belong to tabs that were still running.
   **Re-run the work-loss check at the START of the next session** — tabs kept working after this
   handoff was written, so this list is a floor, not a ceiling.
+
+---
+
+## L. ⛔ ROOT/CLASS: 96 UNPUSHED COMMITS ON 47 LOCAL-ONLY BRANCHES — AND THE FIX IS ITSELF STRANDED
+
+**Operator, 2026-08-01: *"we hit this most end of session (look at the last 3) but we never fix it
+in a mechanical way to stop the ROOT/CLASS and not do whack-a-mole."* Measured at this close:**
+
+```
+charon-private:  25 local-only branches carrying 38 unpushed commits
+charon:          22 local-only branches carrying 58 unpushed commits
+TOTAL:           47 branches / 96 commits that exist ONLY on this box
+```
+(Excludes `backup/*`. "Local-only" = NO upstream ref at all — never pushed, not merely behind.)
+
+**WHY IT RECURS — the fixes for this class were BUILT and then LOST TO THIS CLASS:**
+
+| branch | unique commits | remote |
+|---|---|---|
+| `feat/stranded-work-detect-v2` | 1 | **NONE** |
+| `feat/session-end-push-gate-v2` | 3 | **NONE** |
+
+The stranded-work detector is stranded. The session-end push gate was built and never pushed.
+`SESSION-END-PUSH-GATE` still reads `not-started` on the roadmap. Each session rediscovers the
+problem, builds a fix, and loses the fix the same way — that IS the whack-a-mole.
+
+Single largest at-risk item: **`feat/cwd-config` — 26 unique commits, never pushed.**
+
+### L1. THE MECHANICAL FIX — do this INSTEAD of another manual sweep
+
+A session-close gate is necessary but NOT sufficient, because a gate that is itself an unpushed
+local branch does nothing. Required, in this order:
+
+1. **RESCUE FIRST, before building anything.** Push all 47 local-only branches to remote (they cost
+   nothing parked there and are then recoverable from any box), or explicitly delete the ones that
+   are genuinely dead. Do NOT build the gate first — the last two sessions did and the gate was lost.
+2. **Land `feat/session-end-push-gate-v2` and `feat/stranded-work-detect-v2` IMMEDIATELY.** They
+   already exist. Landing them is cheaper than rebuilding them a fourth time.
+3. **The gate must cover ALL loss classes, not just "ahead of upstream"** — that narrow check is why
+   this was missed repeatedly. The full set, all measured at this close:
+   - branches AHEAD of their remote (found: `fix/shared-namespace-contention` **25 commits**)
+   - branches with **NO upstream at all** (found: 47 / 96 commits — the class that kept being missed)
+   - uncommitted dirty worktrees (~16 rig worktrees, 1-4 files each)
+   - stashes (1 in the rig)
+   - detached-HEAD worktrees (2 in the rig)
+4. **Run it on a CADENCE, not only at close.** A session that ends abruptly, hits a token limit, or
+   crashes never reaches its close gate. A timer/preflight leg catches what a close gate cannot.
+5. **FAIL LOUD and BLOCK.** `end-session.sh` currently aborts before its work-loss check every run
+   (see §J) — so today the gate exists, is marked done, and never fires. Verify the FIRING LAYER.
+
+### L2. Why "just push everything" is the right first move
+These branches are already on disk. Pushing is non-destructive and reversible, costs one API call
+each, and converts an invisible single-point-of-failure into recoverable remote state. Triage can
+happen later at leisure. Losing 96 commits to a disk failure or a stray `reset --hard` cannot be
+undone at all. **Rescue is cheap; reconstruction is not.**
