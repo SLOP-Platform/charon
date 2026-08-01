@@ -73,6 +73,23 @@ OPENCODE_LOG="${OPENCODE_LOG:-$HOME/.local/share/opencode/log/opencode.log}"
 # provider/local/infra symptom that must enqueue NOTHING (not model quality).
 is_infra_fault() {
   local rc="$1" tail="$2"
+  # ── NO EVIDENCE ⇒ NO MODEL VERDICT (LEDGER-NO-EVIDENCE-NO-VERDICT, 2026-08-01) ──────────
+  # This predicate decides whether a failure is charged to the MODEL (a BLOCK row that
+  # permanently drags its grade) or to the box. Every other branch below asks "is there a
+  # recognised infra signature?" — which means a run that produced NO OUTPUT AT ALL fell
+  # through to `return 1` and was booked as a model-quality failure on the strength of an
+  # EMPTY string. That is fail-OPEN in the one path that must fail closed: a grade is an
+  # accusation, and an accusation with no evidence is not a finding.
+  # MEASURED 2026-08-01: two models sat at -100 in fleet/model-scorecard.tsv from rows whose
+  # whole basis was `opencode exited rc=1`; the client had failed before ever reaching the
+  # model (its id was undeclared to opencode — see OPENCODE-MODEL-SYNC).
+  # Deliberately narrow: this fires ONLY on an empty/whitespace tail. A tail with real content
+  # and no infra signature is STILL charged to the model — the comment below about rc=1 staying
+  # text-discriminated is intact, and a false INFRA remains as corrosive as a false BLOCK.
+  case "$tail" in
+    *[![:space:]]*) : ;;   # has at least one non-whitespace char — carry on and classify it
+    *) return 0 ;;         # empty / whitespace-only: unattributable, never a model verdict
+  esac
   # rc=124 (the `timeout` wrapper firing) is handled EXPLICITLY in the per-model loop
   # below, BEFORE this function is ever called -- it distinguishes genuine too-slow
   # (model streamed output, model-attributable, latency-is-a-failure-class) from a
