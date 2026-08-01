@@ -129,6 +129,15 @@ else
         else                       _SMODE=empty; fi
         rm -f "$_SERR"
       fi
+      # A feature branch must be judged on its diff, never on the stale whole-board snapshot it
+      # inherited when it was cut. Even a populated state store cannot make historical board
+      # content attributable to this branch. rig-ci-scope reports and validates only touched
+      # board files; master itself retains full live-board validation.
+      if [ "$_SMODE" = populated ] \
+         && git -C "$REPO" rev-parse --verify -q refs/remotes/origin/master >/dev/null 2>&1 \
+         && [ "$(git -C "$REPO" rev-parse HEAD)" != "$(git -C "$REPO" rev-parse refs/remotes/origin/master)" ]; then
+        _SMODE=branch-diff
+      fi
       case "$_SMODE" in
       populated)
         GATE_PARTS+=("bash '$REPO/fleet/validate_board.sh' '$REPO/fleet'") ;;
@@ -138,7 +147,7 @@ else
         echo "land-push:   gate needs done-markers and the scoped fallback would be a SILENT" >&2
         echo "land-push:   downgrade under a wrong stated cause. Refusing rather than guessing." >&2
         exit 4 ;;
-      absent|empty)
+      absent|empty|branch-diff)
         if [ -f "$REPO/fleet/checks/rig-ci-scope.sh" ]; then
           # MED-F8: rig-ci-scope.sh diffs against RIG_CI_BASE (default origin/master). We used to set
           # only RIG_CI_ROOT, so when refs/remotes/origin/master did not exist (bare fixture, mirror,
