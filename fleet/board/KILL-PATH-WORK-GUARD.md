@@ -12,7 +12,7 @@ substrate-novel: |
   it attributable to the droid I am about to kill" — a question about the rig's own worktree/claim
   topology. `git status --porcelain` is the primitive and is used directly; there is no library to
   adopt for the policy of refusing a kill.
-depends_on:
+depends_on: STOP-WORKER-GRACEFUL-EXIT
 note: |
   OPERATOR DIRECTIVE 2026-08-01, verbatim: **"all/any droid kill paths MUST have a mechanized check
   for work that reviews and commits."**
@@ -53,6 +53,33 @@ accept: |
     bypass honoured and logged; unreachable worktree -> refuses. Externally red-proof, report both
     counts.
 
+## SWEEPS MUST BE MECHANIZED — operator, 2026-08-01
+
+*"your sweeps must be mechanized to be the ones that find things."*
+
+Proven the same day, twice over:
+- The manager hand-composed a work-loss sweep checking only "ahead of upstream". It found 1 branch.
+  **It missed 47 local-only branches carrying 96 commits** — a whole loss class, invisible to that
+  query shape. Only a second, differently-shaped hand query found them.
+- Meanwhile **`validate_board.sh` ALREADY HAS the check** and reported it unprompted:
+  `RED uncommitted-work: dirty tracked file '...catalog_refresh.py' — a session exited without
+  committing.` The mechanized detector existed, was correct, and was simply not run AS the sweep.
+
+**THE RULE:** a work-loss sweep must be a TOOL that is RUN, never a query composed in the moment.
+An ad-hoc query encodes only the loss class its author happened to remember — which is why the
+class that keeps costing us is the one nobody thinks to type.
+
+Therefore this ticket must ALSO:
+- Expose the guard as a standalone sweep (`fleet/kill-guard.sh --sweep`) covering EVERY loss class
+  in one invocation: dirty tracked · untracked-matching-owns · unpushed commits · **branches with
+  NO upstream at all** · stashes · detached HEADs — across BOTH repos and all worktrees.
+- Reuse `validate_board.sh`'s existing `uncommitted-work` detector rather than writing a second
+  one. Two detectors that disagree is worse than one that is incomplete.
+- Be the thing `preflight.sh` and the session-close path CALL, so no session has to remember the
+  query shape.
+- **Minor bug to fix while there:** that RED prints the path as `rc/charon/...` — the leading `s`
+  is being eaten. A truncated path in a work-loss warning is a path someone cannot act on.
+
 ## Dependencies & Sequence
 
 - **depends_on: (none).**
@@ -61,5 +88,6 @@ accept: |
   when it actually happens.
 - **Blocks / unblocks:** makes tab teardown safe, which is a precondition for running many tabs
   aggressively — the throughput model this fleet depends on.
-- **owns-collision:** check `stop-worker.sh` / `reap-orphans.sh` against the live board before
-  claiming; `fleet/kill-guard.sh` and the test are new files.
+- **owns-collision:** `fleet/stop-worker.sh` is also owned by STOP-WORKER-GRACEFUL-EXIT — this
+  ticket now `depends_on` it and rebases onto its landed version. `fleet/kill-guard.sh` and the test
+  are new files.
