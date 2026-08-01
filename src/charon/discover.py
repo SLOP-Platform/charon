@@ -128,7 +128,8 @@ def _litellm_feed() -> dict[str, dict]:
     return feed
 
 
-def _merge_litellm(entry: dict, mid: str, feed: dict[str, dict]) -> None:
+def _merge_litellm(entry: dict, mid: str, feed: dict[str, dict],
+                   provider_name: str | None = None) -> None:
     """Corroborate *entry* (a per-provider cost-map entry) with the litellm feed.
 
     Fills ``cost_input``/``cost_output``/``context_window`` when the provider
@@ -136,7 +137,10 @@ def _merge_litellm(entry: dict, mid: str, feed: dict[str, dict]) -> None:
     quote a price and they differ, the provider's quote WINS (it is the
     provider's own price) but the litellm figure is preserved in
     ``price_sources`` so the discrepancy is visible, not erased."""
-    spec = feed.get(mid.casefold())
+    candidates = [mid.casefold()]
+    if provider_name:
+        candidates.insert(0, f"{provider_name}/{mid}".casefold())
+    spec = next((feed[key] for key in candidates if key in feed), None)
     if spec is None:
         return
     if "cost_input" not in entry:
@@ -147,9 +151,11 @@ def _merge_litellm(entry: dict, mid: str, feed: dict[str, dict]) -> None:
         cw = spec["context_window"]
         if cw is not None:
             entry["context_window"] = cw
-    # record disagreement rather than silently picking a winner
+    if not entry.get("free") and spec.get("free"):
+        entry["free"] = True
     sources: list[dict] = []
-    if "cost_input" in entry and entry.get("cost_input") != spec["cost_input"]:
+    if (entry.get("cost_input") != spec["cost_input"] or
+            entry.get("cost_output") != spec["cost_output"]):
         sources.append({"source": "litellm",
                         "cost_input": spec["cost_input"],
                         "cost_output": spec["cost_output"]})
@@ -281,7 +287,7 @@ def build_cost_map(discoveries: dict[str, list[dict] | None]) -> dict:
             # corroborate with the litellm feed FIRST (fills gaps, records
             # disagreement) so an unpriced provider entry still gets a price
             # when litellm knows the model.
-            _merge_litellm(entry, mid, feed)
+            _merge_litellm(entry, mid, feed, provider_name)
             entry.setdefault("sources", [])
 
             if key not in _by_key:

@@ -273,6 +273,32 @@ def test_litellm_feed_disagreement_recorded_not_silently_picked(monkeypatch):
     assert rec["cost_input"] == 0.0000099
 
 
+def test_litellm_feed_matches_provider_namespace(monkeypatch):
+    fake_feed = {"zai/glm-4.7": {
+        "cost_input": 6e-07, "cost_output": 2.2e-06,
+        "context_window": 200000, "free": False, "source": "litellm"}}
+    monkeypatch.setattr("charon.discover._litellm_feed", lambda: fake_feed)
+
+    result = build_cost_map({"zai": [{"id": "glm-4.7"}]})
+    entry = result["glm-4.7"]["providers"][0]
+    assert entry["cost_input"] == 6e-07
+    assert entry["context_window"] == 200000
+
+
+def test_litellm_output_price_disagreement_recorded(monkeypatch):
+    fake_feed = {"gpt-4o": {
+        "cost_input": 0.0000025, "cost_output": 0.000029,
+        "context_window": 128000, "free": False, "source": "litellm"}}
+    monkeypatch.setattr("charon.discover._litellm_feed", lambda: fake_feed)
+
+    result = build_cost_map({"openai": [{"id": "gpt-4o",
+        "pricing": {"prompt": "0.0000025", "completion": "0.00001"},
+        "context_window": 128000}]})
+    entry = result["gpt-4o"]["providers"][0]
+    assert entry["cost_output"] == 0.00001
+    assert entry["price_sources"][0]["cost_output"] == 0.000029
+
+
 def test_litellm_feed_absent_is_silent(monkeypatch):
     """No litellm available → discovery still works (no hard-fail)."""
     monkeypatch.setattr("charon.discover._litellm_feed", lambda: {})
