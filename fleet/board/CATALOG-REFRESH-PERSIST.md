@@ -4,7 +4,8 @@ priority: 0
 difficulty: 3
 work_class: money-path
 branch: fix/catalog-refresh-persist
-depends_on:
+depends_on: SW-STATIC-LEGS-RETIRE
+real-dep: SW-STATIC-LEGS-RETIRE shares src/charon/routing_policy/catalog_refresh.py and is pushed awaiting merge — sequence after it lands
 owns: src/charon/routing_policy/catalog_refresh.py, tests/test_catalog_refresh_persist.py
 substrate: N/A
 substrate-novel: |
