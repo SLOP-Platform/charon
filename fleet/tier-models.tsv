@@ -3,28 +3,22 @@
 # ════════════════════════════════════════════════════════════════════════════
 # COST IS A HEAVY WEIGHT (operator directive, 2026-08-01 — do not silently undo)
 # ════════════════════════════════════════════════════════════════════════════
-# Verbatim: "model expense should be a very heavy weight to them. If we have an option of a
-# model that will do equally good work that is cheaper, the cheaper model should be used."
-# And: "GPT models are way TOO expensive to run in any provider. We need to be VERY careful
-# about sending work to expensive providers unless really required."
+# Cost carries heavy weight in every routing choice. Where two legs do the work equally well,
+# the cheaper one wins. OpenAI GPT legs are expensive and must never be a preferred choice.
 #
-# RULES FOR EDITING THE CHAINS BELOW:
-#   1. Order each chain CHEAPEST-CAPABLE FIRST. The first leg that can do the work well wins;
-#      a costlier leg is a FAILOVER, never a default.
-#   2. Adding an expensive leg requires a stated reason that the cheap legs demonstrably cannot
-#      do the work — not a hunch, and not "for headroom".
-#   3. EXPENSIVE LEGS STAY, BUT LAST. Operator 2026-08-01: "I don't say drop legs but make them
-#      not a preferred choice." A costly leg at the TAIL costs nothing until every cheaper leg
-#      has failed — it is insurance, not spend. DELETING it thins the pool, and a thin pool is
-#      how we get ALL-EXHAUSTED (see fleet/state/provider-exhaustion-ledger.tsv). So:
-#      never DELETE an expensive leg to control cost — DEMOTE it to the tail.
-#      `gpt-5.4-mini` (strong) and `gpt-5.4-nano` (economy) are therefore LAST-RESORT ONLY.
-#   4. This is the same principle as the product's north-star router (need -> cheapest-capable
-#      -> hold -> re-admit); the fleet's own dispatch must not violate what the product preaches.
+# RULES:
+#   1. Order each chain CHEAPEST-CAPABLE FIRST. A costlier leg is failover, never a default.
+#   2. Promoting an expensive leg requires evidence the cheap legs cannot do the work.
+#      "Headroom" is not a reason.
+#   3. DEMOTE, NEVER DELETE. A costly leg at the tail costs nothing until everything cheaper
+#      fails — it is insurance, not spend. Deleting it thins the pool, and thin pools produce
+#      ALL-EXHAUSTED (fleet/state/provider-exhaustion-ledger.tsv). `gpt-5.4-mini` (strong) and
+#      `gpt-5.4-nano` (economy) are last-resort only.
+#   4. Mirrors the product's north-star router (need -> cheapest-capable -> hold -> re-admit).
+#      The fleet must not violate what the product preaches.
 #
-# POSITION IS THE COST CONTROL, NOT PRESENCE. Chain order IS the policy: failover walks
-# left -> right, so leg #1 is what actually runs almost always. Judge a chain by what its FIRST
-# leg costs, not by what its last leg could cost.
+# POSITION IS THE COST CONTROL, NOT PRESENCE. Failover walks left -> right, so leg #1 is what
+# actually runs. Judge a chain by its FIRST leg's cost, not its last.
 #
 # TIER AXIS (EVAL-TIER-CANON / review F-tier fix): the three tier names below
 # (frontier | strong | economy) are the COST-BAND tiers — how expensive a model
