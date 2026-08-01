@@ -417,3 +417,27 @@ These branches are already on disk. Pushing is non-destructive and reversible, c
 each, and converts an invisible single-point-of-failure into recoverable remote state. Triage can
 happen later at leisure. Losing 96 commits to a disk failure or a stray `reset --hard` cannot be
 undone at all. **Rescue is cheap; reconstruction is not.**
+
+---
+
+## M. RESCUED WIP + 4-LOM DEPLOY DRIFT (found during session close-out)
+
+**M1. `CATALOG-REFRESH-PERSIST` WIP was rescued from a killed droid.**
+`src/charon/routing_policy/catalog_refresh.py` in the PRODUCT MAIN CHECKOUT carried
+**+222/-40 uncommitted lines** when its tab was killed at close. Saved as a tracked patch:
+`fleet/state/RESCUE-catalog-refresh-persist-WIP.patch` (17,518 bytes).
+**Next session: apply it onto branch `fix/catalog-refresh-persist`, review it against the raised
+bar in the ticket (persist to disk, cadence observable, propagate to EVERY consumer, fail-loud,
+gate), then land.** Do NOT assume it is complete — the droid was interrupted mid-work.
+Note it was left on the MAIN CHECKOUT rather than a worktree, which is itself worth checking.
+
+**M2. 4-LOM gateway is running an OLD build.**
+Live `/charon/status` reports `build_sha 9659998` = *"land: release v0.6.1"*. Master has moved far
+past that. So the deployed gateway does NOT contain this session's landed fixes, and any reasoning
+about live behaviour must account for the deployed build, not master.
+Live state at close: **4,365 pools, 12 providers**, health endpoint 401 without a bearer token
+(expected — an unauthenticated `/charon/status` answers 302 with a ZERO-BYTE body, which curl
+reports as success; always test that the body PARSES).
+**Next session: decide whether to redeploy.** Relevant known trap: config/state live on the `/data`
+volume and the RUNNING process REWRITES `spend.json` — a disk edit is inert until restart and can
+be clobbered by the live process.

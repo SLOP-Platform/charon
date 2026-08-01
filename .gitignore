@@ -122,3 +122,5 @@ graphify-out/
 !fleet/state/TOOL-UTILIZATION-AUDIT.md
 # ...and the cross-session carry-forward TODO — the list the next session must read FIRST.
 !fleet/state/PRIORITY-TODO.md
+# ...and the rescued CATALOG-REFRESH-PERSIST WIP patch (droid killed at 2026-08-01 session close).
+!fleet/state/RESCUE-catalog-refresh-persist-WIP.patch
