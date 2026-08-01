@@ -16,6 +16,7 @@ class SpendLimiter:
     def __init__(self, monthly_limit_usd: float = 0.0, state_dir: Path | None = None):
         self._limit_usd = monthly_limit_usd
         self._spent_usd: float = 0.0
+        self._unpriced_count: int = 0
         self._month_start: str = ""
         self._state_dir = state_dir or secrets.config_dir()
         self._lock = threading.RLock()
@@ -23,6 +24,7 @@ class SpendLimiter:
 
     def check(self, estimated_cost: float) -> SpendDecision:
         with self._lock:
+            self._reload_limit()
             if self._limit_usd == 0.0:
                 return SpendDecision(
                     allowed=True, remaining=float("inf"), reason=""
@@ -47,6 +49,27 @@ class SpendLimiter:
             self._spent_usd += cost
             self._save()
 
+    def record_unpriced(self):
+        with self._lock:
+            self._ensure_month_reset()
+            self._unpriced_count += 1
+            self._save()
+
+    @property
+    def unpriced_count(self) -> int:
+        with self._lock:
+            return self._unpriced_count
+
+    @property
+    def limit_usd(self) -> float:
+        with self._lock:
+            return self._limit_usd
+
+    @property
+    def spent_usd(self) -> float:
+        with self._lock:
+            return self._spent_usd
+
     def remaining(self) -> float:
         with self._lock:
             if self._limit_usd == 0.0:
@@ -57,7 +80,21 @@ class SpendLimiter:
         current = datetime.now().strftime("%Y-%m")
         if current != self._month_start:
             self._spent_usd = 0.0
+            self._unpriced_count = 0
             self._month_start = current
+
+    def _reload_limit(self):
+        p = self._state_dir / _STATE_FILE
+        if not p.exists():
+            return
+        try:
+            data = json.loads(p.read_text())
+        except (OSError, json.JSONDecodeError):
+            return
+        if not isinstance(data, dict):
+            return
+        if "monthly_limit_usd" in data:
+            self._limit_usd = float(data["monthly_limit_usd"])
 
     def _load(self):
         p = self._state_dir / _STATE_FILE
@@ -71,6 +108,9 @@ class SpendLimiter:
             return
         self._spent_usd = float(data.get("spent_usd", 0.0))
         self._month_start = str(data.get("month_start", ""))
+        self._unpriced_count = int(data.get("unpriced_count", 0))
+        if "monthly_limit_usd" in data:
+            self._limit_usd = float(data["monthly_limit_usd"])
 
     def _save(self):
         d = self._state_dir
@@ -81,6 +121,7 @@ class SpendLimiter:
             json.dumps(
                 {
                     "spent_usd": self._spent_usd,
+                    "unpriced_count": self._unpriced_count,
                     "month_start": self._month_start,
                     "monthly_limit_usd": self._limit_usd,
                 },
