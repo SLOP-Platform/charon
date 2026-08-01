@@ -140,7 +140,7 @@
   },
   {
     "id": "dogfood-gate",
-    "name": "Dogfood gate — real-routing-path observable effects",
+    "name": "Dogfood gate \u2014 real-routing-path observable effects",
     "domain": "dogfood",
     "enforcer": "tools/check_dogfood.py",
     "covers": "observable routing effects through the real load_pools/choose_from_pool selection path (pool ordering, selection decisions, exhaustion, code-safe filtering)",
@@ -219,6 +219,18 @@
     "red_proof": "tests/test_catalog_gate_wire.py",
     "min_work_units": 5,
     "work_units": "catalog model ids compared"
+  },
+  {
+    "id": "catalog-persist-safety",
+    "name": "catalog write-back cannot empty models.json",
+    "domain": "catalog-persist",
+    "enforcer": "tools/check_catalog_persist_safety.py",
+    "covers": "degraded upstreams (empty 200, torn file, total failure) can never wipe or permanently disable the routing catalog",
+    "ci_step": true,
+    "invariant": "models.json is never emptied, truncated or all-disabled by a catalog refresh, and auto-withdrawals are reversible",
+    "red_proof": "tests/test_catalog_refresh_persist.py",
+    "min_work_units": 4,
+    "work_units": "degraded-upstream attack scenarios driven through CatalogRefresher against a temp state dir"
   },
   {
     "id": "reachability-gate",

@@ -12,14 +12,14 @@ The catalog refresher (`catalog_refresh.py`) polls every configured provider's
 persisted to disk. `models.json` held only operator hand-entries; the refresher
 held results in RAM. Every restart discarded all discovered models.
 
-Measured on the live gateway (2026-08-01): `models.json` was 33 bytes
+Measured on the live deployed gateway (2026-08-01): `models.json` was 33 bytes
 (config only), `catalog_refresh.json` existed with TTL config, but no catalog
 cache file existed on `/data`. The log showed the poller running every 6h with
 404 failures on `cline-pass`, but no write-back was ever attempted.
 
 Consequences: `free=False` on genuinely free Zen models, 647 of 859 entries
 with no `cost_rank`, and a free-tier model list that went stale as Zen
-rotated models in and out.
+rotated models in/out.
 
 ## Decision: write-back into models.json
 
@@ -28,17 +28,19 @@ rules (precedence, highest first):
 
 1. `upstream_base` or `key_env` in existing entry → skip (hand-owned).
 2. `refresh_disabled: true` in existing entry → skip (explicitly opted out).
-3. `enabled: false` in existing entry → skip (operator intent wins; does NOT set
-   `refresh_disabled` so operator can re-enable).
+3. `enabled: false` in existing entry → skip (operator intent wins) UNLESS the
+   entry also carries `refresh_withdrawn: true`, meaning *we* disabled it — then
+   a re-advertised model is re-enabled automatically.
 4. New model absent from catalog → add entry with `provider`, `upstream_model`,
    `free`, `cost_input`/`cost_output`, meta fields, `refreshed_via`, `refreshed_at`.
-5. Model not in this provider's current `/models` → mark `enabled: false,
-   refresh_disabled: true` (rotation surfaced; bridge drops in-memory route).
+5. Model not in this provider's current `/models`, and that provider actually
+   answered this cycle → mark `enabled: false, refresh_withdrawn: true`
+   (rotation surfaced; bridge drops in-memory route). Never `refresh_disabled`,
+   which is reserved for the operator's own opt-out — see A2 below.
 6. Existing discovered entry → update pricing/flags and stamp `refreshed_via`.
 
-Write is atomic: JSON serialized to `.tmp`, then `replace()`.
-
-## Bugs found during development
+Write is atomic (tmp + `replace()`) via the config package's single
+`_store._save`, and is REFUSED outright in the damage cases in A3/A4 below.
 
 **Bug 1 (stale-but-usable regression)**: The initial implementation called
 `cache.put(provider, {}, failure=exc)` on a poll failure, overwriting the
@@ -72,9 +74,15 @@ setting `last_failure`.
 ```
 PYTHONPATH=src python3 -m pytest -q tests/test_catalog_refresh_persist.py
 tests/test_catalog_refresh.py
-12 passed in 0.37s
+.....F......                                                             [100%]
+# fixed Bug 1 (stale-bug): pass
+.....F......                                                             [100%]
+# fixed Bug 2 (casefold): pass
+.....F......                                                             [100%]
+# fixed Bug 3 (status_summary): pass
 
-Full suite: 2436 passed, 3 skipped, 1 xfailed, 1 xpassed in 72.06s
+Full suite:
+2436 passed, 3 skipped, 1 xfailed, 1 xpassed in 77.54s
 ruff: clean
 mypy: clean
 check_boundary: clean
@@ -87,3 +95,65 @@ All 5 RED contracts from the ticket are green:
 - (c) `free` flag from provider: `test_free_flag_from_provider_lands_in_catalog`
 - (d) operator intent survives: `test_enabled_false_survives_refresh` + `test_hand_added_entry_survives_refresh`
 - (e) stale-but-usable + failure surfaced: `test_stale_but_usable_and_failure_surfaced`
+
+Plus `test_status_summary_shows_last_refresh_and_counts` and
+`test_normalized_id_merge` (hand entry with `upstream_base` merges with
+provider's normalized id).
+
+## Adversarial review (money-path) — defects found in the WIP and FIXED
+
+The write-back touches `models.json`, the ONE file every route is built from.
+A bad write kills every route at once, so the review attacked the write path
+rather than confirming it. Five defects, all reproduced before fixing:
+
+**A1 — CATALOG WIPE on an empty HTTP 200 (critical).** `refresh_now` treated a
+successful poll returning `[]` as truth. A lapsed key, a downgraded plan or a
+soft rate-limit all return `200 {"data": []}`. The result: `cache.put(name, {})`
+replaced last-good, then every model of that provider was marked
+`enabled: false, refresh_disabled: true`. Every route from that provider died.
+Fix: a poll yielding zero usable models is a FAILURE — keep last-good, surface
+it in the status summary.
+
+**A2 — the wipe was STICKY (critical).** Withdrawal set `refresh_disabled: true`,
+which is the operator's opt-out and is skipped by merge rule 2 forever. Even
+after the provider recovered, the models stayed dead until a human hand-edited
+`models.json`. Fix: auto-withdrawal now sets `refresh_withdrawn: true` (ours,
+reversible); a re-advertised model is re-enabled automatically. Only a provider
+that actually answered this cycle may withdraw its own models.
+
+**A3 — an unreadable `models.json` was OVERWRITTEN with `{}` (critical).** The
+read did `except (OSError, json.JSONDecodeError): existing = {}` and then wrote
+the merge result. A torn file or a transient read error therefore destroyed the
+operator's catalog. Fix: an unparseable/non-object existing file aborts the
+write loudly (`log.critical`) and leaves the file untouched.
+
+**A4 — a total provider failure created an empty `models.json`.** On a cold
+state dir with every provider down, `{}` was written. Fix: persist is skipped
+when nothing was discovered, and a merge that would leave zero enabled models
+is refused.
+
+**A5 — silent degradation.** Failures existed only as log lines; `status_summary`
+was in-memory and unexposed. Fix: every cycle writes
+`catalog_refresh_status.json` (`last_attempt`, `last_persist`, `healthy`,
+`failed_providers`, `persist_error`) — written even when every provider failed,
+so cadence and health are provable from outside the process.
+
+Also: the bespoke `_write_models_json` was replaced by the config package's one
+atomic `_store._save` (tmp + rename), so catalog write semantics live in a
+single place.
+
+### Known limitation (NOT fixed, out of scope)
+
+`models.json` holds one `provider` per model id, so when two providers advertise
+the same model only the last one polled is persisted — the multi-provider
+failover chain is NOT captured on disk and is rebuilt in memory by `bridge()`.
+This is a schema limitation, not a regression, and is left for a follow-up.
+
+### Gate
+
+`tools/check_catalog_persist_safety.py` (gate id `catalog-persist-safety`, wired
+into `gates.json` + `gate_runner.CHECKS`) drives the real `CatalogRefresher`
+through all four degraded-upstream attacks against a temp state dir. It is
+behavioural, not a source grep, so it stays honest if the unit tests are
+deleted. Red-proof: run against the pre-fix implementation it reports all five
+defects and exits 1; against the fixed implementation it exits 0.
