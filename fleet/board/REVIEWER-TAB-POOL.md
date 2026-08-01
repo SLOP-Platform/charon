@@ -29,6 +29,17 @@ substrate-novel: |
   their own hosted models — neither maps onto "this droid built it, so a DIFFERENT droid must
   review it, through OUR gateway". That boundary is the part worth owning; the diff-fetching,
   prompting and comment-posting around it are not, and are what PR-AUTOMATION-EVAL should test.
+substrate-retest: |
+  Run PR-AUTOMATION-EVAL as an EXECUTED trial, not desk research (AP-12). Concretely: point
+  qodo-merge (self-hosted CLI mode) and aider at 3 REAL open PRs from this repo's backlog, record
+  the verdicts side-by-side against what review-pool.sh produced for the same PRs, and count:
+  defects found, false positives, wall-clock, and cost. Then answer the only two questions that
+  decide it — (1) can the tool run OFF-CLAUDE through our own gateway (charon-run.sh), and
+  (2) can its author identity be made to satisfy reviewer!=builder over OUR droid ids? If both are
+  yes, the hand-roll's remaining novel slice is just queue/claim integration and most of the
+  ~830 lines should go. If either is no, record WHICH and why — that is a real adopt blocker, not
+  an anti-pattern objection. Until that trial runs this row stays `drifted` and this ticket stays
+  scoped to repairs of what already runs.
 owns: fleet/review-pool.sh, fleet/tests/review-pool.test.sh, fleet/state/review-queue.tsv, fleet/checks/rig-ci-scope.sh
 work_class_note: |
   Operator-approved 2026-07-23. The REVIEW analog of the SG-tab pool: reviewer tabs claim PR-review work
