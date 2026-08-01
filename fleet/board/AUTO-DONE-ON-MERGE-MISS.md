@@ -5,7 +5,7 @@ work_class: rig-meta
 priority: 1
 branch: fix/auto-done-on-merge-miss
 depends_on:
-owns: fleet/checks/reconcile-board-pr.sh, fleet/tests/auto-done-on-merge.test.sh
+owns: fleet/reconcile-merged.sh, fleet/tests/auto-done-on-merge.test.sh
 substrate: N/A
 substrate-novel: |
   The rule is "a ticket whose PR is MERGED must not remain in `submitted`" — a reconciliation
@@ -61,3 +61,34 @@ D&S — Deps & Sequence:
   - Depends on: nothing. Touches the reconcile surface, not land.sh.
   - Related: RECONCILE-BOARD-PR-DONE (DONE) covers adjacent ground — READ IT FIRST; this may be a
     gap IN that work rather than new work. If so, say so and re-scope rather than building twice.
+
+## Scope correction (2026-08-01, saba-sebatyne)
+
+The original `owns:` named `fleet/checks/reconcile-board-pr.sh` — a NEW 74-line file added by
+PR #339. That file was a REINVENTION and it never fired: nothing invoked it, confirmed not by grep
+but by the rig's own detector, `fleet/checks/reconcile-gate-wired.sh`, which reported
+`R-G: DECLARED BUT NOT FIRED (built-but-inert) — RED — reconcile-board-pr.sh`. A ticket created to
+fix built-but-inert work produced another instance of it.
+
+The mechanism ALREADY EXISTED and was ALREADY WIRED: `fleet/reconcile-merged.sh`, invoked first in
+every `preflight.sh` scan (:1033). #339 re-implemented a strictly weaker copy — single-repo,
+GraphQL, no creation-PR guard, no ambiguity refusal.
+
+ACTUAL ROOT CAUSE: `reconcile-merged.sh` was REPO-BLIND. `REPO_SLUG` was derived once from the
+product checkout's origin (`SLOP-Platform/charon`), and the merged-PR query only ever asked that
+repo. The board is multi-repo — **196 `repo: charon-private` tickets vs 75 product** — so every rig
+ticket was structurally unreachable: its PR merges in `Nnyan/charon-private`, which the reconciler
+never queried. Verified live: `Nnyan/charon-private#358` merged 19:31:39Z and was missed, requiring
+a hand-written done marker. Contributing cause: an exhausted GraphQL quota rendered as `"clean"`
+(fail-open).
+
+Owns is therefore corrected to the file that actually needed fixing. `reconcile-board-pr.sh` is
+REMOVED by this ticket, and the meta-gate is clean of it after removal.
+
+Also fixed in passing — third sighting of this class today: `IFS=$'\t' read` COLLAPSES runs of
+tabs (TAB is IFS-whitespace), so an empty column shifted `pr`/`slug` left and silently disabled
+both fail-closed guards while looking correct. Rows now read on `\037`.
+
+Corrected assumption: `_lib.sh`'s `verify_merged` is ALREADY repo-aware (H1/H2, 2026-07-18,
+`VERIFY_MERGED_REPO` / `CHARON_FLEET_REPO` seams). The "hardcodes the product repo" warning that
+circulates in handoffs is STALE — the fix relies on it rather than working around it.
