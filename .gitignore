@@ -124,3 +124,4 @@ graphify-out/
 !fleet/state/PRIORITY-TODO.md
 # ...and the rescued CATALOG-REFRESH-PERSIST WIP patch (droid killed at 2026-08-01 session close).
 !fleet/state/RESCUE-catalog-refresh-persist-WIP.patch
+!fleet/state/GATE-DEFECT-OWNERSHIP-DIAG.md
