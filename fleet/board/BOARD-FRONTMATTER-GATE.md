@@ -6,7 +6,15 @@ work_class: ci-infra
 branch: fix/board-frontmatter-gate
 owns: fleet/board-lock.sh, fleet/tests/board-lock-frontmatter.test.sh, fleet/tests/board-write-lock.test.sh
 serial_justified: One guard on the board-write chokepoint plus its fail-on-revert suite, plus the sibling suite whose fixture the guard necessarily changes.
-substrate: PyYAML
+substrate: |
+  PyYAML — ADOPT (already adopted; this adds no new dependency). It is the established YAML parser
+  and is ALREADY the parser of record for board frontmatter via
+  fleet/checks/substrate_first_gate.py:104. This ticket does not re-implement any part of it — it
+  CALLS read_frontmatter() from that module, so the split rule, the parser and the error wording
+  stay identical to the downstream gate by construction rather than by discipline.
+  yamllint REJECTED for this job (installed, but a STYLE linter: indentation/line-length/truthy).
+  The gate needs PARSEABILITY, not style; yamllint would fire on legal tickets, catch nothing new,
+  and add a second verdict source. That is a merit rejection, not a dependency-cost objection.
 substrate-retest: |
   Not needed — PyYAML already carries an ADOPT verdict in EVAL-REGISTRY ("ADOPT — shipped, pinned
   PyYAML 6.0.3") scoped to exactly this job (parsing rig YAML), and this ticket adds no new use of
