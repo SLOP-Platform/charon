@@ -4,7 +4,7 @@ priority: 1
 difficulty: 1
 work_class: bugfix
 branch: fix/brief-absolute-paths
-depends_on: SESSION-REPORT-WIRE
+depends_on: SESSION-REPORT-WIRE, LOOP-GUARD-REASON-WIRE
 real-dep: SESSION-REPORT-WIRE introduced the judgment-file brief text in fleet/fleet-droid.sh; this fixes that text and must land after it
 owns: fleet/fleet-droid.sh, fleet/tests/brief-absolute-paths.test.sh
 serial_justified: |
