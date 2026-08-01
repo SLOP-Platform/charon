@@ -64,15 +64,31 @@
 # COST-BAND tiers — see fleet/state/TIER-CANON.md for the $/Mtok rule that DEFINES them).
 # Legacy aliases (high/opus, med/sonnet, low/haiku) are normalized to these by fleet-droid.sh
 # before lookup (alias fold lives in src/charon/config/tiers.py:_LEGACY_ALIASES).
-# REVISED 2026-07-12 (LIGHT-MODELS-EVAL.md): spread economy/strong load OFF the frontier
+# REVISED 2026-08-01 — DIRECT LEGS FIRST, OPENROUTER DEMOTED TO TAIL.
+# OpenRouter hit $0.00/-$0.15 and EVERY leg of every chain resolved through it, so the whole fleet
+# went ALL-EXHAUSTED and five tickets were falsely quarantined as bad work. The chains now name
+# leg-specific DIRECT ids that bypass OpenRouter entirely. Verified reachable 2026-08-01 post
+# gateway restart (probe: 200 + provider=direct):
+#     deepseek-v4-flash-ds   deepseek DIRECT      deepseek-v4-pro-ds   deepseek DIRECT
+#     gpt-oss-120b-groq      groq DIRECT          free-groq            groq free
+#     free-cerebras          cerebras free
+# NOT reachable at that time (do NOT promote without re-probing): glm-4.7-flash-zai (overloaded),
+# deepseek-v4-flash-nv (nvidia), glm-5.2-di (deepinfra).
+# The base pool ids (deepseek-v4-flash, minimax-m3-free, kimi-k2.6, deepseek-v4-pro) are KEPT at
+# the TAIL as insurance — they route via OpenRouter, so they cost nothing until every direct leg
+# fails. Demote, never delete (rule 3 above).
+# NOTE gpt-oss-120b-groq is an OPEN-WEIGHTS model on Groq, not an OpenAI GPT — cheap despite the
+# name. Judge legs by measured $/Mtok, never by the string "gpt".
+#
+# PRIOR REVISION 2026-07-12 (LIGHT-MODELS-EVAL.md): spread economy/strong load OFF the frontier
 # default deepseek-v4-pro. pro now lives ONLY in frontier (hard money-path work like F29);
 # strong/economy are free-first onto flash-class coders with a paid deepseek-v4-flash leg
 # ($0.077/$0.154) as the reliable backstop behind every free leg. All active ids verified
 # reachable on gateway build 319658f. NanoGPT weekly cap is LIVE — keep a paid leg behind
 # any -free/-ng leg. Base pool ids used so the gateway does its own provider failover.
-frontier	deepseek-v4-pro,kimi-k2.6,glm-5.2,minimax-m3-free
-strong	minimax-m3-free,deepseek-v4-flash,glm-5.2,gpt-5.4-mini
-economy	deepseek-v4-flash-free,deepseek-v4-flash,gpt-5.4-nano
+frontier	deepseek-v4-pro-ds,deepseek-v4-flash-ds,gpt-oss-120b-groq,deepseek-v4-pro,kimi-k2.6
+strong	deepseek-v4-flash-ds,gpt-oss-120b-groq,free-groq,minimax-m3-free,deepseek-v4-flash
+economy	free-cerebras,free-groq,deepseek-v4-flash-ds,deepseek-v4-flash-free,deepseek-v4-flash
 # TARGET after operator wires ZAI_API_KEY + MORPH_API_KEY + gemini-3.1-flash-lite-or entry:
 # strong    morph-dsv4flash-morph,minimax-m3-free,deepseek-v4-flash,gemini-3.1-flash-lite-or,gpt-5.4-mini
 # economy   glm-4.7-flash-zai,glm-4.5-flash-zai,deepseek-v4-flash-free,gpt-5.4-nano,gemini-3.1-flash-lite-or
