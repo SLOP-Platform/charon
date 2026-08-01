@@ -4,9 +4,10 @@ difficulty: 4
 work_class: rig-meta
 priority: 0
 branch: feat/reviewer-tab-pool
-depends_on:
+depends_on: CI-SUITES-CANARY
+real-dep: CI-SUITES-CANARY owns fleet/checks/rig-ci-scope.sh and is in flight; B3 (wire review-pool.test.sh into CI_SUITES) requires editing that file, so it sequences after
 serial_justified: one atomic capability — the reviewer launcher (review-pool.sh), its fail-on-revert test, and the review-queue schema are inseparable: the launcher can't be tested without the queue it claims from, and splitting ships a launcher with no queue or a queue with no consumer. One coupled build, not parallel surfaces.
-owns: fleet/review-pool.sh, fleet/tests/review-pool.test.sh, fleet/state/review-queue.tsv
+owns: fleet/review-pool.sh, fleet/tests/review-pool.test.sh, fleet/state/review-queue.tsv, fleet/checks/rig-ci-scope.sh
 work_class_note: |
   Operator-approved 2026-07-23. The REVIEW analog of the SG-tab pool: reviewer tabs claim PR-review work
   from a queue (just like SG tabs claim build tickets), run the adversarial review OFF-CLAUDE via CG,
