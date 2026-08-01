@@ -1,5 +1,6 @@
 repo: charon-private
 tier: economy
+priority: 2
 difficulty: 2
 work_class: rig-meta
 branch: feat/project-membership-gate

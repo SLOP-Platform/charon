@@ -1,5 +1,6 @@
 repo: charon
 tier: strong
+priority: 2
 difficulty: 4
 work_class: ci-infra
 branch: feat/inert-instance-detect

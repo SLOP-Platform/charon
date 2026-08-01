@@ -1,5 +1,6 @@
 repo: charon-private
 tier: strong
+priority: 0 # inherited: blocks a P0 ticket
 difficulty: 3
 work_class: refactor
 branch: feat/repo-map-converge

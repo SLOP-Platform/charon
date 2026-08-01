@@ -1,4 +1,5 @@
 tier: strong
+priority: 2
 difficulty: 2
 work_class: money-path
 branch: feat/gateway-nontoken-metering

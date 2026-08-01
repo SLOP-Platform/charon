@@ -1,5 +1,6 @@
 repo: charon-private
 tier: strong
+priority: 2
 difficulty: 4
 work_class: ci-infra
 branch: feat/work-gate-universal

@@ -2,7 +2,7 @@ repo: charon
 tier: economy
 difficulty: 1
 work_class: ci-infra
-priority: 2
+priority: 0
 branch: feat/pylint-unused-args
 depends_on:
 owns: tests/test_pylint_unused_args.py

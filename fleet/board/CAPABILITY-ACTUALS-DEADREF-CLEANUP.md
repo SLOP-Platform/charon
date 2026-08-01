@@ -1,5 +1,6 @@
 repo: charon
 tier: economy
+priority: 2
 difficulty: 1
 work_class: refactor
 branch: feat/capability-actuals-deadref-cleanup

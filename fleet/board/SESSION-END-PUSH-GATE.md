@@ -1,5 +1,6 @@
 repo: charon-private
 tier: strong
+priority: 2
 difficulty: 2
 work_class: ci-infra
 branch: feat/session-end-push-gate
