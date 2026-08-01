@@ -7,7 +7,8 @@ branch: feat/capture-wiring-timeout-fix
 owns: fleet/charon-run.sh
 depends_on: SALVAGE-STASH-CHARON-RUN, LEDGER-NO-EVIDENCE-NO-VERDICT
 dep-kind: build
-real-dep: both own fleet/charon-run.sh. SALVAGE-STASH-CHARON-RUN landed FIRST (rig PR #83, merged
+real-dep: |
+  both own fleet/charon-run.sh. SALVAGE-STASH-CHARON-RUN landed FIRST (rig PR #83, merged
   2026-07-16T01:18Z) — this ticket sequences onto its landed version rather than co-writing the file.
   Declared 2026-07-16: validate_board flagged the pair as a LIVE owns-collision with no dep ordering
   (and as WCI-redundant, identical owns sets). They are NOT duplicates — SALVAGE recovered the

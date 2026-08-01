@@ -72,8 +72,9 @@ note: |
        flagged (or is, deliberately — state which and why).
   Report the before/after count of live-path hardcodes.
 
-D&S — Deps & Sequence:
-  - `fleet/review-pool.sh` is also owned by REVIEWER-TAB-POOL (in flight). Sequence AFTER it lands
-    to avoid a collision — or coordinate: if REVIEWER-TAB-POOL fixes its own default as part of
-    B3, drop that file from this ticket's owns and say so.
-  - Concrete instance of KS19 `hardcoded-single-entity` (designed, unbuilt). Feeds it.
+## Dependencies & Sequence
+
+- `fleet/review-pool.sh` is also owned by REVIEWER-TAB-POOL (in flight). Sequence AFTER it lands
+  to avoid a collision — or coordinate: if REVIEWER-TAB-POOL fixes its own default as part of
+  B3, drop that file from this ticket's owns and say so.
+- Concrete instance of KS19 `hardcoded-single-entity` (designed, unbuilt). Feeds it.
