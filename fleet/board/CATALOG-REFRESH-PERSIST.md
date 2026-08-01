@@ -81,3 +81,48 @@ D&S — Deps & Sequence:
   - Feeds CATALOG-COMPLETENESS (which backfills what is missing) and FREE-TIER-QUOTA-ROUTING
     (which needs accurate `free` flags). This one keeps the catalog TRUE over time; those consume it.
   - Check owns collision on routing_policy/ before starting.
+
+## Bar raised 2026-08-01 (operator: "FULLY tested and wired (dogfood etc)")
+
+This ticket may NOT be marked done on a green unit test. It is the canonical instance of the
+rig's dominant failure class — a mechanism that exists and cannot fire — so the proof must be
+behavioural, not structural.
+
+REQUIRED, all of them:
+
+1. **PERSISTS.** After a refresh cycle, `models.json` on disk actually changes. Prove it by
+   diffing the file before/after, not by asserting the function was called. The current defect is
+   precisely that results live in memory and are dropped.
+
+2. **FIRES ON A CADENCE, and the cadence is observable.** Show the 6h poller invoking the persist
+   path in a real run. A refresher whose timer never fires is the same bug in a new place.
+
+3. **DOGFOOD — the real test.** Point it at the LIVE gateway catalog and prove it detects a genuine
+   change. Two concrete, currently-true cases to use as fixtures:
+     * `minimax-m3-free` billed $0.1542 and $0.1009 on 2026-08-01 despite `-free` in its NAME.
+       A refresh must surface that its free status no longer matches the id.
+     * `deepseek-v3` / `deepseek-r1` are ids that existed once and now match NOTHING among the
+       gateway's ~2580 models. A refresh must surface a vanished id, not silently keep it.
+   Model NAMES change and free STATUS changes — see MANAGER-OPERATING-RULES.md §14.
+
+4. **PROPAGATES TO EVERY CONSUMER.** Per §14's generalisation: a refresh that updates ONE copy is a
+   drift generator, because the copies then disagree and each looks authoritative. Name every
+   consumer of catalog data in the PR and show each one sees the update — at minimum
+   `models.json`, `pools.json`, the opencode client's declared model map (see
+   `fleet/sync-opencode-models.sh`), and `fleet/tier-models.tsv` chains.
+
+5. **FAILS LOUD, never silently stale.** If a provider poll fails, the refresher must say so and
+   leave the previous data intact with a visible staleness marker. It must NEVER write a partial
+   catalog and never report success on a failed poll — an unreachable provider must not read as
+   "this provider now offers nothing".
+
+6. **FAIL-ON-REVERT, externally red-proofed.** Report both counts (green with the fix, RED on
+   revert). A test that passes with the persist call removed is worthless.
+
+7. **A GATE, so it cannot rot back.** `fleet/sync-opencode-models.sh --check` already exits 3 when a
+   tier chain names a model the client cannot call or the gateway will not route. Wire the
+   staleness check into preflight so drift is caught mechanically rather than remembered.
+
+NOT IN SCOPE, and do NOT do it: setting or changing any spend cap. The live meter is fiction in
+both directions (gateway reports usage.cost_usd = $0.000226 while opencode reports $1.3372 of real
+spend for the same period), and a cap against a fictional number bricks the gateway.
