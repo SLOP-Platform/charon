@@ -17,6 +17,15 @@ Read /home/stack/charon-private/fleet/state/PRIORITY-TODO.md FIRST, then this fi
 4. `SESSION-END-GATE-REPAIR` — LIVE, UNCLAIMED. Ticketed, never scheduled.
 5. **Adopt a tool to run the loss-gate CONTINUOUSLY in the background** — a close-gate never fires
    when a session dies on a token limit or crashes. Try monit first (already adopted by the rig).
+   **LAUNCH THIS IN A TAB FIRST, IN PARALLEL WITH 0** — it is research and blocks nothing.
+6. **GATE DEFECT** — `land-push` refuses `fix/shared-namespace-contention` as *"code owned by NO
+   live board ticket"*, but the ticket IS on origin/master (`f8266ef`) and owns exactly those 4
+   files. Diagnose it; do NOT `--force`. A gate that blocks legitimate work is how `--force` habits
+   start.
+
+**Ordering:** RESCUE is 0 because it is the only IRREVERSIBLE item — 96 commits on one disk, and the
+gate protects only FUTURE work. Rescue is minutes; the gate is hours. The last two sessions built
+the fix first and lost it to the very class it fixes. **0 and 5 start together; 5 finishes last.**
 
 Launch these in TABS. Full detail + the required loss-class coverage: `PRIORITY-TODO.md` §START HERE.
 
