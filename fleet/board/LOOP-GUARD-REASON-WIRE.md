@@ -55,8 +55,11 @@ note: |
     d. ANTI-OVER-BLOCK: a successful run records nothing and quarantines nothing.
   Then reproduce the real incident: simulate an all-legs-403 and show the ticket stays claimable.
 
-D&S — Deps & Sequence:
-  - Depends on SESSION-REPORT-WIRE: both edit `fleet/fleet-droid.sh` (LAUNCHER-CRASH-PARTIAL-DETECT
-    is the third owner, sequenced last). Collision ordering, not a build prereq.
-  - MITIGATION until this lands: a false quarantine clears with
-    `rm fleet/state/loop-guard/<TICKET>`. The manager did this by hand on 2026-08-01.
+## Dependencies & Sequence
+
+- Depends on SESSION-REPORT-WIRE: both edit `fleet/fleet-droid.sh` (LAUNCHER-CRASH-PARTIAL-DETECT
+  is the third owner, sequenced last). Collision ordering, not a build prereq.
+- Depends on LAUNCHER-GATE-SETE-KILL: it also edits `fleet/fleet-droid.sh`, in the DISJOINT
+  launcher-gate block, and lands first as the anchor line. Collision ordering, not a build prereq.
+- MITIGATION until this lands: a false quarantine clears with
+  `rm fleet/state/loop-guard/<TICKET>`. The manager did this by hand on 2026-08-01.
