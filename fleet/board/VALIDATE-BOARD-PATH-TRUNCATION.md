@@ -11,7 +11,7 @@ substrate-novel: |
   A one-character slice bug in our own parser of `git status --porcelain`. Nothing to adopt; the
   correct fix is to stop hand-slicing the porcelain format by index and parse it properly
   (`-z` + NUL split, or split on the first space after the 2-char status field).
-depends_on:
+depends_on: REPO-MAP-CONVERGE
 note: |
   MEASURED 2026-08-01. `fleet/validate_board.sh:598-601` does:
 
@@ -46,7 +46,7 @@ accept: |
 - **depends_on: (none).** One file, one function.
 - **Sequence: quick win, do it early.** It is small, and it makes every future work-loss warning
   actionable — including the ones the KILL-PATH-WORK-GUARD sweep will emit.
-- **owns-collision:** `fleet/validate_board.sh` — check the live board before claiming.
+- **owns-collision:** `fleet/validate_board.sh` is also owned by REPO-MAP-CONVERGE — sequenced behind it via depends_on; this change is confined to the uncommitted-work reporting block.
 - **Provenance:** found while verifying a claim the manager had asserted from a single line of
   output without checking. It was nearly filed as a prose footnote inside another P0 ticket, where
   by the manager's own estimate it had roughly a 20% chance of ever being actioned. Operator caught
