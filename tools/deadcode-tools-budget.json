@@ -1,0 +1,17 @@
+{
+  "_about": "Shrinking-only ratchet for tools/check_deadcode_tools.py. Recorded by DEADCODE-TOOLS-WIRE on the adopted-wire cutover. Number MUST go DOWN only in subsequent commits; if it goes UP, the gate fails closed. If it goes DOWN, the recorded value MUST be lowered to match in the same commit (the BUDGET-OUT-OF-DATE branch). A frozen baseline that reports green over a growing pile is the fake-green class this gate exists to prevent — see tools/check_deadcode_tools.py.",
+  "findings_count": 169,
+  "_per_class_at_recording": {
+    "DC01 (unused variable)": 42,
+    "DC02 (unused function)": 42,
+    "DC03 (unused class)": 4,
+    "DC04 (unused method)": 64,
+    "DC05 (unused attribute)": 14,
+    "DC08 (unused property)": 3,
+    "DC11 (empty file)": 0,
+    "vulture:unreachable (unreachable code after try/return)": 0
+  },
+  "_recorded_after_commits": [
+    "DEADCODE-TOOLS-WIRE: removed one vulture-unreachable finding at src/charon/forwarder.py:934 (a bare 'return' after a try/finally whose try body always returned or raised). See docs/review-log/DEADCODE-TOOLS-WIRE.md."
+  ]
+}

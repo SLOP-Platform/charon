@@ -39,6 +39,10 @@ ALL_DOMAINS: frozenset[str] = frozenset({
     # catalog-case-quant gate has existed — registered here rather than left as
     # standing noise, because a permanently-noisy registry is one nobody reads.
     "catalog",
+    # "deadcode" + "dogfood" landed alongside the vulture+deadcode adoption;
+    # both have @covers annotations and gate entries, register them here so
+    # the registry stops reporting them as standing noise.
+    "deadcode", "dogfood",
 })
 
 

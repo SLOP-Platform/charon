@@ -931,4 +931,3 @@ def forward_with_failover(handler, srv) -> None:
                 resp.close()
             except Exception:
                 pass
-        return
