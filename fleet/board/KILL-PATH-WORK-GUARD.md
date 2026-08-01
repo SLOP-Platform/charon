@@ -77,8 +77,27 @@ Therefore this ticket must ALSO:
   one. Two detectors that disagree is worse than one that is incomplete.
 - Be the thing `preflight.sh` and the session-close path CALL, so no session has to remember the
   query shape.
-- **Minor bug to fix while there:** that RED prints the path as `rc/charon/...` — the leading `s`
-  is being eaten. A truncated path in a work-loss warning is a path someone cannot act on.
+- The truncated-path bug in that RED is now its OWN ticket, VALIDATE-BOARD-PATH-TRUNCATION — a
+  prose footnote inside another P0 was estimated at ~20% odds of ever being actioned.
+
+## ENFORCE IT — block hand-written sweeps (operator-approved 2026-08-01)
+
+Mechanizing the sweep is not enough if a session can still hand-compose one and miss a loss class.
+Add a `PreToolUse[Bash]` hook (the mechanism ALREADY works on this box — the board-lock, work-lease
+and dangerous-`rm` guards all blocked this session today) that REFUSES ad-hoc sweep shapes:
+`git status --porcelain` inside a loop · `for w in .../charon*wt*` · `git for-each-ref … refs/heads`
+· `rev-list --count origin/…` · bare `kill`/`pkill` targeting a droid.
+
+**Every refusal MUST NAME THE APPROVED TOOL.** A bare "denied" sends the session hunting for a
+workaround — that is precisely how `--force` habits form. The message should read:
+*"Work-loss sweeps are mechanized — run `fleet/kill-guard.sh --sweep`. Composing your own query
+encodes only the loss classes you remembered; that is how 96 commits were missed on 2026-08-01."*
+
+HONEST LIMITS, state them in the implementation: the hook matches a command STRING, not intent, so
+it will false-positive on legitimate one-off `git status` calls and a determined session can
+rephrase around it. It raises the cost of the wrong path and makes the right one the default — it
+is not a proof. That is still the right trade: today's failure was not defiance, it was the manager
+not remembering the tool existed.
 
 ## Dependencies & Sequence
 
