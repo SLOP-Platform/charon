@@ -4,7 +4,8 @@ priority: 2
 difficulty: 2
 work_class: ci-infra
 branch: feat/session-end-push-gate
-depends_on:
+depends_on: SESSION-END-GATE-REPAIR
+real-dep: SESSION-END-GATE-REPAIR shares fleet/end-session.sh and is the P0 that makes the close gate able to run at all — sequence after it
 owns: fleet/end-session.sh, fleet/tests/end-session-push.test.sh
 accept: |
   GAP found 2026-07-15 (cere-junda): end-session.sh commits ONLY the handoff FILE and NEVER pushes or checks for unpushed

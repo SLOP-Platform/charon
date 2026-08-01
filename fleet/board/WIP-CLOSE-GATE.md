@@ -5,7 +5,7 @@ difficulty: 3
 work_class: rig-meta
 branch: feat/wip-close-gate
 owns: fleet/end-session.sh
-depends_on: SESSION-END-PUSH-GATE
+depends_on: SESSION-END-PUSH-GATE, SESSION-END-GATE-REPAIR
 accept: |
   MECHANIZE the pre-existing-WIP catch — turn "noted" into "ticketed + scheduled" by
   construction. THE RECURRING ROOT CAUSE: session-start ALREADY prints
