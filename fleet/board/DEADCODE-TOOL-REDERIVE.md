@@ -1,7 +1,7 @@
 repo: charon-private
 tier: strong
 difficulty: 3
-work_class: eval
+work_class: design-review
 priority: 1
 branch: eval/deadcode-tool-rederive
 depends_on:
