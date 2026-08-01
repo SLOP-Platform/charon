@@ -57,3 +57,23 @@ note: |
 D&S — Deps & Sequence:
   - Depends on: nothing. Do it FIRST — the product `gate` is a REQUIRED check and is RED, so every
     product land (including GATE 2's ADR-0021) is blocked until this clears.
+
+  ## ⚠ ROUND 2 — 2026-08-01: DEADLOCK. This branch must ALSO carry the autoland fix.
+  Round 1 is CORRECT and VERIFIED — do not redo it. `_FrozenDatetime` monkeypatch is the right
+  shape; 12/12 pass, and pass under BOTH `TZ=Pacific/Kiritimati` and `TZ=Etc/GMT+12`.
+
+  **The blocker is a mutual deadlock under required-green CI:**
+    - PR #202 (`fix/autoland-default-branch`) fixes the host-git-config coupling. Its CI fails on
+      the MONTH ROLLOVER — which THIS branch fixes.
+    - PR #204 (this branch) fixes the month coupling. Its gate fails with **8 `test_autoland`
+      failures** — which #202 fixes.
+  Neither is green alone, so neither can merge, and no amount of review changes that.
+
+  ## TASK
+  1. Rebase/merge `fix/autoland-default-branch` (PR #202) INTO this branch so ONE branch carries
+     BOTH fixes. Use three-dot diffs to inspect content.
+  2. Run the FULL product gate: `PYTHONPATH=src python3 -m charon.cli gate`. It must be GREEN —
+     both the 8 autoland failures and the 2 spend-limit failures gone.
+  3. Report the gate output verbatim. Then #202 can be closed as superseded.
+  4. Do NOT weaken, skip, or xfail any test to reach green. Both fixes are real; the gate must
+     pass on merit.
