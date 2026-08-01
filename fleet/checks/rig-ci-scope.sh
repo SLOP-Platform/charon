@@ -54,7 +54,9 @@ CI_SUITES=(
                             # the real claim.sh. The single canary a revert to "alphabetical
                             # first" or a drop of the revdep field fails. ~2s.
   rig-ci.test.sh            # this gate's own fail-on-revert tests
+  board-file-ratchet.test.sh # hermetic merge-result guard against board ticket drops
   tier-drift.test.sh        # hermetic: isolated temp fleets under mktemp -d (own
+
                             # validate_board.sh + capability/ + checks/ + a 2-ticket board
                             # copied from the real one), no network, ~1s. Red-proofs the
                             # validate_board "2f" TIER-DRIFT gate on every path it shipped
