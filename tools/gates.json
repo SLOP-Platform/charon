@@ -209,6 +209,18 @@
     "work_units": "python files under src/ walked for public symbols"
   },
   {
+    "id": "deadcode-tools",
+    "name": "Deadcode-tools detector (vulture + deadcode, findings-budget ratchet)",
+    "domain": "deadcode",
+    "enforcer": "tools/check_deadcode_tools.py",
+    "covers": "Reference-counting dead-code findings (unused function/class/method/attribute/property) plus vulture's 'unreachable code after try/return' class; finds things ruff F401/F841 and the KSF reachability detector both miss. Findings count is a shrinking-only ratchet recorded in tools/deadcode-tools-budget.json.",
+    "ci_step": true,
+    "invariant": "Findings count never exceeds the recorded budget; when it falls below, the budget MUST be lowered to match in the same commit",
+    "red_proof": "tests/test_deadcode_tools.py",
+    "min_work_units": 50,
+    "work_units": "python files under src/ scanned by deadcode"
+  },
+  {
     "id": "catalog-case-quant",
     "name": "Catalog case/quant mismatch detector",
     "domain": "catalog",

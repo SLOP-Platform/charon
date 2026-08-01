@@ -28,7 +28,13 @@ service = ["fastapi>=0.110", "uvicorn>=0.29", "pydantic>=2"]
 # when the live wire-in lands (accepting the ~218MB + native deps ADR-0017 calls out).
 # httpx ships with litellm and backs `no_redirect_client()`.
 router = ["litellm>=1.93"]
-dev = ["pytest>=8", "pytest-xdist>=3.8", "ruff>=0.4", "mypy>=1.9", "pip-audit>=2.7", "httpx>=0.27"]
+# DEADCODE-TOOLS-WIRE: vulture + deadcode are the third-party reference-counting
+# detector pair adopted by tools/check_deadcode_tools.py. They are dev-only —
+# the gate script imports them, and the merge gate runs it. Pinned to lower
+# bounds known to reproduce the matrix counts from the DEADCODE-TOOL-REDERIVE
+# substrate (vulture >= 2.11 for the 'unreachable code after try' class;
+# deadcode >= 2.4 for the DC01..DC11 taxonomy).
+dev = ["pytest>=8", "pytest-xdist>=3.8", "ruff>=0.4", "mypy>=1.9", "pip-audit>=2.7", "httpx>=0.27", "vulture>=2.11", "deadcode>=2.4"]
 # BUILD-time only — never installed into the privileged gateway path (ADR-0005 D5)
 packaging = ["pyinstaller>=6.0"]
 
