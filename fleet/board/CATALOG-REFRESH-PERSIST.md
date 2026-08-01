@@ -126,3 +126,19 @@ REQUIRED, all of them:
 NOT IN SCOPE, and do NOT do it: setting or changing any spend cap. The live meter is fiction in
 both directions (gateway reports usage.cost_usd = $0.000226 while opencode reports $1.3372 of real
 spend for the same period), and a cap against a fictional number bricks the gateway.
+
+## Dependencies & Sequence
+
+- **depends_on: SW-STATIC-LEGS-RETIRE** (pre-existing) — retires the static leg set this refresher
+  would otherwise keep re-populating.
+- **Sequence: NOW — this is the root of the catalog-rot class.** Four separate outages on
+  2026-08-01 traced to stale catalog data (see MANAGER-OPERATING-RULES.md §14). While the refresher
+  holds results in memory only, every downstream copy drifts and each looks authoritative.
+- **Blocks / unblocks:** unblocks trustworthy free-tier routing (FREE-TIER-QUOTA-ROUTING), correct
+  cost ordering (a catalog with 10 of 861 models priced cannot be ordered by cost no matter how
+  correct the sort — see the PR #207 bounce), and removes the standing need to hand-verify model
+  ids before every dispatch.
+- **owns-collision:** `src/charon/routing_policy/catalog_refresh.py` — verify against the live
+  board before claiming; sequence rather than co-write if another gateway ticket is in flight.
+- **Related, do NOT fold in:** SPEND-METRIC-TRUSTWORTHY (the meter is fiction in both directions)
+  and PRICE-REFRESHER (pricing data specifically). This ticket is the CATALOG persist path only.
