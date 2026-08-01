@@ -8,6 +8,20 @@ Read /home/stack/charon-private/fleet/state/PRIORITY-TODO.md FIRST, then this fi
 
 ---
 
+# ⛔ FIRST SIX ACTIONS (operator-set at close — do these before anything else)
+
+0. **RESCUE** — push the 47 local-only branches (96 commits exist ONLY on this box). Before building anything.
+1. `feat/stranded-work-detect-v2` — 1 commit, NO remote. The stranded-work detector is stranded.
+2. `feat/session-end-push-gate-v2` — 3 commits, NO remote. Built, never pushed.
+3. `HANDOFF-NAME-ALLOCATOR` — archived+DONE and STILL BROKEN. Verify the firing layer.
+4. `SESSION-END-GATE-REPAIR` — LIVE, UNCLAIMED. Ticketed, never scheduled.
+5. **Adopt a tool to run the loss-gate CONTINUOUSLY in the background** — a close-gate never fires
+   when a session dies on a token limit or crashes. Try monit first (already adopted by the rig).
+
+Launch these in TABS. Full detail + the required loss-class coverage: `PRIORITY-TODO.md` §START HERE.
+
+---
+
 # ⛔ READ THIS FIRST
 
 **The carry-forward list is `fleet/state/PRIORITY-TODO.md`, not this file.**
