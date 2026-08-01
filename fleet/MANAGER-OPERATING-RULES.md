@@ -147,3 +147,72 @@ pointers here (see institutionalization-audit.md demotion list).*
 - The total token cost of startup artifacts (this file, START-SESSION.md, handoff output, preflight output) MUST stay below a hard budget enforced in preflight.sh's `startup_budget_gate` — any tracked artifact exceeding its per-file budget fires a blocking red.
 - Every addition to a tracked startup file is self-reviewed against the budget BEFORE commit: a rule adding 3 sentences must be worth 3 sentences; a rule already covered elsewhere is CUT, not duplicated.
 - Blade-runner proof: adding text past the budget gate makes preflight RED — the budget is fail-on-revert.
+
+## 14. MODEL/PROVIDER CATALOG IS LIVE DATA, NEVER A LITERAL (operator, 2026-08-01)
+
+**Model NAMES change. Free STATUS changes. Provider offerings change. Constantly.** A model id
+written into a file is correct only on the day it was written. This is not a hypothetical — every
+instance below was MEASURED on 2026-08-01:
+
+- `review-pool.sh:36` defaulted its review chain to `deepseek-v3,deepseek-r1`. **Neither id exists**
+  among the gateway's ~2580 models. Every review failed the whole chain and wrote a fail-closed
+  BOUNCE that read like a code verdict. Those names were real once.
+- `opencode.json` hand-declared 36 models. `minimax-m2.5-go` and `deepseek-v4-flash-ds` — the FIRST
+  TWO legs of both the frontier and strong chains — were absent, so opencode failed client-side
+  with `UnknownError` and the gateway looked dead while serving HTTP 200 throughout.
+- `minimax-m3-free` billed **$0.1542** and **$0.1009** in one session. A model with `-free` in its
+  NAME is not evidence it is still free — the provider withdrew the free tier and the name stayed.
+- `kimi-k2.6` / `minimax-m3-free` are absent from `/v1/models` yet ARE routable (pool-only ids,
+  deliberately hidden). Deriving "is it routable" from `/v1/models` alone produces FALSE REDs.
+
+### The rules
+
+1. **NEVER hardcode a model id as a default.** Derive every chain from `fleet/tier-models.tsv`
+   (the canonical source `fleet-droid.sh` uses via `tier_chain()`). A literal in a script is a
+   latent outage with a delay fuse.
+2. **NEVER trust a name as a capability claim.** `-free` in an id is a string, not a price. Free
+   status comes from the live catalog/API, never from the id.
+3. **The routable set is `/v1/models` UNION the pool ids from `/charon/status`.** Pool-only ids are
+   routable but deliberately unadvertised (`pool_only = set(srv.pools) - set(srv.routes)` in
+   proxy_server.py). Using either source alone is wrong in a different direction.
+4. **Catalog refresh must PERSIST.** The refresher polls every provider every 6h and holds results
+   IN MEMORY ONLY — it never writes back to `models.json`. That is why a rotated free list goes
+   stale unnoticed and we keep routing to a model that started charging.
+   Ticket: **CATALOG-REFRESH-PERSIST** (money P0).
+5. **Gate it, do not remember it.** `fleet/sync-opencode-models.sh --check` fails loud (exit 3) the
+   moment a tier chain names a model the client cannot call or the gateway will not route. Wire it
+   into preflight — the drift is invisible again the moment a chain is edited, which is how the
+   opencode gap survived 27 days after being correctly diagnosed.
+6. **A stale reference must be SUPERSEDED, not left to be found.** When a model id, chain, or
+   verdict is replaced, mark the old one — EVAL-REGISTRY has a `supersedes` column and an
+   `alignment` column (`drifted` = MAY NOT be cited as settled). An old reference that is merely
+   wrong, rather than marked wrong, will be picked up by the next session as current.
+
+### Why this is a §0-class rule
+
+Four separate outages in ONE session traced to a model literal or a stale catalog. The cost is
+never local: a wrong id presents as "the model pool is dead" or "the backlog is drained", i.e. it
+masquerades as a DIFFERENT problem, and sessions then debug the wrong thing. See also §11
+(GREEN IS NOT PROOF) — a name that resolves is not a model that serves.
+
+### Generalisation (operator, 2026-08-01): EVERY static list is a staleness bug waiting
+
+This is not a model-catalog rule. **ANY static pool/list in the rig must be UPDATED FROM THE
+SOURCE API/SEARCH TOOL, everywhere it is consumed** — otherwise one refresh fixes one copy and the
+other consumers keep serving stale data, which is worse than no refresh because the copies now
+DISAGREE and each looks authoritative.
+
+Known instances of the class, all live today:
+- model chains (`tier-models.tsv`) and the opencode client's declared model map — two copies of
+  "what models exist", drifted apart until measured.
+- `FREE-TIER-LIMITS.tsv` — researched limits with **ZERO rig consumers**; the gateway's `/data` has
+  no limits file at all.
+- provider pools / `models.json` on 4-LOM vs `pools.json` vs the catalog refresher's in-memory view.
+- `session-registry.tsv` — the name→port map the adopted control plane resolves against: EMPTY
+  except its header, so the board cannot resolve any worker by name.
+
+**The required shape:** ONE fetch from the authoritative API, then propagate to EVERY consumer in
+the same operation, then a gate that fails loud when any consumer disagrees with the source. A
+refresher that updates one file and leaves the others is a drift generator, not a fix.
+Do not add a new static list without naming, in the ticket, the API that refreshes it and every
+consumer the refresh must reach.
