@@ -7,6 +7,28 @@ branch: feat/reviewer-tab-pool
 depends_on: PR-QUEUE-REST-ETAG
 serial_justified: |
   one atomic capability — the reviewer launcher (review-pool.sh), its fail-on-revert test, and the review-queue schema are inseparable: the launcher can't be tested without the queue it claims from, and splitting ships a launcher with no queue or a queue with no consumer. One coupled build, not parallel surfaces.
+substrate: |
+  qodo-merge (ex pr-agent) / aider / CodeRabbit / GitHub Actions review bots — UNEVALUATED, and
+  that is a REAL gap, not a dismissal.
+  Added 2026-08-01 by saba-sebatyne to clear a pre-existing gate RED (this ticket predates the
+  substrate-first gate). Judged under the CURRENT adopt-first lens, which means saying the
+  uncomfortable thing plainly: `fleet/review-pool.sh` is ~830 lines of hand-rolled PR-review
+  automation, and no executed trial of an established alternative exists anywhere in the rig.
+  A board ticket for exactly this question — PR-AUTOMATION-EVAL (aider / pr-agent vs the
+  hand-rolled review-pool.sh) — was minted, landed, and NEVER CLAIMED. So the honest status is
+  "adopt-vs-build was never actually asked", not "build won".
+  This ticket is therefore NOT a licence to keep growing the hand-roll. It is scoped to REPAIRS of
+  what already runs (B1 correctness, the REST/ETag cutover, defect fixes). Any NEW reviewer
+  capability should wait on PR-AUTOMATION-EVAL.
+  What is genuinely rig-local and would survive adopting a tool: the CG/gateway execution path
+  (reviews run off-Claude through our own gateway), reviewer!=builder over OUR droid ids, and the
+  claim/queue integration with the fleet board. A vendor bot supplies none of those.
+substrate-novel: |
+  The novel slice is the reviewer!=builder boundary over the fleet's own droid identities plus the
+  off-Claude gateway execution path. Vendor PR bots review as a single vendor identity against
+  their own hosted models — neither maps onto "this droid built it, so a DIFFERENT droid must
+  review it, through OUR gateway". That boundary is the part worth owning; the diff-fetching,
+  prompting and comment-posting around it are not, and are what PR-AUTOMATION-EVAL should test.
 owns: fleet/review-pool.sh, fleet/tests/review-pool.test.sh, fleet/state/review-queue.tsv, fleet/checks/rig-ci-scope.sh
 work_class_note: |
   Operator-approved 2026-07-23. The REVIEW analog of the SG-tab pool: reviewer tabs claim PR-review work
