@@ -80,7 +80,7 @@ Ranked by the order above, not by discovery order.
 | # | Item | Ticket? |
 |---|---|---|
 | 1 | **Fix the 10-defect pipeline chain above** — start with RELEASE-PRESERVES-WORK + CLAIM-LIVENESS-BINDING (both P0, READY, unclaimed) | yes |
-| 2 | **Non-bypassable SessionEnd work-loss gate** — `end-session.sh` EXISTS and is thorough (refuses on dirty tree / unpushed commits / unresolvable paths) but **NOTHING RUNS IT**: no SessionEnd hook in settings.json, no session-end in `fleet/hooks/`. 100% bypassable. | NO TICKET |
+| 2 | **Session-close gates — START HERE.** `end-session.sh` is thorough but has TWO defects: it SELF-BLOCKS (creates its own target file, then its allocator refuses the name — aborts before the work-loss check EVERY run) and NOTHING INVOKES IT (no SessionEnd hook). Plus a meta-gate so untracked commitments cannot survive a close. | **SESSION-END-GATE-REPAIR (P0) + SESSION-CLOSE-COMPLETENESS-GATE (P0)** |
 | 3 | **`mkdir` ordering at `fleet-droid.sh:1403`** — kills whole pool tabs under `set -e`; this is why pools drain below P0 | NO TICKET |
 | 4 | **Land the PR backlog** — 20 open (14 rig + 6 product). #116 needs only a rebase (16/16 real fail-on-revert tests). #263 NEEDS-WORK (`ledger_decay` wired NOWHERE, money-path intended). | partial |
 | 5 | **PR-AUTOMATION-EVAL verdict** (aider / pr-agent vs our hand-rolled 830-line `review-pool.sh`) — minted, landed, NEVER CLAIMED | yes |
@@ -93,7 +93,13 @@ Ranked by the order above, not by discovery order.
 | 12 | **Diff-scope `rig-ci-scope.sh`'s substrate check** — #338 fixed land-push only; this gate has the identical stale-worktree flaw and produced a FALSE "code owned by NO ticket" RED | NO TICKET |
 | 13 | **Restart gateway after config changes** — pools/limits load at STARTUP; disk edits are inert until restart, and the running process REWRITES `spend.json` (it clobbered a cap back to 0.0) | yes |
 
-**7 of 13 have NO board ticket — they live only here. Ticket them or they die.**
+**5 of 13 have NO board ticket — they live only here. TICKET THEM OR THEY DIE.**
+(Was 7. Items 2 and 12 were ticketed at session close as SESSION-END-GATE-REPAIR and
+SESSION-CLOSE-COMPLETENESS-GATE — both P0, both READY, unclaimed.)
+
+**SESSION-CLOSE-COMPLETENESS-GATE is the one that stops this recurring**: it makes "a session may
+not close with untracked commitments" a real exit code instead of a habit. Until it lands, this
+list is protected only by whoever remembers to read it.
 
 ---
 
