@@ -108,9 +108,27 @@ bash fleet/preflight.sh       # foreman + claimable depth
 ls fleet/state/claims/        # what tabs hold
 ```
 
-## Provenance
+## Provenance (anti-clobber — verify this matches the filename before trusting anything here)
+
+**Session:** saba-sebatyne
+**Generated:** 2026-08-01 (written directly — `handoff.sh` refused this session's own name, the
+known self-blocking allocator bug, operator action #20 / PRIORITY-TODO §J)
+**Rig HEAD at close:** see `git -C /home/stack/charon-private log -1 origin/master`
 
 Session `saba-sebatyne`, 2026-08-01. Product `/home/stack/code/charon`, rig
 `/home/stack/charon-private`. Real spend measured **$1.3372** across 50 opencode sessions
 (`GET http://127.0.0.1:<port>/api/session`) while the gateway reported `usage.cost_usd = $0.000226`
 — the gateway meter is fiction; opencode has ground truth.
+
+## session-bridge (live board at close)
+
+Registered on the bridge as `saba-sebatyne` (repo `charon`, model `claude-opus-5[1m]`).
+One stale peer present: `plo-koon`, lease expired 2026-07-27, status `escalated` — a ghost row.
+
+> **Do NOT trust this board.** The bespoke session-bridge was slated for RETIREMENT on 2026-07-26
+> in favour of opencode's HTTP control plane, and is still dual-running (3,073 LOC, ~10 sidecars,
+> 3 daemons — one stale since Jul 26 — an SSH tunnel, and MCP entries in BOTH client configs).
+> It was MEASURED showing **3 rows for 8 live workers — 2 real, 1 ghost** — because registration is
+> a model decision, not a fact. Use `fleet/session-ctl.sh` (`/api/session/*`) for real worker state.
+> `fleet/session-registry.tsv` is EMPTY except its header, so name→port resolution does not work yet.
+> Full detail + the retirement plan: PRIORITY-TODO.md §G.
