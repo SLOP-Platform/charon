@@ -14,6 +14,9 @@ its fixes keep being lost to the class itself.**
 | **5** | **Adopt a tool to run the gate CONTINUOUSLY in the background** | nothing exists | a close-gate never fires when a session dies on a token limit, crashes, or is killed — which is most of them. **LAUNCH THIS IN A TAB FIRST, IN PARALLEL WITH 0** — it is research and does not block |
 | **6** | **GATE DEFECT blocking a real push** | `fix/shared-namespace-contention` cannot be pushed | `land-push` refuses it as *"code owned by NO live board ticket"* — but the ticket IS on origin/master (`f8266ef`) and owns exactly those 4 files. **A gate that blocks legitimate work is how `--force` habits start.** Same stale-base class as RIG-CI-BASE-DEFAULT-BRANCH (fixed today for a different scope) |
 
+| **7** | **`KILL-PATH-WORK-GUARD` (P0, minted)** | 3 kill paths, ZERO work checks | `stop-worker.sh` has 0 refs to `git status`/`diff`/`commit`. A killed droid left **+222 lines** uncommitted at this close; `OPERATOR-ACTIONS.md` held 7 escalations uncommitted. **Every kill path must check + commit BEFORE signalling.** |
+| **8** | **SWEEPS MUST BE MECHANIZED** | hand-composed queries missed a whole loss class | `validate_board.sh` ALREADY reports `uncommitted-work` and found the 222-line file unprompted — it just was not run AS the sweep. Meanwhile a hand-written "ahead of upstream" query missed **47 branches / 96 commits**. Make the sweep a TOOL that is RUN, never a query typed in the moment |
+
 ### Ordering rationale — why RESCUE is 0 and the gate is not
 
 Asked directly at close: *"should #5 be the FIRST action?"* **No — but launch it in parallel.**
