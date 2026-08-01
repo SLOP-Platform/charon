@@ -11,7 +11,25 @@ its fixes keep being lost to the class itself.**
 | **2** | `feat/session-end-push-gate-v2` | 3 unique commits, **NO remote** | the push gate was built and never pushed; roadmap still says `not-started` |
 | **3** | `HANDOFF-NAME-ALLOCATOR` | **archived + DONE, still broken** | verify the FIRING LAYER — a fix marked complete that never fixed it |
 | **4** | `SESSION-END-GATE-REPAIR` | **LIVE, UNCLAIMED** | ticketed, never scheduled; `end-session.sh` aborts before its work-loss check EVERY run |
-| **5** | **Investigate a tool to run the gate CONTINUOUSLY in the background** | nothing exists | a close-gate never fires when a session dies on a token limit, crashes, or is killed — which is most of them |
+| **5** | **Adopt a tool to run the gate CONTINUOUSLY in the background** | nothing exists | a close-gate never fires when a session dies on a token limit, crashes, or is killed — which is most of them. **LAUNCH THIS IN A TAB FIRST, IN PARALLEL WITH 0** — it is research and does not block |
+| **6** | **GATE DEFECT blocking a real push** | `fix/shared-namespace-contention` cannot be pushed | `land-push` refuses it as *"code owned by NO live board ticket"* — but the ticket IS on origin/master (`f8266ef`) and owns exactly those 4 files. **A gate that blocks legitimate work is how `--force` habits start.** Same stale-base class as RIG-CI-BASE-DEFAULT-BRANCH (fixed today for a different scope) |
+
+### Ordering rationale — why RESCUE is 0 and the gate is not
+
+Asked directly at close: *"should #5 be the FIRST action?"* **No — but launch it in parallel.**
+
+- **0 is the only IRREVERSIBLE item.** 96 commits exist on one disk. A failure or a stray
+  `reset --hard` loses them permanently. The gate protects FUTURE work; it does nothing for the 96
+  already at risk.
+- **Cost asymmetry:** rescue is ~47 pushes, minutes. The gate is an adopt-trial plus wiring, hours.
+  Doing the cheap irreversible thing first is strictly correct.
+- **This exact ordering is what the last two sessions got wrong** — they built the fix first, then
+  lost it to the class (§L). Rescue-then-build breaks that loop; build-then-rescue repeats it.
+- **BUT item 5 is INVESTIGATION, so it is not sequential.** Launch it in a tab immediately,
+  concurrently with the rescue. Nothing about it blocks, and by the time rescue and items 1-4 are
+  done the adopt-verdict should be ready to wire.
+
+Net: **0 and 5 start together; 5 finishes last.**
 
 ### Item 5 — the requirement, stated properly
 A session-close gate is structurally insufficient: **the sessions that lose work are the ones that
