@@ -13,15 +13,33 @@ alphabetically ignores it entirely. Either way the operator-set ordering is lost
 `0..5` and **LOWER = MORE URGENT**. The operator abbreviates bands as "P:0".."P:5" in
 chat; the on-disk field is the integer.
 
-| Band  | Name                              | What it means                                                                                                |
-| :---: | --------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| P:0   | top band                          | Operator-escalated / direct CG-active work. The old RANK-0 / R0.0 / R0.1 / R0.2 / R0.3 FOLD IN HERE — no separate super-tier; an "R0.0" is just a human label for a P:0 ticket (see fleet/session-notes/NEXT-SESSION-RANK0.md). |
-| P:1   | attached CG work                  | Attached-CG, not huge, not over-dependent.                                                                   |
-| P:2   | standalone, biggest blast-radius  | The big standalone pieces (e.g. SUBAGENT-WORKTREE-SANDBOX, REACHABILITY-GATE).                                |
-| P:3   | Router standalone                 | The router's own standalone work.                                                                            |
-| P:4   | quick wins                        | Fast, isolated, low-risk.                                                                                    |
-| P:5   | reserved lowest                   | Reserved lowest explicit band.                                                                               |
-| unset | (no `priority:` field)            | Treated as the lowest band (internally 9999) — auto-sequenced by the dependency graph and the rest of the ladder. NOT a priority band in its own right; absence just means "let the graph order it". |
+| Band  | Name                    | ENTRY CRITERIA (mechanically checkable where marked [M])                                          |
+| :---: | ----------------------- | ------------------------------------------------------------------------------------------------ |
+| P:0   | **FLEET STOPPED**       | Work cannot proceed until this lands. Entry requires ONE of: (a) `operator-escalated: true` [M]; (b) the board/gate/CI is RED and blocks ALL landing [M — validate_board or the product gate is non-zero]; (c) it transitively unblocks **>= 5** open tickets [M — revdep]. MUST name what is stopped in `source:`. **P:0 is SCARCE** — if more than ~5 tickets are P:0, the band has lost meaning and must be re-ranked. |
+| P:1   | **UNBLOCKER**           | Transitively unblocks **>= 2** open tickets [M — revdep], OR is a declared `depends_on:` of a live P:0/P:1 [M]. Cheap unblockers belong here even when tiny — release-value beats size. |
+| P:2   | **HIGH CONSEQUENCE**    | Blocks nothing, but a defect is expensive or irreversible: `work_class:` in {money-path, routing, ci-infra} [M], or security/data-loss. **Adversarial review is a GATE on this band, not a priority boost** — danger means care, not queue-jumping. |
+| P:3   | **STANDARD**            | Real work, blocks nothing, bounded consequence. **The default for new tickets.** |
+| P:4   | **QUICK WIN**           | `difficulty: 1` [M] AND isolated (`owns:` <= 2 files) [M] AND low risk. Deliberately BELOW standard so quick wins cannot crowd out real work — but they jump within a pool the moment a tab frees. |
+| P:5   | **DEFERRED**            | Wanted, explicitly not now. Must carry a reason. |
+| unset | (no `priority:` field)  | **NOT ALLOWED on a new ticket** — the creation gate rejects it. Legacy unset is treated as 9999 (lowest); 46 such tickets were backfilled 2026-08-01 after 30 sat undispatched for up to 22 days. |
+
+### THE RANKING ORDER (operator-approved 2026-08-01) — apply in this order
+1. **Operator asks.** The operator has context the rig does not (direction, demos, what is
+   personally blocking). An explicit ask outranks any computed score.
+2. **Unblocking power.** How many things does landing this release, transitively. *Evidence this
+   rung matters most:* PR #205 was a two-file test fix — low criticality, tiny blast radius — and
+   it unblocked the ENTIRE product repo, which had not moved in a day. The `priority:` backfill
+   was a trivial edit that released 30 tickets stuck up to 22 days. Neither ranks high on any
+   other axis.
+3. **Criticality and blast radius — ONE axis, not two.** In this codebase what makes work critical
+   IS its blast radius; splitting them double-counts and yields a tie-break that does not
+   discriminate. Money-path, security and data-loss weight highest.
+4. **Cost, as tie-break only.** Cheap-and-fully-done beats expensive-and-partial.
+
+### What is NOT a ranking rung
+**Risk.** Money-path work is dangerous-high-blast — a mistake costs real money on every request.
+That argues for adversarial review as a GATE (see P:2), never for jumping the queue. Ranking by
+danger rushes precisely the work that most needs care.
 
 ### Why LOWER = more urgent
 
