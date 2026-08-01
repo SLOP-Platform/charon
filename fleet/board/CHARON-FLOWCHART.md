@@ -1,5 +1,6 @@
 repo: charon
 tier: strong
+priority: 2
 difficulty: 3
 work_class: docs
 branch: docs/charon-flowchart

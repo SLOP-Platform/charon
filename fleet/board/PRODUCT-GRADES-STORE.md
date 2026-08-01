@@ -1,5 +1,6 @@
 repo: charon
 tier: strong
+priority: 2
 difficulty: 5
 work_class: coding
 branch: feat/product-grades-store

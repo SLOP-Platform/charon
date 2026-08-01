@@ -2,7 +2,7 @@ repo: charon-private
 tier: strong
 difficulty: 2
 work_class: ci-infra
-priority: 1
+priority: 0
 branch: feat/bash-inert-coverage
 depends_on: FIXTURE-BYPASS-GATE
 real-dep: FIXTURE-BYPASS-GATE lands gate-integrity.sh, whose G1 INERT rule this ticket widens — the file does not exist until then

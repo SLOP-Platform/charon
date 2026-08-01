@@ -1,5 +1,6 @@
 repo: charon
 tier: economy
+priority: 2
 difficulty: 2
 work_class: greenfield-feature
 branch: feat/ft-catalog-seed

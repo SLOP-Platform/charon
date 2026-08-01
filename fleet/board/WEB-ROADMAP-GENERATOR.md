@@ -1,5 +1,6 @@
 repo: charon-private
 tier: economy
+priority: 2
 difficulty: 3
 work_class: rig-meta
 branch: feat/web-roadmap-generator

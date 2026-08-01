@@ -1,5 +1,6 @@
 repo: charon-private
 tier: economy
+priority: 2
 difficulty: 2
 work_class: money-path
 branch: feat/ft-limits-groq-reconcile

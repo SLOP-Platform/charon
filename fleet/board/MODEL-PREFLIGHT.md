@@ -1,4 +1,5 @@
 tier: frontier
+priority: 2
 difficulty: 4
 work_class: ci-infra
 branch: feat/model-preflight

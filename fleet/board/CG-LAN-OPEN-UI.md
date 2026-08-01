@@ -1,5 +1,6 @@
 repo: charon
 tier: strong
+priority: 2
 difficulty: 2
 work_class: gateway-auth
 branch: feat/cg-lan-open-ui

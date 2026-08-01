@@ -1,5 +1,6 @@
 repo: charon-private
 tier: economy
+priority: 2
 difficulty: 1
 work_class: docs
 branch: feat/handoff-root-archive

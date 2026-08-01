@@ -1,5 +1,6 @@
 repo: charon
 tier: strong
+priority: 2
 difficulty: 5
 work_class: money-path
 branch: feat/gateway-litellm-adopt

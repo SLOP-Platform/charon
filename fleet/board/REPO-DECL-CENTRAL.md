@@ -1,5 +1,6 @@
 repo: charon-private
 tier: economy
+priority: 0 # inherited: blocks a P0 ticket
 difficulty: 2
 work_class: ci-infra
 branch: feat/repo-decl-central

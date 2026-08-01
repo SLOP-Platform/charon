@@ -1,4 +1,5 @@
 tier: frontier
+priority: 2
 difficulty: 3
 work_class: ci-infra
 branch: audit/final-e2e-review
