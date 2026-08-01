@@ -1,3 +1,47 @@
+# ⛔⛔ START HERE — THE VERY FIRST THINGS THE NEXT SESSION DOES ⛔⛔
+
+**Operator directive, 2026-08-01 session close. Do these BEFORE anything else in this file.
+Launch them in TABS. They are one causal chain: the work-loss class recurs every session because
+its fixes keep being lost to the class itself.**
+
+| # | item | state at close | why first |
+|---|---|---|---|
+| **0** | **RESCUE: push the 47 local-only branches** | 96 commits exist ONLY on this box | non-destructive, reversible, one call each. Do this BEFORE building anything — the last two sessions built the fix and lost it |
+| **1** | `feat/stranded-work-detect-v2` | 1 unique commit, **NO remote** | the stranded-work detector is itself stranded |
+| **2** | `feat/session-end-push-gate-v2` | 3 unique commits, **NO remote** | the push gate was built and never pushed; roadmap still says `not-started` |
+| **3** | `HANDOFF-NAME-ALLOCATOR` | **archived + DONE, still broken** | verify the FIRING LAYER — a fix marked complete that never fixed it |
+| **4** | `SESSION-END-GATE-REPAIR` | **LIVE, UNCLAIMED** | ticketed, never scheduled; `end-session.sh` aborts before its work-loss check EVERY run |
+| **5** | **Investigate a tool to run the gate CONTINUOUSLY in the background** | nothing exists | a close-gate never fires when a session dies on a token limit, crashes, or is killed — which is most of them |
+
+### Item 5 — the requirement, stated properly
+A session-close gate is structurally insufficient: **the sessions that lose work are the ones that
+never reach their close.** This session came within a token limit of exactly that. So the check must
+run on a CADENCE, independent of any session's lifecycle.
+
+Investigate ADOPT-FIRST (per §0 doctrine — do NOT hand-roll a daemon first):
+- the rig already runs **monit** (`fleet/watchdog/*`) — the cheapest candidate, already adopted
+- systemd user timers / cron
+- a git hook (`post-commit` / `pre-push`) for the commit-time half
+- `fleet/watchdog/discover-services.sh` + `generate-monit-config.sh` already exist and may take it
+
+It must cover **ALL** loss classes (the narrow "ahead of upstream" check is exactly what missed 96
+commits): branches ahead of remote · **branches with NO upstream at all** · dirty worktrees ·
+stashes · detached HEADs. And it must FAIL LOUD — see §J, where the existing gate is marked done and
+silently never fires.
+
+### Also at the head of the queue
+- **`fix/shared-namespace-contention` — REVIEWED, PUSH BLOCKED.** 25 commits ahead of its remote;
+  24 are master merges, the real work is tip `6e8247b` (split claim from check, idempotent re-claim,
+  orphan reap, namespaced scratch) + `fleet/tests/scratch-namespace.test.sh`. 88 files, +2209.
+  `land-push` REFUSES with *"touches CODE owned by NO live board ticket"* for
+  `fleet/claim-jedi-name.sh`, `fleet/spawn-worker.sh` and both tests — **but
+  `fleet/board/SHARED-NAMESPACE-CONTENTION.md` IS on origin/master (f8266ef) and owns exactly those
+  four files.** So this is a GATE DEFECT, not a real ownership gap — almost certainly the branch's
+  own stale copy of the board being read, the same stale-base class as RIG-CI-BASE-DEFAULT-BRANCH.
+  Diagnose the gate; do NOT `--force` past it.
+
+---
+
 # PRIORITY TODO — OUTSTANDING WORK (authored 2026-08-01, session saba-sebatyne)
 
 > **THIS FILE IS THE CARRY-FORWARD LIST.** It exists because the recurring failure is not bad work
