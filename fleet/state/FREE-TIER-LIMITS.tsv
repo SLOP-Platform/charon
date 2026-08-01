@@ -17,3 +17,12 @@ synthetic.new	none_no_free_tier_30usd_mo_flat	n/a	n/a	n/a	n/a	n/a	n	y	500_req_pe
 google-gemini	gemini-2.5-flash	250	10	250000	unpublished	1000000	y	y	parked_credits_depleted_plus_classify_bug
 google-gemini	gemini-2.5-flash-lite	1000	15	250000	unpublished	1000000	y	y	parked_credits_depleted_plus_classify_bug
 google-gemini	gemini-2.5-pro	100	5	250000	unpublished	1000000	y	y	parked_credits_depleted_plus_classify_bug
+# ── OPERATOR-SUPPLIED 2026-08-01 — UNVERIFIED, MUST BE CONFIRMED VIA API/HEADERS ──
+# Operator: "not sure if this is accurate". Treat every row below as a SEED to reconcile against
+# live x-ratelimit-* headers or a provider usage endpoint. Do NOT route on these as if measured.
+nvidia	nim_all	unverified_GENEROUS_operator_believes	unverified	unverified	unverified	unpublished	unknown	unknown	MUST_GATHER_operator_flagged_generous_limits_unknown
+huggingface	inference_api	unverified_300_per_hour	unverified	unverified	unverified	unpublished	unknown	unknown	operator_supplied_2026_08_01_unverified
+cohere	north-mini-code-free_upstream	unverified	unverified_20_per_min	unverified	unverified	unpublished	unknown	unknown	operator_supplied_2026_08_01_unverified
+zai	glm_all	unverified	unverified_60_per_min_approx_1_per_sec	unverified	unverified	unpublished	unknown	unknown	operator_supplied_2026_08_01_unverified_plus_http_429_code_1302_confirmed_live
+deepinfra	all	unverified	unverified_60_per_min	unverified	unverified	unpublished	unknown	unknown	operator_supplied_2026_08_01_unverified
+chutes.ai	unknown	UNKNOWN_operator_unsure	UNKNOWN	UNKNOWN	UNKNOWN	unpublished	unknown	unknown	prior_row_says_no_free_tier_RECONCILE_THIS_CONTRADICTION
