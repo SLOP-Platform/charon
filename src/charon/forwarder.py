@@ -527,28 +527,56 @@ def forward_with_failover(handler, srv) -> None:
 
     is_stream = orig_bj.get("stream") is True
 
-    # ── R2: dynamic cheapest-first using live metered cost ──────────
-    # Reorder the provider chain at request time so the cheapest (by real
-    # cumulative metered spend) is tried first.  Empty meter → the order is
-    # unchanged (preserves the static configured order built at startup).
-    # This runs BEFORE cooldown ordering so a cheap-but-cooled provider is
-    # still surfaced correctly by the cooldown pass below.
+    # ── R2: cheapest-first from live metered cost, then cost_rank ──
+    # Order the chain by OBSERVED cost so the cheapest leg is tried first.
+    # Precedence (the money path uses the cost data it already has):
+    #   1. free legs first
+    #   2. real per-provider metered spend, when present
+    #   3. cost_rank ASC (derived from configured per-token pricing)
+    #   4. static configured order (last-resort tiebreak only)
+    # The per-provider meter was NEVER populated on the live gateway — spend.json
+    # held a GLOBAL aggregate only — so the previous "empty meter → order
+    # unchanged" fallback let the static hand-authored order govern every
+    # request: openrouter (rank 50) was reached BEFORE a funded, ~6x
+    # cheaper deepseek-direct leg (rank 8) one position down, which was
+    # never tried (2026-08-01 fleet stall while the or key cap 403'd every
+    # leg).  Empty meter now falls back to cost_rank ASC (free-first), NOT
+    # to the static order.  Reuses ``routing_policy.derived_cost_rank``
+    # (the same derivation pools.py / build_routes_and_pools use) so a
+    # leg with NO pricing derives to a neutral 1000 and never sorts ahead
+    # of a known-cheap leg.  Runs BEFORE cooldown ordering so a cheap-but-
+    # cooled provider is still surfaced by the cooldown pass below.
+    # ANTI-OVER-BLOCK: a stable sort on a chain already in correct cost
+    # order returns it unchanged.
     observer = getattr(srv, "observer", None)
     if observer is not None and chain:
         live = observer.all_model_provider_costs()
+        registry: dict[str, dict] = {}
+        model_pricing = getattr(srv, "model_pricing", {}) or {}
+        model_meta = getattr(srv, "model_meta", {}) or {}
+        for route in chain:
+            mid = route.model_id or route.pool_id or ""
+            if mid and mid not in registry:
+                spec = dict(model_pricing.get(mid, {}))
+                spec.update(model_meta.get(mid, {}))
+                registry[mid] = spec
+        from .routing_policy import cost_class_priority, derived_cost_rank, order_pool_by_live_cost
         if live:
-            registry: dict[str, dict] = {}
-            model_pricing = getattr(srv, "model_pricing", {}) or {}
-            model_meta = getattr(srv, "model_meta", {}) or {}
-            for route in chain:
-                mid = route.model_id or route.pool_id or ""
-                if mid and mid not in registry:
-                    spec = dict(model_pricing.get(mid, {}))
-                    spec.update(model_meta.get(mid, {}))
-                    registry[mid] = spec
-            from .routing_policy import order_pool_by_live_cost
+            # Per-provider metered spend present → it wins over cost_rank
+            # (do not regress the existing behaviour).
             chain = order_pool_by_live_cost(
                 chain, registry=registry, metered_costs=live)
+        else:
+            # Empty per-provider meter → fall back to cost_rank ASC
+            # (free-first), NOT to the static configured order.
+            def _cost_rank_key(route: UpstreamRoute) -> tuple[bool, int, int]:
+                mid = route.model_id or route.pool_id or ""
+                spec = registry.get(mid, {}) if isinstance(
+                    registry.get(mid), dict) else {}
+                return (not bool(spec.get("free", False)),
+                        cost_class_priority(spec),
+                        derived_cost_rank(spec))
+            chain = sorted(chain, key=_cost_rank_key)
 
     ordered = srv.order_by_cooldown(chain)  # fresh providers first, cooled last (R7)
 
