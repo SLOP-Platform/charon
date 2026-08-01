@@ -5,7 +5,7 @@ difficulty: 3
 work_class: money-path
 branch: fix/park-rearm-funded-provider
 depends_on: SW-IDENTITY-FOLD
-real-dep: SW-IDENTITY-FOLD owns src/charon/proxy.py and has unlanded commits in flight; sequence after it to avoid clobbering
+real-dep: SW-IDENTITY-FOLD shares src/charon/proxy.py and is now PUSHED awaiting merge — sequence after it lands, not a build prereq
 owns: src/charon/proxy.py, tests/test_park_rearm.py
 serial_justified: |
   One classification rule and one re-arm path, both on the same exhaustion decision. Splitting
