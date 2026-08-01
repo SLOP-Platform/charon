@@ -4,7 +4,7 @@ difficulty: 1
 work_class: bugfix
 priority: 0
 branch: fix/loop-guard-reason-wire
-depends_on: SESSION-REPORT-WIRE
+depends_on: SESSION-REPORT-WIRE, LAUNCHER-GATE-SETE-KILL
 owns: fleet/fleet-droid.sh, fleet/tests/loop-guard-reason-wire.test.sh
 serial_justified: |
   Two call sites, one flag, one test. Nothing to split.
