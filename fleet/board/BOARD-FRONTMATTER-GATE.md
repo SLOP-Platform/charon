@@ -11,7 +11,7 @@ substrate-retest: |
   Not needed — PyYAML already carries an ADOPT verdict in EVAL-REGISTRY ("ADOPT — shipped, pinned
   PyYAML 6.0.3") scoped to exactly this job (parsing rig YAML), and this ticket adds no new use of
   it beyond calling the module that already parses board frontmatter.
-depends_on:
+depends_on: NO-LOCAL-MASTER-COMMITS
 note: |
   MEASURED 2026-08-01: FIVE board tickets were committed with unparseable YAML frontmatter in a
   single session — LOOP-GUARD-REASON-WIRE, CAPTURE-WIRING-TIMEOUT-FIX, MODEL-HARDCODE-PURGE,
@@ -84,7 +84,10 @@ verified: |
 - **Sequence: now.** Every board write until it lands can mint another latent parse RED — five did
   today.
 - **Blocks / unblocks:** removes a recurring push-cycle tax on ALL board work.
-- **owns-collision:** none — `fleet/board-lock.sh` carries no `owns:` on any other live ticket.
+- **owns-collision:** `fleet/board-lock.sh` and `fleet/tests/board-write-lock.test.sh` are also
+  owned by NO-LOCAL-MASTER-COMMITS. Sequenced behind it (`depends_on`) so the file stays
+  single-writer; this change is confined to the `commit` path's staged-file check, which that
+  ticket does not touch.
 - **Deliberate deviations, flagged rather than hidden:**
   (a) `set -uo pipefail` kept (NOT `-e`): `board-lock.sh` returns documented exit codes and `-e`
       would break that contract. Follows each file's own convention over the brief's boilerplate.
