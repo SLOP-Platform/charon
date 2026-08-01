@@ -1,5 +1,27 @@
 # tier-models.tsv — per-tier GATEWAY model FAILOVER CHAIN for the OFF-CLAUDE droid executor.
 #
+# ════════════════════════════════════════════════════════════════════════════
+# COST IS A HEAVY WEIGHT (operator directive, 2026-08-01 — do not silently undo)
+# ════════════════════════════════════════════════════════════════════════════
+# Verbatim: "model expense should be a very heavy weight to them. If we have an option of a
+# model that will do equally good work that is cheaper, the cheaper model should be used."
+# And: "GPT models are way TOO expensive to run in any provider. We need to be VERY careful
+# about sending work to expensive providers unless really required."
+#
+# RULES FOR EDITING THE CHAINS BELOW:
+#   1. Order each chain CHEAPEST-CAPABLE FIRST. The first leg that can do the work well wins;
+#      a costlier leg is a FAILOVER, never a default.
+#   2. Adding an expensive leg requires a stated reason that the cheap legs demonstrably cannot
+#      do the work — not a hunch, and not "for headroom".
+#   3. REMOVED 2026-08-01 under this directive: `gpt-5.4-mini` (was strong, last leg) and
+#      `gpt-5.4-nano` (was economy, last leg). Do NOT re-add an OpenAI GPT leg without an
+#      explicit operator decision.
+#   4. This is the same principle as the product's north-star router (need -> cheapest-capable
+#      -> hold -> re-admit); the fleet's own dispatch must not violate what the product preaches.
+#
+# POOL DEPTH CAVEAT: dropping those legs leaves strong=3 and economy=2. If a chain empties,
+# the fix is to add a CHEAP verified leg, never to re-add an expensive one.
+#
 # TIER AXIS (EVAL-TIER-CANON / review F-tier fix): the three tier names below
 # (frontier | strong | economy) are the COST-BAND tiers — how expensive a model
 # is, defined OBJECTIVELY by $/Mtok thresholds in fleet/state/TIER-CANON.md.
@@ -51,8 +73,8 @@
 # reachable on gateway build 319658f. NanoGPT weekly cap is LIVE — keep a paid leg behind
 # any -free/-ng leg. Base pool ids used so the gateway does its own provider failover.
 frontier	deepseek-v4-pro,kimi-k2.6,glm-5.2,minimax-m3-free
-strong	minimax-m3-free,deepseek-v4-flash,glm-5.2,gpt-5.4-mini
-economy	deepseek-v4-flash-free,deepseek-v4-flash,gpt-5.4-nano
+strong	minimax-m3-free,deepseek-v4-flash,glm-5.2
+economy	deepseek-v4-flash-free,deepseek-v4-flash
 # TARGET after operator wires ZAI_API_KEY + MORPH_API_KEY + gemini-3.1-flash-lite-or entry:
 # strong    morph-dsv4flash-morph,minimax-m3-free,deepseek-v4-flash,gemini-3.1-flash-lite-or,gpt-5.4-mini
 # economy   glm-4.7-flash-zai,glm-4.5-flash-zai,deepseek-v4-flash-free,gpt-5.4-nano,gemini-3.1-flash-lite-or
