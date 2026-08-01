@@ -157,7 +157,23 @@ else
           _DSTG="${BRANCH#*:}"; [ "$BRANCH" = "${BRANCH%%:*}" ] && _DSTG="$BRANCH"
           _DSTG="${_DSTG#refs/heads/}"
           _CIB=""
-          for _cand in "origin/$_DSTG" origin/master origin/main; do
+          # BASE MUST BE THE DEFAULT BRANCH (RIG-CI-BASE-DEFAULT-BRANCH, 2026-08-01).
+          # This loop used to try "origin/$_DSTG" FIRST — the branch's OWN remote-tracking ref —
+          # which made the gate's verdict depend on whether the branch had been pushed before:
+          #   1st push: refs/remotes/origin/<branch> does not exist -> fell through to
+          #             origin/master -> FULL branch diff -> the owning ticket on master is
+          #             found -> GREEN.
+          #   2nd push: that ref now exists -> base is the branch's own previous tip -> only the
+          #             incremental commit is diffed -> a commit touching just code reports
+          #             "this change touches CODE owned by NO live board ticket" even though a
+          #             master ticket plainly owns those files. FALSE RED, every time.
+          # The board/substrate/ownership questions are inherently "does the board on the DEFAULT
+          # BRANCH cover this change" — and the board exists ONLY on that branch, never in a
+          # feature branch's previous tip. So resolve the default branch first. Pushing TO master
+          # is unchanged (origin/master is first either way). "origin/$_DSTG" stays as the LAST
+          # resort so a repo with neither origin/master nor origin/main still resolves a base
+          # rather than falling through to the fail-closed refusal below.
+          for _cand in origin/master origin/main "origin/$_DSTG"; do
             if git -C "$REPO" rev-parse --verify -q "refs/remotes/$_cand" >/dev/null 2>&1; then
               _CIB="$_cand"; break
             fi
