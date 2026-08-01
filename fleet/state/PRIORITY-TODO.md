@@ -245,3 +245,58 @@ negation) rather than `/tmp`.
 
 **I10. `/tmp` scratchpad does not survive.** Anything a session needs to carry forward must be in
 the repo with a `!fleet/state/<file>` negation in `.gitignore` — `fleet/state/*` is blanket-ignored.
+
+---
+
+## J. SESSION-END SELF-BLOCKING — HIT AGAIN 2026-08-01, ESCALATE
+
+**Operator, at session close: *"we keep hitting this stub file exists / self-blocking defect every
+session end — is it scheduled to be FIXED?"* Answer: ticketed, NOT scheduled, and one prior fix is
+already marked DONE while the defect persists.**
+
+Measured at THIS session's close:
+
+| ticket | state | reality |
+|---|---|---|
+| `SESSION-END-GATE-REPAIR` | **LIVE, UNCLAIMED** | ticketed, never scheduled |
+| `SESSION-CLOSE-COMPLETENESS-GATE` | LIVE, unclaimed | blocked on the above |
+| `HANDOFF-NAME-ALLOCATOR` | **archived + DONE** | **and the allocator STILL BLOCKS** — another merged-but-inert instance |
+
+**The defect, reproduced live:** `handoff.sh` with `SESSION=saba-sebatyne` refused —
+*"that name is already in use (live file present)"* — because the session's own 29-byte claim-marker
+stub `fleet/SESSION-HANDOFF-<name>.md` is in `claim-jedi-name.sh`'s exclusion set. `end-session.sh`
+hits the identical shape: it CREATES its target file, then calls `handoff.sh`, whose allocator sees
+that 0-byte file and refuses. **The one gate meant to prevent work loss at session close aborts
+before it runs its work-loss check, every single time.**
+
+**J1. Fix the allocator to EXEMPT the caller's own target file** (or have `end-session.sh` write to
+a temp path and `mv` into place). Both `end-session.sh` and `handoff.sh` are affected — fix the
+allocator, not one call site, or the other keeps failing.
+
+**J2. Verify `HANDOFF-NAME-ALLOCATOR`'s "DONE" claim.** It is archived with a done marker and the
+symptom is still live. Either it fixed a different sub-case or it never fired — check the FIRING
+LAYER, not the ticket state. This is the class the whole session was about.
+
+**J3. Until J1 lands, session close MUST do the work-loss check by hand.** This session did:
+```
+git worktree list --porcelain | awk '/^worktree /{print $2}' | while read w; do ... done
+```
+**It found real stranded work** (see K), which is exactly what the broken gate would have missed.
+
+**J4. Name-pool burn (operator action #19) is the same root.** Every `handoff.sh` /
+`handoff-check.sh` invocation allocates a name and leaves a stub, burning names without a real
+session. Same allocator, same exclusion-set behaviour.
+
+---
+
+## K. STRANDED WORK FOUND AT SESSION CLOSE — verify before assuming lost or safe
+
+- **`fix/shared-namespace-contention` is 25 COMMITS AHEAD of its remote** (remote branch exists;
+  PR #345 is open). This is the largest single body of unpushed work on the box. **Verify what those
+  25 commits contain and land or explicitly drop them.** Do not assume PR #345 represents them.
+- `fix/auto-done-on-merge-miss` — 1 commit ahead, unpushed (see E1).
+- Rig master had 36 dirty files at close — mostly untracked board/archive churn and this session's
+  in-flight worktrees; not lost, but not clean either.
+- ~16 rig worktrees carry 1-4 dirty files each; several belong to tabs that were still running.
+  **Re-run the work-loss check at the START of the next session** — tabs kept working after this
+  handoff was written, so this list is a floor, not a ceiling.
