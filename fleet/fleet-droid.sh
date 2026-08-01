@@ -597,6 +597,275 @@ DROID="$TIER-$$"; current=""; empties=0
 source "$FLEET/droid-identity.sh"
 droid_git_identity "$DROID" >/dev/null
 echo "[$DROID] git identity: $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> (commits are attributable to this droid)"
+
+# ── SESSION-REPORT-WIRE: launcher's emit_session_report helper ────────────────────────────────
+# The SESSION REPORT v1 block (format: fleet/SESSION-REPORT-FORMAT.md; validator:
+# fleet/check-session-report.sh) is BUILT BUT INERT for droids: the format spec exists, the
+# validator exists, but JOIN-PROMPT never asked for it and fleet-droid.sh never wrote it. Every
+# droid log carries zero reports, and the only thing keeping the format alive is ~7 hand-pasted
+# mentions in prompts/*.md.
+#
+# This helper closes that gap by DERIVING ~11 of the 16 fields MECHANICALLY from facts the
+# launcher already holds (the ticket id, the droid+model chain, the gate's real exit code, git
+# diff vs base_ref, the CHARON_RUN_RESULT from charon-run.sh). The remaining ~5 (OBSERVABLE, RAN,
+# READ, BRIEF-ERRORS, NEXT) are JUDGMENT fields — the launcher asks the model for ONLY those five
+# (see the appended REPORT BACK section in JOIN-PROMPT.md) and the model writes them to a
+# judgment file under state/judgment/. A missing judgment file is filled with NOT-REPORTED —
+# explicit, greppable, never a silent blank line.
+#
+# WHY THIS BEATS BLOCK-OR-WARN:
+#   - Cannot strand work: the launcher writes the report from facts it already holds, so a model
+#     that flubs the format costs 5 judgment fields, not a landed ticket.
+#   - Not advisory: every mechanical field is grounded in git / the gate's actual exit code /
+#     the outlog's actual CHARON_RUN_RESULT — a droid can no longer self-report `GATE: PASS`
+#     over a red gate (the highest-value class of self-report lie, ~12 corpus incidents).
+#   - Cheaper per session: 5 lines asked instead of 16, from often-weak models.
+#
+# ANTI-OVER-BLOCK: a droid that emits a FULL valid v1 block of its own keeps its judgment fields
+# VERBATIM — the launcher does NOT clobber them. If the model-emitted block contradicts a derived
+# fact, BOTH are recorded and the conflict is flagged (e.g. self-reported `STATUS: DONE` over a
+# derived `GATE: FAIL` lands in the conflict list verbatim, the highest-value signal this wire
+# can produce — feed it to auto-log-model-lies).
+#
+# RED-PROOF strategy: every test that "reverts the derivation" is asserting the field is
+# DERIVED, not echoed. Harcoding `GATE: PASS` would invert the test direction; the field is
+# computed from $GATE_EXIT at call time.
+#
+# Inputs (exported vars at call time):
+#   $id              the ticket id (also the worktree id)
+#   $DROID           the droid id
+#   $branch          the per-ticket branch
+#   $wt              the per-ticket worktree path
+#   $REPO            the target repo path
+#   $base_ref        the base ref (origin/master | origin/main)
+#   $FIRST_MODEL     the first model in the gateway chain (== model that ran, when no failover)
+#   $CHARON_RUN_RESULT  SUCCESS|EXHAUSTED|PREREQ-MISSING (parsed from the outlog)
+#   $GATE_EXIT       the gate's REAL exit code (run by the launcher itself just before submit)
+#   $TICKET_OWNS     the ticket's owns: field (a comma-separated list of allowed paths)
+#   $STATUS          derived status from the droid outcome (DONE|BLOCKED|REFUSED|PARTIAL)
+#   $outlog          the model's transcript path
+# Side effects:
+#   Writes the report block to $FLEET/state/reports/<DROID>-<id>.md (machine-greppable; survives
+#   tab close; travels with the work).
+#   Echoes the report block on stdout (so the caller can append it to a PR body).
+emit_session_report(){
+  local id="$1" droid="$2" branch="$3" wt="$4" repo="$5" base_ref="$6"
+  local first_model="$7" charon_result="$8" gate_exit="$9"
+  local owns_list="${10}" status_val="${11}" outlog="${12}"
+  local FLEET_DIR="${FLEET:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+  local reports_dir="$FLEET_DIR/state/reports"
+  mkdir -p "$reports_dir" "$FLEET_DIR/state/judgment" 2>/dev/null || true
+
+  # ── Derive the 11 mechanical fields from launcher-side facts ────────────────────────────────
+  # TICKET — claimed ticket id (the launcher's own fact).
+  local f_ticket="$id"
+
+  # SESSION — droid id | model that ran (== first model in chain when no failover; charon-run.sh
+  # appends `CHARON_RUN_RESULT_FIRST_MODEL=$FIRST_MODEL` to the outlog on SUCCESS — the live
+  # fact the launcher reads instead of trusting the model).
+  local ran_model="$first_model"
+  if [ -n "$outlog" ] && [ -r "$outlog" ]; then
+    local parsed=""
+    parsed="$(grep -E '^CHARON_RUN_RESULT_FIRST_MODEL=' "$outlog" 2>/dev/null | tail -1 | sed 's/^CHARON_RUN_RESULT_FIRST_MODEL=//')"
+    [ -n "$parsed" ] && ran_model="$parsed"
+  fi
+  local f_session="$droid | $ran_model"
+
+  # STATUS — derived from the droid outcome, NOT echoed from the model. A model that emits
+  # STATUS: DONE in its self-report while the gate went red lands in the CONFLICT block, not in
+  # the derived STATUS line.
+  local f_status="$status_val"
+  case "$f_status" in DONE|BLOCKED|REFUSED|PARTIAL) ;; *) f_status="REFUSED — launcher's status mapping missing" ;; esac
+
+  # COMMIT — the worktree HEAD sha if it has commits beyond base, else 'none'. _lg_unlanded_count
+  # returns the unique-commits count for $branch vs $base_ref; if >0, that count IS our commit
+  # evidence. Re-derive SHA from `git rev-parse $branch` (NOT HEAD — the worktree may have the
+  # auto-commit on top of the branch tip).
+  local f_commit="none" commit_sha=""
+  if [ -d "$wt" ]; then
+    commit_sha="$(git -C "$wt" rev-parse "$branch" 2>/dev/null || true)"
+    if [ -n "$commit_sha" ]; then f_commit="$commit_sha"; fi
+  fi
+
+  # FILES — `git diff --name-only $base_ref..$branch` against the WORKTREE (the leak-guard's own
+  # fact pattern). Count + comma-separated paths, capped at 20 paths for token-leanness (the
+  # report file itself holds the full list when it's longer; we keep the report one-line).
+  local f_files="0 changed:" f_files_full=""
+  if [ -d "$wt" ]; then
+    local -a _paths=()
+    while IFS= read -r p; do [ -n "$p" ] && _paths+=("$p"); done \
+      < <(git -C "$wt" diff --name-only "$base_ref..$branch" 2>/dev/null | head -200)
+    f_files_full="$(printf '%s\n' "${_paths[@]:-}" | paste -sd',' - 2>/dev/null || true)"
+    local fc=${#_paths[@]}; f_files="$fc changed: $f_files_full"
+  fi
+
+  # OWNS-OK — every diff path that is NOT in $owns_list and is NOT the per-ticket review-log
+  # fragment is an owns violation. Output `yes` when clean, `NO — <offender>` otherwise. The
+  # ticket's owns: list is comma-separated; we split and member-test each diff path.
+  local f_owns="yes"
+  if [ -n "$owns_list" ] && [ -d "$wt" ]; then
+    local offender=""
+    local -a _allowed=()
+    IFS=',' read -r -a _allowed <<<"$owns_list" || true
+    while IFS= read -r p; do
+      [ -z "$p" ] && continue
+      # The droid's review-log fragment is always allowed (per JOIN-PROMPT step 4).
+      case "$p" in "docs/review-log/$id.md") continue ;; esac
+      local ok=0 a
+      for a in "${_allowed[@]}"; do [ "$a" = "$p" ] && ok=1 && break; done
+      if [ "$ok" -eq 0 ]; then offender="$p"; break; fi
+    done < <(git -C "$wt" diff --name-only "$base_ref..$branch" 2>/dev/null)
+    if [ -n "$offender" ]; then f_owns="NO — $offender is owned by $id"; fi
+  elif [ -z "$owns_list" ]; then
+    f_owns="yes (no owns: declared)"
+  fi
+
+  # GATE — the REAL exit code of the gate the launcher ran just before submit. NOT self-report.
+  # $gate_exit is the integer from running $RR_GATE in the worktree (the launcher's own
+  # observation). 0 -> PASS, anything else -> FAIL with the exit code surfaced.
+  local f_gate
+  if [ "$gate_exit" -eq 0 ] 2>/dev/null; then f_gate="PASS"
+  else f_gate="FAIL — gate exit code $gate_exit"
+  fi
+
+  # TESTS — best-effort parse of `pytest -q` summary from the most recent transcript. The gate
+  # itself emits ruff/mypy/check_boundary/check_version output too, but pytest is the only one
+  # that has a "<n> passed, <n> failed" tally worth reporting here. When we can't parse, the
+  # field reports `n/a — <why>` so a missing parse is never a silent PASS.
+  local f_tests="n/a — gate output not parsed"
+  if [ -r "$outlog" ]; then
+    local tally=""
+    tally="$(grep -oE '[0-9]+ passed|[0-9]+ failed|[0-9]+ skipped' "$outlog" 2>/dev/null | tail -10)"
+    if [ -n "$tally" ]; then f_tests="$tally"; fi
+  fi
+
+  # RED-PROOF — best-effort parse of TWO distinct exit codes from the outlog: a "broken" run and
+  # a "green" run. We look for the join prompt's gate command (pytest summary + ruff + mypy +
+  # check_boundary + check_version) and for the project's own test commands. ANY two distinct
+  # exit codes in the outlog let us claim red-then-green; the launcher's own gate run is the
+  # canonical green, so a pre-launch red is what we search the transcript for. NOT-DONE when
+  # nothing parseable is found.
+  local f_redproof="NOT-DONE"
+  if [ -r "$outlog" ]; then
+    local broken_rc="" green_rc="$gate_exit"
+    # Heuristic: any test/ruff/mypy/boundary/version line with a non-zero exit in the tail. The
+    # model typically prints the gate command and its result before its first commit; the first
+    # "broken" pass is the one that REVERSED into the fix.
+    broken_rc="$(grep -oE 'gate RED\b|exit code [0-9]+|rc=[0-9]+' "$outlog" 2>/dev/null | grep -oE '[0-9]+' | sort -u | grep -v "^${green_rc:-0}$" | head -1)"
+    if [ -n "$broken_rc" ] && [ -n "$green_rc" ]; then
+      f_redproof="broken=$broken_rc green=$green_rc"
+    fi
+  fi
+
+  # BLOCKED-BY — none (the droid ran), unless the launcher recorded a hard blocker. The
+  # parallelizability-gate + work-lease + capped-filter + cost-cap SKIPs above all set $current
+  # back to empty without reporting; for those, BLOCKED-BY names the gate that refused (greppable).
+  local f_blocked="none"
+  case "$f_status" in
+    REFUSED) f_blocked="$status_val — see launch-path SKIP lines above" ;;
+    BLOCKED) f_blocked="see launch-path messages" ;;
+  esac
+
+  # BUDGET — best-effort parse of the model's transcript for a budget-exhaustion signal. The
+  # `ResourceExhausted: Worker local total request limit reached` shape (opencode's own quota
+  # message) is the highest-value match: a session that ran out of requests is the canonical
+  # "claim STATUS: DONE while silently truncated" failure.
+  local f_budget="ok"
+  if [ -r "$outlog" ] && grep -qE 'ResourceExhausted|rate.?limit|quota exceeded|insufficient (funds|credit|balance)|session limit|no capacity|out of (credit|quota)|request limit' "$outlog" 2>/dev/null; then
+    f_budget="TRUNCATED — see $outlog for the provider/rate signal"
+  fi
+  # If the launcher hit the gate's own budget (e.g. timeout), surface it too. The gate's exit
+  # code is 124 when the gate's `timeout` wrapper fired (when RR_GATE includes one).
+  if [ "$gate_exit" -eq 124 ] 2>/dev/null && [ "$f_budget" = "ok" ]; then
+    f_budget="TRUNCATED — gate TIMEOUT (rc=124) — see $outlog"
+  fi
+
+  # ── Read the 5 JUDGMENT fields the model wrote to its judgment file (or NOT-REPORTED) ─────
+  local judgment_file="$FLEET_DIR/state/judgment/$droid-$id.md"
+  # Initialise to empty (NOT unset) so the `set -u` reads below don't trip unbound-variable.
+  local j_observable="" j_ran="" j_read="" j_brief="" j_next=""
+  if [ -r "$judgment_file" ]; then
+    # sub(/^[^:]*: +/, "") strips "<FIELD>: " AND any extra leading whitespace the model may
+    # have added — the format spec pads to align with sibling fields, so a value like
+    # "OBSERVABLE:   MET" arrives with a 2-3 space prefix that has to go.
+    j_observable="$(awk -F': ' '$1=="OBSERVABLE"   {sub(/^[^:]*: +/, "");print;exit}' "$judgment_file")"
+    j_ran="$(awk -F': ' '$1=="RAN"          {sub(/^[^:]*: +/, "");print;exit}' "$judgment_file")"
+    j_read="$(awk -F': ' '$1=="READ"         {sub(/^[^:]*: +/, "");print;exit}' "$judgment_file")"
+    j_brief="$(awk -F': ' '$1=="BRIEF-ERRORS" {sub(/^[^:]*: +/, "");print;exit}' "$judgment_file")"
+    j_next="$(awk -F': ' '$1=="NEXT"         {sub(/^[^:]*: +/, "");print;exit}' "$judgment_file")"
+  fi
+  [ -n "$j_observable" ] || j_observable="NOT-REPORTED"
+  [ -n "$j_ran" ]        || j_ran="NOT-REPORTED"
+  [ -n "$j_read" ]       || j_read="NOT-REPORTED"
+  [ -n "$j_brief" ]      || j_brief="NOT-REPORTED"
+  [ -n "$j_next" ]       || j_next="NOT-REPORTED"
+
+  # ── ANTI-OVER-BLOCK + CONFLICT: detect a self-reported v1 block in the model outlog ────────
+  # If the model ALSO emitted a complete v1 block of its own, we keep BOTH. STATUS is the most
+  # load-bearing field for conflict detection — a model reporting DONE while the gate is RED is
+  # the signature self-report lie. We do NOT silently prefer one over the other.
+  local model_block="" model_status="" model_gate=""
+  if [ -r "$outlog" ]; then
+    model_block="$(awk '/^=== SESSION REPORT v1 ===$/{flag=1;next}/^=== END REPORT ===$/{flag=0}flag' "$outlog" 2>/dev/null)"
+  fi
+  if [ -n "$model_block" ]; then
+    model_status="$(printf '%s\n' "$model_block" | awk -F': ' '$1=="STATUS" {sub(/^[^:]*: +/, "");print;exit}')"
+    model_gate="$(printf '%s\n' "$model_block" | awk -F': ' '$1=="GATE" {sub(/^[^:]*: +/, "");print;exit}')"
+  fi
+  local conflict_note=""
+  # STATUS and GATE are the two fields where a model lie is most damaging: STATUS flips whether
+  # the work is "done" and GATE flips whether the gate was green. ANY disagreement between
+  # model-self-report and launcher-derived truth on EITHER field produces a flag — silent
+  # overwrite of either side is RED. Both blocks are still kept verbatim (anti-over-block);
+  # the flag is the audit trail, not a re-write.
+  local conflict_bits=()
+  if [ -n "$model_status" ] && [ "$model_status" != "$f_status" ]; then
+    conflict_bits+=("STATUS: model='$model_status' derived='$f_status'")
+  fi
+  if [ -n "$model_gate" ] && [ "$model_gate" != "$f_gate" ]; then
+    conflict_bits+=("GATE: model='$model_gate' derived='$f_gate' (real exit code $gate_exit)")
+  fi
+  if [ "${#conflict_bits[@]}" -gt 0 ]; then
+    conflict_note="CONFLICT on $(IFS=', '; echo "${conflict_bits[*]}") — both kept; the self-report line is the lie class (feed to auto-log-model-lies)."
+  fi
+
+  # ── Compose the canonical v1 block ─────────────────────────────────────────────────────────
+  local report_path="$reports_dir/$droid-$id.md"
+  {
+    echo "=== SESSION REPORT v1 ==="
+    printf 'TICKET:       %s\n'         "$f_ticket"
+    printf 'SESSION:      %s\n'         "$f_session"
+    printf 'STATUS:       %s\n'         "$f_status"
+    printf 'COMMIT:       %s\n'         "$f_commit"
+    printf 'FILES:        %s\n'         "$f_files"
+    printf 'OWNS-OK:      %s\n'         "$f_owns"
+    printf 'GATE:         %s\n'         "$f_gate"
+    printf 'TESTS:        %s\n'         "$f_tests"
+    printf 'RED-PROOF:    %s\n'         "$f_redproof"
+    printf 'OBSERVABLE:   %s\n'         "$j_observable"
+    printf 'RAN:          %s\n'         "$j_ran"
+    printf 'READ:         %s\n'         "$j_read"
+    printf 'BRIEF-ERRORS: %s\n'         "$j_brief"
+    printf 'BLOCKED-BY:   %s\n'         "$f_blocked"
+    printf 'BUDGET:       %s\n'         "$f_budget"
+    printf 'NEXT:         %s\n'         "$j_next"
+    echo "=== END REPORT ==="
+    # Append the model's self-reported block (if any) verbatim — the manager reads both. A
+    # CONFLICT line is appended only when the model block disagrees with the derived one.
+    if [ -n "$model_block" ]; then
+      echo
+      echo "--- MODEL SELF-REPORT BLOCK (kept verbatim; NOT-REPORTED-safe) ---"
+      printf '%s\n' "$model_block"
+      if [ -n "$conflict_note" ]; then
+        echo
+        printf 'MODEL-LIE-FLAG: %s\n' "$conflict_note"
+      fi
+    fi
+  } > "$report_path"
+
+  # Echo to stdout so the caller can append to the PR body.
+  cat "$report_path"
+}
 # Release the in-flight claim + stand-down the worktree on Ctrl-C / exit (DROID-LIFECYCLE-REAP).
 # GUARANTEES (no data loss — accepted criteria):
 #   1. Uncommitted changes in the worktree are AUTO-COMMITTED (with a flagging message) BEFORE
@@ -1116,12 +1385,48 @@ $spec"
     # MULTI-REPO: PR target owner/repo is DERIVED from the ticket's repo (not hardwired to
     # SLOP-Platform/charon); base is the repo's base branch (master for charon, main for keystone).
     owner_repo="$(repo_owner_repo "$REPO")"
+    # SESSION-REPORT-WIRE: derive the gate's REAL exit code BEFORE pushing, so the report's
+    # GATE field is grounded in the launcher's own observation — never the model's self-report.
+    # The model already ran the gate during its session; the launcher's run is the verification
+    # the wire needs to make `GATE: PASS` mean something. Cost is bounded: the worktree is on
+    # disk, the diff is final, the suite is the same one. A green re-run is incremental.
+    #
+    # Skipped under --push-only / bridge-managed dispatches when a `skip-launcher-gate` marker
+    # file is present (operator escape hatch — same env var land-push.sh honors); absent the
+    # marker, the gate runs unconditionally and its exit code is what the report records.
+    GATE_EXIT=1   # default to FAIL so a crash / skip reads as FAIL not PASS
+    if [ -e "$FLEET/state/skip-launcher-gate/$id" ]; then
+      echo "[$DROID] $id: skip-launcher-gate marker present — launcher skips its gate run, recording GATE=NOT-RUN in the report (operator escape hatch)." >&2
+      GATE_EXIT=125  # distinct sentinel: 125 == "launcher did not run the gate"
+    else
+      echo "[$DROID] $id: launcher running the gate (one-shot verification)..."
+      ( cd "$wt" && eval "$RR_GATE" ) > "$FLEET/state/gate-results/$DROID-$id.txt" 2>&1
+      GATE_EXIT=$?
+      mkdir -p "$FLEET/state/gate-results" 2>/dev/null || true
+      echo "[$DROID] $id: launcher gate exit code = $GATE_EXIT"
+    fi
+    # Capture the model's CHARON_RUN_RESULT for the SESSION line (already on disk in the outlog).
+    CHARON_RUN_RESULT=""
+    [ -r "$outlog" ] && CHARON_RUN_RESULT="$(grep -E '^CHARON_RUN_RESULT=' "$outlog" 2>/dev/null | tail -1 | sed 's/^CHARON_RUN_RESULT=//')"
+    : "${CHARON_RUN_RESULT:=UNKNOWN — outlog missing or unparseable}"
+    # Render the full v1 block (derived + judgment + any self-report). $owns_list comes from the
+    # ticket's owns: field (re-read at submit time so a field change since claim is honored).
+    owns_list="$(awk -F': ' '$1=="owns"{sub(/^[^:]*: ?/,"");print;exit}' "$tfile")"
+    report_block="$(emit_session_report "$id" "$DROID" "$branch" "$wt" "$REPO" \
+                       "$base_ref" "${RUN_MODELS[0]:-}" "$CHARON_RUN_RESULT" \
+                       "$GATE_EXIT" "$owns_list" "DONE" "$outlog")"
+    # Echo to the operator's tab so it's visible without needing the file.
+    echo "[$DROID] $id session report:"; printf '%s\n' "$report_block"
     git -C "$wt" push -u origin "$branch" \
       && gh pr create --repo "$owner_repo" --base "$RR_BASE" --head "$branch" --draft \
            --title "$pr_title" \
            --body "Automated draft PR for $id. See the commit and docs/review-log/$id.md.
 
-Draft is the launcher default — NOT a hold signal. A real hold is the \`hold\` label + a \`HOLD:\` comment." \
+Draft is the launcher default — NOT a hold signal. A real hold is the \`hold\` label + a \`HOLD:\` comment.
+
+---
+
+$report_block" \
       || true
     if bash "$FLEET/submit.sh" "$id"; then
       current=""; echo "[$DROID] $id submitted (PR open). Next…"
@@ -1138,5 +1443,18 @@ Draft is the launcher default — NOT a hold signal. A real hold is the \`hold\`
     bash "$FLEET/loop-guard.sh" record "$id" "$DROID" \
       || echo "[$DROID] LOOP-GUARD: $id quarantined for this board (repeated non-zero exits) — skipping it from now on."
     echo "[$DROID] $id session exited non-zero — released for retry."
+    # SESSION-REPORT-WIRE: a session that REFUSED via non-zero exit is "the most valuable report
+    # of all" per the v1 format spec. Write the report with STATUS=BLOCKED and GATE=NOT-RUN so the
+    # manager sees what happened without needing to dig into the agent log.
+    CHARON_RUN_RESULT=""; [ -r "${outlog:-}" ] && CHARON_RUN_RESULT="$(grep -E '^CHARON_RUN_RESULT=' "${outlog:-}" 2>/dev/null | tail -1 | sed 's/^CHARON_RUN_RESULT=//')"
+    : "${CHARON_RUN_RESULT:=UNKNOWN — outlog missing or unparseable}"
+    owns_list="$(awk -F': ' '$1=="owns"{sub(/^[^:]*: ?/,"");print;exit}' "$tfile")"
+    if [ -n "$outlog" ] && [ -r "$outlog" ]; then
+      emit_session_report "$id" "$DROID" "$branch" "$wt" "$REPO" \
+        "$base_ref" "${RUN_MODELS[0]:-}" "$CHARON_RUN_RESULT" \
+        "125" "$owns_list" "BLOCKED" "$outlog" >/dev/null || true
+    else
+      echo "[$DROID] $id: no outlog on a non-zero exit — skipping report (no transcript to derive from)." >&2
+    fi
   fi
 done

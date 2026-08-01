@@ -41,3 +41,29 @@ Do these IN ORDER, TERSELY (no preamble, no narration, one-line results):
 If you hit a true blocker you cannot resolve: run
   bash /home/stack/charon-private/fleet/release.sh <id>
 and STOP with a one-line reason. Do not improvise outside your ticket's files.
+
+## REPORT BACK — THE 5 FIELDS YOU WRITE (SESSION-REPORT-WIRE)
+The launcher derives 11 of the 16 SESSION REPORT v1 fields MECHANICALLY (TICKET, SESSION, STATUS,
+COMMIT, FILES, OWNS-OK, GATE, TESTS, RED-PROOF, BLOCKED-BY, BUDGET) from facts it already holds
+(claimed ticket id, your droid id + the model that ran, the gate exit code, `git diff`, the
+`CHARON_RUN_RESULT` it gets from charon-run.sh). It writes those itself — do NOT emit them.
+
+You only fill in 5 JUDGMENT fields. Before you exit, write a partial block to:
+    $FLEET/state/judgment/$DROID-$id.md
+containing exactly these five lines (one per line, no headers, no diffs):
+    OBSERVABLE:   MET | DEFERRED — <what could not be observed and why>
+    RAN:          <what you proved by EXECUTING, one line>
+    READ:         <what you concluded by READING only, one line>
+    BRIEF-ERRORS: none | <what the brief got factually wrong>
+    NEXT:         <the single thing the manager should do next>
+If you have nothing useful to say on a field, write `NOT-REPORTED` — silence is NOT acceptable, the
+launcher fills that exact token in for you but a field you actively know about beats a sentinel.
+A field you DO NOT WRITE is recorded as `NOT-REPORTED` by the launcher — explicit and greppable.
+
+DO NOT write the `=== SESSION REPORT v1 ===` header, the other 11 fields, or the closing fence.
+The launcher writes those from the worktree state. If you ALSO emit a complete v1 block in your
+session output (some sessions copy the format from a past prompt), it is recorded alongside the
+launcher's derived block — any field that contradicts a derived fact is flagged as CONFLICT.
+A self-reported `STATUS: DONE` over a derived `GATE: FAIL` is the highest-value signal you can
+produce; it lands in the conflict list verbatim so the manager sees the lie. Do NOT pad, do NOT
+echo, do NOT duplicate the launcher's fields — your five lines only.
