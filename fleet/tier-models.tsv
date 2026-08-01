@@ -13,14 +13,18 @@
 #      a costlier leg is a FAILOVER, never a default.
 #   2. Adding an expensive leg requires a stated reason that the cheap legs demonstrably cannot
 #      do the work — not a hunch, and not "for headroom".
-#   3. REMOVED 2026-08-01 under this directive: `gpt-5.4-mini` (was strong, last leg) and
-#      `gpt-5.4-nano` (was economy, last leg). Do NOT re-add an OpenAI GPT leg without an
-#      explicit operator decision.
+#   3. EXPENSIVE LEGS STAY, BUT LAST. Operator 2026-08-01: "I don't say drop legs but make them
+#      not a preferred choice." A costly leg at the TAIL costs nothing until every cheaper leg
+#      has failed — it is insurance, not spend. DELETING it thins the pool, and a thin pool is
+#      how we get ALL-EXHAUSTED (see fleet/state/provider-exhaustion-ledger.tsv). So:
+#      never DELETE an expensive leg to control cost — DEMOTE it to the tail.
+#      `gpt-5.4-mini` (strong) and `gpt-5.4-nano` (economy) are therefore LAST-RESORT ONLY.
 #   4. This is the same principle as the product's north-star router (need -> cheapest-capable
 #      -> hold -> re-admit); the fleet's own dispatch must not violate what the product preaches.
 #
-# POOL DEPTH CAVEAT: dropping those legs leaves strong=3 and economy=2. If a chain empties,
-# the fix is to add a CHEAP verified leg, never to re-add an expensive one.
+# POSITION IS THE COST CONTROL, NOT PRESENCE. Chain order IS the policy: failover walks
+# left -> right, so leg #1 is what actually runs almost always. Judge a chain by what its FIRST
+# leg costs, not by what its last leg could cost.
 #
 # TIER AXIS (EVAL-TIER-CANON / review F-tier fix): the three tier names below
 # (frontier | strong | economy) are the COST-BAND tiers — how expensive a model
@@ -73,8 +77,8 @@
 # reachable on gateway build 319658f. NanoGPT weekly cap is LIVE — keep a paid leg behind
 # any -free/-ng leg. Base pool ids used so the gateway does its own provider failover.
 frontier	deepseek-v4-pro,kimi-k2.6,glm-5.2,minimax-m3-free
-strong	minimax-m3-free,deepseek-v4-flash,glm-5.2
-economy	deepseek-v4-flash-free,deepseek-v4-flash
+strong	minimax-m3-free,deepseek-v4-flash,glm-5.2,gpt-5.4-mini
+economy	deepseek-v4-flash-free,deepseek-v4-flash,gpt-5.4-nano
 # TARGET after operator wires ZAI_API_KEY + MORPH_API_KEY + gemini-3.1-flash-lite-or entry:
 # strong    morph-dsv4flash-morph,minimax-m3-free,deepseek-v4-flash,gemini-3.1-flash-lite-or,gpt-5.4-mini
 # economy   glm-4.7-flash-zai,glm-4.5-flash-zai,deepseek-v4-flash-free,gpt-5.4-nano,gemini-3.1-flash-lite-or
