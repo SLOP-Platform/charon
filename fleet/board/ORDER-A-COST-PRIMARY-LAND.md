@@ -8,8 +8,8 @@ owns: src/charon/forwarder.py, src/charon/proxy_server.py, tests/test_boundary.p
 serial_justified: Rebase-and-land of a SINGLE existing commit (16dbdc2) whose cost-primary ordering +
   slow-failover change spans forwarder.py + proxy_server.py as one logical unit with its 3 tests;
   splitting it would fracture one coherent routing change.
-depends_on: GW-CUTOVER-LIVE-WIRE
-real-dep: GW-CUTOVER-LIVE-WIRE shared src/charon/forwarder.py surface — merge-order so the cost-primary
+depends_on: GW-CUTOVER-LIVE-WIRE, FORWARDER-COST-ORDER-FALLBACK
+real-dep: FORWARDER-COST-ORDER-FALLBACK shared src/charon/forwarder.py — the cost-order fallback is the live P0 defect and lands first; order-a (latency/slow-failover) rebases onto it. GW-CUTOVER-LIVE-WIRE shared src/charon/forwarder.py surface — merge-order so the cost-primary
   ordering rebases onto the settled cutover forwarder.py rather than colliding; rebasing onto the
   later state is also SAFER (order-a must reconcile with live routing regardless).
 source: scratchpad WORKTREE-TRIAGE-34.md SALVAGE (D1 triage, 2026-07-23); operator directive "salvage order-a"
