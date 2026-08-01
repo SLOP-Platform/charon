@@ -5,6 +5,22 @@ difficulty: 2
 work_class: rig-meta
 branch: feat/capture-wiring-timeout-fix
 owns: fleet/charon-run.sh
+substrate: N/A
+substrate-novel: |
+  Added 2026-08-01 by saba-sebatyne to clear a pre-existing gate RED (the ticket predates the
+  substrate-first gate and carried no substrate field). Judged on the CURRENT adopt-first lens,
+  not the old hand-roll-preferring one:
+
+  There is nothing external to adopt here. The defect is that OUR wrapper leaves a stray
+  `.active.*.json` row in OUR capture spool when `timeout` kills the client (rc=124) — a
+  correctness bug in rig-local cleanup, in a file we already own. No library models "this rig's
+  capture-spool row must not outlive an unattributable kill".
+
+  The adjacent question — "should we be hand-rolling a run-capture/attribution spool at all?" —
+  IS a legitimate adopt-first question, but it is a different and much larger ticket (replacing
+  the capture/scorecard substrate wholesale). Leaving a known-RED test unfixed while that is
+  debated would be the worse trade. Flagged here so the larger question is not lost:
+  the capture-spool + scorecard stack is a candidate for a real adopt-test under the new lens.
 depends_on: SALVAGE-STASH-CHARON-RUN, LEDGER-NO-EVIDENCE-NO-VERDICT
 dep-kind: build
 real-dep: |
