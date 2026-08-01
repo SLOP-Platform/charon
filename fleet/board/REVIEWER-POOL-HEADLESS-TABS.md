@@ -6,9 +6,13 @@ work_class: rig-meta
 branch: feat/reviewer-pool-headless-tabs
 owns: fleet/reviewer-tab.sh, fleet/spawn-tab.sh, fleet/REVIEWER-POOL-PROCESS.md
 serial_justified: One reviewer-tab entrypoint, the generic tab spawner it needs, and the process doc that makes the decision durable; splitting them lands a launcher with no documented contract.
-substrate: |
-  Windows Terminal (`wt.exe`) + the rig's OWN fleet/spawn-worker.sh — adopt, do not re-derive.
-  spawn-tab.sh reuses spawn-worker.sh's VERIFIED invocation verbatim (`-w 1` targets the
+substrate: N/A
+substrate-novel: |
+  No third-party tool is being replaced or hand-rolled: this reuses the rig's OWN, already-verified
+  spawner and adds a preflight contract specific to this rig's silent-failure modes (derive the
+  model chain from tier-models.tsv; refuse to start unless gh is present AND authenticated, the
+  gateway token derives, and /v1/models parses). Nothing external knows those.
+  spawn-tab.sh reuses fleet/spawn-worker.sh's VERIFIED invocation verbatim (`-w 1` targets the
   operator's window because `-w 0` follows GUI focus and $WT_SESSION is a PANE guid;
   --suppressApplicationTitle stops the child retitling the tab; the quoted ';' stops wt eating it
   as a shell separator; the chained focus-tab stops the spawn eating operator keystrokes). None of
