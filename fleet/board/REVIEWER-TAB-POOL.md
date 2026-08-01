@@ -8,7 +8,7 @@ depends_on: PR-QUEUE-REST-ETAG
 serial_justified: |
   one atomic capability — the reviewer launcher (review-pool.sh), its fail-on-revert test, and the review-queue schema are inseparable: the launcher can't be tested without the queue it claims from, and splitting ships a launcher with no queue or a queue with no consumer. One coupled build, not parallel surfaces.
 substrate: |
-  qodo-merge (ex pr-agent) / aider / CodeRabbit / GitHub Actions review bots — UNEVALUATED, and
+  qodo-merge / aider / CodeRabbit — UNEVALUATED (EVAL-REGISTRY row 2026-08-01), and
   that is a REAL gap, not a dismissal.
   Added 2026-08-01 by saba-sebatyne to clear a pre-existing gate RED (this ticket predates the
   substrate-first gate). Judged under the CURRENT adopt-first lens, which means saying the
