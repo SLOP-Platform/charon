@@ -4,7 +4,7 @@ difficulty: 2
 work_class: rig-meta
 priority: 1
 branch: feat/session-report-wire
-depends_on: DROID-LIFECYCLE-REAP, LAUNCHER-CRASH-PARTIAL-DETECT
+depends_on: DROID-LIFECYCLE-REAP
 owns: fleet/fleet-droid.sh, fleet/JOIN-PROMPT.md, fleet/tests/session-report-wire.test.sh
 substrate: N/A
 substrate-novel: |
@@ -90,12 +90,16 @@ note: |
   Then run it against a real claim and show the produced block.
 
 D&S — Deps & Sequence:
-  - Depends on: DROID-LIFECYCLE-REAP, LAUNCHER-CRASH-PARTIAL-DETECT — REAL sequencing prereqs,
-    not paperwork. All three edit `fleet/fleet-droid.sh`; DROID-LIFECYCLE-REAP is already PR-OPEN
-    and LAUNCHER-CRASH-PARTIAL-DETECT is blocked behind it. Wiring a report into a submit path
-    those two are about to rewrite means one change silently eats the other. validate_board.sh
-    flagged this as `owns-collision LIVE (no dep ordering)` at mint time.
-  - CONSEQUENCE (surfaced deliberately): this ticket is therefore BLOCKED on landing
-    DROID-LIFECYCLE-REAP (PR-OPEN ~374h). If the operator wants the report sooner, the lever is
-    landing that PR — not dispatching this one in parallel.
-  - Does NOT block the board. Sequence AFTER the remaining orphan-marker REDs clear.
+  - Depends on: DROID-LIFECYCLE-REAP — **SATISFIED 2026-08-01**. All three tickets edit
+    `fleet/fleet-droid.sh`, so the deps were collision-SEQUENCING, not build prereqs.
+  - **RE-SEQUENCED 2026-08-01 (operator: unblock this).** The original dep list also named
+    LAUNCHER-CRASH-PARTIAL-DETECT. Measured: that ticket has **no branch, no PR and has never been
+    started** — so a READY ticket was blocked behind an UNSTARTED one, which is backwards. The
+    ordering is now inverted: LAUNCHER-CRASH-PARTIAL-DETECT depends on THIS ticket. An unstarted
+    ticket yields to in-flight work; it does not gate it.
+  - DROID-LIFECYCLE-REAP resolution: its PR #103 was CLOSED (sent back — the unique-commit check
+    failed OPEN, turning "preserve the work" into `git branch -D`), and **superseded by PR #126
+    (feat/droid-lifecycle-reap-v2), which is MERGED**. The board read "PR-OPEN 374h" because the
+    ticket sat at `submitted` after the v2 merge — the F2 auto-done-on-merge miss again
+    (see AUTO-DONE-ON-MERGE-MISS). Done-marked 2026-08-01.
+  - Does NOT block the board.
