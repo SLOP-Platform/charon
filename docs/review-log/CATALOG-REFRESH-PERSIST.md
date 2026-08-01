@@ -157,3 +157,32 @@ through all four degraded-upstream attacks against a temp state dir. It is
 behavioural, not a source grep, so it stays honest if the unit tests are
 deleted. Red-proof: run against the pre-fix implementation it reports all five
 defects and exits 1; against the fixed implementation it exits 0.
+
+### Propagation: consumers enumerated (bar item 3)
+
+Consumers of the persisted catalog, enumerated from the call graph rather than
+sampled — `graphify explain catalog_refresh` plus every reader of `models.json`:
+
+| consumer | path | gets the persisted catalog |
+|---|---|---|
+| live router (in-process) | `bridge()` → `GatewayProxyServer.apply_routes` → `srv.routes`/`pools`/`model_pricing`, read by `chain_for` + `order_pool_by_live_cost` | yes, each cycle |
+| gateway config load | `gateway._resolve_config` (`models.json` → `build_routes_and_pools`); honours `enabled: false` at gateway.py:233 | yes, at startup |
+| setup-handler hot reload | `make_setup_handler._reload` → `load_config` → `apply_routes` | yes, on reload |
+| pool loader | `pools.load_pools` | yes, on read |
+| read-only config view | `api.show_config` | yes, on read |
+| model store / CLI | `config.models.load_models`, `cli.py` export | yes, on read |
+| pricing/limits checker | `pricing_limits_checker` | yes, on read |
+| pool-aware router | `router.Router` | yes, at construction |
+
+**Open defect (PRE-EXISTING, not introduced here — belongs to the original
+PROVIDER-CATALOG-REFRESH work).** `bind()` snapshots the static config into
+`self._base` ONCE at `build_server` time, and `bridge()` rebuilds the live
+routing table as `dict(base_routes)` + discovered on every cycle. Anything
+removed from the live server AFTER that snapshot — e.g. an operator disabling a
+model through the setup handler, which `_reload()` drops via the
+`enabled: false` filter — is RESTORED by the next `bridge()` from the stale
+baseline. So an operator disable does not durably stick on a running gateway
+until it is restarted. Fixing this means re-reading the baseline in `bridge()`
+(or re-`bind()`ing on reload), which touches the gateway wiring this ticket
+declared out of scope. Flagged for a follow-up ticket rather than silently
+carried.
