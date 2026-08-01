@@ -57,10 +57,15 @@ note: |
     d. ANTI-OVER-BLOCK: a `claimed` ticket with no PR is untouched.
   Then run it against the real board and show what it closes or explains.
 
-D&S — Deps & Sequence:
-  - Depends on: nothing. Touches the reconcile surface, not land.sh.
-  - Related: RECONCILE-BOARD-PR-DONE (DONE) covers adjacent ground — READ IT FIRST; this may be a
-    gap IN that work rather than new work. If so, say so and re-scope rather than building twice.
+## Dependencies & Sequence
+
+- **depends_on: (none).** Touches the reconcile surface, not land.sh.
+- Related: RECONCILE-BOARD-PR-DONE (DONE) covers adjacent ground — READ IT FIRST; this may be a
+  gap IN that work rather than new work. If so, say so and re-scope rather than building twice.
+  (2026-08-01: it WAS exactly that — see the Scope correction below.)
+- **Sequence: high.** While unlanded, every merged PR needs a hand-written done marker, and any
+  forgotten one silently blocks downstream tickets — measured today on GRADE-MODEL-PROVIDER-PAIR.
+- **owns-collision:** `fleet/reconcile-merged.sh` carries no `owns:` on any other live ticket.
 
 ## Scope correction (2026-08-01, saba-sebatyne)
 
