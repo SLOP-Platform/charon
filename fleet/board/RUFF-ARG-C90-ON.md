@@ -1,6 +1,6 @@
 repo: charon
 tier: economy
-priority: 1
+priority: 0
 difficulty: 3
 work_class: ci-infra
 branch: fix/ruff-arg-c90-on

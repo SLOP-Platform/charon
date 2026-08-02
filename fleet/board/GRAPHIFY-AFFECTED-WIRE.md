@@ -1,6 +1,6 @@
 repo: charon-private
 tier: economy
-priority: 1
+priority: 0
 difficulty: 3
 work_class: rig-meta
 branch: feat/graphify-affected-wire

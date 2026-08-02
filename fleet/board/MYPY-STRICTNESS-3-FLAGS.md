@@ -1,6 +1,6 @@
 repo: charon
 tier: strong
-priority: 1
+priority: 0
 difficulty: 4
 work_class: ci-infra
 branch: fix/mypy-strictness-3-flags
