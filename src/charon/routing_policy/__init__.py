@@ -61,6 +61,9 @@ class RoutingPolicyViolation(ValueError):
     """
 
 
+# zen/go routing policy — operator decision 2026-08-02:
+#   opencode-zen  -> FREE models ONLY  (funding_class 1)
+#   opencode-go   -> FREE models ONLY  (funding_class 2; "very cheap" proxied as free here)
 _OPENCODE_ZEN = "opencode-zen"
 _OPENCODE_GO = "opencode-go"
 
@@ -85,13 +88,13 @@ def _check_routing_policy(mid: str, spec: dict, providers_cfg: dict) -> None:
         return
     fc = _get_funding_class(prov, providers_cfg)
     is_free = bool(spec.get("free", False))
-    if fc == 1:
+    if fc == 1:  # funding_class 1 = free-recurring → free models only
         if not is_free:
             raise RoutingPolicyViolation(
                 f"model {mid!r} on provider {prov!r} is not free "
                 f"(free={is_free}) — violates opencode-zen FREE-ONLY policy"
             )
-    elif fc == 2:
+    elif fc == 2:  # funding_class 2 = flat-sub; "very cheap" enforced as free-only
         if not is_free:
             raise RoutingPolicyViolation(
                 f"model {mid!r} on provider {prov!r} is not free "
