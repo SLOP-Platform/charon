@@ -72,6 +72,109 @@ proof. "Merged" is not proof. A green that has never been red proves nothing. Tw
 passes against a mock of the component under test.
 
 ---
+
+# ⚠️ FRICTION FROM 2026-08-02 — DO NOT REPEAT THESE
+
+**Every item below cost real time in the last session. Each is stated as a COMMAND or a RULE, not
+advice. Read this before you touch anything.**
+
+## F1. GROUND ON THE TOOL INVENTORY BEFORE LAUNCHING ANYTHING
+I launched droids with `run_in_background` for HOURS. They were children of my own session:
+invisible to the operator and dead the moment the session ends. The operator had to tell me
+THREE times. `fleet/TOOL-INVENTORY.md` and `fleet/spawn-tab.sh` existed the whole time.
+**The ONLY correct launch commands:**
+```
+bash fleet/spawn-tab.sh <name> '<#hex>' bash fleet/fleet-droid.sh <economy|strong|frontier> --wait 2 --retries 0
+bash fleet/reviewer-tab.sh --tier <strong|frontier> --wait 5 --retries 0
+```
+`reviewer-tab.sh` is a LAUNCHER-OF-A-LAUNCHER — it spawns its own tab and exits. Do NOT wrap it
+in `spawn-tab.sh` (double-spawn). Its CLI is `--tier strong`, NOT a bare `strong`.
+**Verify a tab is REAL, not a child of your session:**
+```
+for p in $(pgrep -f 'bash .*fleet-droid\.sh'); do echo "$p ppid=$(ps -o ppid= -p $p|tr -d ' ')"; done
+```
+A ppid pointing at your shell = it dies with you. A ppid of 1 or an init-ish pid = detached.
+
+## F2. THE HANDOFF'S CLAIMS ARE STALE — VERIFY EVERY ONE BEFORE ACTING
+Five load-bearing claims were WRONG last session; each cost a wrong decision:
+| claim | reality | command that would have caught it |
+|---|---|---|
+| "PR #356 merged" | still OPEN | `gh pr view 356 --json state` |
+| "monit already adopted by the rig" | NOT INSTALLED anywhere | `command -v monit` |
+| "charon-bot account EXISTS" (implying ours) | it is a STRANGER's account | `gh api users/charon-bot` |
+| "$30.86 spent today" | meter is fiction both ways | read `/data/spend.json` on 4-LOM |
+| "fleet/state/* gitignored breaks CI" | negations already existed; files were never `git add`ed | `git check-ignore -v <path>` |
+**RULE: a claim in a handoff is a HYPOTHESIS. Confirm from the system before you build on it.**
+
+## F3. MEASUREMENT PATTERNS THAT LIE (I fell for all four)
+```
+pgrep -c -f 'review-pool.sh'        # WRONG: matches the string inside droid PROMPTS, and counts
+                                    # parent+child as 2. Tab count != process count.
+git merge-base --is-ancestor B M    # WRONG for this repo: we SQUASH-merge, so a merged branch is
+                                    # NEVER an ancestor. Use PR state, not ancestry.
+curl -s ... | head -c 60 && echo OK # WRONG: head exits 0 on EMPTY input, so this prints OK for a
+                                    # dead endpoint. Check the body, not the exit code.
+grep -c PARKED <file>               # Confirm the hit is in the FIELD you mean, not in prose.
+```
+
+## F4. 4-LOM IS DOCKER — NOT systemd, NOT a plain env file
+I gave the operator a confidently wrong procedure (systemd unit, `/data/charon/gateway.env`).
+Neither exists. Ground truth:
+```
+ssh -i ~/.ssh/4lom stack@10.0.1.60
+docker ps                                   # container: charon-gateway-1
+docker inspect charon-gateway-1 --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}'
+docker exec charon-gateway-1 ls -l /data    # config volume: charon_charon-config -> /data
+```
+**Provider secrets live in `/data/secrets.json` (mode 0600) INSIDE the container.** Back it up
+before ANY write — it is the live credential store for every provider.
+
+## F5. GRAPHQL IS THE BINDING CONSTRAINT — REST IS FREE
+GraphQL hits 0/5000 AT THE RESET BOUNDARY (the fleet drains it instantly) while REST core sits
+UNTOUCHED at 5000/5000. `gh pr list` is GraphQL; `gh api repos/.../pulls` is REST.
+```
+gh api rate_limit --jq '.resources.core, .resources.graphql'
+```
+When GraphQL is dry, `land-push` cannot verify CI and refuses. For a BOARD-ONLY change that is a
+verification gap, not a red — `--force` is the logged escape. For CODE, wait.
+
+## F6. EXACT COMMAND FORMS THAT COST ME RETRIES
+```
+bash fleet/land-push.sh <ref>:<ref> <repo> [--force]   # bare branch name is REFUSED; flag goes LAST
+bash fleet/done.sh <id>                                # there is NO --pr flag
+bash fleet/board-lock.sh commit --session <s> -m '<msg>' -- <paths>   # plain `git commit` is refused
+bash fleet/work-lease.sh acquire <TICKET>              # do this INSTEAD of WORK_LEASE_BYPASS=1
+( ... ) | crontab -                                    # the trailing '-' is MANDATORY; without it
+                                                       # crontab REPLACED the table and silently
+                                                       # killed the detector for 8 hours
+```
+Ticket frontmatter that passes the gate FIRST TRY (copy `fleet/board/RESCUE-PUSH-TOOL.md`):
+`substrate:` (>=60 chars real reasoning, or `N/A` + `substrate-novel:`) · a
+`## Dependencies & Sequence` section · block scalars for prose containing `: ` or a backtick ·
+NO column-0 line before the first `##` · `work_class` from the CANONICAL set
+(`bugfix ci-infra design-review docs frontend generalist greenfield-feature money-path refactor
+rig-meta routing tests` — **`fix` is NOT valid**).
+
+## F7. THE BOARD HAS TWO VIEWS AND THEY DISAGREE
+`status.sh` says `ready`; `claim.sh` silently skips for FIVE more reasons (loop-guard quarantine,
+`/PARKED/` prose match, tier rank, own/other pass, claimed/submitted/done sets). `--only` is
+applied BEFORE them, so a hard pin is silently overridden.
+```
+ls fleet/state/loop-guard/          # quarantined = INVISIBLE to claim.sh
+bash fleet/loop-guard.sh clear <id> # but FIX THE CAUSE or it re-quarantines in minutes
+```
+Ticketed as BOARD-VIEW-MISMATCH (#2) and ZERO-COMMIT-SPIN (#1).
+
+## F8. CHECK THE SECOND LEG OF EVERY CADENCE
+A registered cron job that never executes reads as clean. Both halves must be proven:
+```
+crontab -l | grep -c stranded-work-cron      # leg A: registered
+cat fleet/state/.stranded-work.heartbeat     # leg B: EXECUTED (must be <20 min old)
+tail -5 fleet/state/cron-rescue.log          # never redirect cron to /dev/null — I did, and the
+                                             # failure was invisible for hours
+```
+
+---
 # ⛔⛔⛔ START HERE — OPERATOR DIRECTIVE 2026-08-02 — TOOL UTILIZATION IS PRIORITY #1 ⛔⛔⛔
 
 **This section SUPERSEDES the 2026-08-01 first-six below (which is now COMPLETE — see §DONE-0802).
