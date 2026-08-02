@@ -1,6 +1,6 @@
 repo: charon-private
 tier: strong
-priority: 1
+priority: 0
 difficulty: 3
 work_class: design-review
 branch: eval/pr-automation
@@ -87,3 +87,50 @@ note: |
 D&S — Deps & Sequence:
   - Depends on: nothing. Pure measurement, owns one doc, collision-free.
   - Feeds REVIEWER-TAB-POOL: if pr-agent wins, that ticket is re-scoped or retired.
+
+## SCOPE GAP 2026-08-02 (operator-directed): THE MERGE/LIFECYCLE HALF IS NOT EVALUATED
+
+Operator: "I WANT a tool that will handle draft PR/PR in the BACKGROUND AS THEY ARE GENERATED.
+I want this researched as this can NOT be unique to us." Correct — it is a solved product
+category, and this eval currently covers only HALF of it.
+
+WHAT THIS EVAL COVERS TODAY: PR **REVIEW** automation — pr-agent, aider, CodeRabbit, Greptile,
+Danger, Reviewpad. Verdict ADOPT-pr-agent-wrapper is sitting in **OPEN DRAFT PR #391**.
+
+WHAT IT DOES NOT COVER: the **MERGE QUEUE / PR LIFECYCLE AUTOMATION** category — tools whose entire
+job is "react to PR events in the background: when CI is green and approvals are satisfied, merge;
+batch, retry, rebase, and report". NONE of these has an EVAL-REGISTRY row:
+  - **Mergify** — rules engine + merge queue, reacts to PR webhooks; the market leader
+  - **GitHub native merge queue** — zero new infra, already in the platform we use
+  - **Prow / Tide** (Kubernetes) — the mature open-source answer; batch merging on label+CI state
+  - **Kodiak** — small auto-merge bot, GitHub App
+  - **Bulldozer** (Palantir) — auto-merge on configurable conditions
+  - **Aviator**, **Trunk Merge** — commercial merge queues
+  - **plain GitHub Actions on `pull_request` / `check_suite` events** — the DIY event-driven floor,
+    and the honest baseline every candidate must beat
+MCP-first still applies: check EVERY candidate for an MCP interface (standing operator input).
+
+WHY IT MATTERS HERE, measured 2026-08-02: **67 open PRs, 52 DRAFTS, up from 42 in ONE session.**
+`fleet-droid.sh` ends every ticket by opening a draft, so drafts are the launcher's normal output
+and the queue grows monotonically with fleet throughput. Polling reviewers cannot keep up and
+already drained the entire GraphQL quota trying. **This needs to be EVENT-DRIVEN, not polled** —
+which is precisely what this category does and our `review-pool.sh` does not.
+
+Done contract additions:
+ 1. Evaluate the merge-queue category against the SAME 4 criteria as the review half. A verdict per
+    candidate in EVAL-REGISTRY — never in a handoff note.
+ 2. Answer explicitly: **can it drive DRAFT PRs?** Most merge queues ignore drafts by design. If the
+    fleet's normal output is a draft, either the tool must handle drafts or the LAUNCHER must stop
+    opening them as drafts. That is a real fork in the design — decide it here.
+ 3. Weigh event-driven (webhook/Action) vs polling explicitly. Polling is what exhausted the quota;
+    it is a cost axis, not just an elegance one.
+ 4. Land PR #391 first or fold it in — an ADOPT verdict stuck in a draft is this ticket's own
+    failure mode, and it has been sitting unread.
+ 5. The two halves compose: a REVIEW tool produces the verdict, a MERGE tool acts on it. Do not
+    pick one and call the problem solved.
+
+## Dependencies & Sequence
+
+Raised with PR-QUEUE-DRIVE (queue #6): that ticket DRAINS the current 52 by hand, this one stops the
+backlog re-forming. Do both — draining without automation just refills, automating without draining
+leaves 52 stranded.
