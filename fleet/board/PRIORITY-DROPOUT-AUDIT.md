@@ -9,15 +9,16 @@ owns: fleet/state/PRIORITY-DROPOUT-AUDIT.md, docs/review-log/PRIORITY-DROPOUT-AU
 serial_justified: |
   One reconciliation across one pair of sources. Parallel lanes would each build a different
   notion of "on the list" and disagree, which is the defect under audit.
-substrate: |
-  ADOPT-FIRST applies to the FIX, not the audit. The rig already owns four tools that each hold a
-  piece of this - fleet/validate_board.sh (already reconciles board state and reports orphan
-  markers), fleet/report.sh with fleet/state/ROADMAP.tsv (the canonical status list),
-  fleet/pending.sh (the operator-action list) and fleet/checks/stranded-work.sh (work-loss
-  shapes). The leading hypothesis is that NO new tool is needed - validate_board.sh already walks
-  every board ticket and already emits RED findings, so a board-to-roadmap reconciliation is an
-  additional predicate in an existing walker rather than a new script. The audit must CONFIRM or
-  REFUTE that before anything is built.
+substrate: N/A
+substrate-novel: |
+  Nothing is adopted by this ticket - it is a read-only audit over THIS RIG'S OWN state, and no
+  external tool can answer "which of our work items fell off our own list". ADOPT-FIRST applies to
+  the FIX that follows, and the audit's own done contract (see the TOOL QUESTION in note:) forces
+  that evaluation across the four tools we ALREADY own - validate_board.sh, stranded-work.sh,
+  report.sh/ROADMAP.tsv and pending.sh - with a written rejection reason for each, and forbids
+  proposing a new script unless every one is shown unsuitable. So the adopt-first discipline is
+  enforced INSIDE the deliverable rather than skipped here. The novel slice is the reconciliation
+  predicate itself - "live in git, absent from the list" - which no existing check computes.
 execution: |
   Off-Claude. AUDIT lane - measure and report. Wire NOTHING in this ticket; the wiring is a
   follow-up sized by what the audit finds.
