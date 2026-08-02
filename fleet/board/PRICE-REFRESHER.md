@@ -104,3 +104,40 @@ CONSEQUENCE FOR THE DESIGN:
 DEPENDENCY DIRECTION (was implicit, now explicit): SPEND-METRIC-TRUSTWORTHY consumes this feed,
 not the reverse. Neither blocks the other — provider-reported cost works today for the providers
 that report it, and should not wait on full price coverage.
+
+## SUBSTRATE CANDIDATE 2026-08-02: TokenWatch (evaluated by CODE, not by stars)
+
+https://tokenwatch.wyrdwerk.com/ · https://github.com/WyrdWerk/tokenwatch
+
+VERIFIED LIVE, not read from marketing:
+  - `https://tokenwatch.wyrdwerk.com/pricing.json` -> HTTP 200, 863 KB, **993 models**, no auth.
+  - Row shape: `pricing{input,output}`, `provider`, `quantization`, `context_length`, `discount`,
+    `zdr`, `benchmarks`, `modelsdev_model`.
+  - A queryable API exists at `functions/api/v1/` (Cloudflare Pages Functions).
+  - Refresh cadence: GitHub Actions **2-hourly cron** commits updated JSON.
+  - Sources (per its README, and consistent with the data): direct `/v1/models` polling
+    (DeepInfra, Crof, EmberCloud, Wafer, Synthetic, Lilac, SambaNova, Hyper), OpenRouter
+    `/endpoints` **de-aggregated into the underlying providers**, CSV/hardcoded for a few
+    (Makora, Xiaomimimo, **OpenCode Go**), plus models.dev enrichment. Normalised to $/M tokens.
+
+PROOF IT ANSWERS A QUESTION OUR OWN CATALOG COULD NOT — `deepseek-v4-flash-0731`:
+our gateway catalog lists it under DeepInfra and Morph ONLY. TokenWatch shows **13 providers**
+serving it, cheapest-first: deepinfra $0.09/$0.18 · crof $0.12/$0.21 · gmicloud $0.133/$0.266 ·
+deepseek-direct/cloudflare/novita/parasail/siliconflow/atlascloud/fireworks $0.14/$0.28 ·
+hyper $0.152/$0.305 · io-net $0.18/$0.34 · mancer-2 $0.25/$1.00.
+So DeepSeek DIRECT does serve it (we lacked the entry), and DeepInfra — which we already have —
+is 36% cheaper on input than direct. That is a routing decision we could not previously make.
+
+ROLE — FALLBACK ONLY, and this is not negotiable:
+ 1. PRIMARY remains provider-reported cost (SPEND-METRIC-TRUSTWORTHY). A third-party aggregator
+    is evidence about price, never evidence about what WE were actually charged.
+ 2. This feed replaces the STATIC table (10 of 861 priced) as the fallback when a provider does
+    not report cost. It does NOT license a synthesised floor — unpriced still resolves UNKNOWN.
+ 3. RISK, state it in the review-log: 6 stars, single maintainer, third-party availability.
+    Treat as an external dependency — cache the last good copy, fail to UNKNOWN (never to a
+    stale price presented as current) if the fetch fails, and record fetch time with every price.
+ 4. Cross-check a sample against provider-reported cost before trusting it broadly; a
+    disagreement is a finding, not a rounding error.
+ 5. USE THE `quantization` FIELD. Most of the $0.14 offers above are fp8. Quality is a
+    model x provider property precisely because of quantization, so price alone must not pick a
+    leg — this feeds GRADE-MODEL-PROVIDER-PAIR, it does not override it.
