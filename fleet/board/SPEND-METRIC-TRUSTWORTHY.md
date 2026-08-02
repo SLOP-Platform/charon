@@ -106,3 +106,35 @@ CONTINUOUSLY, because the ground truth only exists while a session lives.
 ACCEPTANCE: a spend record that attributes cost PER PROVIDER, sourced from the provider's own
 number where available, with unpriced calls counted as UNKNOWN rather than estimated — and a
 fail-on-revert test proving a synthesised floor can never reappear.
+
+## UNIT CORRECTION 2026-08-02 (operator-directed): COST PER ACCEPTED TASK, NOT PER TOKEN
+
+Operator: "a cheap model that takes a ton of tokens to complete a task can be a worse option than
+a more expensive model that does the task faster/fewer tokens (with the ground plane being
+quality work that stands up to adversarial review with no changes)."
+
+$/M tokens is the WRONG UNIT and is actively misleading. A model that is half the price but burns
+5x the tokens, needs three retries, and then fails adversarial review is STRICTLY more expensive
+than a dearer model that lands correct work first time. The current meter cannot see any of that:
+it has no denominator of completed, accepted work.
+
+THE METRIC: **cost per ACCEPTED task** =
+    (total spend across ALL attempts for a ticket — every retry, every failover leg, every
+     model in the chain that was tried)
+    / (tasks that pass ADVERSARIAL REVIEW WITH NO CHANGES REQUIRED)
+
+The quality floor is what makes it honest. Without "no changes required" in the denominator,
+"cheap" degenerates into "fails cheaply" — and the fleet has already measured that shape: 6 of 8
+PRs bounced in one review round, several from models chosen on price.
+
+INPUTS THAT ALREADY EXIST — join them, do not build a new pipeline:
+  - per-ticket spend: this ticket's per-provider attribution (once provider-reported cost lands)
+  - attempts + failover legs: the launcher already records the model chain and每 retry
+  - outcome: the launcher's per-ticket GATE result and the review verdict (LAND / BOUNCE)
+  - ranking surface: fleet/capability/assign.py real-outcome ranking + the live model-scorecard
+The MISSING join is spend -> ticket -> outcome. That join IS the deliverable.
+
+CONSEQUENCE FOR ROUTING: cheapest-per-token must NOT be the sort key. The key is cheapest per
+ACCEPTED task for that work_class x tier, which is a model x provider property (quantization,
+hardware, hidden prompts) — see GRADE-MODEL-PROVIDER-PAIR. A price feed informs this; it never
+decides it alone.
