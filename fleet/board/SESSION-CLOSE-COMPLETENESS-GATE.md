@@ -79,3 +79,49 @@ D&S — Deps & Sequence:
   - After SESSION-END-GATE-REPAIR (that fixes the close path; this adds a check to it).
   - Composes with, and does not replace, WIP-CLOSE-GATE and SESSION-END-PUSH-GATE — read both
     before starting and fold rather than fork if they overlap.
+
+## SCOPE EXTENSION 2026-08-02 (operator-directed): THE CLOSE GATE MUST COVER NON-GIT LOSS TOO
+
+Operator: "can we make the session end gate cover things like this — make a session verify its
+claims and save/ticket harness tasks?" Yes, and this ticket is the umbrella.
+
+WHAT end-session.sh ASSERTS TODAY — all of it GIT-SHAPED: handoff exists (or regenerate),
+handoff-check passes, no strandable work in second repos, stale-handoff guard. Every loss class it
+knows about leaves a git artifact. The classes measured 2026-08-02 that it CANNOT see leave none.
+
+THE ASSERTION LIST — a close is REFUSED unless every one passes, each naming what failed:
+
+  A. HARNESS TASKS HAVE A DURABLE HOME  → owned by `TASK-LIST-DURABILITY-GATE` (minted 2026-08-02)
+     Every OPEN harness task maps to a board ticket id, a fleet/pending.sh action, or an explicit
+     `[DROPPED — reason]`. MEASURED: closed with 24 tasks / 15 open / SIX with no ticket. They
+     survived only because the operator asked. No prior session's list can be inspected because
+     none survived — that absence IS the evidence.
+
+  B. THE SESSION VERIFIED ITS OWN CLAIMS  → the F9 rule, mechanized
+     Every COMMAND written into the handoff must have been EXECUTED this session, with its result
+     recorded. MEASURED: the first draft of the 2026-08-02 handoff carried two false claims —
+     "a ppid of 1 = detached" (wrong; real detached tabs show a bash/timeout parent) and an
+     inherited "monit is already adopted" (disproved by one `command -v`). An unverified procedure
+     in a handoff is not guidance, it is a trap: the next session trusts it exactly as much as
+     this one trusted the last.
+
+  C. CADENCE LEG B  — every registered cron job has a FRESH heartbeat, not merely a crontab line.
+     MEASURED: an 8-hour silent outage after a `| crontab` (missing `-`) replaced the table.
+
+  D. NO INVISIBLE TICKETS  — `fleet/state/loop-guard/` is empty, or each entry is named with its
+     reason. MEASURED: 8 tickets quarantined and invisible, including P0s minted the same day.
+
+  E. NO STALE OPERATOR ACTIONS  — closed items retired. MEASURED: the list reached #33 and mostly
+     closed, which is why action #15 went UNREAD for three sessions.
+
+Done contract: implement A-E as named assertions in fleet/end-session.sh, each FAILING LOUD with
+the specific unmet item. Fail-on-revert per assertion — seed the exact condition and prove the
+close REFUSES. A close gate that passes silently is the same false-green family as a registered
+cron job that never executes.
+
+## Dependencies & Sequence
+
+Depends on SESSION-END-GATE-REPAIR: the close path is self-blocking today (end-session.sh creates
+its own target file, then the allocator refuses the name), so it ABORTS BEFORE any assertion runs.
+Fix that first or every assertion added here is dead code. Assertion A is owned by
+TASK-LIST-DURABILITY-GATE; land it independently and reference it here.
