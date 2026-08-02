@@ -93,7 +93,9 @@ in `spawn-tab.sh` (double-spawn). Its CLI is `--tier strong`, NOT a bare `strong
 ```
 for p in $(pgrep -f 'bash .*fleet-droid\.sh'); do echo "$p ppid=$(ps -o ppid= -p $p|tr -d ' ')"; done
 ```
-A ppid pointing at your shell = it dies with you. A ppid of 1 or an init-ish pid = detached.
+VERIFIED 2026-08-02: a real detached tab shows a `bash`/`timeout` parent from the WT spawn chain,
+NOT pid 1. The test is: does the ppid chain trace back to YOUR shell? If yes it dies with you.
+(My first draft of this rule said 'ppid 1 = detached' — that is WRONG and would fail every time.)
 
 ## F2. THE HANDOFF'S CLAIMS ARE STALE — VERIFY EVERY ONE BEFORE ACTING
 Five load-bearing claims were WRONG last session; each cost a wrong decision:
@@ -210,6 +212,33 @@ and checks that read as protection while being wired to nothing.**
 **Rule for every one of these:** wiring is proven by making the check FAIL on a deliberate
 violation. Registration is not proof. "Merged" is not proof. A gate must be SEEN to fail.
 
+
+## F9. CONFIRM YOUR OWN HANDOFF BEFORE YOU HAND IT OVER
+
+The golden rule is CONFIRM EVERYTHING, NEVER TRUST DOCUMENTATION — and it applies to the document
+you are writing, not just the one you inherited. Last session wrote 688 lines of handoff and had
+to be asked before verifying any of it. Two claims in THIS file were wrong on first draft:
+  - "a ppid of 1 = detached" — WRONG. Real detached tabs show a bash/timeout parent from the WT
+    spawn chain. Corrected in F1 above, but only because it was actually run.
+  - "monit already adopted" — inherited, repeated, then disproved by one `command -v`.
+**BEFORE HANDING OFF: run every command you wrote down, and mark each claim VERIFIED <date> or
+delete it.** An unverified procedure in a handoff is not guidance, it is a trap with your name on
+it. The next session will trust it exactly as much as you trusted the last one.
+
+VERIFIED 2026-08-02 (each actually executed, not reasoned about):
+```
+bash fleet/checks/stranded-work.sh          rc=1   (findings present = correct, not failure)
+bash fleet/checks/gate-integrity.sh scan    rc=0
+bash fleet/rescue-push.sh                   rc=0
+crontab -l | grep stranded-work-cron        1 entry; heartbeat fired 23:00:07 then 07:40:12
+bash fleet/loop-guard.sh clear <id>         cleared 8; SPEND-METRIC re-quarantined in minutes
+bash fleet/land-push.sh <ref>:<ref> <repo>  bare name REFUSED; --force must come LAST
+bash fleet/done.sh <id>                     no --pr flag exists
+bash fleet/board-lock.sh commit --session … plain `git commit` on the board is REFUSED
+docker exec charon-gateway-1 ls -l /data    secrets.json 0600 present; NO systemd, NO gateway.env
+gh api rate_limit                           graphql 0/5000 at reset; REST core 5000/5000
+```
+
 ---
 
 # ⛔⛔ UNTRACKED WORK PILEUP — MEASURED 2026-08-02 ⛔⛔
@@ -282,7 +311,7 @@ never reach their close.** This session came within a token limit of exactly tha
 run on a CADENCE, independent of any session's lifecycle.
 
 Investigate ADOPT-FIRST (per §0 doctrine — do NOT hand-roll a daemon first):
-- the rig already runs **monit** (`fleet/watchdog/*`) — the cheapest candidate, already adopted
+- ~~the rig already runs **monit**~~ **FALSE — CORRECTED 2026-08-02**: `command -v monit` fails here AND on 4-LOM, no `/etc/monit*`, and its SSOT `fleet/state/service-registry.tsv` did not exist. monit was a PAPER adoption. cron was adopted instead and is now live
 - systemd user timers / cron
 - a git hook (`post-commit` / `pre-push`) for the commit-time half
 - `fleet/watchdog/discover-services.sh` + `generate-monit-config.sh` already exist and may take it
