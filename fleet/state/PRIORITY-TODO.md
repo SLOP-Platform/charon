@@ -59,13 +59,41 @@ moved in two reports, say so explicitly and why.
   ENGINE-CONVERGE, PRICING-FEED (now minted), ORCHESTRATION-RE-RUN
 
 ## 5 — NEEDS THE OPERATOR
-- **opencode-zen / opencode-go providers** — key IS stored in `/data/secrets.json`
-  (`OPENCODE_ZEN_API_KEY`, 67 chars, backed up). Register both: zen
-  `https://opencode.ai/zen/v1`, go `https://opencode.ai/zen/go/v1`
-- **Monthly spend cap** — `monthly_limit_usd` is GLOBAL and `0.0` (uncapped). **Do NOT set a
-  number until the meter is trustworthy** — it currently claims $1,185 for two days
-- **A second GitHub identity** — `charon-bot` is NOT ours (it is "Mr. Charon", created
-  2018-11-05). Needed for reviewer!=builder AND as a second API-quota pool
+
+- **[RANKED WITH #10] A SECOND GITHUB IDENTITY THE OPERATOR CONTROLS.** `charon-bot` is NOT ours —
+  `gh api users/charon-bot` resolves to a real third party ("Mr. Charon", created 2018-11-05), and
+  the operator has confirmed they never had such an account. So operator action #23 was never
+  actionable. TWO things follow, and they are separable:
+    (a) CODE, ticketed as `DROID-IDENTITY-THIRD-PARTY` (P0, queue #10) — stop stamping droid
+        commits as `charon-bot@users.noreply.github.com`, which maps to THAT PERSON'S account on a
+        PUBLIC repo. Fix the default to an address resolving to nobody (`@fleet.local`, the shape
+        the launcher already uses). This does NOT need the operator.
+    (b) OPERATOR — create a bot account you control, if we still want reviewer!=builder (GitHub
+        refuses request-changes on your own PRs) AND a second 5000-point API quota pool
+        (see action #31; GraphQL was the binding constraint all of 2026-08-02).
+  (a) is unblocked and should just be done. (b) is a real decision — a second identity is
+  optional, the misattribution fix is not.
+
+- **MONTHLY SPEND CAP — HOLD.** `monthly_limit_usd` is GLOBAL (not per-provider) and `0.0`
+  (uncapped). Do NOT pick a number yet: the meter reads \$1,185 for two days of August against
+  ~\$1.34 of measured real spend, and has no per-provider breakdown. Capping against a meter that
+  is wrong in both directions either throttles everything instantly or does nothing. Set it AFTER
+  `SPEND-METRIC-TRUSTWORTHY` lands.
+
+- **~~opencode-zen / opencode-go registration~~ — DONE, NOTHING NEEDED.** VERIFIED 2026-08-02 on
+  the live gateway: both entries carry `base_url` AND `key_env`, the secret is in
+  `/data/secrets.json`, and both ROUTE — opencode-go serves 2 models (`deepseek-v4-flash-go`,
+  `minimax-m2.5-go` — the latter is in the live strong chain), opencode-zen serves 60.
+  **Operator action #18 is STALE** and should be retired; its claim that opencode-go has "only
+  funding_class, NO base_url and NO key_env" is no longer true.
+
+- **⚠ NEW RISK, needs a decision:** `opencode-zen` exposes `claude-*` models
+  (`opencode-zen/claude-opus-4-1`, `claude-fable-5`, `claude-haiku-4-5`, ...). The standing HARD
+  rule is **SG never routes via Claude/Anthropic**, and that rule is on record as one that KEEPS
+  REGRESSING. No current tier chain includes them, so we are clean TODAY — but they are now
+  reachable through a live provider, which is precisely the setup for a silent regression. Either
+  exclude `claude-*` from opencode-zen at the pool layer, or add an assertion that no tier chain
+  may contain an Anthropic-served model. Recommend the assertion — it survives catalog refreshes.
 
 ## 6 — THE RULE THAT GOVERNS ALL OF IT
 **Wiring is proven by making the check FAIL on a deliberate violation.** Registration is not
