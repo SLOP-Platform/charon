@@ -699,3 +699,34 @@ def test_default_seed_path_resolves_to_repo_tsv():
 
     assert ledger.tracker._active.get("groq") is not None
     assert ledger.tracker._active["groq"]["rpd"] == (14400, "rolling")
+
+
+# ---------------------------------------------------------------------------
+# Dogfood: per-provider headroom report for the ticket's named providers
+# ---------------------------------------------------------------------------
+
+
+def test_dogfood_headroom_report_for_named_providers():
+    """(DONE dogfood) the real seed reports headroom for the five free-tier
+    providers the operator cares about: nvidia, mistral, google-aistudio
+    (google-gemini), groq, cerebras.  Unknown-limit providers report None —
+    surfaced, never guessed."""
+    ledger = FreeTierLedger.from_tsv()
+
+    for provider in ("nvidia", "mistral", "google-gemini", "groq", "cerebras"):
+        # Every named provider is either configured with limits or surfaced
+        # as unknown — never silently absent.
+        assert (
+            not ledger.is_unknown_limit(provider)
+            or ledger.remaining_quota(provider) is None
+        )
+
+    # Known-limit providers report real headroom.
+    assert ledger.remaining_quota("groq") is not None
+    assert ledger.remaining_quota("cerebras") is not None
+    assert ledger.remaining_quota("google-gemini") is not None
+    assert ledger.remaining_quota("mistral") is not None
+
+    # Unknown-limit providers report None (surfaced, not guessed).
+    assert ledger.remaining_quota("nvidia") is None
+    assert ledger.is_unknown_limit("nvidia") is True
