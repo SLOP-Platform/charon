@@ -1,3 +1,77 @@
+# ⛔⛔⛔ FIRST THINGS — NEXT SESSION, IN ORDER, NON-NEGOTIABLE ⛔⛔⛔
+
+**Operator directive 2026-08-02. Do these BEFORE anything else. Do NOT delete an item — mark it
+`[DONE <sha/PR>]` or `[DROPPED — reason]`. An item that vanishes is the failure this file exists
+to prevent.**
+
+## 0 — RUN THESE THREE, EVERY SESSION, FIRST (they take ~2 minutes)
+```
+bash fleet/checks/stranded-work.sh          # all 5 work-loss shapes
+bash fleet/checks/gate-integrity.sh scan    # inert / falsely-claimed / unproven gates
+bash fleet/rescue-push.sh                   # at-risk branches (dry run)
+```
+Then confirm the cadence is ALIVE, not merely registered:
+```
+crontab -l | grep -c stranded-work-cron     # must be 1
+cat fleet/state/.stranded-work.heartbeat    # must be < 20 min old
+tail -5 fleet/state/cron-rescue.log         # rescue half must be running too
+```
+**A registered job that never executes reads as clean. That is the failure mode. Check leg B.**
+
+## 1 — REPORT PROGRESS ON THIS LIST EVERY 5 COMPLETED TASKS
+Print: item · state · evidence (sha/PR/command output). No prose-only claims. If an item has not
+moved in two reports, say so explicitly and why.
+
+## 2 — THE P0 QUEUE, BLAST-RADIUS ORDERED
+| # | ticket | why here |
+|---|---|---|
+| 1 | `BOARD-VIEW-MISMATCH` | status.sh says `ready`, claim.sh silently skips. 5 hidden filters, no reason surfaced, `--only` silently overridden. **Until this lands you cannot trust the board.** |
+| 2 | `ZERO-COMMIT-SPIN` | 8 tickets were quarantined+INVISIBLE for claim->no-op->release. Cleared 2026-08-02, but SPEND-METRIC-TRUSTWORTHY re-quarantined within MINUTES — the spin is LIVE |
+| 3 | `GRAPHIFY-AFFECTED-WIRE` | the blast-radius query itself, 0 call sites. Everything else is prioritised by hand until it is wired |
+| 4 | `WIRING-DONE-CONTRACT` | done.sh proves MERGED, never REACHABLE. This is why built-but-inert keeps happening |
+| 5 | `FLEET-STATUS-BOARD` + `MISSING-CLASS-DETECTORS` | registry + bidirectional meta-check, and detectors for the 9 classes that have none. A check that stops running must show MISSING |
+| 6 | `INERT-CHECKS-WIRE` · `PROOF-SUITES-ENFORCE` | 9 inert checks; 101 red-proof suites that never run (floor 88, RISING) |
+| 7 | money: `SPEND-METRIC-TRUSTWORTHY` · `COST-PER-TASK-REPLAY` · `PRICING-FEED` · `LITELLM-COST-ADOPT` | meter is fiction both ways; cost/token is the WRONG UNIT; LiteLLM cost tracking is vendored with ZERO importers |
+| 8 | `OWNS-OVERLAP-DISAMBIGUATE` · `DROID-IDENTITY-THIRD-PARTY` | reconciler premise wrong; our commits attributed to a stranger's GitHub account |
+
+## 3 — LOOSE ENDS FROM 2026-08-02 (mine, unfinished — process these)
+- **189 `pushed-no-pr`** branches · **57 `closed-pr-unlanded`** · **17 dirty worktrees**
+  (tickets exist: PUSHED-NO-PR-TRIAGE, CLOSED-PR-UNLANDED-TRIAGE, DIRTY-WORKTREE-SWEEP)
+- **`rescue/*` refs never triaged** — they hold the LOCAL side of 4 diverged branches. Do not
+  delete until the divergence is resolved by hand
+- **Stale operator-action markers never retired** — the list is at #32 and mostly closed, which
+  is why #15 has gone unread for THREE sessions
+- **7 tickets re-quarantined then cleared without diagnosing the cause** — see item 2
+
+## 4 — HANDED TO ME, STILL NOT DONE (carried from the 2026-08-01 handoff)
+- §C — 13 ticketed-but-inert, 10 never-ticketed, **101 unrun proof suites**
+- §D — `import-linter` adopt-test; KS29/KS30 still `designed`
+- §E — 5 `review-pool.sh` defects (a 6th found today); `--wait/--retries` STILL dropped by its
+  own dispatch (`main_loop "$CMD"`)
+- §F2 — doctrine loads from `.claude/settings.local.json`, machine-local and untracked. A fresh
+  clone loads NOTHING
+- §M2 — 4-LOM runs image `v0.6.1`; deployed gateway lacks everything landed since
+- **#15 — Letta + memory-layer reviews: ~10 verdicts commissioned, completed, NEVER READ.**
+  Survived 3 sessions. `grep -c Letta EVAL-REGISTRY` = 0
+- **#17 — 4 GATE-3 tickets approved 2026-07-31, never staged:** SPAWN-VIA-CAPABILITY,
+  ENGINE-CONVERGE, PRICING-FEED (now minted), ORCHESTRATION-RE-RUN
+
+## 5 — NEEDS THE OPERATOR
+- **opencode-zen / opencode-go providers** — key IS stored in `/data/secrets.json`
+  (`OPENCODE_ZEN_API_KEY`, 67 chars, backed up). Register both: zen
+  `https://opencode.ai/zen/v1`, go `https://opencode.ai/zen/go/v1`
+- **Monthly spend cap** — `monthly_limit_usd` is GLOBAL and `0.0` (uncapped). **Do NOT set a
+  number until the meter is trustworthy** — it currently claims $1,185 for two days
+- **A second GitHub identity** — `charon-bot` is NOT ours (it is "Mr. Charon", created
+  2018-11-05). Needed for reviewer!=builder AND as a second API-quota pool
+
+## 6 — THE RULE THAT GOVERNS ALL OF IT
+**Wiring is proven by making the check FAIL on a deliberate violation.** Registration is not
+proof. "Merged" is not proof. A green that has never been red proves nothing. Two shapes caused
+6 of 8 PR bounces on 2026-08-02: a safety property asserted only in prose, and a suite that
+passes against a mock of the component under test.
+
+---
 # ⛔⛔⛔ START HERE — OPERATOR DIRECTIVE 2026-08-02 — TOOL UTILIZATION IS PRIORITY #1 ⛔⛔⛔
 
 **This section SUPERSEDES the 2026-08-01 first-six below (which is now COMPLETE — see §DONE-0802).
