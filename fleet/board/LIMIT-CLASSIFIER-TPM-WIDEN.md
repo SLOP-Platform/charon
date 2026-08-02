@@ -115,14 +115,15 @@ scope: |
 
 ## Dependencies & Sequence
 
-- **depends_on: `CAPTURE-WIRING-TIMEOUT-FIX` — a SEQUENCING dependency, not a build prereq.** The
-  change itself needs nothing to land first: it is one regex and one hermetic test. The dependency
-  exists because `fleet/charon-run.sh` is contended — `CAPTURE-WIRING-TIMEOUT-FIX` and
-  `GRADE-MODEL-PROVIDER-PAIR` both own it and are both LIVE, and `CAPTURE-WIRING-TIMEOUT-FIX`
-  already depends on `GRADE-MODEL-PROVIDER-PAIR`. Declaring this ticket downstream of
-  `CAPTURE-WIRING-TIMEOUT-FIX` therefore orders it after BOTH transitively, which is what makes the
-  three safe to schedule [[disjoint-owns-not-no-dependency]]. **If the contended file is freed
-  earlier — either of those two lands, or a manager re-sequences — this ticket can run immediately;
+- **depends_on: `CAPTURE-WIRING-TIMEOUT-FIX, MODEL-HARDCODE-PURGE` — SEQUENCING dependencies, not
+  build prereqs.** The change itself needs nothing to land first: it is one regex and one hermetic
+  test. The dependencies exist because `fleet/charon-run.sh` is CONTENDED BY FOUR LIVE TICKETS —
+  `CAPTURE-WIRING-TIMEOUT-FIX`, `GRADE-MODEL-PROVIDER-PAIR`, `MODEL-HARDCODE-PURGE` and this one.
+  `CAPTURE-WIRING-TIMEOUT-FIX` already depends on `GRADE-MODEL-PROVIDER-PAIR`, so declaring this
+  ticket downstream of `CAPTURE-WIRING-TIMEOUT-FIX` orders it after both transitively;
+  `MODEL-HARDCODE-PURGE` is unordered relative to them and so is named explicitly. Together these
+  make the four safe to schedule [[disjoint-owns-not-no-dependency]]. **If the contended file is
+  freed earlier — any of those land, or a manager re-sequences — this ticket can run immediately;
   nothing in its diff waits on their content.**
 - **This is a P0 sitting behind two tickets, and that is a real cost worth surfacing.** Every hour
   it waits, `fleet/model-scorecard.tsv` accrues more false BLOCKs. If the queue is long, the right
