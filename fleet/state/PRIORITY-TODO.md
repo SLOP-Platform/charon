@@ -1,3 +1,18 @@
+# BOOTSTRAP — COPY-PASTE THIS INTO THE NEXT SESSION
+
+```
+Read /home/stack/charon-private/fleet/state/PRIORITY-TODO.md FIRST (it is the carry-forward list and
+opens with FIRST THINGS), then flip to fleet mode. Run the three section-0 commands before anything
+else. Top of the queue is ZERO-COMMIT-SPIN — the fleet claims work and produces nothing.
+```
+
+**Why this block lives HERE and not only in a generated handoff:** `handoff.sh`/`end-session.sh`
+normally emit it, and they ABORT before they can (the self-blocking allocator, queue item #3). A
+bootstrap that only exists in a generator that cannot run is a bootstrap that does not exist.
+Keep this block in this file until #3 lands.
+
+---
+
 # ⛔⛔⛔ FIRST THINGS — NEXT SESSION, IN ORDER, NON-NEGOTIABLE ⛔⛔⛔
 
 **Operator directive 2026-08-02. Do these BEFORE anything else. Do NOT delete an item — mark it
