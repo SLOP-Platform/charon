@@ -106,6 +106,7 @@ class ProxyObservation:
     usage: Usage | None = None
     note: str = ""
     cost_source: str = ""  # "provider" | "computed" | "unpriced" | "" (no usage)
+    exhaustion_type: str = ""  # "balance" | "key_limit" | "throttle" | "unavailable" | ""
 
     @property
     def failover(self) -> bool:
@@ -218,10 +219,14 @@ def _has_body_pattern(body: dict | None, patterns: list[str]) -> bool:
 
 def _is_billing_error(body: dict | None, status: int) -> bool:
     """A capacity/billing exhaustion: either a well-known HTTP status (429/402/503)
-    or a 401 whose response body contains billing/credit-exhaustion language —
-    the OpenCode provider returns 401 for "Insufficient balance", not 402."""
+    or a 401/403 whose response body contains billing/credit-exhaustion language —
+    the OpenCode provider returns 401 for "Insufficient balance", not 402, and
+    some providers signal a billing block with a 403 whose body still says
+    balance/quota. A 403 WITHOUT billing language is a per-key limit (see
+    ``_is_key_limit_error``) — a different exhaustion class, not folded into this
+    one (PARK-REARM-FUNDED-PROVIDER)."""
     return status in _EXHAUSTION_STATUSES or (
-        status == 401 and _has_body_pattern(body, _EXHAUSTION_BODY_PATTERNS))
+        status in (401, 403) and _has_body_pattern(body, _EXHAUSTION_BODY_PATTERNS))
 
 
 def _is_transient_billing_error(body: dict | None, status: int) -> bool:
@@ -247,6 +252,42 @@ def _is_auth_error(body: dict | None, status: int) -> bool:
     if not body:
         return True  # 401 with no body → assume auth, not billing
     return _has_body_pattern(body, _AUTH_BODY_PATTERNS)
+
+
+def _is_key_limit_error(body: dict | None, status: int) -> bool:
+    """A per-key/per-model rate/count limit (403) — a different exhaustion class
+    from a 402 balance-exhausted. All 403s are conservatively treated as key-limit
+    exhaustion (failover-worthy) unless the body explicitly says billing/balance
+    (that case is caught by ``_is_billing_error`` and labelled "balance").
+    This is the right signal split: 402 = balance; 403 = key-limit/throttle."""
+    if status != 403:
+        return False
+    return not _has_body_pattern(body, _EXHAUSTION_BODY_PATTERNS)
+
+
+def _exhaustion_type(body: dict | None, status: int) -> str:
+    """Return the narrowest exhaustion classification for the exhaustion ledger.
+
+    Distinguished from ``ProxyObservation.exhausted`` (which is a boolean — covers
+    all exhaustion kinds). This string is the observable label surfaced to
+    operators, so it must be precise enough to distinguish a per-key rate limit
+    (403, never provider-park-worthy) from a balance-exhausted (402, provider-park-
+    worthy) from a transient throttle (429/503, never park-worthy).
+
+    For 402 the type is ALWAYS "balance" — ``transient`` only affects whether to
+    retry-once before failing over (park-worthiness is a separate forwarder
+    concern). Labelling a transient 402 "throttle" would be wrong: the root cause
+    is a billing/balance issue, not a capacity throttle."""
+    if status == 402 or (
+            status in (401, 403) and _has_body_pattern(body, _EXHAUSTION_BODY_PATTERNS)):
+        return "balance"
+    if status == 403:
+        return "key_limit"
+    if status == 429:
+        return "throttle"
+    if status == 503:
+        return "unavailable"
+    return ""
 
 
 def _is_unsupported_model(body: dict | None, status: int) -> bool:
@@ -372,7 +413,16 @@ class GatewayProxy:
     router excludes (H6), and a cumulative ``Usage`` mirrored into the Ledger."""
 
     def __init__(self, model_pricing: dict[str, dict] | None = None) -> None:
-        self._exhausted: dict[str, ProxyObservation] = {}
+        self._exhausted: dict[tuple[str, str | None], ProxyObservation] = {}
+        # Per-provider ACCOUNT-depletion evidence (PARK-REARM-FUNDED-PROVIDER):
+        # provider label → set of model ids that showed DETERMINISTIC balance
+        # exhaustion (402 / 401-403+billing, ``not transient``). This is the
+        # provider-level signal the auto-park gate needs: a 402 on ONE model is
+        # a per-key cap and must not park the provider; only when MULTIPLE
+        # distinct models of the same provider are all balance-exhausted is the
+        # account itself depleted. Kept alongside ``_exhausted`` under the same
+        # lock; a clean-200 re-arm also withdraws the model from this set.
+        self._model_exhausted: dict[str, set[str]] = {}
         self._usage = Usage()
         self._delta_seen = Usage()
         self._model_pricing = model_pricing or {}
@@ -466,9 +516,10 @@ class GatewayProxy:
             # normally either way.
             body = {"error": body} if isinstance(body, list) else None
         returned = (body or {}).get("model")
-        exhausted = _is_billing_error(body, status)
+        exhausted = _is_billing_error(body, status) or _is_key_limit_error(body, status)
         transient = exhausted and _is_transient_billing_error(body, status)
         auth_error = _is_auth_error(body, status)
+        exhaustion_type = _exhaustion_type(body, status)
         dropped = status in _DROP_STATUSES or _is_unsupported_model(body, status)
         # netutil.open_keyed refuses redirects (urllib does NOT strip Authorization
         # cross-host), so a provider that starts 30x-ing surfaces here as a bare
@@ -514,7 +565,8 @@ class GatewayProxy:
         note = ""
         if exhausted:
             hint = _error_type(body) or _body_text_lower(body)[:60]
-            note = f"exhausted: status={status} {hint}".strip()
+            etype = f"[{exhaustion_type}] " if exhaustion_type else ""
+            note = f"exhausted: status={status} {etype}{hint}".strip()
         elif auth_error:
             note = f"auth: status={status} {_error_type(body)}".strip()
         elif refused_redirect:
@@ -539,6 +591,7 @@ class GatewayProxy:
             usage=usage,
             note=note,
             cost_source=cost_source,
+            exhaustion_type=exhaustion_type,
         )
 
     def _lookup_pricing(self, requested_model: str,
@@ -576,6 +629,22 @@ class GatewayProxy:
         always recorded on failover; usage is folded only when ``count_usage`` (the
         attempt was actually served to the client — ADR-0005 R10a).
 
+        EXCLUSION KEY (PARK-REARM-FUNDED-PROVIDER blast radius): the exhausted set
+        is keyed by the ``(requested_model, provider)`` LEG — not the model id
+        alone. ``requested_model`` is the shared pool/model id the router excludes
+        by; ``provider`` (the ``route.label`` passed on every money-path record)
+        discriminates the legs behind it. A 402 on ONE leg therefore records only
+        that leg: sibling legs of the same provider (and sibling providers serving
+        the same model id) stay eligible. ``is_exhausted``/``exhausted_models``
+        keep the model-wide view for the orchestrator; ``is_exhausted_leg``/
+        ``exhausted_legs`` expose the narrow per-leg view.
+
+        RE-ARM (DONE CONTRACT b): a clean ``200`` (no silent downgrade) is evidence
+        the leg serves traffic again, so its exhaustion entry is DROPPED — the leg
+        is re-admitted within one observation window instead of staying parked for
+        the process lifetime. A pseudo-success 200 is a failover observation (it
+        served a different model), so it never re-arms.
+
         ``session`` (SESSION-COST) optionally also folds the same usage into a
         per-session bucket, isolated from both the global counter and every other
         session id — so concurrent gateway traffic tagged with a different session
@@ -589,10 +658,26 @@ class GatewayProxy:
         actual metered spend instead of an est_cost floor. Caller wiring is
         LIVE: forwarder.py passes ``provider=route.label`` at its 8 metering
         sites, so this ledger is populated under real traffic."""
+        key = (obs.requested_model, provider)
         with self._lock:
             if obs.failover:
-                # record under the requested model — the router excludes by model id.
-                self._exhausted[obs.requested_model] = obs
+                # record under the (requested_model, provider) leg — the router
+                # excludes by model id; the provider keeps one leg's exhaustion
+                # from parking its siblings (PARK-REARM-FUNDED-PROVIDER).
+                self._exhausted[key] = obs
+                # Account-depletion evidence for the provider-level park gate:
+                # only DETERMINISTIC balance exhaustion counts (a throttle /
+                # key-limit / transient blip is per-key, not the account).
+                if provider is not None and obs.exhausted and not obs.transient \
+                        and obs.exhaustion_type == "balance":
+                    self._model_exhausted.setdefault(provider, set()).add(
+                        obs.requested_model)
+            elif obs.status == 200 and not obs.pseudo_success:
+                # RE-ARM: a clean 200 re-admits the leg (DONE CONTRACT b).
+                self._exhausted.pop(key, None)
+                if provider is not None:
+                    self._model_exhausted.get(provider, set()).discard(
+                        obs.requested_model)
             if obs.usage is not None and count_usage:
                 u = obs.usage
                 self._usage = Usage(
@@ -619,14 +704,50 @@ class GatewayProxy:
                         self._session_usage.popitem(last=False)
 
     def is_exhausted(self, model: str) -> bool:
+        """True if ANY leg under *model* is excluded (model-wide view, backward-
+        compatible with the orchestrator's ``proxy_excluded_keys``). See
+        ``is_exhausted_leg`` for the narrow per-provider query."""
         with self._lock:
-            return model in self._exhausted
+            return any(m == model for (m, _p) in self._exhausted)
+
+    def is_exhausted_leg(self, model: str, provider: str | None) -> bool:
+        """True if exactly the ``(model, provider)`` LEG is excluded (PARK-REARM-
+        FUNDED-PROVIDER blast radius): a 402 on openrouter's leg of a shared model
+        id does not mark another provider's leg of that model excluded."""
+        with self._lock:
+            return (model, provider) in self._exhausted
 
     def exhausted_models(self) -> set[str]:
-        """Model ids to exclude on the next route — exhausted (429/402/503),
-        dropped (404), or silently downgraded (H6)."""
+        """Model ids with at least one excluded leg (model-wide view, backward-
+        compatible). The router excludes by model id; ``exhausted_legs`` carries
+        the per-provider precision underneath."""
+        with self._lock:
+            return {m for (m, _p) in self._exhausted}
+
+    def exhausted_legs(self) -> set[tuple[str, str | None]]:
+        """The ``(model, provider)`` legs currently excluded — the NARROW view.
+        One leg's exhaustion never parks a sibling: anti-over-block is preserved
+        because a provider whose EVERY leg is here IS fully excluded."""
         with self._lock:
             return set(self._exhausted)
+
+    def provider_exhausted_models(self, provider: str) -> set[str]:
+        """The model ids of *provider* that are deterministically balance-
+        exhausted (diagnostics / provider-level park evidence)."""
+        with self._lock:
+            return set(self._model_exhausted.get(provider, ()))
+
+    def has_multiple_exhausted_models(self, provider: str) -> bool:
+        """PROVIDER-LEVEL park evidence (PARK-REARM-FUNDED-PROVIDER): True when
+        TWO OR MORE distinct models of *provider* are deterministically balance-
+        exhausted.
+
+        This is the ``account-balance``-style signal the ticket's blast-radius
+        fix demands before parking a provider: one model's 402 is a per-key cap
+        (park the leg, not the provider); only multi-model balance exhaustion is
+        evidence the provider's account (not one key) is depleted."""
+        with self._lock:
+            return len(self._model_exhausted.get(provider, ())) >= 2
 
     def cumulative_usage(self) -> Usage:
         with self._lock:
