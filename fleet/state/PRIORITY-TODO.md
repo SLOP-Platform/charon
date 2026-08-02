@@ -1,3 +1,68 @@
+# ⛔⛔⛔ START HERE — OPERATOR DIRECTIVE 2026-08-02 — TOOL UTILIZATION IS PRIORITY #1 ⛔⛔⛔
+
+**This section SUPERSEDES the 2026-08-01 first-six below (which is now COMPLETE — see §DONE-0802).
+Operator, verbatim: *"I want the TOOLS under utilized to be the NUMBER 1 PRIORITY before anything
+else."* Queued by BLAST RADIUS. Do not start §A-§M until this section is moving.**
+
+## WHY THIS IS #1 — measured on this box 2026-08-02, not read from docs
+
+| measurement | value | source |
+|---|---|---|
+| tool surface actually switched on | **~20%** | `fleet/state/OWN-TOOLS-CAPABILITY-AUDIT.md` |
+| tools audited / with unused capability | **52 / 37** | same |
+| fleet checks INERT (wired NOWHERE) | **9** | same |
+| **claimed-but-absent guarantee ALREADY CODED AGAINST** | **1** (Faktory exactly-once) | same |
+| suites declaring red-proof but NOT in CI_SUITES | **101** (floor 88, and RISING — was 91 the same day) | `gate-integrity.sh scan` G5 |
+| `graphify affected` (blast-radius query) call sites | **0** (vs 114 for `update`) | same audit |
+| gate-integrity findings | **39** (3 new / 36 baseline) | live scan |
+
+**The failure is not missing tools. It is default configuration accepted as a tool's full surface,
+and checks that read as protection while being wired to nothing.**
+
+## THE QUEUE — BLAST RADIUS ORDER (highest leverage first)
+
+| # | ticket | why it is at this rank |
+|---|---|---|
+| **1** | `GRAPHIFY-AFFECTED-WIRE` | the blast-radius query ITSELF. 0 call sites. Until it is wired we cannot mechanically answer "what else does this change break" — every other prioritisation on this list is done by hand |
+| **2** | `INERT-CHECKS-WIRE` (P0) | 9 inert checks + 2 documented wiring gaps (`land.sh:361-362`) + the Faktory guarantee code already depends on. An inert check is WORSE than no check: it reads as protection |
+| **3** | `PROOF-SUITES-ENFORCE` (P0) | 101 suites assert "this guard has been seen to fail" and are NEVER EXECUTED. Until this lands, every red-proof claim in the rig is unverified — so every gate's green is worth less than it looks |
+| **4** | `RUFF-PREVIEW-ON` -> `RUFF-ARG-C90-ON` | 12 defects (7 autofix) + 184 findings incl **3 HIGH-severity security**. Chained: both own `pyproject.toml` |
+| **5** | `MYPY-STRICTNESS-3-FLAGS` | 176 real bugs. Explicitly SKIP `disallow_untyped_defs` (1952 = churn) |
+| **6** | `SHELLCHECK-OPTIONAL-CHECKS-ON` | 15 error-level findings invisible today, AND fixes a fake-done: `SHELLCHECK-BLOCKING` is archived + done-marked while `gate.sh:127` still prints ADVISORY and never increments `$FAIL`. It owned 2 paths; NEITHER EXISTS |
+
+**Rule for every one of these:** wiring is proven by making the check FAIL on a deliberate
+violation. Registration is not proof. "Merged" is not proof. A gate must be SEEN to fail.
+
+---
+
+# ⛔⛔ UNTRACKED WORK PILEUP — MEASURED 2026-08-02 ⛔⛔
+
+`bash fleet/checks/stranded-work.sh` (landed today, PR #361) reports **269 findings**. This is
+work that was DONE and then silently stopped existing to the rest of the fleet:
+
+| shape | count | ticket | pri |
+|---|---|---|---|
+| `pushed-no-pr` | **189** | `PUSHED-NO-PR-TRIAGE` | P1 |
+| `closed-pr-unlanded` | **57** | `CLOSED-PR-UNLANDED-TRIAGE` | P1 |
+| `dirty-worktree` | **17** | `DIRTY-WORKTREE-SWEEP` | P1 — **lowest-hanging, start here** |
+| `unpushed-branch` | 8 | mostly `backup/*` (by design) | — |
+| `pr-no-checks` | 1 | folded into the landing lanes | — |
+
+**`closed-pr-unlanded` was tracked by NOTHING before today** — a PR closed while its branch still
+carries unlanded commits is either a deliberate bounce, a squash artefact, or silently discarded
+work, and they are indistinguishable without looking. Treat unclassifiable as discarded.
+
+**Do NOT open 189 PRs.** That converts an invisible backlog into an unreviewable one. Batch by
+owning ticket — e.g. the FIVE `fix/provider-key-exfil-*` branches are ONE fix.
+
+## RUN THIS FIRST, EVERY SESSION
+```
+bash fleet/checks/stranded-work.sh          # all five loss shapes
+bash fleet/checks/gate-integrity.sh scan    # inert / falsely-claimed / unproven gates
+bash fleet/rescue-push.sh                   # at-risk branches (dry run)
+```
+
+---
 # ⛔⛔ START HERE — THE VERY FIRST THINGS THE NEXT SESSION DOES ⛔⛔
 
 **Operator directive, 2026-08-01 session close. Do these BEFORE anything else in this file.
