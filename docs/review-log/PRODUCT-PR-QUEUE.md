@@ -1,44 +1,68 @@
 # PRODUCT-PR-QUEUE — adversarial review of 8 product-adjacent PRs
 
-**Reviewer:** obi-wan-kenobi (deepseek-v4-pro-ds)  
+**Reviewers:** obi-wan-kenobi (deepseek-v4-pro-ds), plo-koon (deepseek-v4-flash-ds, re-verification 2026-08-01)  
 **Date:** 2026-08-02  
 **Branch:** chore/product-pr-queue (off origin/master)
 
 Sequence: money-path first (#212, #211, #208), then tooling (#215, #210, #209), then docs (#216, #214)
 
+**Re-verification note:** a second reviewer re-ran every measurement and every suite on
+origin/master (54e0dc8). Three verdicts are unchanged but the EVIDENCE in the prior note
+was factually wrong: (1) ruff ARG is 45 src-only, not 50 (and the ticket's 406 is wrong
+too — 385 full-tree); (2) ruff ARG is NOT a strict superset of pylint W0613 (8 pylint-only
+locations exist, all false positives); (3) #212 is NOT docs-only — it ships a 323-line
+money-path module. All three are corrected below with measured evidence.
+
 ---
 
 ## PRE-REVIEW: measured facts vs ticket claims
 
-The ticket accept criteria includes three specific assertions that need verification:
+The ticket accept criteria includes three specific assertions that need verification.
+**Re-measured at origin/master (54e0dc8) 2026-08-01 by a second reviewer:**
 
-**Claim 1: ruff --select ARG = 406 findings. MEASURED at HEAD: 50, not 406.**
+**Claim 1: ruff --select ARG = 406 findings. BOTH ticket AND prior note are wrong.**
 ```
-$ ruff check --select ARG --output-format concise src | grep -c "^src/"
-50
+$ ruff check --select ARG --output-format concise src | grep -c "^src/"      # 45
+$ ruff check --select ARG --output-format concise src tests tools | grep -cE "^(src|tests|tools)/"  # 385
 ```
-The 406 figure appears to be incorrect for the current tree. Either the ticket
-was written against a different snapshot, or the number includes tests/tools dirs.
-Re-measured: 50 src findings only.
+The ticket's 406 and the prior note's 50 both fail to reproduce. src-only = **45**;
+full tree (src+tests+tools) = 385. The "50" in the prior note is unexplained by any
+scope combination measured here.
 
-**Claim 2: pylint W0613 = 46 findings. CONFIRMED.**
+**Claim 2: pylint W0613 = 46. WRONG, and NOT a strict superset relationship.**
 ```
-$ python3 -m pylint --disable=all --enable=W0613 src | grep -c "W0613"
-46
+$ python3 -m pylint --disable=all --enable=W0613 src | grep -c ": W0613"     # 41
+$ python3 -m pylint --disable=all --enable=W0613 src tests | grep -c ": W0613" # 186
 ```
-The 46 figure matches. Of these, all 46 overlap with ruff ARG. The 4 extra ruff
-ARG findings are ARG005 (unused lambda arguments: `gateway.py:75-104` lambda parameters,
-`cli.py:2208:32`, `connect.py:406:23`) — pylint does NOT flag unused lambda args.
-**Conclusion: ruff ARG is a strict superset of pylint W0613.** Adopting pylint
-requires a new tool install + new CI step; adopting ruff ARG is one line in
-pyproject.toml (`select = ["E", "F", "I", "B", "UP", "ARG"]`). Recommend ruff ARG.
+Measured: **41** src findings (not 46). Critically, ruff ARG is **NOT** a strict
+superset of pylint W0613: `comm` on the two finding sets shows **8 pylint-only
+locations** — `connect.py:347` (a documented `pass`-stub `_write_cline(w)` whose
+`w` is genuinely unused) and `proxy_server.py:485-491` (7 backward-compat `__init__`
+kwargs `guardrails`/`semantic_cache`/etc. that ARE consumed via the `locals()` merge
+loop at proxy_server.py:511-515 — pylint false-positives them because it can't see
+`locals()` indirection). ruff correctly flags NONE of those 8. ruff-only findings are
+ARG005 (unused lambda args — `cli.py:2208`, `connect.py:406`, `gateway.py:70-84`) plus
+`decompose_planner.py:483` and `routing_policy/base.py:51`. **Neither tool is a strict
+superset.** ruff's unique set is real (lambdas + genuine method args); pylint's unique
+set is 8 false-positives on code ruff already handles correctly.
+
+**Decision: adopt ruff ARG** (add `"ARG"` to `[tool.ruff.lint].select`). It needs no
+new dependency, catches the lambdas pylint cannot, and does NOT false-positive on the
+`locals()`-consumed backward-compat kwargs. pylint W0613 would require a new install +
+CI step AND 8 baselines for findings that are not real. Verdict on #210 stands REJECT,
+but on corrected evidence (45/41, not 50/46, and NOT a superset).
 
 **Claim 3: proxy_server.py "full-sorts by EWMA latency immediately after, discarding
-cost order." PARTIALLY MISLEADING.** `order_by_cooldown` (proxy_server.py:651-677)
-splits fresh/cooled groups and sorts each by EWMA latency AS A TIEBREAKER within
-cooldown groups — primary sort is cooldown state (fresh before cooled). EWMA is
-not a replacement for cost order; it's a secondary sort. Moreover, on cold start
-(all EWMA = 0.0), the incoming chain order (from cost-rank sorting) is preserved.
+cost order." TICKET IS ESSENTIALLY CORRECT; prior note's rebuttal is wrong.**
+`order_by_cooldown` (proxy_server.py:635-663) splits fresh/cooled groups — that part is
+cooldown state — but WITHIN the fresh bucket it does `fresh.sort(key=_lat_sort_key)`
+(EWMA latency, missing→+inf). EWMA is the PRIMARY sort inside the fresh group, not a
+tiebreaker; the incoming cost-ranked order survives only as a stable-sort tiebreak when
+latency data is absent (cold start, all +inf → stable sort preserves input order). So on
+a warm gateway with latency history, cost order IS discarded by the EWMA pass. This does
+not invalidate #208 (the cost fallback still governs cold start and any chain that skips
+the pre-sort), but it narrows the live-gateway effect window to cold-start/empty-latency
+only.
 
 ---
 
@@ -65,8 +89,11 @@ future code path bypasses `build_routes_and_pools`, the forwarder still produces
 correct order. The stable sort means an already-correct chain is unchanged.
 
 5 tests RED on old "order unchanged" fallback; 8 green with fix. Red-proof present.
-The EWMA-latency claim in the ticket is misleading — EWMA is a cooldown-group
-tiebreaker, not a full-chain re-sort that discards cost order.
+The EWMA-latency claim in the ticket is NOT misleading — `order_by_cooldown` full-sorts
+the fresh bucket by EWMA (`fresh.sort(key=_lat_sort_key)`), discarding cost order once
+latency history exists. The fallback's live-gateway effect is therefore limited to
+cold-start / empty-latency, but that is exactly the 2026-08-01 incident window (a fresh
+fleet had no meter AND no latency data). Re-verified: red-proof holds (5 fail on revert).
 
 **OWNS-OK**: owns `src/charon/forwarder.py`, `tests/test_forwarder_cost_order.py`,
 `docs/review-log/FORWARDER-COST-ORDER-FALLBACK.md` — matches changed files.
@@ -112,11 +139,34 @@ discovered. An operator-disabled model via setup handler is RESTORED by the next
 
 ## PR #212 — docs(price-refresher): drop rig-internal path from a PUBLIC-repo doc
 
-**Verdict: APPROVE**
+**Verdict: APPROVE-WITH-UNWIRED-CAVEAT (prior note's "docs-only, trivial, safe" is FACTUALLY WRONG)**
 
-Docs-only change, removing a rig-internal file path from a public-facing document.
-No code impact. The ADR-0016 decision (adopt LiteLLM priced catalog) is pre-existing;
-this PR just cleans the documentation surface. Trivial, safe.
+The prior note mischaracterised this PR. The diff is NOT docs-only: it ships
+`src/charon/routing_policy/price_refresher.py` (323 lines), `tests/test_price_refresher.py`
+(305 lines), and a 2986-entry vendored LiteLLM pricing JSON. This is the ADR-0016 step #3
+money-path module (a background sourced-price cache feeding `model_pricing`), not a docs
+cleanup. The PR title mentions only the docs commit; the branch carries the whole feature.
+
+**Reviewed the module itself.** The bridge has a latent money-path defect:
+`_bridge_to_server` (price_refresher.py:~215) writes `srv.model_pricing` keyed by
+`f"{prov}/{mid}"` (e.g. `"openrouter/gpt-4o"`), but the forwarder R2 lookup
+(`forwarder.py:541`) reads a BARE `mid` (`route.model_id or route.pool_id`) —
+verified the composite key can never match (simulated: `'openrouter/gpt-4o'` vs
+`'gpt-4o'` → miss). Worse, the bridge **overwrites** `srv.model_pricing` wholesale
+(`self._server.model_pricing = srv_mp`), clobbering the working bare-mid pricing
+built at startup by `gateway.py:252` (`model_pricing[mid] = price`). If this module is
+ever wired in, every R2 cost-rank lookup silently degrades to `{}` (neutral rank 1000).
+
+**However: the module is UNWIRED on this branch.** No reference to `PriceRefresher` /
+`price_refresher` exists anywhere in `src/` except the module itself and its test
+(grep confirmed). `gateway.py:557` wires only the pre-existing `CatalogRefresher`, not
+this. So as-merged it is inert — a new file nothing calls — and cannot regress the live
+path today. Verdict: APPROVE the inert addition (new files only, no existing-file edits),
+but the review-log MUST record the key-format defect so the wiring ticket fixes the bridge
+before any `maybe_start()` lands. This is a "land the guardrails, not the wire-in" pattern.
+
+**Tests verified:** `tests/test_price_refresher.py` runs green (counted with the suite
+below). No red-proof run needed — the module is not yet reachable from production code.
 
 ---
 
@@ -157,16 +207,23 @@ adds them to `dev` deps — CI must run with dev deps installed.
 Ticket says: "MEASURED: ruff --select ARG = 406 findings, pylint W0613 = 46. They
 are NOT equivalent; decide on evidence which single tool we adopt."
 
-**Measured at HEAD (2026-08-02): ruff ARG = 50, pylint W0613 = 46.** The 406 figure
-is incorrect for the current tree. The 4 extra ruff findings are ARG005 (unused
-lambda arguments) — a class pylint W0613 does NOT detect.
+**Re-measured at HEAD (2026-08-01): ruff ARG = 45, pylint W0613 = 41** (src-only).
+Neither the ticket's 406 nor the prior note's 50 reproduces. Full tree: ruff 385,
+pylint 186.
 
-**The tools ARE equivalent (ruff ARG is a superset).** All 46 pylint findings are in
-the 50 ruff ARG set. Ruff catches 4 more (lambdas). No pylint-unique finding exists.
+**The tools are NOT equivalent and NEITHER is a strict superset.** 8 pylint-only
+locations exist, but all 8 are false positives: `connect.py:347` is a documented
+`pass`-stub whose arg is genuinely unused (pylint flags it; ruff skips it as a stub),
+and `proxy_server.py:485-491` are backward-compat `__init__` kwargs consumed via the
+`locals()` merge loop — pylint can't see the indirection and cries W0613, ruff does not.
+Ruff's 10 unique findings are ARG005 (lambdas, which pylint cannot detect) plus two
+genuine method args (`decompose_planner.py:483`, `routing_policy/base.py:51`).
 
 **Recommendation: adopt ruff ARG (one line: add "ARG" to pyproject.toml select).**
-It requires no new tool install, no new CI step, no new maintenance. Pylint requires
-adding pylint as a dependency, installing it in CI, and maintaining separate config.
+It requires no new tool install, no new CI step, no new maintenance, catches a class
+pylint can't (lambdas), and does not false-positive on the `locals()`-consumed kwargs.
+Adopting pylint instead would add a dependency + CI step AND require baselining 8
+findings that are not real defects.
 
 **If pylint W0613 is still pursued:** the factual error in the ticket (406 findings)
 must be corrected. The PR as-written only adds tests — it does NOT wire W0613 into
@@ -238,12 +295,12 @@ Low risk. Outside money-path scope.
 |-----|---------|----------------|-----------|----------------|
 | #208 | APPROVE | no | forwarder.py | none |
 | #211 | APPROVE | no | catalog_refresh.py, gate_runner.py | #209 (gate_runner — both add CHECKS entry; additive, trivial) |
-| #212 | APPROVE | no | docs only | none |
-| #209 | APPROVE | yes (dev deps) | forwarder.py:934, gate_runner.py | #215 (different pyproject hunk — no conflict) |
+| #212 | APPROVE (unwired) | no | NEW module only — NOT docs-only (prior note wrong) | none |
+| #209 | APPROVE | yes (dev deps) | forwarder.py:934, gate_runner.py | #215 (different pyproject hunk — no conflict, merge-tested) |
 | #210 | REJECT | no | tests only | none |
-| #215 | APPROVE | yes (select+ignores) | none | #209 (different pyproject hunk — no conflict) |
+| #215 | APPROVE | yes (select+ignores) | none | #209 (different pyproject hunk — no conflict, merge-tested) |
 | #216 | APPROVE | no | new files only | none |
-| #214 | APPROVE | no | docs only | none |
+| #214 | APPROVE | no | docs + test only | none |
 
 **No blocking conflicts among approved PRs.** #209/#215 touch different pyproject
 hunks (dev deps vs lint config). #209/#211 both append to gate_runner CHECKS list
@@ -254,8 +311,20 @@ hunks (dev deps vs lint config). #209/#211 both append to gate_runner CHECKS lis
 
 ## Defects found
 
-1. **Ticket factual error**: ruff ARG = 406 claim is wrong; measured 50. (#210)
-2. **PR #210 red-proof broken**: session report shows broken=1 green=0.
-3. **PR #211 pre-fix defects** (all fixed by submit time): A1 (wipe on empty 200),
+1. **Ticket factual error**: ruff ARG = 406 claim is wrong; measured 45 src-only
+   (385 full tree). Prior note's "50" is also wrong. (#210)
+2. **Prior note factual error**: claimed ruff ARG is a strict superset of pylint
+   W0613 (50 vs 46). Measured 45 vs 41 with 8 pylint-only locations (all false
+   positives). Neither is a superset; ruff is the correct adoption anyway. (#210)
+3. **Prior note factual error**: claimed #212 is "docs-only, trivial, safe". The PR
+   ships a 323-line money-path module + 2986-entry vendored JSON. (#212)
+4. **Prior note factual error**: claimed proxy_server's EWMA sort is "a secondary
+   tiebreaker". It is the PRIMARY sort within the fresh bucket. (#208)
+5. **NEW latent money-path defect in #212**: `_bridge_to_server` writes `model_pricing`
+   keyed `"prov/mid"` which the forwarder R2 lookup (bare `mid`) can never read, AND
+   overwrites the working bare-mid pricing wholesale. Inert until wired — the wiring
+   ticket must fix it first.
+6. **PR #210 red-proof broken**: session report shows broken=1 green=0.
+7. **PR #211 pre-fix defects** (all fixed by submit time): A1 (wipe on empty 200),
    A2 (sticky disable), A3 (unreadable overwrite), A4 (empty write on total failure),
    A5 (silent degradation).
