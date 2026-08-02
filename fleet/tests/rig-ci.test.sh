@@ -18,9 +18,13 @@
 #   (2) CLEAN PASSES        — an unmodified branch off master -> every step rc=0 (anti-over-block).
 #   (3) FALSE-RED GUARD     — the board step against a checkout with an EMPTY fleet/state/ must NOT
 #                             red on a done-but-unmarked ticket.
-#       (3r) REVERT PROOF   — reverting the diff-scoping (whole-board scan instead of PR-changed
-#                             files) makes (3) go RED. This is what proves the fresh-checkout
-#                             constraint was solved, not hand-waved.
+#       (3r) TEETH PROOF    — what makes (3)'s green load-bearing. 3r-a: the diff-scoping still
+#                             SELECTS a strictly smaller set (unscoped considers the off-diff
+#                             ticket, scoped never sees it). 3r-b: the same done-but-unmarked
+#                             ticket, GENUINELY IN SCOPE (a substrate-relevant field changed, so
+#                             grandfathering does not apply), REDs under the real script. See the
+#                             block at (3r) for why the pre-2026-08-01 "revert the scoping -> RED"
+#                             form became a theorem-level impossibility and had to be RESTATED.
 #   (4) ALLOWLIST GUARD     — CI_SUITES is a literal allowlist, not a fleet/tests/*.sh sweep
 #                             (a benchmark grader suite added later must be excluded BY DEFAULT).
 #   (5) VACUOUS-GREEN GUARD — an UNRESOLVABLE diff scope must REFUSE. The pre-fix `_merge_base`
@@ -145,9 +149,38 @@ else
   bad "(3) board step false-REDed on an empty fleet/state/ (rc=$rc3): $out3"
 fi
 
-# (3r) REVERT PROOF: neuter the diff-scoping so the board step scans the WHOLE board instead of the
-#      PR-changed files — exactly the naive implementation the fresh-checkout constraint forbids.
-#      The old done-but-unmarked ticket is then inspected and (3) goes RED.
+# ---------------------------------------------------------------------------------------------
+# (3r) TEETH PROOF — what makes (3)'s rc=0 load-bearing.
+#
+# WHAT (3r) USED TO ASSERT, AND WHY THAT CLAIM DIED (2026-08-01):
+#   It neutered `_scoped_board_files` into a whole-board `ls fleet/board/*.md` and asserted the
+#   unscoped variant went RED on the off-diff done-but-unmarked ticket. That worked until the
+#   SEMANTIC grandfathering landed in cmd_board (rig-ci-scope.sh `_ticket_grandfathered`,
+#   TICKET-CHECK-SCOPE-SEMANTIC). It is now a THEOREM that the old assertion can never fire:
+#
+#       a board file that is NOT in the base..head diff is byte-identical to the base blob
+#       => its fingerprint is identical => it is grandfathered => it is SKIPPED.
+#
+#   So "off the diff" is a strict subset of "grandfathered", and the whole-board scan reaches the
+#   SAME VERDICT as the scoped scan on any clean checkout. Reverting the diff-scoping alone can no
+#   longer produce a RED — not because the gate got weaker, but because a second, independent layer
+#   now catches the same case. Diff-scoping is still load-bearing for SELECTION/COST (asserted in
+#   3r-a below); grandfathering now carries the VERDICT. Re-asserting the dead claim would have
+#   meant weakening the grandfathering, which exists so a meaning-preserving reformat cannot re-open
+#   years of unrelated debt — so the claim is RESTATED here, not deleted and not relaxed.
+#
+# WHAT (3r) ASSERTS NOW — strictly stronger, because it rules out the failure mode the old form
+# never covered (a cmd_board that reds NOTHING would have passed the old 3r's sibling test 3):
+#   3r-a  SELECTION: the unscoped variant still CONSIDERS the off-diff ticket (it reports it as
+#         grandfathered); the scoped variant does not consider it at all. The scoping is doing real
+#         work — it is just no longer the only thing standing between (3) and a false RED.
+#   3r-b  TEETH: the SAME old, non-conforming, done-but-unmarked ticket, made GENUINELY IN SCOPE
+#         (this PR edits a substrate-relevant field, so grandfathering legitimately does not apply),
+#         REDs under the REAL, unmodified scope script. That is what proves (3)'s green is a SCOPING
+#         DECISION rather than a toothless check.
+# The complementary direction — a ticket whose FILE is touched but whose MEANING is not stays
+# grandfathered/green — is owned by fleet/tests/ticket-check-scope.test.sh (a)/(b)/(c), not duplicated here.
+# ---------------------------------------------------------------------------------------------
 rev="$d3/fleet/checks/rig-ci-scope.REVERTED.sh"
 python3 - "$SCOPE" "$rev" <<'PY'
 import sys, re
@@ -159,12 +192,39 @@ new = re.sub(r"(_scoped_board_files\(\)\{\n).*?(\n\})",
 assert new != s, "could not neuter _scoped_board_files — the revert test would prove nothing"
 open(dst, "w").write(new)
 PY
-grep -q 'ls fleet/board' "$rev" || bad "(3r) could not build the reverted (unscoped) variant"
-out3r="$(RIG_CI_SCRIPT="$rev" run_scope "$d3" board)"; rc3r=$?
-if [ "$rc3r" -ne 0 ]; then
-  ok "(3r) reverting the diff-scoping (whole-board scan) -> rc=$rc3r RED, proving (3)'s green comes from the scoping"
+if ! grep -q 'ls fleet/board' "$rev" 2>/dev/null; then
+  # The neuter found nothing to neuter — the real script is ALREADY scanning the whole board.
+  bad "(3r-a) could not build the reverted (unscoped) variant — the real _scoped_board_files is already unscoped"
 else
-  bad "(3r) unscoped variant still passed (rc=$rc3r) — test 3 proves nothing: $out3r"
+  out3r="$(RIG_CI_SCRIPT="$rev" run_scope "$d3" board)"; rc3r=$?
+  # The scoped run (out3) must never have looked at the old ticket; the unscoped run must have.
+  if grep -q 'OLD-DONE-TICKET' <<<"$out3r" && ! grep -q 'OLD-DONE-TICKET' <<<"$out3"; then
+    ok "(3r-a) the diff-scoping is load-bearing for SELECTION: unscoped considers OLD-DONE-TICKET, scoped never sees it (rc=$rc3r)"
+  else
+    bad "(3r-a) scoping made no difference to the set considered — unscoped: $out3r | scoped: $out3"
+  fi
+fi
+
+# 3r-b: the teeth. Same non-conforming ticket, now genuinely in scope.
+d3r="$(mk_repo)"
+git -C "$d3r" checkout -q master
+printf 'tier: strong\nbranch: feat/oldie\nowns: fleet/oldie.sh\n' > "$d3r/fleet/board/OLD-DONE-TICKET.md"
+git -C "$d3r" add -A >/dev/null; git -C "$d3r" commit -q -m oldie   # no work_class, no repo, no D&S
+git -C "$d3r" checkout -q feat/fixture
+git -C "$d3r" merge -q master -m merge
+# A SUBSTRATE-RELEVANT edit (the `branch:` field is in _SUBSTRATE_RELEVANT_KEYS), so the ticket is
+# genuinely in scope: grandfathering does not apply and every marker-independent check must run.
+# The edit does NOT repair the ticket — it is still missing work_class, so the checks must RED.
+printf 'tier: strong\nbranch: feat/oldie-renamed\nowns: fleet/oldie.sh\n' > "$d3r/fleet/board/OLD-DONE-TICKET.md"
+git -C "$d3r" add -A >/dev/null; git -C "$d3r" commit -q -m 'oldie: rebranch'
+[ -z "$(ls -A "$d3r/fleet/state")" ] || bad "(3r-b) fixture fleet/state/ is not empty"
+out3rb="$(run_scope "$d3r" board)"; rc3rb=$?
+if [ "$rc3rb" -ne 0 ] \
+   && grep -q "OLD-DONE-TICKET: missing 'work_class:' field" <<<"$out3rb" \
+   && ! grep -q 'skip OLD-DONE-TICKET (grandfathered' <<<"$out3rb"; then
+  ok "(3r-b) a done-but-unmarked ticket GENUINELY IN SCOPE (substrate-relevant field changed) -> rc=$rc3rb RED, so (3)'s green is a scoping decision, not a toothless check"
+else
+  bad "(3r-b) an in-scope done-but-unmarked ticket did NOT red (rc=$rc3rb) — test 3 proves nothing: $out3rb"
 fi
 
 # ---------------------------------------------------------------------------------------------
