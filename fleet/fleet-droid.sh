@@ -1400,10 +1400,50 @@ $spec"
       GATE_EXIT=125  # distinct sentinel: 125 == "launcher did not run the gate"
     else
       echo "[$DROID] $id: launcher running the gate (one-shot verification)..."
-      ( cd "$wt" && eval "$RR_GATE" ) > "$FLEET/state/gate-results/$DROID-$id.txt" 2>&1
-      GATE_EXIT=$?
-      mkdir -p "$FLEET/state/gate-results" 2>/dev/null || true
+      # ORDERING + set -e (2026-08-01): this block had TWO ways to kill the WHOLE TAB, and
+      # `GATE_EXIT=$?` was unreachable on any failure — so the FAIL default and the 125
+      # sentinel above were dead code for exactly the path they exist to describe.
+      #   1. the mkdir ran AFTER the redirect. bash opens the target when it sets up the
+      #      redirection, so a missing dir fails the command outright -> `set -e` exits the tab.
+      #   2. a RED gate is a non-zero compound command in plain statement position, so
+      #      `set -e` exits the tab there too. Measured: `( false ) > f; RC=$?` never reaches
+      #      the assignment. A failing gate must be DATA (an exit code we record), not a fault.
+      # Both are why pools drained below their floor and tickets fell back to READY holding a
+      # claim: the tab died mid-ticket instead of recording a FAIL and moving on.
+      # mkdir is NOT `|| true`: if the results dir cannot be created the redirect below WILL
+      # fail, and silently swallowing that just moves the tab-kill one line down. Fail here,
+      # loudly, with the reason — but as DATA (a recorded FAIL), not an unwind.
+      if ! mkdir -p "$FLEET/state/gate-results" 2>/dev/null; then
+        echo "[$DROID] $id: cannot create $FLEET/state/gate-results — recording gate FAIL (exit 126)" >&2
+        GATE_EXIT=126
+      else
+        gate_log="$FLEET/state/gate-results/$DROID-$id.txt"
+        # `|| GATE_EXIT=$?` instead of toggling `set +e`/`set -e` around the call. A command on
+        # the left of `||` is in a CONDITION context, where `set -e` does not fire at all — so
+        # the failing gate is captured as data without ever mutating global shell options.
+        # Toggling would also re-enable `set -e` UNCONDITIONALLY, which is correct here only by
+        # coincidence (this script sets it at :17) and silently wrong if that ever changes.
+        # (Raised by adversarial review of PR #356.)
+        GATE_EXIT=0
+        ( cd "$wt" && eval "$RR_GATE" ) > "$gate_log" 2>&1 || GATE_EXIT=$?
+      fi
       echo "[$DROID] $id: launcher gate exit code = $GATE_EXIT"
+      # $gate_log had NO reader anywhere in the rig (grep -rn gate-results = these lines only),
+      # so a RED gate discarded its own diagnosis and the skipped publish downstream looked
+      # causeless. Surface the tail on failure — silent report loss is the defect, not the log.
+      # `${gate_log:-}` and the -r test, NOT a bare "$gate_log": under `set -u` the mkdir-failed
+      # branch above leaves gate_log UNSET, and referencing it bare would abort the tab here —
+      # re-introducing the exact class this block fixes, one line further down.
+      if [ "$GATE_EXIT" -ne 0 ]; then
+        if [ -r "${gate_log:-}" ]; then
+          echo "[$DROID] $id: gate FAILED (exit $GATE_EXIT) — last 40 lines of $gate_log:" >&2
+          # `>&2` BEFORE `2>/dev/null`: redirections apply left to right, so the reverse order
+          # points stdout at an already-nulled stderr and silently swallows the diagnosis.
+          tail -40 "$gate_log" >&2 2>/dev/null || true
+        else
+          echo "[$DROID] $id: gate FAILED (exit $GATE_EXIT) — no readable gate log at '${gate_log:-<unset>}'" >&2
+        fi
+      fi
     fi
     # Capture the model's CHARON_RUN_RESULT for the SESSION line (already on disk in the outlog).
     CHARON_RUN_RESULT=""
