@@ -37,21 +37,82 @@ tail -5 fleet/state/cron-rescue.log         # rescue half must be running too
 Print: item · state · evidence (sha/PR/command output). No prose-only claims. If an item has not
 moved in two reports, say so explicitly and why.
 
-## 2 — THE P0 QUEUE, BLAST-RADIUS ORDERED
-| # | ticket | why here |
+# ⚖️ HOW TO PRIORITISE — THE NINE LENSES (apply ALL of them, every time)
+
+**Operator-directed 2026-08-02, made durable so it is not re-derived each session.** Blast radius
+alone produces the wrong order. Rank by applying EVERY lens below, then say which one decided it.
+
+| # | lens | the question it asks |
 |---|---|---|
-| **1** | **`ZERO-COMMIT-SPIN` — INVESTIGATE FIRST** | **The fleet claims work and produces NOTHING while looking busy.** Re-quarantined within MINUTES of clearing (count=3, 15:40:28Z) so it is LIVE. Decisive evidence: NO gate-result and NO agent-log exist for the ticket, while the SAME droid has a full session log for a different one — **the session never starts**, and the failure leaves no artifact. First hypothesis to test: both spinning tickets are `repo: charon` PRODUCT tickets claimed by a RIG droid (the product worktree path already broke `land-needs-push` today the same way). 8 tickets hit this, including P0s minted hours earlier |
-| **2** | `BOARD-VIEW-MISMATCH` | status.sh says `ready`, claim.sh silently skips. 5 hidden filters, no reason surfaced, `--only` silently overridden. Makes exclusion VISIBLE — but visibility of nothing is still nothing, which is why the spin outranks it. **Ranked above the close gate deliberately: it is the SAME code path as #1.** The spin diagnosis needs the claim->session-start path instrumented, and this is what makes exclusion on that path visible. One investigation, not two. |
-| **3** | **`SESSION-END-GATE-REPAIR`** | **SMALL AND BLOCKING — do it before #4.** The close path is self-blocking: `end-session.sh` CREATES its target file, then `handoff.sh`'s allocator sees that 0-byte file and refuses the name, so the gate ABORTS BEFORE its work-loss check on EVERY run. Fix is one line at `claim-jedi-name.sh:47` (`[ -e ]` -> `[ -s ]`) at the ALLOCATOR so it covers both call sites; the work already exists on PR #359's branch (`d03829c`) with a real integration test that drives the UNMODIFIED handoff.sh, plus --release/--gc for the name pool (was 48% burned, ~9 names left). Until this lands, every assertion added in #4 is DEAD CODE |
-| **4** | **`SESSION-CLOSE-COMPLETENESS-GATE` (+ `TASK-LIST-DURABILITY-GATE`)** | **Operator-set 2026-08-02.** The close gate only understands GIT-shaped loss; every class measured that day leaves no git artifact and is invisible to it. Five assertions: (A) harness tasks have a durable home, (B) the session VERIFIED its own handoff claims, (C) cadence leg-B heartbeat FRESH not merely registered, (D) no invisible/quarantined tickets, (E) no stale operator actions. Evidence: closed with 24 harness tasks / 15 open / SIX with no ticket, saved only because the operator asked; no prior session's list survives to audit |
-| **5** | **`TOOLS-FULLY-WIRED-CAMPAIGN`** (umbrella) + `GRAPHIFY-AFFECTED-WIRE` + `MONIT-INSTALL-OR-RETIRE` + land **PR #209** | **The operator's #1 priority, with ONE bar for every tool:** W1 reachable from a real entrypoint · W2 invoked on its cadence · W3 **SEEN TO FAIL** on a deliberate violation · W4 findings reach a human · W5 unused capability enabled or explicitly declined. Baseline: ~20% of tool surface on, 37 of 52 tools with unused capability, 9 checks INERT, `graphify affected` at 0 call sites, LiteLLM cost tracking vendored with ZERO importers, monit listed adopted but NOT INSTALLED, and the vulture confidence-80 ratchet fix already built and sitting UNREAD in draft PR #209. `GRAPHIFY-AFFECTED-WIRE` first inside this row (WIRING-DONE-CONTRACT consumes it); `MONIT-INSTALL-OR-RETIRE` must end a paper adoption that already cost a session real time — install and PROVE a restart, or retire it and strike the doc claims |
-| **6** | **`PR-QUEUE-DRIVE` — DRAIN THE DRAFTS** (operator-raised to P0) | **67 open PRs, 52 DRAFTS — up from 42 during one session.** `fleet-droid.sh` ends every ticket by opening a draft and never merging, so the queue grows monotonically with fleet throughput: **a faster fleet makes this worse.** 52 drafts is the largest pool of FINISHED-BUT-UNDELIVERED work — the same "stops before the terminal gate" class as unpushed commits, one stage later. **TOKEN-LEAN: reviewer tabs, OFF-CLAUDE, `--retries` FINITE (never 0 — that plus the dropped `--wait` drained the entire GraphQL quota today), 1-2 tabs until #392's REST cutover lands, check `gh api rate_limit` before scaling. Manager merges, reviewers review, Claude does not read diffs.** Closing a superseded draft with evidence IS success. Acceptance: the draft count FALLS — report before/after per batch, and if it does not fall say so rather than reporting activity |
-| **7** | **`PR-AUTOMATION-EVAL` — both halves, one bar** | **Paired with #6 and deliberately AFTER it: draining 52 PRs by hand teaches what the automation must handle.** Half A = REVIEW (pr-agent — ADOPT verdict stuck in OPEN DRAFT #391 — aider, CodeRabbit, Danger, vs our 830-line review-pool.sh). Half B = **MERGE/LIFECYCLE, never evaluated, ZERO registry rows**: Mergify, GitHub native merge queue, Prow/Tide, Kodiak, Bulldozer, Aviator, Trunk, plus plain Actions on `pull_request` as the DIY baseline every candidate must beat. **PROPERLY, NOT BLINDLY** — 5 DISQUALIFYING criteria: blocks on a VERDICT not CI, fail-CLOSED on a missing review, "green" != "reviewed", handles conflicted PRs (they get ZERO checks and read mergeable), auditable decision trail. Evidence: **6 of 8 PRs bounced in one round, all with GREEN CI** — blind auto-merge would have landed every one. Also decide the fork: most merge queues ignore DRAFTS by design and drafts are the launcher's normal output. **A focused ADVERSARIAL review of this eval is REQUIRED** — the under-scoped-trial anti-pattern has already corrupted two evals here |
-| 8 | `WIRING-DONE-CONTRACT` | done.sh proves a PR MERGED; nothing proves the merged code is REACHABLE. So "done" has meant "landed", not "working" — the direct cause of the built-but-inert backlog. Fail-closed: unproven is NOT done. Consumes #5's blast-radius query |
-| 9 | `FLEET-STATUS-BOARD` + `MISSING-CLASS-DETECTORS` + **`THROUGHPUT-EXPECTATION-ALARM`** | **These three are ONE answer to "something stopped working and nothing announced it" — and FSB alone covers only a THIRD of it.** FSB watches the WATCHERS (a check that is deleted, renamed or silently stops shows MISSING). It does NOT notice a WORKER that stops producing (the reviewer pool sat at ZERO for hours; droids claimed and no-op'ed) nor an ARTIFACT that stops appearing while its producer still exits 0 (the next-session bootstrap vanished exactly this way). Heartbeats prove a process is ALIVE; only an EXPECTATION proves it is doing anything. THROUGHPUT-EXPECTATION-ALARM supplies that, and must distinguish "no work to do" from "work available and nothing produced". MISSING-CLASS-DETECTORS supplies detectors for the 9 classes with none |
-| 10 | `INERT-CHECKS-WIRE` · `PROOF-SUITES-ENFORCE` | 9 fleet checks wired NOWHERE, 2 documented wiring gaps, 1 claimed-but-absent guarantee already coded against; and 101 suites declaring themselves red-proofs that NEVER execute (floor 88, and RISING) |
-| 11 | money: `SPEND-METRIC-TRUSTWORTHY` · `COST-PER-TASK-REPLAY` · `PRICING-FEED` · `LITELLM-COST-ADOPT` | the meter is fiction in BOTH directions (\$1,185 for two days vs ~\$1.34 real); \$/token is the WRONG UNIT — cost per ACCEPTED task is the metric; LiteLLM cost tracking is vendored with ZERO importers while we hand-roll a lying meter |
-| 12 | `OWNS-OVERLAP-DISAMBIGUATE` · `DROID-IDENTITY-THIRD-PARTY` | reconciler asks an unanswerable question (file overlap is not evidence of completion; a declared `branch:` is); and our droid commits are attributed to a STRANGER's GitHub account |
+| 1 | **Unblocks execution** | does anything else become POSSIBLE? A fleet that produces nothing makes every other rank academic |
+| 2 | **Prevention at source** | does it stop a CLASS recurring? Every day a source-fix is absent, more debt lands |
+| 3 | **Hard dependency** | can X even start without Y? Build in the order the data flows |
+| 4 | **Cost-to-value** | a ONE-LINE fix that unblocks the fleet outranks a week-long one that does not |
+| 5 | **Compounding** | does NOT fixing it get worse on its own? (drafts grow monotonically; the name pool burns down; owns-overlap self-reinforces) |
+| 6 | **Surfacing multiplier** | does it make ALL future problems visible, rather than fixing one instance? |
+| 7 | **Irreversibility** | can work be permanently LOST? (this is why RESCUE was item 0 on 2026-08-01) |
+| 8 | **Operator's explicit asks** | weighted AS STATED, not re-litigated. If your analysis conflicts with a stated priority, SAY SO and ask — do not silently override |
+| 9 | **Money & hard rules** | money-path and standing HARD rules are elevated regardless of ticket size |
+
+## THE TWO ORDERING MISTAKES THIS REPLACES
+- **Ranking cleanup above prevention.** Draining a backlog while its source is unfixed refills it.
+  Fix the source, then drain — otherwise both lanes run forever.
+- **Ranking big-and-important above small-and-blocking.** A one-line prerequisite buried in a
+  parenthetical (SESSION-END-GATE-REPAIR was, on 2026-08-02) stalls everything behind it while
+  looking like a footnote.
+
+## THE TEST TO APPLY BEFORE ACCEPTING ANY ORDER
+For each item ask: **"if this lands, what STOPS happening?"** An item that prevents a class beats an
+item that cleans one instance of it. Then: **"can the next item even start without it?"** If yes,
+they are independent and can run in parallel tabs — say so, do not serialise by habit.
+
+---
+
+## 2 — THE QUEUE (ordered by the nine lenses above, not blast radius alone)
+
+**PHASE 0 — RESTORE EXECUTION.** Nothing else can be *done by the fleet* until these land.
+| # | ticket | deciding lens |
+|---|---|---|
+| **1** | `ZERO-COMMIT-SPIN` | **L1 unblocks execution.** The fleet CLAIMS work and produces NOTHING — live, 8 tickets, re-quarantining within minutes. Every other rank is academic while this holds. No session log and no gate result exist for the spinning ticket while the SAME droid logs normally elsewhere: **the session never starts** |
+| **2** | `BOARD-VIEW-MISMATCH` | **L6 surfacing + L3 same code path as #1.** status.sh says `ready`, claim.sh silently skips for FIVE more reasons and `--only` is silently overridden. Diagnosing #1 needs this instrumented — one investigation, not two |
+
+**PHASE 1 — CHEAP + PREVENTIVE.** All small, all high-leverage. Do them before anything large.
+| # | ticket | deciding lens |
+|---|---|---|
+| **3** | `SESSION-END-GATE-REPAIR` | **L4 one line, L3 blocks #9, L5 the name pool is down to ~9.** `[ -e ]`->`[ -s ]` at `claim-jedi-name.sh:47`. Also restores the next-session BOOTSTRAP, which vanished with this gate |
+| **4** | `NEVER-ANTHROPIC-ASSERTION` | **L4 one test + L9 hard rule.** opencode-zen now serves `claude-*` live. No chain uses them TODAY — that is exactly when to add the assertion, not after it regresses again |
+| **5** | `SPILL-UP-CEILING-SSOT` | **L4 one key.** `SPILL_UP_COST_CEILING` is absent from the SSOT the launcher reads, so cost spill-up FAILS CLOSED on every tab, right now |
+| **6** | `TOOLS-FULLY-WIRED-CAMPAIGN` — **LEDGER PHASE ONLY** | **L8 operator's #1 + L6 makes everything else measurable.** Define the bar (W1 reachable · W2 invoked on cadence · W3 **SEEN TO FAIL** · W4 findings reach a human · W5 unused capability enabled or explicitly declined) and build the row-per-tool ledger from the EXISTING audit. Cheap. Remediation is phase 3 — the ledger is not |
+| **7** | `GRAPHIFY-AFFECTED-WIRE` | **L3 feeds #8 + L8 tools.** 0 call sites vs 114 for `update`. Build it first and WIRING-DONE-CONTRACT gets reachability for free instead of hand-rolling a second traversal |
+
+**PHASE 2 — STOP NEW DEBT AT SOURCE.** Every day these are absent, more debt lands. Prevention before cleanup.
+| # | ticket | deciding lens |
+|---|---|---|
+| **8** | `WIRING-DONE-CONTRACT` | **L2 prevention at source.** done.sh proves MERGED, never REACHABLE. Landing this means the 9 inert checks, the 101 unrun proofs and the zero-importer LiteLLM plane **never recur** — it is why they happened at all |
+| **9** | `PROOF-SUITES-ENFORCE` — **INFLOW GATE HALF** | **L2 + L5 compounding.** 101 suites declare red-proof and never execute, and the count ROSE 91->101 in one day. Gate the inflow FIRST; the burn-down is phase 3. Landing both together avoids the day-one RED that gets a gate switched off |
+| **10** | `SESSION-CLOSE-COMPLETENESS-GATE` (+ `TASK-LIST-DURABILITY-GATE`) | **L2 + L7 irreversibility.** Assertions A-E: harness tasks have a durable home · the session VERIFIED its own claims · cadence leg-B fresh · no invisible tickets · no stale operator actions. Needs #3 or every assertion is dead code |
+
+**PHASE 3 — DRAIN WHAT HAS ACCRUED.** Safe to do now that the sources are plugged.
+| # | ticket | deciding lens |
+|---|---|---|
+| **11** | `PR-QUEUE-DRIVE` | **L5 compounding + L8.** 67 open PRs, **52 DRAFTS, up from 42 in one session** — the launcher opens a draft per ticket and nothing merges, so it grows with throughput. TOKEN-LEAN: reviewer tabs off-Claude, `--retries` FINITE, 1-2 tabs until #392 lands |
+| **12** | `PR-AUTOMATION-EVAL` | **L2 stops it re-forming + L3 after the drain.** Draining by hand produces the measured friction the bar must be written from. Both halves, 5 disqualifying criteria, adversarial pass REQUIRED |
+| **13** | `TOOLS-FULLY-WIRED-CAMPAIGN` — remediation · `INERT-CHECKS-WIRE` · `MONIT-INSTALL-OR-RETIRE` · land **PR #209** · `LITELLM-COST-ADOPT` · ruff/mypy/shellcheck chain | **L8 operator's #1, executed.** The ledger from #6 says what to fix; this is fixing it. monit must be INSTALLED-and-proven or RETIRED — a paper adoption blocks the search for a real one |
+
+**PHASE 4 — DETECTION LAYER.** Register into it only what is already proven to fire.
+| # | ticket | deciding lens |
+|---|---|---|
+| **14** | `FLEET-STATUS-BOARD` + `MISSING-CLASS-DETECTORS` + `THROUGHPUT-EXPECTATION-ALARM` | **L6 surfacing.** FSB watches the WATCHERS; it does NOT notice a worker that stopped producing or an artifact that stopped appearing. All three together, or the class is only a third closed. **Substrate check MANDATORY first** — dead-man's-switch and Prometheus/OTel have ZERO registry rows |
+
+**PHASE 5 — MONEY & INTEGRITY.** Gated on a trustworthy meter, which is gated on the above.
+| # | ticket | deciding lens |
+|---|---|---|
+| **15** | money: `SPEND-METRIC-TRUSTWORTHY` · `COST-PER-TASK-REPLAY` · `PRICING-FEED` · `ZEN-GO-ROUTING-POLICY` | **L9 money.** The meter is fiction BOTH ways (\$1,185/2 days vs ~\$1.34 real). \$/token is the WRONG UNIT — cost per ACCEPTED task. zen must serve FREE models only; it currently serves 60 incl. paid |
+| **16** | `OWNS-OVERLAP-DISAMBIGUATE` · `DROID-IDENTITY-THIRD-PARTY` | **L2 + L9.** The reconciler asks an unanswerable question; our commits are attributed to a STRANGER's GitHub account |
+
+**PARALLELISM:** phases are a dependency order, NOT a serialisation. Within a phase, items with
+disjoint `owns:` should run in separate tabs simultaneously. #4, #5 and #7 are independent of each
+other and of #3 — three tabs, not three days.
 
 ## 3 — LOOSE ENDS FROM 2026-08-02 (mine, unfinished — process these)
 - **189 `pushed-no-pr`** branches · **57 `closed-pr-unlanded`** · **17 dirty worktrees**
