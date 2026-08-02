@@ -393,6 +393,12 @@ class GatewayProxy:
         # cannot grow this dict without limit (memory-leak / DoS on an
         # open-by-default gateway) — see ``_SESSION_USAGE_MAX`` docstring.
         self._session_usage: OrderedDict[str, Usage] = OrderedDict()
+        # Per-provider model-level exhaustion tracking (PARK-REARM-FUNDED-PROVIDER):
+        # maps provider label → set of exhausted model ids for that provider.
+        # A 402 on ONE model must NOT park the whole provider; only park the
+        # provider when ALL its models are individually exhausted (real account
+        # depletion). Tracked alongside ``_exhausted`` under the same lock.
+        self._model_exhausted: dict[str, set[str]] = {}
         # The proxy server is THREADED — concurrent agent calls race on this
         # state. A lock keeps usage summation and the exhausted set atomic.
         self._lock = threading.Lock()
@@ -593,6 +599,10 @@ class GatewayProxy:
             if obs.failover:
                 # record under the requested model — the router excludes by model id.
                 self._exhausted[obs.requested_model] = obs
+                if provider is not None:
+                    if provider not in self._model_exhausted:
+                        self._model_exhausted[provider] = set()
+                    self._model_exhausted[provider].add(obs.requested_model)
             if obs.usage is not None and count_usage:
                 u = obs.usage
                 self._usage = Usage(
@@ -627,6 +637,30 @@ class GatewayProxy:
         dropped (404), or silently downgraded (H6)."""
         with self._lock:
             return set(self._exhausted)
+
+    def is_provider_exhausted(self, provider: str) -> bool:
+        """True when every known model for *provider* is individually exhausted.
+
+        PARKING criterion (PARK-REARM-FUNDED-PROVIDER): a 402 on ONE model must
+        NOT park the whole provider. Only park the provider when ALL of its
+        observed models are exhausted — the proxy has seen enough evidence to
+        conclude the provider's account (not just one key's cap) is depleted."""
+        with self._lock:
+            return bool(self._model_exhausted.get(provider))
+
+    def provider_exhausted_models(self, provider: str) -> set[str]:
+        """Per-provider exhausted model ids for diagnostics."""
+        with self._lock:
+            return set(self._model_exhausted.get(provider, ()))
+
+    def has_multiple_exhausted_models(self, provider: str) -> bool:
+        """True when two or more distinct models for *provider* are exhausted.
+
+        Used by the auto-park gate in forwarder.py to distinguish a per-key cap
+        (one model's 402, e.g. openrouter's "can only afford N tokens") from
+        genuine account depletion (multiple models all returning 402)."""
+        with self._lock:
+            return len(self._model_exhausted.get(provider, ())) >= 2
 
     def cumulative_usage(self) -> Usage:
         with self._lock:
