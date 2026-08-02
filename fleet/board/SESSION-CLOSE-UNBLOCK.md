@@ -26,3 +26,12 @@ accept: |
      green. That test is the whole point; if it does not survive, the reconciliation is wrong.
   2. Get CI green, land.
   3. PR #116 is also conflicted and has NO CI as a result. Triage it: land, or close with evidence.
+
+## Dependencies & Sequence
+
+SECOND in blast radius. Independent of UNBLOCK-REVIEW-INFRA (disjoint owns) so it runs
+concurrently, but it gates every session close: until it lands, each session's work-loss check
+aborts before running, which is the exact mechanism that let 96 commits accumulate unpushed.
+
+Internal order: resolve #359's conflict and land it BEFORE triaging #116 — #116 is a stale
+conflicted PR with no CI, and the reconciliation technique proven on #359 applies to it.

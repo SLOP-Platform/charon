@@ -31,3 +31,16 @@ accept: |
      make the pool review NOTHING. It also now conflicts with #393's review-pool.sh hunk. Rework
      or close with evidence.
   Each step: fail-on-revert test, and `gh pr checks` verified GREEN before landing.
+
+## Dependencies & Sequence
+
+FIRST in the blast-radius order. The review pool is the machinery every other PR is processed
+BY, so nothing else in the queue moves at full rate until this lands. No inbound deps.
+
+Internal order is strict and NOT parallelisable: (1) #392 REST+ETag cutover, because the GraphQL
+quota exhaustion it fixes is what throttles every reviewer tab; (2) #389 reviewer-tab, the tool
+those tabs execute; (3) #346 rework-or-close, which touches the same fleet/review-pool.sh and
+would collide with either of the first two.
+
+Blocks: SESSION-CLOSE-UNBLOCK and MONEY-SECURITY-LANE do not depend on this, and may run
+concurrently in other tabs — they own disjoint paths.

@@ -36,3 +36,13 @@ accept: |
      suite must be run with the change REVERTED before it is believed. Two shapes accounted for
      6 of 8 bounces today: a safety property asserted only in prose, and a suite that passes
      against a mock of the component under test.
+
+## Dependencies & Sequence
+
+THIRD in blast radius but HIGHEST in consequence — this is the only lane touching money and
+security. Runs concurrently with the other two (disjoint owns; different repo).
+
+Internal order: (1) #212 PRICE-REFRESHER first, because cost ordering over an unpriced catalog
+cannot work and everything else in the money path is downstream of pricing existing at all;
+(2) #211 verify-then-land; (3) the five provider-key-exfil variants consolidated last, since
+picking the best requires the catalog picture the first two establish.
