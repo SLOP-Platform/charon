@@ -918,6 +918,20 @@ cleanup(){
       printf 'branch=%s\nworktree=%s\nrepo=%s\nreason=cleanup auto-commit (droid stood down with uncommitted work)\nflagged=%s\n' \
         "$branch" "$wt" "$REPO" "$(date -u +%FT%TZ)" > "$FLEET/state/needs-push/$current" || true
     fi
+    # (1b) PUBLISH committed-but-unpushed work BEFORE the guard is consulted (FRONTIER-TAB-DEATH,
+    #     2026-08-01). Step (1) auto-commits, and the droid itself commits on its normal path, so
+    #     by the time we reach (2) the branch routinely carries commits that exist on NO remote.
+    #     safe_worktree_remove then REFUSED with "N commit(s) on HEAD are not on any remote" — a
+    #     CORRECT refusal that is nonetheless a symptom report, not a remedy: five frontier tabs
+    #     ended this way in one session and the manager had to rescue the commits by hand. The
+    #     launcher was MANUFACTURING the stranded-work class.
+    #     Ordering is the fix, never tolerance: publish first, and the guard then evaluates a
+    #     branch that is genuinely safe to drop. leak-guard is untouched — it must keep refusing.
+    #     A non-zero return here is DATA (work stayed on disk, marker is live), NOT a fault: it is
+    #     consumed by the `if` below, so `set -e` cannot unwind the tab on it.
+    if ! bash "$FLEET/preserve-unpushed.sh" "$REPO" "$wt" "$branch" "$current" "$FLEET/state/needs-push"; then
+      echo "[$DROID] cleanup: $current — unpushed work could NOT be published; it stays on disk under a live needs-push marker. Land it with: bash fleet/land-needs-push.sh $current" >&2
+    fi
     # (2) SAFELY remove the worktree — branch STAYS. A leak-guard REFUSAL IS TERMINAL.
     #
     #     THE BUG THIS REPLACES (CRITICAL, reproduced): this read
