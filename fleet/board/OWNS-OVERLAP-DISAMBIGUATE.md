@@ -60,3 +60,35 @@ tie-break gets written against a namespace that is still ambiguous and encodes t
 The write-time gate (4) lands LAST, once the existing overlaps are resolved, or it reds the
 board on day one and gets switched off — the failure mode already observed with the shellcheck
 advisory ramp and with PROOF-SUITES-ENFORCE.
+
+## CORRECTION 2026-08-02 — the premise is wrong, not just ambiguous
+
+Measured after minting this ticket. Tested every AMBIGUOUS branch against every live ticket's
+`branch:` field (drift-tolerant for -v2/-clean/-rebuilt): **NOT ONE of them is declared by any
+live ticket.** They are `board/*` hygiene commits (which touch many tickets' files BY NATURE),
+cross-cutting chores like `chore/gitignore-state-negations`, and old merges from tickets already
+retired or renamed.
+
+So reconcile-merged is not failing to disambiguate — it is asking a question that cannot be
+answered. Its premise is "a merged PR touching this ticket's owned file is evidence that ticket
+landed". **That premise is FALSE.** A board-hygiene commit editing 12 ticket files is not 12
+completed tickets. File overlap is not evidence of completion; a declared `branch:` is.
+
+CONSEQUENCE FOR THE FIX — do this instead of ownership-search:
+ 1. REQUIRE a branch->ticket declaration. A merged branch no live ticket declares is NOT a
+    ticket completion: skip it, do not report it as ambiguous. This alone removes ~all of the
+    hundreds of AMBIGUOUS lines and the preflight starvation they cause.
+ 2. Use file-ownership only as a CROSS-CHECK on the already-identified ticket, never as the
+    search key.
+ 3. Tolerate branch drift (-v2/-clean/-rebuilt), or better: have land-push write the ACTUAL
+    pushed branch back to the ticket so the declared value cannot drift from reality. Drift was
+    the dominant real cause — 5 genuinely-merged tickets were invisible because they declared
+    `branch: X` and merged as `X-v2`.
+ 4. The owns-overlap itself (forwarder.py 9 claimants, gateway.py 6, pyproject.toml 6) is STILL
+    worth fixing for CONTENTION and for the substrate gate's ownership resolution — but it is
+    NOT the cause of the reconciliation failure. Do not conflate the two.
+
+EVIDENCE: the real backlog was 5 tickets (GITHUB-LIMITS-HARDENING, SESSION-END-PUSH-GATE,
+SYNC-SCHEDULE, REVIEWER-TAB-POOL, SANDBOX-CONTAINMENT), all found by branch-drift matching and
+retired in 1adbde8. Zero additional tickets were closable on file-ownership evidence, because
+file ownership is not evidence.
