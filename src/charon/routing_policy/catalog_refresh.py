@@ -203,15 +203,24 @@ class CatalogRefresher:
         )
 
     def bridge(self) -> None:
-        """Merge the discovered catalog onto the static baseline and push it into
-        the live router via ``apply_routes`` — THE bridge that makes a discovered
-        model routable with no hand edit.
+        """Merge the discovered catalog onto the current live router state and push
+        the result via ``apply_routes`` — THE bridge that makes a discovered model
+        routable with no hand edit.
 
         Static config WINS on every id collision (``setdefault``), so a
-        hand-authored route/pool/price is never overwritten by discovery."""
-        if self._server is None or self._base is None:
+        hand-authored route/pool/price is never overwritten by discovery.
+
+        Live-state layering: reads from ``self._server`` (the live router) on every
+        call so that operator hot-reloads (via ``gateway._reload``) are preserved
+        across subsequent bridge cycles. ``self._base`` from ``bind()`` is NOT used
+        here — that snapshot was captured at startup and is stale the moment a
+        web-setup write calls ``server.apply_routes()``."""
+        if self._server is None:
             return
-        base_routes, base_pools, base_pricing, base_meta = self._base
+        base_routes = dict(self._server.routes)
+        base_pools = {k: list(v) for k, v in self._server.pools.items()}
+        base_pricing = dict(getattr(self._server, "model_pricing", {}) or {})
+        base_meta = dict(getattr(self._server, "model_meta", {}) or {})
         with self._lock:
             registry, pool_map = self.cache.registry_and_pool_map()
 
