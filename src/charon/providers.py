@@ -73,6 +73,7 @@ class ProviderPreset:
     base_url: str
     key_env: str | None = None
     strip_v1: bool = True       # most OpenAI-compatible bases already end in /v1
+    funding_class: int | None = None
     downgrade_prone: bool = False  # vendor known to silently swap models (arms R1 strictly)
     # Upstream wire format: "openai" (default) or "anthropic". Drives SR-6 Phase-1
     # prompt-cache enrichment — an "anthropic"-wire route may get one cache_control
