@@ -27,7 +27,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import api, gitutil
+from . import gitutil
 from .coordinator import CostGate, RunResult, _consult_reviewer
 from .fence import Fence, detect_escape, snapshot_outside
 from .ledger import Checkpoint, Ledger

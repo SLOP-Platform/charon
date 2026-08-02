@@ -386,9 +386,16 @@ def _build_import_graph_from_ast(src_root: Path) -> dict[str, set[str]]:
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 if id(node) in tc_ids:
                     continue
-                target = _resolve_import_target(node, pkg, mod)
-                if target:
-                    graph[mod].add(target)
+                if isinstance(node, ast.ImportFrom) and node.module is None:
+                    # handle "from . import a, b" style imports: add edge for each alias
+                    for alias in node.names:
+                        target = _resolve_relative(pkg, node.level, alias.name)
+                        if target and (target == "charon" or target.startswith("charon.")):
+                            graph[mod].add(target)
+                else:
+                    target = _resolve_import_target(node, pkg, mod)
+                    if target:
+                        graph[mod].add(target)
     return dict(graph)
 
 
