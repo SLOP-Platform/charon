@@ -191,3 +191,5 @@ SECURITY	LEG-SANDBOX-HARDEN	queued	security	leg-preflight sandbox isolation	clos
 FLEET	LEG-F6-REALPATH-TEST	queued	test	close vacuous F6 fail-on-revert	exercise the real urllib pin path	leg-followups
 FLEET	STRANDED-WORK-AUDIT	done	audit	stranded near-done work audit	recover 18 built-unmerged items + FN #49-53	session-reliability
 FLEET	SESSION-END-PUSH-GATE	queued	gate	session-end commit+push gate	refuse session close on uncommitted OR unpushed work (found this session)	session-reliability
+Fleet	WCI-DEC-PYPROJECT-TOML	parked	-	wci-decompose pyproject.toml	split pyproject.toml so its owners re-slice onto disjoint modules	WCI — decompose contended files
+Fleet	WCI-DEC-FLEET-REVIEW-POOL-SH	parked	-	wci-decompose fleet/review-pool.sh	split fleet/review-pool.sh so its owners re-slice onto disjoint modules	WCI — decompose contended files

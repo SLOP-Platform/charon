@@ -5,8 +5,9 @@ difficulty: 3
 work_class: refactor
 branch: feat/wci-dec-pyproject-toml
 owns: pyproject.toml
-depends_on: MYPY-STRICTNESS-3-FLAGS, RUFF-ARG-C90-ON, RUFF-PREVIEW-ON, RUFF-SEC-RULES-ON
+depends_on:
 dep-kind: build
+parked: true
 auto_generated: wci-contention
 wci_contention_target: pyproject.toml
 wci_contention_count: 5
@@ -43,3 +44,6 @@ ds: |
   Sequenced STRICTLY AFTER every live owner above: this ticket rewrites the file they are
   editing, so it must not run concurrently with them (that is the collision it exists to
   end, not to cause). Concurrency-safe once they land — it owns a single path.
+stale: |
+  PARKED 2026-08-01 by fleet/wci-contention.sh --generate: owner MYPY-STRICTNESS-3-FLAGS carries a justified 'serial_justified:' — the file is serial BY DESIGN.
+  The contention this ticket tracked is gone; it is retired rather than left to accrete.
