@@ -165,3 +165,70 @@ however good its merge queue is:
     a queue that treats no-checks as not-failing will merge unverified work.
  5. Is the merge decision AUDITABLE after the fact — who/what approved, on what evidence?
 The prize is removing the LATENCY and the polling cost, not removing the judgement.
+
+## CONSOLIDATED SCOPE 2026-08-02 — ONE EVAL, TWO HALVES, ONE BAR
+
+This ticket now covers the FULL PR lifecycle. Both halves are in scope and neither may be dropped:
+
+  HALF A — REVIEW automation: who/what produces the verdict.
+    Candidates: pr-agent (current ADOPT verdict, stuck in OPEN DRAFT PR #391), aider, CodeRabbit,
+    Greptile, Danger, Reviewpad, our own review-pool.sh (~830 hand-rolled lines).
+  HALF B — MERGE / LIFECYCLE automation: what ACTS on the verdict, in the background, as PRs appear.
+    Candidates: Mergify · GitHub native merge queue · Prow/Tide · Kodiak · Bulldozer (Palantir) ·
+    Aviator · Trunk Merge · plain GitHub Actions on `pull_request`/`check_suite` events (the honest
+    DIY baseline every candidate must beat). ZERO of these has an EVAL-REGISTRY row today.
+  THEY COMPOSE. A review tool produces a verdict; a merge tool acts on it. Adopting one and
+  declaring the problem solved is the failure mode — say which half each candidate covers.
+
+### THE BAR — every candidate is scored on ALL of these, and 1-5 are DISQUALIFYING
+
+  1. Blocks on an explicit VERDICT, not merely on CI status.
+  2. Treats a MISSING adversarial review as BLOCKING — fail-CLOSED on absence. (Our own land-push
+     CI gate fails OPEN on "no PR exists"; that is the wrong default and must not be reproduced.)
+  3. Distinguishes "CI green" from "reviewed". Anything conflating them is disqualified.
+  4. Handles a CONFLICTED PR correctly — those receive ZERO checks and read mergeable-looking. A
+     queue treating no-checks as not-failing will merge unverified work.
+  5. Leaves an AUDITABLE decision trail: who/what approved, on what evidence.
+  6. Can it drive DRAFT PRs? Most merge queues ignore drafts BY DESIGN, and drafts are the
+     launcher's normal output (52 of 67 open PRs). Either the tool handles drafts or
+     `fleet-droid.sh` stops opening them as drafts — decide that fork explicitly, do not leave it.
+  7. EVENT-DRIVEN vs POLLING, treated as a COST axis: polling drained the entire GraphQL quota on
+     2026-08-02 (cycle 461 in minutes; killing the pools took graphql 0/5000 -> 3784/5000).
+  8. MCP interface? Check EVERY candidate (standing operator input).
+  9. Self-hosted vs SaaS: egress and secret exposure for a PRIVATE rig and a PUBLIC product repo.
+
+### WHY THE BAR IS SHAPED THIS WAY — measured, not theoretical
+**6 of 8 PRs bounced in ONE review round on 2026-08-02, every one with GREEN CI.** Two shapes:
+(a) a safety property asserted in PROSE that the code does not implement — #360 claimed atomic
+config write three times, `grep -n os.replace` = 0, the real write was `cp -p`; (b) a suite passing
+against a MOCK of the component under test, so it cannot fail on revert — #334 was byte-identical
+21/0 with the change reverted. **Blind auto-merge on green CI would have landed all of them.**
+Green CI proves the tests RAN, not that the work is CORRECT.
+**The automation is a DELIVERY MECHANISM for a review bar already satisfied — never a substitute
+for it.** The prize is removing LATENCY and POLLING COST, not removing judgement. A queue that
+lands work faster than we can verify converts a review backlog into a DEFECT backlog on master,
+which is strictly worse.
+
+### REQUIRED: A FOCUSED ADVERSARIAL REVIEW OF THIS EVAL (operator-directed)
+Do NOT accept this eval's own conclusions. Run a dedicated adversarial pass against it and record
+the result in EVAL-REGISTRY:
+  - Attack the INCUMBENT framing: is `review-pool.sh` being scored generously because we wrote it?
+    It has 6 known defects incl. a `rm -rf` of the caller's TMPDIR and silently dropped
+    `--wait/--retries`. State them in the comparison.
+  - Attack the CHALLENGER framing: check for the **under-scoped trial** anti-pattern — an eval that
+    genuinely runs a candidate but configures the INCUMBENT too narrowly so the candidate wins a
+    comparison it should have lost. It has ALREADY happened twice here (PR #320 Coverage.py 2/3 ->
+    WATCH vs OTel 0/3 -> ADOPT; PR #371 River run on defaults with its deciding parameter unset).
+  - Verify every capability claim by RUNNING it, not by reading the README. A vendor claim is a
+    hypothesis.
+  - The verdict must name what we would DELETE if we adopt. An adoption that deletes nothing is an
+    addition, and additions are how we reached ~20% utilisation across 52 tools.
+  - Cross-check against REVIEWER-TAB-POOL and UNBLOCK-REVIEW-INFRA: if a tool wins, those are
+    re-scoped or retired — say which, explicitly.
+
+## Dependencies & Sequence
+
+P0, and paired with PR-QUEUE-DRIVE (queue #6): that ticket drains the current 52 by hand, this one
+stops the backlog re-forming. Draining without automation refills; automating without draining
+leaves 52 stranded. Land PR #391 or fold it in FIRST — an ADOPT verdict sitting in an unread draft
+is this ticket's own failure mode, demonstrated.
