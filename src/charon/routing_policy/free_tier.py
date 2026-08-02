@@ -1,45 +1,77 @@
-"""Free-tier quota ledger (FREE-TIER-QUOTA-ROUTING).
+"""Free-tier quota ledger and quota-aware routing policy (FREE-TIER-QUOTA-ROUTING).
 
-Provides a **quota-aware router** that orders free legs by remaining headroom
-instead of price — the correct axis for free-tier selection, where cost_rank
-is always $0 and cannot discriminate between legs.
+Free-tier selection needs a different axis than paid legs: every free leg is
+$0, so ``cost_rank`` cannot discriminate between them, and a leg with quota
+remaining is indistinguishable from one that is exhausted.  The correct
+selector for a free tier is **remaining quota, not price**.
 
-Layers onto the existing routing_policy infrastructure without modifying it:
-the ``FreeTierLedger`` wraps ``QuotaTracker`` with per-provider limit loading
-from the TSV seed, and ``order_chain_free_first`` produces the sort key
-that reorders a chain so free legs with headroom come first.
+This module layers onto the existing ``routing_policy`` package without
+modifying it.  It provides:
 
-Composition with the existing axis (cost_rank / cost_class_priority):
-  * Free legs WITH known headroom:  ordered by remaining quota (most headroom first)
-  * Free legs AT limit:             excluded from the free bucket; visible in counters
-  * Free legs UNKNOWN limit:        surfaced but not preferred; no silent drop
-  * Paid legs:                      fall through unchanged; ordered by cost_rank
+* :class:`FreeTierLedger` — a per-provider quota ledger.  It wraps
+  :class:`charon.quota.QuotaTracker` with per-(provider, model) limit
+  loading from the TSV seed, self-accounting for providers with unpublished
+  limits, remaining-headroom computation, and a live-observation
+  reconciliation hook (response headers / key endpoints).
+* :func:`order_chain_free_first` — the selection rule.  Among capable legs it
+  prefers FREE legs with headroom (most headroom first), falls back to PAID
+  legs ordered by ``cost_rank``, and only then to free legs whose limits are
+  unknown or exhausted.  It composes with, and does not replace, the existing
+  cost-first axis for paid legs.
+* :class:`FreeTierPolicy` — a ``routing_policy.base.Policy`` implementation
+  wrapping the ledger for the gateway's route/pool view.
 
-Observed beats declared: the ledger records usage from every request and
-reconciles against live limits from response headers.  A drift between the
-TSV seed and observed reality is a signal to update the TSV — never a
-silent override of either source.
+Limit semantics
+---------------
+* Limits are DATA (the TSV seed), never hardcoded — providers change them.
+* A provider with an UNKNOWN limit is surfaced, not preferred as unlimited
+  and not silently dropped (DONE contract (e)).
+* A quota-exhausted leg is healthy and recovers at window rollover; it must
+  never be parked as faulty (DONE contract (d)).
+* Observed beats declared: live values from response headers take precedence
+  over our own accounting, which takes precedence over the TSV seed.  A
+  drift between seed and observation is surfaced in counters, not silently
+  resolved either way.
+
+``mistral``'s monthly budget is encoded in the seed as ``N_per_month`` in
+the token column; it is parsed into the calendar ``tmo`` window so the
+provider's largest free budget is a real, enforced limit.
 """
 from __future__ import annotations
 
 import csv
+import re
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from charon.quota import QuotaTracker
 
 if TYPE_CHECKING:
     from charon.proxy_server import UpstreamRoute
 
-_LIMIT_PATH = Path(__file__).parent.parent.parent / "fleet" / "state" / "FREE-TIER-LIMITS.tsv"
-
-_WINDOW_KEYS = frozenset(
-    {"rpm", "rpd", "rwk", "rmo", "tpm", "tpd", "twk", "tmo"}
+# repo root / fleet / state / FREE-TIER-LIMITS.tsv.  ``free_tier.py`` lives at
+# src/charon/routing_policy/, so the repo root is 4 parents up.
+_LIMIT_PATH = (
+    Path(__file__).resolve().parents[3] / "fleet" / "state" / "FREE-TIER-LIMITS.tsv"
 )
+
+_WINDOW_KEYS = frozenset({"rpm", "rpd", "rwk", "rmo", "tpm", "tpd", "twk", "tmo"})
+
+# Suffix -> window code for cells like ``1000000000_per_month``.  The request/
+# token kind (first char of the column name) is preserved.
+_WINDOW_SUFFIX = {
+    "minute": "pm",
+    "day": "pd",
+    "week": "wk",
+    "month": "mo",
+}
+
+# request/token windows that feed routing headroom (most binding constraint wins).
+_HEADROOM_WINDOWS = ("tpd", "tpm", "tmo", "rpd", "rpm", "rmo", "twk", "rwk")
 
 
 @dataclass
@@ -87,6 +119,90 @@ class _UsageRecord:
     tokens: int
 
 
+def _parse_window_value(column: str, raw: object) -> tuple[str, int] | None:
+    """Parse a TSV cell into ``(window_key, limit)``.
+
+    Handles plain ints (``1000``) and suffixed values like
+    ``1000000000_per_month`` (mapped to the monthly window of the same
+    request/token kind, e.g. the ``tpd`` column -> ``tmo``).  Returns None
+    for empty/``-``/``unknown``/``unpublished`` cells and for cells with a
+    suffix this module cannot map to a known window.
+    """
+    s = str(raw).strip()
+    if not s or s in ("-", "unknown", "unpublished"):
+        return None
+    match = re.fullmatch(r"(\d+)(?:_per_(\w+))?", s)
+    if match is None:
+        return None
+    limit = int(match.group(1))
+    if limit <= 0:
+        return None
+    per = match.group(2)
+    if per is None:
+        key = column
+    else:
+        code = _WINDOW_SUFFIX.get(per.lower())
+        if code is None or not column:
+            return None
+        key = column[0] + code
+    if key not in _WINDOW_KEYS:
+        return None
+    return key, limit
+
+
+def _int_or_none(v: object) -> int | None:
+    """Back-compat plain-int parser (legacy tests / callers)."""
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s or s in ("-", "unknown", "unpublished"):
+        return None
+    try:
+        return int(s)
+    except (ValueError, TypeError):
+        return None
+
+
+def _limit_from_row(row: dict[str, str]) -> ProviderLimit:
+    prov = str(row.get("provider", "")).strip()
+    model = str(row.get("model", "")).strip()
+    sig = str(row.get("exhaustion_signal", "")).strip().lower()
+    unpublished = (
+        "unpublished" in sig or sig in ("-", "unknown", "")
+    )
+    fields: dict[str, int] = {}
+    for col in _WINDOW_KEYS:
+        if col not in row:
+            continue
+        parsed = _parse_window_value(col, row.get(col))
+        if parsed is not None:
+            fields[parsed[0]] = parsed[1]
+    return ProviderLimit(
+        provider=prov,
+        model=model,
+        rpd=fields.get("rpd"),
+        rpm=fields.get("rpm"),
+        tpd=fields.get("tpd"),
+        tpm=fields.get("tpm"),
+        rwk=fields.get("rwk"),
+        twk=fields.get("twk"),
+        rmo=fields.get("rmo"),
+        tmo=fields.get("tmo"),
+        exhaustion_signal=str(row.get("exhaustion_signal", "")),
+        unpublished=unpublished,
+    )
+
+
+def _read_rows(path: Path) -> list[dict[str, str]]:
+    if not path.exists():
+        return []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    return [dict(r) for r in csv.DictReader(text.splitlines(), delimiter="\t")]
+
+
 @dataclass
 class FreeTierLedger:
     """Quota ledger for free-tier providers.
@@ -103,7 +219,7 @@ class FreeTierLedger:
     Usage::
 
         ledger = FreeTierLedger()
-        # or load from TSV seed:
+        # or load from TSV seed (the repo's fleet-state seed, see _LIMIT_PATH):
         ledger = FreeTierLedger.from_tsv()
 
         # Before sending a request:
@@ -121,11 +237,13 @@ class FreeTierLedger:
         observed = parse_ratelimit_headers(response.headers)
         if observed:
             ledger.reconcile_from_observed(provider, observed)
+            ledger.record_headers(provider, list(response.headers))
     """
 
     tracker: QuotaTracker = field(default_factory=QuotaTracker)
     _limits: dict[tuple[str, str], ProviderLimit] = field(default_factory=dict)
     _self_acct: dict[str, list[_UsageRecord]] = field(default_factory=dict)
+    _header_inventory: dict[str, set[str]] = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     @classmethod
@@ -139,60 +257,33 @@ class FreeTierLedger:
         """Build a ledger from the TSV seed at *path*.
 
         ``state_dir`` is passed to :class:`QuotaTracker` for persistence.
+        The default *path* is the repo's TSV seed (see ``_LIMIT_PATH``).
         """
         path = Path(path) if path is not None else _LIMIT_PATH
-        self_acct: dict[str, list[_UsageRecord]] = {}
         limits: dict[tuple[str, str], ProviderLimit] = {}
-        if path.exists():
-            try:
-                text = path.read_text(encoding="utf-8")
-            except OSError:
-                text = ""
-            reader = csv.DictReader(text.splitlines(), delimiter="\t")
-            for row in reader:
-                prov = str(row.get("provider", "")).strip()
-                model = str(row.get("model", "")).strip()
-                if not prov:
-                    continue
-                sig = str(row.get("exhaustion_signal", "")).strip().lower()
-                unpublished = (
-                    "unpublished" in sig
-                    or sig == "-"
-                    or sig == "unknown"
-                    or sig == ""
-                )
-                pl = ProviderLimit(
-                    provider=prov,
-                    model=model,
-                    rpd=_int_or_none(row.get("rpd")),
-                    rpm=_int_or_none(row.get("rpm")),
-                    tpd=_int_or_none(row.get("tpd")),
-                    tpm=_int_or_none(row.get("tpm")),
-                    rwk=_int_or_none(row.get("rwk")),
-                    twk=_int_or_none(row.get("twk")),
-                    rmo=_int_or_none(row.get("rmo")),
-                    tmo=_int_or_none(row.get("tmo")),
-                    exhaustion_signal=str(row.get("exhaustion_signal", "")),
-                    unpublished=unpublished,
-                )
-                limits[(prov, model)] = pl
-                # Init self-accounting for unpublished providers.
-                if pl.is_unknown():
-                    self_acct.setdefault(prov, [])
-        limits_cfg: dict[str, dict[str, Any]] = {}
-        for _key, pl in limits.items():
+        self_acct: dict[str, list[_UsageRecord]] = {}
+        for row in _read_rows(path):
+            if not str(row.get("provider", "")).strip():
+                continue
+            pl = _limit_from_row(row)
+            limits[(pl.provider, pl.model)] = pl
+            if pl.is_unknown():
+                self_acct.setdefault(pl.provider, [])
+        # Aggregate per-(provider, window) to the MAX across the provider's
+        # models — one per-provider ledger (the ticket's unit) per window.
+        limits_cfg: dict[str, dict[str, int]] = {}
+        for pl in limits.values():
             prov = pl.provider
             ld = pl.limits_dict()
-            if ld:
-                existing = limits_cfg.setdefault(prov, {})
-                for k, v in ld.items():
-                    if k not in existing or v > existing[k]:
-                        existing[k] = v
-        inst = cls.__new__(cls)
-        inst.tracker = QuotaTracker(limits=limits_cfg, now=now, state_dir=state_dir)
-        inst._limits = dict(limits)  # type: ignore[assignment]
+            if not ld:
+                continue
+            agg = limits_cfg.setdefault(prov, {})
+            for k, v in ld.items():
+                if k not in agg or v > agg[k]:
+                    agg[k] = v
+        inst = cls(tracker=QuotaTracker(limits=limits_cfg, now=now, state_dir=state_dir))
+        inst._limits = dict(limits)
         inst._self_acct = self_acct
-        inst._lock = threading.Lock()
         return inst
 
     def should_skip(self, provider: str, est_tokens: int = 0) -> bool:
@@ -272,14 +363,18 @@ class FreeTierLedger:
     def remaining_quota(self, provider: str) -> float | None:
         """Return the combined headroom score for *provider*.
 
-        Combines token and request headroom into a single comparable float.
+        Combines the headroom of every configured window (request AND token,
+        rolling AND calendar) into a single comparable float — the most
+        binding constraint governs, so a provider one window away from its
+        limit scores low even if every other window is empty.
+
         Returns ``None`` for unknown-limit providers.  Higher = more headroom.
         """
-        h_tpd = self.get_headroom(provider, "tpd")
-        h_tpm = self.get_headroom(provider, "tpm")
-        h_rpd = self.get_headroom(provider, "rpd")
-        h_rpm = self.get_headroom(provider, "rpm")
-        heads = [h for h in [h_tpd, h_tpm, h_rpd, h_rpm] if h is not None]
+        heads = [
+            h
+            for w in _HEADROOM_WINDOWS
+            if (h := self.get_headroom(provider, w)) is not None
+        ]
         if not heads:
             return None
         return min(heads)
@@ -289,7 +384,7 @@ class FreeTierLedger:
         return self.tracker._active.get(provider) is None
 
     def is_exhausted(self, provider: str, est_tokens: int = 0) -> bool:
-        """True when the provider is at or over ALL its known limits."""
+        """True when sending to *provider* would exceed a known limit."""
         return self.should_skip(provider, est_tokens=est_tokens)
 
     def reconcile_from_observed(
@@ -297,9 +392,9 @@ class FreeTierLedger:
     ) -> None:
         """Update limits from live observed values (response headers / key endpoints).
 
-        Precedence: observed > our accounting > TSV seed.  A drift between the TSV
-        and an observed value is surfaced in counters (``limit_drift``), not silently
-        resolved.
+        Precedence: observed > our accounting > TSV seed.  A drift between the
+        seed and an observed value is surfaced via the ``limit_drift`` counter
+        — never silently resolved in either direction.
         """
         if not observed:
             return
@@ -308,25 +403,43 @@ class FreeTierLedger:
             return
         with self._lock:
             with self.tracker._lock:
+                existing = self.tracker._active.get(provider, {})
+                for k, v in ld.items():
+                    if k in existing and existing[k][0] != v:
+                        self.tracker._bump("limit_drift")
                 self.tracker._active[provider] = {}
                 for k, v in ld.items():
-                    self.tracker._active[provider][k] = (v, "rolling")
+                    reset = "calendar" if k in ("rmo", "tmo") else "rolling"
+                    self.tracker._active[provider][k] = (v, reset)
+
+    def record_headers(self, provider: str, header_names: list[str] | set[str]) -> None:
+        """Record which header names *provider* actually emitted (the
+        fly-blind inventory).  The set of providers that never report limits
+        tells us where we cannot rely on live discovery."""
+        with self._lock:
+            self._header_inventory.setdefault(provider, set()).update(header_names)
+
+    def header_inventory(self) -> dict[str, list[str]]:
+        """Provider -> sorted list of header names observed, for the fly-blind
+        report (which providers expose limits and which do not)."""
+        with self._lock:
+            return {p: sorted(s) for p, s in self._header_inventory.items()}
 
     def counters(self) -> dict[str, int]:
-        """Return a snapshot of skip counters including any limit-reconciliation signals."""
+        """Snapshot of skip counters, including any limit-drift signals."""
         return dict(self.tracker.counters())
 
 
-def _int_or_none(v: object) -> int | None:
-    if v is None:
-        return None
-    s = str(v).strip()
-    if not s or s == "-" or s.lower() == "unknown":
-        return None
-    try:
-        return int(s)
-    except (ValueError, TypeError):
-        return None
+def load_tsv_seed(path: Path | str | None = None) -> dict[tuple[str, str], ProviderLimit]:
+    """Load the TSV seed into a dict keyed by (provider, model)."""
+    path = Path(path) if path is not None else _LIMIT_PATH
+    out: dict[tuple[str, str], ProviderLimit] = {}
+    for row in _read_rows(path):
+        if not str(row.get("provider", "")).strip():
+            continue
+        pl = _limit_from_row(row)
+        out[(pl.provider, pl.model)] = pl
+    return out
 
 
 def order_chain_free_first(
@@ -336,23 +449,23 @@ def order_chain_free_first(
     est_tokens: int = 0,
     cost_rank_key: Callable[[UpstreamRoute], tuple[bool, int, int]] | None = None,
 ) -> list[UpstreamRoute]:
-    """Reorder *chain* so free legs with headroom come FIRST, ordered by
-    remaining quota (most headroom first); free legs AT limit are deprioritised
-    (but not dropped — they're still reachable as fallback).
+    """Reorder *chain* so free legs with headroom come FIRST.
 
-    Paid legs and free legs with unknown limits fall through unchanged, ordered
-    by *cost_rank_key* if provided (otherwise left in their input position).
+    Final order — four buckets, in preference order:
 
-    Anti-over-block rule (DONE contract c): when ALL free legs are exhausted
-    or unknown, the chain is returned with paid legs in their input order so
-    a request that a paid leg could serve is never stranded.
+    1. FREE legs with KNOWN headroom, most headroom first.
+    2. PAID legs, ordered by *cost_rank_key* when provided (else input order).
+    3. FREE legs with UNKNOWN limits — surfaced, not preferred, not dropped.
+    4. FREE legs at/exceeding their limit — last resort only, and re-admitted
+       at window rollover automatically (DONE contract (d)).
 
-    A provider with an unknown limit is neither preferred as unlimited nor
-    silently dropped — it falls through to its input position (DONE contract e).
+    This ordering keeps the ANTI-OVER-BLOCK guarantee: a request that a paid
+    leg could serve is never stranded, and an exhausted free leg is never
+    sent to while a paid leg can serve (no 429 incurred — DONE contract (b)).
 
-    ``cost_rank_key(route)`` must return ``(not free, cost_class_priority, cost_rank)``
-    — the same tuple ``_live_rank_key`` produces.  When absent, the paid-leg
-    bucket is returned in input order.
+    ``cost_rank_key(route)`` must return ``(not free, cost_class_priority,
+    cost_rank)`` — the same tuple ``_live_rank_key`` produces.  When absent,
+    the paid-leg bucket is returned in input order.
 
     Usage::
 
@@ -361,51 +474,32 @@ def order_chain_free_first(
     if not chain:
         return []
 
-    def _headroom_sort_key(route: UpstreamRoute) -> tuple[int, int]:
-        prov = route.provider or route.label
-        rem = ledger.remaining_quota(prov)
-        unknown = ledger.is_unknown_limit(prov)
-        if rem is None:
-            unknown_headroom = 2
-        elif rem <= 0.0:
-            unknown_headroom = 1
-        else:
-            unknown_headroom = 0
-        # Invert headroom so most-headroom sorts first (lowest score).
-        # Use large int for unknown so it sorts last in the free bucket.
-        if unknown_headroom == 0:
-            headroom_inv = int((1.0 - (rem if rem is not None else 0.0)) * 10_000)
-        elif unknown:
-            headroom_inv = 9998
-        else:
-            headroom_inv = 9999
-        return (unknown_headroom, headroom_inv)
-
-    free_legs: list[UpstreamRoute] = []
+    free_headroom: list[UpstreamRoute] = []
+    free_unknown: list[UpstreamRoute] = []
+    free_exhausted: list[UpstreamRoute] = []
     paid_legs: list[UpstreamRoute] = []
 
     for route in chain:
-        spec_free = getattr(route, "free", False)
-        if not spec_free:
+        if not getattr(route, "free", False):
             paid_legs.append(route)
             continue
         prov = route.provider or route.label
-        if ledger.is_exhausted(prov, est_tokens=est_tokens):
-            free_legs.append(route)
-        elif ledger.is_unknown_limit(prov):
-            free_legs.append(route)
+        if ledger.is_unknown_limit(prov):
+            free_unknown.append(route)
+        elif ledger.is_exhausted(prov, est_tokens=est_tokens):
+            free_exhausted.append(route)
         else:
-            free_legs.append(route)
+            free_headroom.append(route)
 
-    free_legs.sort(key=_headroom_sort_key)
-
-    if not paid_legs:
-        return free_legs
+    # Most headroom first: remaining_quota in (0, 1.0]; ascending 1-rem.
+    free_headroom.sort(
+        key=lambda r: 1.0 - (ledger.remaining_quota(r.provider or r.label) or 0.0)
+    )
 
     if cost_rank_key is not None:
         paid_legs.sort(key=cost_rank_key)
 
-    return free_legs + paid_legs
+    return free_headroom + paid_legs + free_unknown + free_exhausted
 
 
 class FreeTierPolicy:
@@ -416,9 +510,9 @@ class FreeTierPolicy:
     from the gateway's routes/pools view.
 
     A provider with an UNKNOWN limit is neither preferred as unlimited nor
-    silently dropped — it appears after known-headroom providers in the free
-    bucket but before paid legs.  A quota-exhausted free leg is kept at the
-    end of the free bucket so it can still serve if all paid legs also fail.
+    silently dropped — it is surfaced (DONE contract (e)).  A quota-exhausted
+    free leg is kept as a last-resort fallback so it can still serve if every
+    paid leg also fails (DONE contract (c)).
     """
 
     name: str = "free_tier"
@@ -459,43 +553,3 @@ class FreeTierPolicy:
         if model_id is not None and model_id in routes:
             return [routes[model_id]]
         return []
-
-
-def load_tsv_seed(path: Path | str | None = None) -> dict[tuple[str, str], ProviderLimit]:
-    """Load the TSV seed into a dict keyed by (provider, model)."""
-    path = Path(path) if path is not None else _LIMIT_PATH
-    out: dict[tuple[str, str], ProviderLimit] = {}
-    if not path.exists():
-        return out
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return out
-    reader = csv.DictReader(text.splitlines(), delimiter="\t")
-    for row in reader:
-        prov = str(row.get("provider", "")).strip()
-        model = str(row.get("model", "")).strip()
-        if not prov:
-            continue
-        sig = str(row.get("exhaustion_signal", "")).strip().lower()
-        unpublished = (
-            "unpublished" in sig
-            or sig == "-"
-            or sig == "unknown"
-            or sig == ""
-        )
-        out[(prov, model)] = ProviderLimit(
-            provider=prov,
-            model=model,
-            rpd=_int_or_none(row.get("rpd")),
-            rpm=_int_or_none(row.get("rpm")),
-            tpd=_int_or_none(row.get("tpd")),
-            tpm=_int_or_none(row.get("tpm")),
-            rwk=_int_or_none(row.get("rwk")),
-            twk=_int_or_none(row.get("twk")),
-            rmo=_int_or_none(row.get("rmo")),
-            tmo=_int_or_none(row.get("tmo")),
-            exhaustion_signal=str(row.get("exhaustion_signal", "")),
-            unpublished=unpublished,
-        )
-    return out

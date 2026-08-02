@@ -1,9 +1,21 @@
 """DONE-contract tests for FREE-TIER-QUOTA-ROUTING.
 
 All tests use injectable clocks and mock routes — no real network, no live providers.
+
+The DONE contract (RED then GREEN):
+  (a) two free legs, one with headroom and one near its limit -> the one with
+      headroom is chosen.
+  (b) a free leg at its limit is skipped BEFORE the request is sent (no 429
+      incurred) — i.e. an exhausted free leg never precedes a leg that can serve.
+  (c) all free legs exhausted -> falls back to the cheapest PAID leg by cost_rank.
+  (d) a quota-exhausted leg is classified distinctly from a faulty one, and is
+      re-admitted at window rollover without manual intervention.
+  (e) a provider with an UNKNOWN limit is neither preferred as if unlimited nor
+      silently dropped — it is surfaced.
 """
 from __future__ import annotations
 
+from collections import deque
 from pathlib import Path
 
 from charon.quota import _ProviderState
@@ -12,6 +24,7 @@ from charon.routing_policy.free_tier import (
     FreeTierPolicy,
     ProviderLimit,
     _int_or_none,
+    _parse_window_value,
     load_tsv_seed,
     order_chain_free_first,
 )
@@ -72,11 +85,6 @@ class _MockRoute:
         return self._label
 
 
-# ---------------------------------------------------------------------------
-# DONE contract (a): free leg with headroom preferred over one near limit
-# ---------------------------------------------------------------------------
-
-
 def _make_ledger_with_state() -> tuple[FreeTierLedger, FakeClock, _UtcClock]:
     """Build a ledger with injectable clocks and expose clocks for test control."""
     clock = FakeClock(0.0)
@@ -87,6 +95,11 @@ def _make_ledger_with_state() -> tuple[FreeTierLedger, FakeClock, _UtcClock]:
     return ledger, clock, utc
 
 
+# ---------------------------------------------------------------------------
+# DONE contract (a): free leg with headroom preferred over one near limit
+# ---------------------------------------------------------------------------
+
+
 def test_free_leg_with_headroom_chosen_over_near_limit():
     """(a) Given two free legs, the one with more remaining quota is chosen."""
     ledger, clock, utc = _make_ledger_with_state()
@@ -94,11 +107,10 @@ def test_free_leg_with_headroom_chosen_over_near_limit():
     # groq: near limit (900 used of 1000 rpd) → 10% headroom
     ledger.tracker._active["groq"] = {"rpd": (1000, "rolling")}
     st_groq = _ProviderState()
-    from collections import deque
     st_groq.req_rolling["rpd"] = deque([float(i) for i in range(900)])
     ledger.tracker._state["groq"] = st_groq
 
-    # cerebras: lots of headroom (only 10 tokens used of 1M tpd) → 99.999% headroom
+    # cerebras: lots of headroom (only 10 tokens used of 1M tpd) → ~99.999% headroom
     ledger.tracker._active["cerebras"] = {"tpd": (1_000_000, "rolling")}
     st_cere = _ProviderState()
     st_cere.tok_rolling["tpd"] = deque([(0.0, 10)])
@@ -121,7 +133,6 @@ def test_free_leg_with_headroom_chosen_revert_is_red():
 
     ledger.tracker._active["fast"] = {"rpd": (1000, "rolling")}
     st_fast = _ProviderState()
-    from collections import deque
     st_fast.req_rolling["rpd"] = deque([float(i) for i in range(900)])  # near limit
     ledger.tracker._state["fast"] = st_fast
 
@@ -141,18 +152,17 @@ def test_free_leg_with_headroom_chosen_revert_is_red():
 
 
 # ---------------------------------------------------------------------------
-# DONE contract (b): free leg at limit skipped BEFORE request is sent
+# DONE contract (b): free leg at its limit skipped BEFORE request is sent
 # ---------------------------------------------------------------------------
 
 
 def test_free_leg_at_limit_is_deprioritised():
-    """(b) A free leg at its limit is deprioritised (still in chain) so no
-    429 is incurred by sending to it first."""
+    """(b) A free leg at its limit is deprioritised so no 429 is incurred by
+    sending to it while a leg with headroom can serve."""
     ledger, clock, utc = _make_ledger_with_state()
 
     ledger.tracker._active["exhausted"] = {"rpd": (5, "rolling")}
     st_ex = _ProviderState()
-    from collections import deque
     st_ex.req_rolling["rpd"] = deque([float(i) for i in range(5)])
     ledger.tracker._state["exhausted"] = st_ex
 
@@ -172,13 +182,34 @@ def test_free_leg_at_limit_is_deprioritised():
     assert any(r.provider == "exhausted" for r in ordered)
 
 
+def test_free_leg_at_limit_never_precedes_paid():
+    """(b) An exhausted free leg must NOT precede a paid leg: a request would
+    otherwise be sent to the exhausted leg first and incur a 429."""
+    ledger, clock, utc = _make_ledger_with_state()
+
+    ledger.tracker._active["free_at_limit"] = {"rpd": (1, "rolling")}
+    st = _ProviderState()
+    st.req_rolling["rpd"] = deque([0.0])
+    ledger.tracker._state["free_at_limit"] = st
+
+    chain = [
+        _MockRoute(model_id="m/free", provider="free_at_limit", free=True),
+        _MockRoute(model_id="m/paid", provider="paid", free=False),
+    ]
+
+    ordered = order_chain_free_first(chain, ledger)
+
+    paid_idx = next(i for i, r in enumerate(ordered) if r.provider == "paid")
+    free_idx = next(i for i, r in enumerate(ordered) if r.provider == "free_at_limit")
+    assert paid_idx < free_idx
+
+
 def test_free_leg_at_limit_is_deprioritised_revert_is_red():
     """(b RED) Reverting the deprioritisation would pick the exhausted leg first."""
     ledger, clock, utc = _make_ledger_with_state()
 
     ledger.tracker._active["exhausted"] = {"rpd": (2, "rolling")}
     st_ex = _ProviderState()
-    from collections import deque
     st_ex.req_rolling["rpd"] = deque([0.0, 1.0])
     ledger.tracker._state["exhausted"] = st_ex
 
@@ -198,17 +229,17 @@ def test_free_leg_at_limit_is_deprioritised_revert_is_red():
 
 
 # ---------------------------------------------------------------------------
-# DONE contract (c): all free legs exhausted → fallback to cheapest paid
+# DONE contract (c): all free legs exhausted → fallback to cheapest PAID
 # ---------------------------------------------------------------------------
 
 
 def test_all_free_exhausted_falls_back_to_paid():
-    """(c) When all free legs are at limit, paid legs still serve the request."""
+    """(c) When all free legs are at limit, paid legs serve the request — and
+    they are reached BEFORE the exhausted free legs (no 429 on the way)."""
     ledger, clock, utc = _make_ledger_with_state()
 
     ledger.tracker._active["groq"] = {"rpd": (1, "rolling")}
     st_g = _ProviderState()
-    from collections import deque
     st_g.req_rolling["rpd"] = deque([0.0])
     ledger.tracker._state["groq"] = st_g
 
@@ -226,12 +257,11 @@ def test_all_free_exhausted_falls_back_to_paid():
 
     ordered = order_chain_free_first(chain, ledger)
 
+    paid_idx = next(i for i, r in enumerate(ordered) if not r.free)
+    free_idx = next(i for i, r in enumerate(ordered) if r.free)
+    assert paid_idx < free_idx
     assert any(r.provider == "openai" for r in ordered)
     assert any(r.provider == "anthropic" for r in ordered)
-    # Paid legs are reachable: their position after free legs means the chain is non-empty
-    # and a request would reach paid legs if free legs are all skipped
-    paid_in_chain = any(not getattr(r, "free", False) for r in ordered)
-    assert paid_in_chain
 
 
 def test_cost_rank_key_applied_to_paid_legs():
@@ -256,7 +286,7 @@ def test_cost_rank_key_applied_to_paid_legs():
 
 
 # ---------------------------------------------------------------------------
-# DONE contract (d): quota-exhausted distinct from faulty; re-admitted at rollover
+# DONE contract (d): quota-exhausted distinct from faulty; re-admit at rollover
 # ---------------------------------------------------------------------------
 
 
@@ -267,7 +297,6 @@ def test_quota_exhausted_distinct_from_faulty():
 
     ledger.tracker._active["quota_exhausted"] = {"rpd": (2, "rolling")}
     st = _ProviderState()
-    from collections import deque
     st.req_rolling["rpd"] = deque([0.0, 1.0])
     ledger.tracker._state["quota_exhausted"] = st
 
@@ -284,7 +313,6 @@ def test_quota_exhausted_re_admitted_at_rollover():
 
     ledger.tracker._active["quota_exhausted"] = {"rpm": (2, "rolling")}
     st = _ProviderState()
-    from collections import deque
     st.req_rolling["rpm"] = deque([0.0, 1.0])
     ledger.tracker._state["quota_exhausted"] = st
 
@@ -315,7 +343,7 @@ def test_unknown_limit_not_silently_dropped():
 
 
 def test_unknown_limit_not_preferred_as_unlimited():
-    """(e) Unknown-limit free legs are sorted after known-headroom legs."""
+    """(e) Unknown-limit free legs sort after known-headroom legs."""
     ledger, clock, utc = _make_ledger_with_state()
 
     ledger.tracker._active["known"] = {"rpd": (1000, "rolling")}
@@ -334,6 +362,24 @@ def test_unknown_limit_not_preferred_as_unlimited():
     assert known_idx < zai_idx
 
 
+def test_unknown_limit_after_paid():
+    """(e) Unknown-limit free legs are surfaced AFTER paid legs, so traffic is
+    not silently pushed onto a free tier whose limits we cannot verify."""
+    ledger = FreeTierLedger()
+
+    chain = [
+        _MockRoute(model_id="nvidia/unknown", provider="nvidia", free=True),
+        _MockRoute(model_id="openai/paid", provider="openai", free=False),
+    ]
+
+    ordered = order_chain_free_first(chain, ledger)
+
+    nvidia_idx = next(i for i, r in enumerate(ordered) if r.provider == "nvidia")
+    paid_idx = next(i for i, r in enumerate(ordered) if r.provider == "openai")
+    assert paid_idx < nvidia_idx
+    assert nvidia_idx >= 0
+
+
 # ---------------------------------------------------------------------------
 # FreeTierPolicy select() integration
 # ---------------------------------------------------------------------------
@@ -345,7 +391,6 @@ def test_policy_select_uses_free_tier_ordering():
 
     ledger.tracker._active["high"] = {"tpd": (1_000_000, "rolling")}
     st_h = _ProviderState()
-    from collections import deque
     st_h.tok_rolling["tpd"] = deque([(0.0, 100_000)])  # 900k headroom
     ledger.tracker._state["high"] = st_h
 
@@ -377,7 +422,7 @@ def test_policy_select_unknown_model_returns_empty():
 
 
 # ---------------------------------------------------------------------------
-# ProviderLimit / TSV loading
+# ProviderLimit / parsing helpers
 # ---------------------------------------------------------------------------
 
 
@@ -389,6 +434,24 @@ def test_int_or_none_parses_correctly():
     assert _int_or_none("") is None
     assert _int_or_none(None) is None
     assert _int_or_none("unpublished") is None
+
+
+def test_parse_window_value_plain_int():
+    assert _parse_window_value("rpd", "14400") == ("rpd", 14400)
+    assert _parse_window_value("tpd", "1000000") == ("tpd", 1000000)
+
+
+def test_parse_window_value_suffixed_month():
+    assert _parse_window_value("tpd", "1000000000_per_month") == ("tmo", 1000000000)
+    assert _parse_window_value("rpd", "500_per_month") == ("rmo", 500)
+
+
+def test_parse_window_value_rejects_garbage():
+    assert _parse_window_value("tpd", "-") is None
+    assert _parse_window_value("tpd", "unknown") is None
+    assert _parse_window_value("tpd", "") is None
+    assert _parse_window_value("tpd", "many") is None
+    assert _parse_window_value("tpd", "1e9") is None
 
 
 def test_provider_limit_has_any_limit():
@@ -428,7 +491,6 @@ def test_headroom_returns_float_for_configured_provider():
 
     ledger.tracker._active["p"] = {"tpd": (1000, "rolling")}
     st = _ProviderState()
-    from collections import deque
     st.tok_rolling["tpd"] = deque([(0.0, 300)])
     ledger.tracker._state["p"] = st
 
@@ -442,7 +504,6 @@ def test_remaining_quota_combines_windows():
 
     ledger.tracker._active["p"] = {"tpd": (100, "rolling"), "rpd": (10, "rolling")}
     st = _ProviderState()
-    from collections import deque
     st.tok_rolling["tpd"] = deque([(0.0, 90)])  # 10% headroom
     st.req_rolling["rpd"] = deque([float(i) for i in range(9)])  # 1 req left
     ledger.tracker._state["p"] = st
@@ -452,8 +513,28 @@ def test_remaining_quota_combines_windows():
     assert abs(rq - 0.1) < 0.001
 
 
+def test_remaining_quota_calendar_monthly_window():
+    """(mistral) a monthly token limit lands in the calendar tmo window and
+    feeds headroom like any other window."""
+    ledger, clock, utc = _make_ledger_with_state()
+
+    from charon.quota import _Calendar, _calendar_period_start
+
+    ledger.tracker._active["mistral"] = {"tmo": (1_000_000_000, "calendar")}
+    st = _ProviderState()
+    st.calendar["tmo"] = _Calendar(
+        period_start=_calendar_period_start("tmo", utc()),
+        count=900_000_000,
+    )
+    ledger.tracker._state["mistral"] = st
+
+    rq = ledger.remaining_quota("mistral")
+    assert rq is not None
+    assert 0.0 < rq < 0.11  # ~10% of the monthly budget left
+
+
 # ---------------------------------------------------------------------------
-# reconcile_from_observed
+# reconcile_from_observed / header inventory
 # ---------------------------------------------------------------------------
 
 
@@ -469,6 +550,24 @@ def test_reconcile_from_observed_ignores_empty():
     ledger = FreeTierLedger()
     ledger.reconcile_from_observed("test_prov", {})
     assert ledger.tracker._active.get("test_prov") is None
+
+
+def test_reconcile_from_observed_surfaces_drift():
+    ledger = FreeTierLedger()
+    ledger.reconcile_from_observed("p", {"rpd": 1000})
+    ledger.reconcile_from_observed("p", {"rpd": 2000})
+
+    assert ledger.counters().get("limit_drift", 0) >= 1
+
+
+def test_header_inventory_records_providers():
+    ledger = FreeTierLedger()
+    ledger.record_headers("groq", ["x-ratelimit-limit-requests", "x-ratelimit-remaining"])
+    ledger.record_headers("nvidia", [])
+
+    inv = ledger.header_inventory()
+    assert "x-ratelimit-remaining" in inv["groq"]
+    assert "nvidia" in inv
 
 
 # ---------------------------------------------------------------------------
@@ -496,6 +595,22 @@ def test_load_tsv_seed(tmp_path: Path):
     assert seed[("zai", "glm-4.5-flash-zai")].is_unknown() is True
 
 
+def test_load_tsv_seed_parses_suffixed_month(tmp_path: Path):
+    tsv = tmp_path / "FREE-TIER-LIMITS.tsv"
+    tsv.write_text(
+        "provider\tmodel\trpd\trpm\ttpd\ttpm\tcontext_cap\ttrains_on_data\tpersonal_only\texhaustion_signal\n"
+        "mistral\tfree-mistral-code\t-\t-\t1000000000_per_month\t-\t128000\tFALSE\tFALSE\t"
+        "429 on overage; monthly reset\n",
+        encoding="utf-8",
+    )
+
+    seed = load_tsv_seed(tsv)
+
+    pl = seed[("mistral", "free-mistral-code")]
+    assert pl.tmo == 1_000_000_000
+    assert pl.limits_dict() == {"tmo": 1_000_000_000}
+
+
 def test_load_tsv_seed_missing_file_returns_empty():
     seed = load_tsv_seed(Path("/nonexistent/path/FREE-TIER-LIMITS.tsv"))
     assert seed == {}
@@ -521,6 +636,22 @@ def test_ledger_from_tsv_loads_correct_limits(tmp_path: Path):
     assert ledger.tracker._active["groq"]["rpd"] == (14400, "rolling")
     assert ledger.tracker._active.get("cerebras") is not None
     assert ledger.tracker._active["cerebras"]["tpd"] == (1_000_000, "rolling")
+
+
+def test_ledger_from_tsv_mistral_monthly_is_known(tmp_path: Path):
+    """mistral's 1B tokens/month seed is a real (tmo) limit, not 'unknown'."""
+    tsv = tmp_path / "FREE-TIER-LIMITS.tsv"
+    tsv.write_text(
+        "provider\tmodel\trpd\trpm\ttpd\ttpm\tcontext_cap\ttrains_on_data\tpersonal_only\texhaustion_signal\n"
+        "mistral\tfree-mistral-code\t-\t-\t1000000000_per_month\t-\t128000\tFALSE\tFALSE\t"
+        "429 on overage; monthly reset\n",
+        encoding="utf-8",
+    )
+
+    ledger = FreeTierLedger.from_tsv(tsv, state_dir=tmp_path)
+
+    assert ledger.tracker._active.get("mistral") is not None
+    assert ledger.tracker._active["mistral"]["tmo"] == (1_000_000_000, "calendar")
 
 
 # ---------------------------------------------------------------------------
@@ -553,3 +684,18 @@ def test_is_unknown_limit_false_for_configured():
     ledger, clock, utc = _make_ledger_with_state()
     ledger.tracker._active["groq"] = {"rpd": (14400, "rolling")}
     assert ledger.is_unknown_limit("groq") is False
+
+
+# ---------------------------------------------------------------------------
+# Default-path seed (the repo's TSV seed)
+# ---------------------------------------------------------------------------
+
+
+def test_default_seed_path_resolves_to_repo_tsv():
+    """The default from_tsv() path must resolve to the repo's TSV seed
+    (regression: an earlier path bug pointed 3 parents up and silently loaded
+    nothing)."""
+    ledger = FreeTierLedger.from_tsv()
+
+    assert ledger.tracker._active.get("groq") is not None
+    assert ledger.tracker._active["groq"]["rpd"] == (14400, "rolling")
