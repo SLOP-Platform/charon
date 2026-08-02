@@ -84,7 +84,15 @@ while [ $# -gt 0 ]; do case "$1" in
   --wait)     WAIT_MIN="${2:?--wait needs minutes}"; shift 2;;
   --retries)  RETRIES="${2:?--retries needs a count}"; shift 2;;
   --help|-h)  echo "usage: reviewer-tab.sh [--tier <frontier|strong|economy>] [--color #hex>] [--wait <min>] [--retries <n>]"; exit 0;;
-  *)          echo "unknown arg: $1" >&2; exit 2;;
+  # BACKWARD COMPATIBILITY: the original CLI took a BARE tier (`reviewer-tab.sh strong`).
+  # Renaming it to --tier killed every existing caller with a two-word "unknown arg" message,
+  # which is how the reviewer pool silently went to zero. Accept both forms.
+  frontier|strong|economy|high|opus|med|sonnet|low|haiku)
+              TIER="$1"; shift;;
+  *)          echo "[reviewer-tab] FATAL: unknown arg: $1" >&2
+              echo "[reviewer-tab]   usage: reviewer-tab.sh [--tier <frontier|strong|economy>] [--color <#hex>] [--wait <min>] [--retries <n>]" >&2
+              echo "[reviewer-tab]   a BARE tier is also accepted: reviewer-tab.sh strong" >&2
+              exit 2;;
 esac; done
 
 CANON="$(canon_tier "$TIER")"
@@ -100,6 +108,46 @@ DROID_ID="reviewer-tab-$$"
 export CHARON_DROID_ID="$DROID_ID"
 export CHARON_REVIEW_MODELS="$CHAIN"
 
-# ── spawn the tab ───────────────────────────────────────────────────────────────────
-exec "$FLEET/spawn-tab.sh" "reviewer($DROID_ID)" "$COLOR" \
+# ── spawn the tab, then VERIFY IT SURVIVED ──────────────────────────────────────────
+# Do NOT exec: a launcher that hands off and vanishes cannot tell a running reviewer from a
+# tab that died in 200ms. That silent-no-op is exactly how six launches produced zero pools.
+TAB_LOG="${CHARON_TAB_LOG:-/tmp/reviewer-tab-$DROID_ID.log}"
+export CHARON_TAB_LOG="$TAB_LOG"
+rm -f "$TAB_LOG" "$TAB_LOG.rc"
+
+# review-pool.sh's dispatch passes ONLY the tier to main_loop — the trailing `--wait/--retries`
+# it accepts on paper are dropped on the floor, so every pool ran a single cycle (`cycle 1/1`)
+# and exited. review-pool.sh is contended (PR #346/#392), so rather than edit it we set the
+# env vars it ALREADY reads (REVIEW_POOL_WAIT seconds / REVIEW_POOL_RETRIES). Same effect,
+# zero contention. The flags stay on the command line for when that dispatch bug is fixed.
+export REVIEW_POOL_WAIT="$((WAIT_MIN * 60))"
+export REVIEW_POOL_RETRIES="$RETRIES"
+# These reach the tab ONLY via CHARON_TAB_ENV (baked in by spawn-tab.sh) — plain exports do not
+# survive wt.exe -> wsl.exe.
+export CHARON_TAB_ENV="CHARON_DROID_ID=$DROID_ID CHARON_REVIEW_MODELS=$CHAIN REVIEW_POOL_WAIT=$REVIEW_POOL_WAIT REVIEW_POOL_RETRIES=$REVIEW_POOL_RETRIES${CHARON_GATEWAY_TOKEN:+ CHARON_GATEWAY_TOKEN=$CHARON_GATEWAY_TOKEN}"
+
+"$FLEET/spawn-tab.sh" "reviewer($DROID_ID)" "$COLOR" \
   bash "$FLEET/review-pool.sh" "$TIER" --wait "$WAIT_MIN" --retries "$RETRIES"
+_spawn_rc=$?
+if [ "$_spawn_rc" -ne 0 ]; then
+  echo "[reviewer-tab] FATAL: spawn-tab.sh failed rc=$_spawn_rc — no tab was opened." >&2
+  exit 5
+fi
+
+# The tab publishes "$TAB_LOG.rc" only when its command EXITS. If that appears inside the
+# liveness window, the reviewer is already dead — report the real reason, never "launched".
+LIVENESS_WAIT="${REVIEWER_TAB_LIVENESS_WAIT:-20}"
+_i=0
+while [ "$_i" -lt "$LIVENESS_WAIT" ]; do
+  if [ -f "$TAB_LOG.rc" ]; then
+    _rc="$(cat "$TAB_LOG.rc" 2>/dev/null || echo '?')"
+    echo "[reviewer-tab] FATAL: reviewer tab DIED after $_i s — review-pool.sh exited rc=$_rc" >&2
+    echo "[reviewer-tab]   tab output (last 20 lines of $TAB_LOG):" >&2
+    tail -n 20 "$TAB_LOG" 2>/dev/null | sed 's/^/[reviewer-tab]   | /' >&2
+    [ "$_rc" = "126" ] || [ "$_rc" = "127" ] && \
+      echo "[reviewer-tab]   rc=$_rc means the tab could not EXEC the command at all." >&2
+    exit 6
+  fi
+  sleep 1; _i=$((_i+1))
+done
+echo "[reviewer-tab] OK: reviewer tab alive after ${LIVENESS_WAIT}s — id=$DROID_ID log=$TAB_LOG"
