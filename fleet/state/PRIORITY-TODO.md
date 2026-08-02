@@ -26,13 +26,14 @@ moved in two reports, say so explicitly and why.
 | # | ticket | why here |
 |---|---|---|
 | **1** | **`ZERO-COMMIT-SPIN` — INVESTIGATE FIRST** | **The fleet claims work and produces NOTHING while looking busy.** Re-quarantined within MINUTES of clearing (count=3, 15:40:28Z) so it is LIVE. Decisive evidence: NO gate-result and NO agent-log exist for the ticket, while the SAME droid has a full session log for a different one — **the session never starts**, and the failure leaves no artifact. First hypothesis to test: both spinning tickets are `repo: charon` PRODUCT tickets claimed by a RIG droid (the product worktree path already broke `land-needs-push` today the same way). 8 tickets hit this, including P0s minted hours earlier |
-| 2 | `BOARD-VIEW-MISMATCH` | status.sh says `ready`, claim.sh silently skips. 5 hidden filters, no reason surfaced, `--only` silently overridden. Makes exclusion VISIBLE — but visibility of nothing is still nothing, which is why the spin outranks it |
-| 3 | `GRAPHIFY-AFFECTED-WIRE` | the blast-radius query itself, 0 call sites. Everything else is prioritised by hand until it is wired |
-| 4 | `WIRING-DONE-CONTRACT` | done.sh proves MERGED, never REACHABLE. This is why built-but-inert keeps happening |
-| 5 | `FLEET-STATUS-BOARD` + `MISSING-CLASS-DETECTORS` | registry + bidirectional meta-check, and detectors for the 9 classes that have none. A check that stops running must show MISSING |
-| 6 | `INERT-CHECKS-WIRE` · `PROOF-SUITES-ENFORCE` | 9 inert checks; 101 red-proof suites that never run (floor 88, RISING) |
-| 7 | money: `SPEND-METRIC-TRUSTWORTHY` · `COST-PER-TASK-REPLAY` · `PRICING-FEED` · `LITELLM-COST-ADOPT` | meter is fiction both ways; cost/token is the WRONG UNIT; LiteLLM cost tracking is vendored with ZERO importers |
-| 8 | `OWNS-OVERLAP-DISAMBIGUATE` · `DROID-IDENTITY-THIRD-PARTY` | reconciler premise wrong; our commits attributed to a stranger's GitHub account |
+| **2** | **`SESSION-CLOSE-COMPLETENESS-GATE` (+ `TASK-LIST-DURABILITY-GATE`, `SESSION-END-GATE-REPAIR`)** | **Operator-set 2026-08-02.** The close gate only understands GIT-shaped loss. Every class measured that day leaves no git artifact and is therefore invisible to it. Five assertions to add — (A) harness tasks have a durable home, (B) the session VERIFIED its own handoff claims, (C) cadence leg-B heartbeat is FRESH not merely registered, (D) no invisible/quarantined tickets, (E) no stale operator actions. **Land `SESSION-END-GATE-REPAIR` FIRST** — the close path is self-blocking today (end-session.sh creates its own target file, then the allocator refuses the name), so it ABORTS BEFORE any assertion runs and everything added here would be dead code. Evidence: closed with 24 harness tasks / 15 open / SIX with no ticket, saved only because the operator asked; no prior session's list survives to audit |
+| 3 | `BOARD-VIEW-MISMATCH` | status.sh says `ready`, claim.sh silently skips. 5 hidden filters, no reason surfaced, `--only` silently overridden. Makes exclusion VISIBLE — but visibility of nothing is still nothing, which is why the spin outranks it |
+| 4 | `GRAPHIFY-AFFECTED-WIRE` | the blast-radius query itself, 0 call sites. Everything else is prioritised by hand until it is wired |
+| 5 | `WIRING-DONE-CONTRACT` | done.sh proves MERGED, never REACHABLE. This is why built-but-inert keeps happening |
+| 6 | `FLEET-STATUS-BOARD` + `MISSING-CLASS-DETECTORS` | registry + bidirectional meta-check, and detectors for the 9 classes that have none. A check that stops running must show MISSING |
+| 7 | `INERT-CHECKS-WIRE` · `PROOF-SUITES-ENFORCE` | 9 inert checks; 101 red-proof suites that never run (floor 88, RISING) |
+| 8 | money: `SPEND-METRIC-TRUSTWORTHY` · `COST-PER-TASK-REPLAY` · `PRICING-FEED` · `LITELLM-COST-ADOPT` | meter is fiction both ways; cost/token is the WRONG UNIT; LiteLLM cost tracking is vendored with ZERO importers |
+| 9 | `OWNS-OVERLAP-DISAMBIGUATE` · `DROID-IDENTITY-THIRD-PARTY` | reconciler premise wrong; our commits attributed to a stranger's GitHub account |
 
 ## 3 — LOOSE ENDS FROM 2026-08-02 (mine, unfinished — process these)
 - **189 `pushed-no-pr`** branches · **57 `closed-pr-unlanded`** · **17 dirty worktrees**
