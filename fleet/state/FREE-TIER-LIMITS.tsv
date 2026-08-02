@@ -1,0 +1,17 @@
+provider	model	rpd	rpm	tpd	tpm	context_cap	trains_on_data	personal_only	exhaustion_signal
+groq	llama-3.1-8b-instant	14400	1000	-	-	-	FALSE	FALSE	429 on overage
+groq	llama-3.3-70b-versatile	1000	-	100000	-	-	FALSE	FALSE	429 on overage
+groq	free-groq	14400	1000	-	-	-	FALSE	FALSE	429 on overage
+groq	gpt-oss-120b-groq	14400	1000	-	-	-	FALSE	FALSE	429 on overage
+groq	deepseek-v4-pro-groq	14400	1000	-	-	-	FALSE	FALSE	429 on overage
+cerebras	free-cerebras	-	-	1000000	-	-	FALSE	FALSE	429 on overage
+cerebras	gemma-4-31b-cb	-	-	1000000	-	-	FALSE	FALSE	429 on overage
+mistral	free-mistral-code	-	-	1000000000_per_month	-	128000	FALSE	FALSE	429 on overage; monthly reset
+google-gemini	flash-lite	1000	-	-	-	1000000	FALSE	FALSE	429 on overage
+google-gemini	flash	250	-	-	-	1000000	FALSE	FALSE	429 on overage
+google-gemini	pro	100	-	-	-	1000000	FALSE	FALSE	429 on overage
+openrouter	:free suffix	1000	50	-	-	varies	FALSE	FALSE	402 / 429 / credit exhausted header
+nvidia	:free suffix	-	-	-	-	varies	FALSE	FALSE	unknown - limits not published
+zai	glm-4.5-flash-zai	-	-	-	-	-	-	-	unpublished
+zai	glm-4.7-flash-zai	-	-	-	-	-	-	-	unpublished
+nanogpt	:free suffix	-	-	-	-	-	-	-	unpublished
