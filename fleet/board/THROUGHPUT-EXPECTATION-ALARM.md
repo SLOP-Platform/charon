@@ -52,3 +52,35 @@ P0. Pairs with FLEET-STATUS-BOARD (#7) — that one watches the WATCHERS, this o
 Land FSB's registry first if they land together, so these two register into it rather than becoming
 two more unregistered checks. Independent of ZERO-COMMIT-SPIN (#1): that ticket fixes ONE instance
 of (b); this one DETECTS the whole class, including the next instance nobody has found yet.
+
+## SUBSTRATE CHECK IS MANDATORY BEFORE ANY CODE (operator-flagged 2026-08-02)
+
+Operator: "isn't this something a tool like deadcode is supposed to do? Don't we have tools already
+that can do this but we are not utilizing them fully?" Half right, and the half that lands is the
+important one.
+
+WRONG TOOL, ALREADY PROVEN — do NOT spend time here: `deadcode`/`vulture` answer STATIC
+reachability ("is this called anywhere in the source"). They cannot answer "did this process RUN",
+"did this worker PRODUCE", or "did this artifact APPEAR" — those are runtime states. PRIORITY-TODO
+D4 measured it: vulture flags `litellm_plane` at confidence 60 and **0 at confidence 80**, and
+neither tool ever says "this module has no importers". Confidence measures PROVABILITY, not
+IMPORTANCE.
+
+RIGHT TOOLS, AND WE HAVE ADOPTED NONE OF THEM. Evaluate BEFORE writing a detector:
+  - **dead-man's switch / heartbeat monitoring** (healthchecks.io, Cronitor, or self-hosted):
+    purpose-built for "a scheduled job stopped and nobody noticed". EVAL-REGISTRY has **ZERO rows**
+    for any of them. This session HAND-ROLLED heartbeat files for exactly this.
+  - **Prometheus / OpenTelemetry** for worker liveness and throughput. PR #320 ranked OTel #1 for
+    runtime-inert detection, but that eval was BOUNCED as an UNDER-SCOPED TRIAL (by its own table:
+    Coverage.py 2/3 -> WATCH, OTel 0/3 -> ADOPT #1; prometheus marked down for a 404 the PR itself
+    calls a one-line fix). Re-derive it fairly — do not cite the bounced verdict either way.
+  - **monit** — a PAPER adoption: `command -v monit` fails here AND on 4-LOM. Either install it or
+    stop listing it as adopted.
+  - MCP-first: check EVERY candidate for an MCP interface before writing code (standing operator
+    input, see PRICING-FEED).
+
+HARD REQUIREMENT: land an EVAL-REGISTRY row per candidate BEFORE building. If we hand-roll a
+detector for a problem healthchecks.io or Prometheus already solves, we have reproduced the exact
+class this ticket exists to close — inside the fix for that class. Adopt the substrate; build only
+the novel slice (the EXPECTATION model: "work was available and nothing was produced" is our
+semantics, not an off-the-shelf metric).
