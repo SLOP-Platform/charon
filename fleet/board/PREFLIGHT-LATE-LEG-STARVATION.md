@@ -38,3 +38,50 @@ accept: |
 P1. Depends on nothing, but is the natural COMPANION to OWNS-OVERLAP-DISAMBIGUATE: that ticket
 removes the CAUSE of the flood, this one ensures no future noisy leg can starve the late ones
 again. Land either order; landing both is what makes preflight trustworthy.
+
+## MEASURED BASELINE + ADVERSARIAL CORRECTIONS 2026-08-02
+
+A live run was measured, then the proposed remedies were adversarially reviewed and several were
+REJECTED. Both halves are recorded so the next session inherits the evidence AND the traps.
+
+MEASURED (a full `bash fleet/preflight.sh` run):
+  - **1105 lines, 67 functions, 13 detect legs**
+  - **699 output lines conveying 6 verdicts** (`clean`/`WARN`/`RED`) — signal-to-noise **0.86%**
+  - **`reconcile-merged` alone = 175 lines, 25% of ALL output**, and those 175 are only **35
+    distinct message SHAPES** repeated ~5x each
+  - `detect_stranded_work` (the work-loss gate) is leg **7 of 13**, dispatched at line **884** —
+    BEHIND the flood. `detect_gate_integrity` is LAST. A 200s-capped run reaches NEITHER.
+  - What works well and must be preserved: the `--- OPERATOR ACTIONS ---` block and the
+    `!! FOREMAN VERDICT !!` banners ARE visually distinct and unconditional. They correctly
+    surfaced `[DEFECT] COLLISIONS present` and `[ADVISORY] STARVING TIERS: frontier`.
+
+**CORRECTION — a claim in PRIORITY-TODO sec.C is WRONG, and my first review repeated it worse.**
+sec.C states "16 `|| return 0` fail-open guards in preflight.sh". A first pass here reported "39".
+BOTH ARE FALSE. Measured:
+    `|| return 0` (a LEG silently gives up) = **1**
+    `|| true`     (cleanup / deliberate boot-safety) = **38**
+They are unrelated constructs. The 38 are `rm`/`mkdir` cleanup and the documented "never block
+session boot" idiom — converting them would BREAK boot safety. **There is exactly ONE leg-level
+fail-open.** Do not launch a 39-guard audit; fix the one and move on.
+
+REMEDIES — with the adversarial verdict on each, DO NOT implement naively:
+ 1. CAP REPEATED SHAPES (count + distinct shapes, detail behind a flag). **RISK: this is
+    SUPPRESSION**, the class DIVERGED-BRANCH-TRIAGE explicitly forbids — silence is how a class
+    returns. Only safe if a NEW shape REDs and full detail stays reachable. The shape-normaliser is
+    itself a defect surface: a sloppy one merges two different findings into one.
+ 2. VERDICT SUMMARY. **RISK: "at the end" is fragile under the very timeout that motivated it** —
+    a 200s kill yields NO summary at all, worse than partial output. And a summary produced by the
+    same pass can silently omit a leg that CRASHED. Needs the bidirectional property: assert every
+    REGISTERED leg produced a verdict, and emit incrementally or early.
+ 3. REORDER BY CONSEQUENCE. **RISK: data flow unchecked** — 9 references to shared `state/`; legs
+    may write what later legs read. Check dependencies BEFORE reordering. Also beware encoding
+    today's topic as permanent priority; prefer "cheap and decisive first".
+ 4. ~~Audit 39 fail-open guards~~ **REJECTED — the premise was a miscount (see CORRECTION).**
+ 5. ~~Split `--brief` / `--full`~~ **REJECTED.** The session-start hook calls preflight, so brief
+    WOULD be the default path and any leg omitted from it becomes a new blind spot. Two output
+    paths is two things to drift. Make the SINGLE output concise instead.
+
+META-LESSON, recorded because it is the reusable part: the first review measured what preflight
+EMITS and then recommended restructuring how it WORKS, without reading a single leg implementation.
+The only proposal that survived adversarial review unscathed was the one grounded purely in
+measurement. **Read the legs before restructuring them.**
