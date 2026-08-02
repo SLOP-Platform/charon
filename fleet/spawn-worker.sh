@@ -12,12 +12,22 @@
 #    becomes "open another tab". Passing ONE script path collapses three quoting layers to zero.
 #  * MODEL is REQUIRED with no default. opencode's default is gpt-5.4, whose pool is
 #    [nanogpt, openrouter] — BOTH DEAD. A defaulted spawn lands the whole fleet on a dead pool.
-#  * The prompt is NOT passed here: `--prompt` was verified NOT to auto-submit. Push it after the
-#    worker is up with (CORRECTED 2026-08-02 — the previous form omitted the base_url and both
-#    positional slots, and FAILS: session-ctl.sh takes <base_url> FIRST, then the verb):
-#      fleet/session-ctl.sh http://127.0.0.1:<PORT> launch <agent> <model> "<prompt>"
-#    Defaults if the slots are omitted: agent=build, model=charon/deepseek-v4-flash
-#    (see session-ctl.sh:26 for the base_url arg and :120-122 for the agent/model slots).
+#  * PASS THE PROMPT AS THE 7th POSITIONAL ARG TO THIS SCRIPT. It injects via
+#    POST /tui/append-prompt + POST /tui/submit-prompt (see :250-251) and then VERIFIES a new
+#    session actually appeared. That is the ONLY mechanism that drives the VISIBLE TUI.
+#      bash fleet/spawn-worker.sh <NAME> <MODEL> <PORT> '<#hex>' 1 <WORKDIR> "<prompt>"
+#
+#    ⛔ DO NOT use `session-ctl.sh launch` to start a TUI worker's work. It POSTs
+#    /api/session + /api/session/{id}/prompt, which creates a session in the GLOBAL store that
+#    NO TUI DRIVES — the model runs HEADLESS and the tab sits on the splash screen looking dead.
+#    Symptom to recognise: the POST returns `"admittedSeq":1` and the tab never changes.
+#    This mistake was made on 2026-07-27 (cost a full dogfood run) and AGAIN on 2026-08-02 by a
+#    manager session that was misled by an EARLIER VERSION OF THIS VERY COMMENT recommending
+#    session-ctl. The comment was the trap. It is now corrected at the mechanism level, not just
+#    the syntax level.
+#
+#    `session-ctl.sh` remains correct for talking to an ALREADY-RUNNING session
+#    (`steer`, `stop`, `reply`, `watch`, `list`) — just never to START a TUI worker.
 #
 # ============================================================================
 # TUI-READINESS GATE  (was bug 3a — fixed 2026-07-27, see WORKER-LIFECYCLE-FIX)

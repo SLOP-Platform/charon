@@ -5,7 +5,15 @@ difficulty: 3
 work_class: routing
 branch: feat/zen-go-routing-policy
 depends_on:
-owns: docs/review-log/ZEN-GO-ROUTING-POLICY.md
+depends_on: WCI-DEC-SRC-CHARON-PROVIDERS-PY
+owns: src/charon/providers.py, src/charon/provider_presets/opencode.py, src/charon/routing_policy/__init__.py, tests/test_zen_go_routing_policy.py, docs/review-log/ZEN-GO-ROUTING-POLICY.md
+owns_widened: |
+  WIDENED 2026-08-02. The ticket owned ONLY its review-log, but a droid had already written +58
+  lines of real implementation for it into the PRODUCT MAIN CHECKOUT (the leak-guard class) plus
+  an untracked tests/test_zen_go_routing_policy.py. That work was therefore owned by NO ticket,
+  which made it both unlandable and invisible to every ownership gate — it surfaced only as three
+  `uncommitted-work` REDs in validate_board.sh. Widening owns is what makes the existing work
+  landable onto feat/zen-go-routing-policy instead of being stashed or discarded.
 serial_justified: |
   One policy over two provider entries with one shared enforcement point. Splitting it lands half
   a policy, which is indistinguishable from none.

@@ -26,6 +26,11 @@ fleet/state/*
 # ...except the config-drift source registry (CONFIG-SOURCES ticket) — local + gateway,
 # durable; config-drift.sh reads this to detect provider siloing.
 !fleet/state/CONFIG-SOURCES.tsv
+# ...except the outcome-test blueprint + its adversarial review (operator-supplied proposal for
+# test_gateway_outcome.py, 2026-08-02). Operator asked for this file to be DURABLE: it holds the
+# verbatim proposal, the review that found it would pass on a gateway with no failover at all,
+# and the corrected shape. A blueprint that lives only in a session transcript is not a blueprint.
+!fleet/state/OUTCOME-TEST-BLUEPRINT.md
 # ...except the service-liveness registry (SERVICE-LIVENESS-WATCHDOG) — the declarative SSOT of
 # every supervised service. fleet/watchdog/ renders monit config + evaluates liveness FROM it;
 # it is version-controlled config, NOT ephemeral runtime state, so it must survive the blanket ignore.
