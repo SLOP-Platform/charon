@@ -4,7 +4,6 @@ priority: 0
 difficulty: 3
 work_class: routing
 branch: feat/zen-go-routing-policy
-depends_on:
 depends_on: WCI-DEC-SRC-CHARON-PROVIDERS-PY
 owns: src/charon/providers.py, src/charon/provider_presets/opencode.py, src/charon/routing_policy/__init__.py, tests/test_zen_go_routing_policy.py, docs/review-log/ZEN-GO-ROUTING-POLICY.md
 owns_widened: |

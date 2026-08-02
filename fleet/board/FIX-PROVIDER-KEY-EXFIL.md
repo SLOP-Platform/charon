@@ -1,5 +1,5 @@
 repo: charon
-tier: strong
+tier: frontier
 priority: 2
 difficulty: 4
 work_class: security

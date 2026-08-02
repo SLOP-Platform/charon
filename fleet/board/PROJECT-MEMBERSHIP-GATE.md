@@ -4,7 +4,7 @@ priority: 2
 difficulty: 2
 work_class: rig-meta
 branch: feat/project-membership-gate
-depends_on: DIFFICULTY-SCHEMA
+depends_on: VALIDATE-BOARD-PATH-TRUNCATION
 owns: fleet/validate_board.sh, fleet/state/ROADMAP.tsv
 accept: |
   validate_board.sh flags (RED) any LIVE ticket (board/*.md, not parked/retired) that is NOT present as a
