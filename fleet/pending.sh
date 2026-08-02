@@ -69,9 +69,68 @@ cmd_list(){
   done < "$LIST"
 }
 
+# IDEMPOTENT ADD — dedupe by exact item text.
+#
+# WHY THIS IS MANDATORY AND NOT A NICETY [[harmless-cruft-bites]]: cmd_add was a pure append with
+# no identity check. That is fine for a human typing an item once. It becomes fatal the moment a
+# RECURRING caller uses this channel — a 20-minute cadence reporting a standing backlog appends
+# ~72 identical rows/day, and an OPERATOR-ACTIONS.md holding 72 copies of one line is functionally
+# the same as an empty one: the operator stops reading it. Burying the fail-loud channel under its
+# own output is a silencing mechanism, just a slower one than deleting the check.
+#
+# IDENTITY IS THE TEXT ITSELF. An item whose text is byte-identical to one already OPEN is the
+# SAME unresolved item — it is on the board, so re-announcing it adds nothing and burns a label
+# (labels are a monotonic, never-reused resource). Text that DIFFERS is a STATE CHANGE and does
+# warrant a new row. Recurring callers additionally hash their finding-state upstream so they only
+# call `add` when the state moves (see fleet/checks/stranded-work-cron.sh); this exact-text guard
+# is the belt-and-braces covering every OTHER caller, humans included.
+#
+# Prints the EXISTING label and exits 0 on a duplicate. A caller must NOT see a non-zero exit for
+# "already reported" or it will learn to ignore this command's status entirely.
+# --key <PREFIX>: UPSERT ONE STANDING ROW instead of appending a new one.
+#
+# WHY EXACT-TEXT DEDUPE IS NOT SUFFICIENT ON ITS OWN (measured, not theorised): the recurring
+# stranded-work scan was run three times in a row on the live rig and produced THREE rows —
+# "256 finding(s)", "259 finding(s)", "258 finding(s)" — because other agents were landing work
+# between runs. Every row was a genuine state change, and the text differed each time, so both
+# the caller's state hash and the exact-text guard correctly let all three through. The board
+# still filled up. A recurring report of a MOVING number is one standing item whose value changes,
+# not N items; modelling it as N is what buries the channel.
+#
+# So a keyed caller owns exactly ONE row: matched by text PREFIX, rewritten in place, LABEL
+# PRESERVED (the operator may already have referred to it by letter, and labels are never reused),
+# and left completely untouched when the text has not changed.
+_label_for_text(){
+  awk -F'\t' -v t="$1" 'index($0,"\t") && substr($0, index($0,"\t")+1)==t {print $1; exit}' "$LIST"
+}
+_label_for_key(){
+  awk -F'\t' -v k="$1" 'index($0,"\t") && index(substr($0, index($0,"\t")+1), k)==1 {print $1; exit}' "$LIST"
+}
+
 cmd_add(){
+  local key=""
+  if [ "${1:-}" = "--key" ]; then key="${2:-}"; shift 2
+    [ -z "$key" ] && { echo "usage: pending.sh add --key <prefix> \"<item>\"" >&2; exit 1; }
+  fi
   local text="$*"
-  [ -z "$text" ] && { echo "usage: pending.sh add \"<plain-language item>\"" >&2; exit 1; }
+  [ -z "$text" ] && { echo "usage: pending.sh add [--key <prefix>] \"<plain-language item>\"" >&2; exit 1; }
+
+  if [ -n "$key" ]; then
+    case "$text" in "$key"*) ;; *) echo "pending.sh: --key '$key' must be a prefix of the item text" >&2; exit 1;; esac
+    local kl; kl="$(_label_for_key "$key")"
+    if [ -n "$kl" ]; then
+      awk -F'\t' -v l="$kl" -v new="$text" 'BEGIN{OFS="\t"} $1==l{print l, new; next} {print}' \
+        "$LIST" > "$LIST.tmp" && mv "$LIST.tmp" "$LIST"
+      echo "updated standing item '$kl' in place (keyed: $key)"
+      return 0
+    fi
+  fi
+
+  local dup; dup="$(_label_for_text "$text")"
+  if [ -n "$dup" ]; then
+    echo "already pending as '$dup' — not re-added (idempotent)"
+    return 0
+  fi
   local idx; idx=$(( $(hw_effective) + 1 ))
   # Belt AND braces: even with a correct floor, never hand out a label that is
   # currently on the board. An ambiguous label is worse than a skipped one.

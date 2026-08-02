@@ -703,10 +703,72 @@ detect_inflight_landscape(){
 # preflight: session start, and every gate/land cycle that preflights.
 # ADVISORY (`|| true`): it is REPORT-ONLY and must never block a session on pre-existing backlog.
 # The findings surface in the detector block; recovery stays a human/land.sh decision.
+#
+# ANTI-SILENCE LEG (the reason this function has a second half at all):
+#   Running the detector at preflight makes it fire when a SESSION happens. The 96-commit backlog
+#   proves that is not enough — no session for two days meant no scan for two days. The cadence
+#   therefore lives in cron (fleet/checks/stranded-work-cron.sh), OUTSIDE any session.
+#   But a cadence you cannot observe is worse than none: if the crontab entry is deleted, renamed,
+#   or points at a path a fresh checkout lacks, the observable is SILENCE — which is
+#   indistinguishable from "nothing is stranded". That is §J (a gate marked done that quietly
+#   stopped firing) repeating one level up, and it is exactly how this class recurs.
+#   So preflight checks the cron leg's HEARTBEAT, not its findings. Stale/missing heartbeat is
+#   reported LOUDLY and is never silently green — the wrapper writes that file on EVERY run
+#   including its own failures, so a fresh heartbeat means "the cadence fired", never "it was ok".
+# Freshness via the watchdog SSOT grammar when it is present (wd_probe_fresh is the rig's ONE
+# definition of "file mtime within ttl" — three other consumers already share it, and a second
+# private copy of that predicate is the drift class watchdog-lib.sh exists to kill). Inline
+# fallback for checkouts that predate the lib, so this leg can never be skipped for lack of it.
+_stranded_hb_fresh(){ # 0 fresh | 1 stale | 2 missing
+  local hb="$1" ttl="$2" lib="$HERE/watchdog/watchdog-lib.sh"
+  if [ -f "$lib" ]; then
+    ( # shellcheck source=/dev/null
+      . "$lib" >/dev/null 2>&1 && wd_probe_fresh "file:$hb" "$ttl" )
+    return $?
+  fi
+  [ -e "$hb" ] || return 2
+  local mt now; mt="$(stat -c %Y "$hb" 2>/dev/null || date -r "$hb" +%s 2>/dev/null)"
+  [ -n "$mt" ] || return 2
+  now="$(date +%s)"
+  [ $(( now - mt )) -le "$ttl" ] && return 0 || return 1
+}
+
 detect_stranded_work(){
   local script="$HERE/checks/stranded-work.sh"
   [ -f "$script" ] || { echo "stranded-work: checks/stranded-work.sh not found"; return 0; }
   bash "$script" --quiet || true
+
+  # --- CADENCE LIVENESS, TWO LEGS, BOTH REQUIRED.
+  # Leg A alone is THE TRAP: a crontab line whose command does not exist registers perfectly,
+  # `crontab -l` shows it, and it has never once executed (cron logs 127 to mail nobody reads).
+  # Leg B alone cannot tell "the entry was deleted five minutes ago" from "it is about to run".
+  # Only REGISTERED **and** FRESH earns a clean line.
+  # TTL resolved HERE, not at file scope: a default that lives outside the function can be lost by
+  # any caller that reaches the function another way, and an empty TTL silently reads as "stale".
+  local hb="$HERE/state/.stranded-work.heartbeat" rc reg=1 cron_out
+  local ttl="${STRANDED_HB_TTL:-5400}"   # 90m: comfortably > the 20m cadence, well under a day
+  cron_out="$(${STRANDED_CRONTAB_CMD:-crontab -l} 2>/dev/null || true)"
+  printf '%s\n' "$cron_out" | grep -qF 'stranded-work-cron.sh' && reg=0
+  _stranded_hb_fresh "$hb" "$ttl"; rc=$?
+
+  if [ "$reg" -eq 0 ] && [ "$rc" -eq 0 ]; then
+    echo "clean: stranded-work-cadence (crontab REGISTERED and heartbeat FRESH: $(head -1 "$hb" 2>/dev/null))"
+  else
+    echo "WARN: stranded-work-cadence NOT PROVEN — the scan only fires when a SESSION starts;"
+    echo "    between sessions nothing scans, which is how the 96-commit backlog accumulated."
+    [ "$reg" -eq 0 ] && echo "    leg A registered: YES" || echo "    leg A registered: NO  (no crontab entry mentions stranded-work-cron.sh)"
+    case "$rc" in
+      0) echo "    leg B heartbeat:   FRESH ($(head -1 "$hb" 2>/dev/null))" ;;
+      1) if [ "$reg" -eq 0 ]; then
+           echo "    leg B heartbeat:   STALE — older than ${ttl}s ($(head -1 "$hb" 2>/dev/null)). REGISTERED BUT NOT EXECUTING."
+         else
+           echo "    leg B heartbeat:   STALE — older than ${ttl}s ($(head -1 "$hb" 2>/dev/null)); consistent with the entry having been removed."
+         fi ;;
+      *) echo "    leg B heartbeat:   MISSING — no file at $hb" ;;
+    esac
+    echo "    Register the cadence (once, as this user, on the box that holds the checkouts):"
+    echo "      ( crontab -l 2>/dev/null; echo '*/20 * * * * $HERE/checks/stranded-work-cron.sh >/dev/null 2>&1' ) | crontab -"
+  fi
 }
 
 detect_cg_drift(){

@@ -3,9 +3,21 @@ tier: strong
 priority: 2
 difficulty: 3
 work_class: ci-infra
-branch: feat/stranded-work-detect
+branch: feat/stranded-work-detect-v2
 depends_on:
-owns: fleet/checks/stranded-work.sh, fleet/tests/stranded-work.test.sh
+substrate: |
+  crontab — adopt — the SESSION-INDEPENDENT CADENCE is the only part of this ticket a third-party
+  tool can supply, and crontab supplies it. cron is already running on this box
+  (`/usr/sbin/cron -f`), needs no root, and adds no dependency. The two alternatives were CHECKED,
+  not assumed. monit is NOT INSTALLED here or on 4-LOM (`command -v monit` returns rc 1, no
+  /etc/monit*) and its own SSOT fleet/state/service-registry.tsv does not exist, so the watchdog is
+  a config GENERATOR with no runtime. There is no systemd USER manager either (/run/user/1000
+  absent, enabling linger needs root). So the schedule is ADOPTED and nothing is hand-rolled for
+  it. The DETECTOR is the novel slice — no external tool audits git work stranded across N linked
+  worktrees, refs/stash, detached HEADs and live PR check-state in one pass, because the shapes
+  are specific to this rig worktree-per-ticket topology. Registry row landed separately by PR #378
+  (the consult-first rule forbids a ticket and the row it cites landing together).
+owns: fleet/checks/stranded-work.sh, fleet/checks/stranded-work-cron.sh, fleet/tests/stranded-work.test.sh, fleet/pending.sh
 accept: |
   RECURRING, TRIGGER-WIRED stranded-work DETECTOR. Report-only; it never deletes, pushes, or mutates a PR.
 

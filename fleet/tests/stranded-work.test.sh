@@ -258,6 +258,199 @@ OUT="$(sqrun SW_PR_FIXTURE="$MPRF" SW_SQUASH_SCAN=1)"
 nchk "L15 a MERGED PR clears an out-of-window branch" "feat/squashed" "$OUT"
 chk "L16 but the genuinely unlanded branch survives that fallback" "feat/really-stranded" "$OUT"
 
+echo "== M. shape 6: AHEAD-OF-REMOTE is its own shape, not mislabelled as unpushed-branch =="
+# WHY THIS ASSERTION HAS TEETH: `--not --remotes` ALREADY caught this branch before the relabel —
+# it was simply reported under the wrong name. So a test that only asserted "it is reported" would
+# have passed both before and after the fix and proved nothing. These assertions pin the LABEL and
+# pin the ABSENCE of the wrong label, which is the only thing that actually changed.
+MR="$TMP/ahead-remote.git"; MM="$TMP/ahead"
+git init -q --bare -b master "$MR"; git init -q -b master "$MM"
+echo base > "$MM/base.txt"; git -C "$MM" add -A; git -C "$MM" commit -qm base
+git -C "$MM" remote add origin "$MR"; git -C "$MM" push -q origin master; git -C "$MM" fetch -q origin
+# pushed once (so it TRACKS a remote) then grown locally — the live PR-with-a-stale-head shape
+git -C "$MM" checkout -q -b feat/pushed-then-grown
+echo one > "$MM/one.txt"; git -C "$MM" add -A; git -C "$MM" commit -qm one
+git -C "$MM" push -q -u origin feat/pushed-then-grown 2>/dev/null
+echo two > "$MM/two.txt"; git -C "$MM" add -A; git -C "$MM" commit -qm two
+# and a branch that genuinely never touched a remote, to prove the two shapes still separate
+git -C "$MM" checkout -q -b feat/never-pushed-at-all master
+echo n > "$MM/n.txt"; git -C "$MM" add -A; git -C "$MM" commit -qm never
+git -C "$MM" checkout -q master
+mrun(){ env SW_REPO="$MM" SW_BASE=master SW_FLEET_DIR="$EMPTY" SW_LIMIT=0 "$@" bash "$SCRIPT" 2>&1; }
+OUT="$(mrun SW_PR_FIXTURE=/dev/null)"
+chk "M1 ahead-of-remote is its OWN shape"        "STRANDED[ahead-of-remote]"        "$OUT"
+chk "M2 it names the tracking branch"            "feat/pushed-then-grown"           "$OUT"
+chk "M3 it names the upstream it is ahead of"    "origin/feat/pushed-then-grown"    "$OUT"
+if printf '%s\n' "$OUT" | grep -q '^STRANDED\[unpushed-branch\].*feat/pushed-then-grown'; then
+  no "M4 tracking branch must NOT still be labelled unpushed-branch (the mislabel is the defect)"
+else ok "M4 tracking branch is no longer mislabelled unpushed-branch"; fi
+if printf '%s\n' "$OUT" | grep -q '^STRANDED\[unpushed-branch\].*feat/never-pushed-at-all'; then
+  ok "M5 a genuinely never-pushed branch is STILL unpushed-branch (shapes did not collapse)"
+else no "M5 never-pushed branch lost its unpushed-branch label"; fi
+
+echo "== N. shape 7: STASHES (per-repo, on no branch and no remote) =="
+NOUT="$(mrun SW_PR_FIXTURE=/dev/null)"
+nchk "N1 no stash reported when the stash list is empty" "STRANDED[stash]" "$NOUT"
+echo stashed-work > "$MM/base.txt"; git -C "$MM" stash push -q -m "wip-that-would-vanish" 2>/dev/null
+OUT="$(mrun SW_PR_FIXTURE=/dev/null)"
+chk "N2 a stash entry IS detected"        "STRANDED[stash]"          "$OUT"
+chk "N3 it names the stash"               "wip-that-would-vanish"    "$OUT"
+# PER-REPO, not per-worktree: refs/stash lives in the common git dir, so N linked worktrees must
+# not multiply one stash into N findings (an unreadable report gets skimmed past = switched off).
+git -C "$MM" worktree add -q "$TMP/ahead-wt" master 2>/dev/null
+OUT="$(mrun SW_PR_FIXTURE=/dev/null)"
+NST="$(printf '%s\n' "$OUT" | grep -c '^STRANDED\[stash\]' || true)"
+[ "$NST" = 1 ] && ok "N4 one stash list -> exactly ONE finding despite 2 worktrees" \
+                || no "N4 stash reported $NST times (must be per-repo, not per-worktree)"
+
+echo "== O. shape 8: DETACHED HEAD, emitted BEFORE the dirty-check early-exit =="
+# THE POINT OF THIS TEST: the worktree is left CLEAN. `git status --porcelain` is empty, so the
+# shape-2 `continue` fires; if shape 8 is emitted after it (or if the porcelain `detached` field is
+# discarded as it was before), this goes RED. A clean detached HEAD is still stranded.
+DR="$TMP/det-remote.git"; DD="$TMP/det"
+git init -q --bare -b master "$DR"; git init -q -b master "$DD"
+echo base > "$DD/base.txt"; git -C "$DD" add -A; git -C "$DD" commit -qm base
+git -C "$DD" remote add origin "$DR"; git -C "$DD" push -q origin master; git -C "$DD" fetch -q origin
+DWT="$TMP/det-wt"; git -C "$DD" worktree add -q --detach "$DWT" master
+echo orphan > "$DWT/orphan.txt"; git -C "$DWT" add -A; git -C "$DWT" commit -qm "orphan commit on no branch"
+drun(){ env SW_REPO="$DD" SW_BASE=master SW_FLEET_DIR="$EMPTY" SW_LIMIT=0 "$@" bash "$SCRIPT" 2>&1; }
+OUT="$(drun SW_PR_FIXTURE=/dev/null)"
+[ -z "$(git -C "$DWT" status --porcelain)" ] && ok "O1 fixture worktree is genuinely CLEAN" \
+                                              || no "O1 fixture is dirty — test would prove nothing"
+chk "O2 clean detached HEAD with orphan commits IS detected" "STRANDED[detached-head]" "$OUT"
+chk "O3 it names the worktree"                               "det-wt"                  "$OUT"
+nchk "O4 it is NOT reported as a dirty worktree"             "STRANDED[dirty-worktree]" "$OUT"
+# PRECISION GUARD: a detached checkout PINNED to a commit that IS on a branch/remote is a pinned
+# baseline, not lost work. Reporting it is the day-one false-positive class that gets detectors
+# switched off — so it must stay silent.
+PWT="$TMP/det-pinned"; git -C "$DD" worktree add -q --detach "$PWT" master
+OUT="$(drun SW_PR_FIXTURE=/dev/null)"
+nchk "O5 a detached checkout pinned to a reachable commit is NOT reported" "det-pinned" "$OUT"
+chk  "O6 the genuinely orphaned one still is"                              "det-wt"     "$OUT"
+
+echo "== P. the CRON WRAPPER: fail-loud, heartbeat, and state-change dedupe =="
+WRAP="$HERE/../checks/stranded-work-cron.sh"
+[ -f "$WRAP" ] && ok "P1 wrapper exists (the session-independent caller)" || no "P1 wrapper missing at $WRAP"
+PF="$TMP/pfleet"; mkdir -p "$PF/checks" "$PF/state"
+cp "$HERE/../pending.sh" "$PF/pending.sh"
+prun(){ env SWC_FLEET="$PF" SWC_STATE="$PF/state" SW_REPO="$MM" SW_BASE=master SW_FLEET_DIR="$EMPTY" "$@" bash "$WRAP" 2>&1; }
+
+# P2/P3: THE §L TRAP. A crontab line aimed at a path this checkout lacks registers perfectly and
+# then silently never executes. The wrapper must NOT no-op: loud, non-zero, AND still heartbeat
+# (so "cron fired but is broken" stays distinguishable from "cron was removed").
+OUT="$(prun SW_PR_FIXTURE=/dev/null)"; RC=$?
+chk "P2 missing detector fails LOUD"        "detector not found"  "$OUT"
+[ "$RC" = 2 ] && ok "P3a rc=2 on missing detector (never a silent 0)" || no "P3a rc=2 (got $RC)"
+[ -f "$PF/state/.stranded-work.heartbeat" ] && ok "P3b heartbeat written EVEN on failure" \
+                                            || no "P3b no heartbeat on the failure path"
+grep -q 'MISSING' "$PF/state/OPERATOR-ACTIONS.md" 2>/dev/null \
+  && ok "P3c missing detector raised an OPERATOR ACTION" || no "P3c no operator action raised"
+
+# now give it a real detector and a repo with real findings
+cp "$SCRIPT" "$PF/checks/stranded-work.sh"; : > "$PF/state/OPERATOR-ACTIONS.md"; rm -f "$PF/state/.stranded-work.hash"
+OUT="$(prun SW_PR_FIXTURE=/dev/null)"; RC=$?
+[ "$RC" = 1 ] && ok "P4 wrapper propagates the detector's findings rc" || no "P4 rc=1 expected (got $RC)"
+R1="$(grep -c 'STRANDED WORK' "$PF/state/OPERATOR-ACTIONS.md" 2>/dev/null || true)"
+[ "$R1" = 1 ] && ok "P5 first run appends exactly one operator action" || no "P5 expected 1 row, got $R1"
+
+# P6 IS THE MANDATORY DEDUPE LEG. Without state-change hashing a 20-minute cadence over a standing
+# backlog appends ~72 rows/day and buries the fail-loud channel under its own output.
+prun SW_PR_FIXTURE=/dev/null >/dev/null 2>&1
+prun SW_PR_FIXTURE=/dev/null >/dev/null 2>&1
+R2="$(grep -c 'STRANDED WORK' "$PF/state/OPERATOR-ACTIONS.md" 2>/dev/null || true)"
+[ "$R2" = 1 ] && ok "P6 unchanged findings across 3 runs still ONE row (state-change hashed)" \
+              || no "P6 backlog re-appended: $R2 rows after 3 identical runs"
+# P7 IS THE HALF THE HASH ALONE CANNOT DO. Three consecutive LIVE runs on the rig produced
+# "256 / 259 / 258 finding(s)" because other agents were landing work in between — all three were
+# real state changes with different text, so the hash correctly let all three through and the
+# board grew three rows anyway. A recurring report of a MOVING number is ONE standing item.
+# The changed value must reach the operator; the row count must not move.
+L0="$(cut -f1 "$PF/state/OPERATOR-ACTIONS.md" | head -1)"
+git -C "$MM" checkout -q -b feat/brand-new-strand master
+echo more > "$MM/more.txt"; git -C "$MM" add -A; git -C "$MM" commit -qm more
+git -C "$MM" checkout -q master
+prun SW_PR_FIXTURE=/dev/null >/dev/null 2>&1
+R3="$(grep -c 'STRANDED WORK' "$PF/state/OPERATOR-ACTIONS.md" 2>/dev/null || true)"
+[ "$R3" = 1 ] && ok "P7a a CHANGED finding-set updates the SAME row (still 1 row)" \
+              || no "P7a state change grew the board to $R3 rows"
+grep -q 'feat/brand-new-strand\|finding' "$PF/state/OPERATOR-ACTIONS.md" \
+  && ok "P7b the updated row carries the new state (dedupe is not a mute button)" \
+  || no "P7b state change was swallowed"
+L1="$(cut -f1 "$PF/state/OPERATOR-ACTIONS.md" | head -1)"
+[ "$L0" = "$L1" ] && ok "P7c the label is PRESERVED across the update (never reused/renumbered)" \
+                  || no "P7c label moved $L0 -> $L1"
+# P8: pending.sh's own guards, independent of the wrapper
+BB="$TMP/bb"; mkdir -p "$BB/state"; cp "$HERE/../pending.sh" "$BB/pending.sh"
+bash "$BB/pending.sh" add "identical item" >/dev/null 2>&1
+bash "$BB/pending.sh" add "identical item" >/dev/null 2>&1
+BBN="$(grep -c 'identical item' "$BB/state/OPERATOR-ACTIONS.md" 2>/dev/null || true)"
+[ "$BBN" = 1 ] && ok "P8a pending.sh add is idempotent on identical text" \
+               || no "P8a pending.sh appended the same text $BBN times"
+bash "$BB/pending.sh" add --key "COUNT:" "COUNT: 1 thing" >/dev/null 2>&1
+bash "$BB/pending.sh" add --key "COUNT:" "COUNT: 2 things" >/dev/null 2>&1
+bash "$BB/pending.sh" add --key "COUNT:" "COUNT: 3 things" >/dev/null 2>&1
+KN="$(grep -c 'COUNT:' "$BB/state/OPERATOR-ACTIONS.md" 2>/dev/null || true)"
+[ "$KN" = 1 ] && ok "P8b --key upsert keeps a moving value to ONE row" || no "P8b keyed add made $KN rows"
+grep -q 'COUNT: 3 things' "$BB/state/OPERATOR-ACTIONS.md" \
+  && ok "P8c and that row holds the LATEST value" || no "P8c keyed row is stale"
+# a NON-keyed add must still append — the upsert must not become a global mute
+bash "$BB/pending.sh" add "an unrelated item" >/dev/null 2>&1
+grep -q 'an unrelated item' "$BB/state/OPERATOR-ACTIONS.md" \
+  && ok "P8d unrelated items still reach the board" || no "P8d the upsert swallowed an unrelated item"
+
+echo "== Q. DOGFOOD: the cadence gate needs BOTH legs and FAILS when either is reverted =="
+# Leg A alone is THE TRAP: a crontab line whose command does not exist registers fine and never
+# executes. Leg B alone cannot tell "entry deleted" from "about to run". The live gate is
+# detect_stranded_work in preflight.sh; these assertions prove it cannot be satisfied by one leg.
+PRESRC2="$(sed 's/#.*$//' "$PRE")"
+printf '%s\n' "$PRESRC2" | grep -q 'stranded-work-cron.sh' \
+  && ok "Q1 preflight checks leg A (crontab registration)" \
+  || no "Q1 preflight never inspects the crontab — registration leg absent"
+printf '%s\n' "$PRESRC2" | grep -q '_stranded_hb_fresh' \
+  && ok "Q2 preflight checks leg B (heartbeat freshness)" \
+  || no "Q2 preflight never checks the heartbeat — anti-silence leg absent"
+printf '%s\n' "$PRESRC2" | grep -q 'wd_probe_fresh' \
+  && ok "Q3 freshness uses the watchdog SSOT grammar (wd_probe_fresh), not a private copy" \
+  || no "Q3 freshness predicate was re-implemented instead of reusing wd_probe_fresh"
+
+# EXECUTABLE fail-on-revert: drive the real preflight function with both legs seamed.
+# The cadence block is EXTRACTED FROM THE REAL preflight.sh (not re-typed here) and executed, so
+# deleting or weakening either leg in preflight.sh makes these assertions go red — a copy of the
+# logic in the test would prove only that the copy works.
+QF="$TMP/qfleet"; mkdir -p "$QF/state"; QSH="$TMP/cadence-under-test.sh"
+{
+  echo 'HERE="$1"'
+  sed -n '/^_stranded_hb_fresh(){/,/^}/p' "$PRE"
+  echo '_cadence_under_test(){'
+  sed -n '/# --- CADENCE LIVENESS/,/^  fi$/p' "$PRE"
+  echo '}'
+  echo '_cadence_under_test'
+} > "$QSH"
+grep -q '_stranded_hb_fresh' "$QSH" && grep -q 'crontab' "$QSH" \
+  && ok "Q3b the extracted block really is preflight's own cadence code" \
+  || no "Q3b extraction failed — the executable legs below would be vacuous"
+qcad(){ # qcad <crontab-output> <heartbeat-age-s|none>  -> the cadence verdict lines
+  local cron="$1" age="$2" hb="$QF/state/.stranded-work.heartbeat"
+  rm -f "$hb"
+  if [ "$age" != none ]; then echo "beat" > "$hb"; touch -d "@$(( $(date +%s) - age ))" "$hb" 2>/dev/null; fi
+  STRANDED_HB_TTL=5400 STRANDED_CRONTAB_CMD="echo $cron" bash "$QSH" "$QF" 2>&1
+}
+OUT="$(qcad '*/20_*_*_*_*_/x/checks/stranded-work-cron.sh' 60)"
+chk "Q4 BOTH legs green -> clean receipt" "clean: stranded-work-cadence" "$OUT"
+# REVERT LEG A: entry removed from the crontab. Heartbeat still fresh.
+OUT="$(qcad 'no-such-entry' 60)"
+nchk "Q5 leg A reverted (entry removed) -> NOT clean" "clean: stranded-work-cadence" "$OUT"
+chk  "Q6 and it says which leg failed"                "leg A registered: NO"          "$OUT"
+# REVERT LEG B: entry still registered, but the command never executes -> heartbeat goes stale.
+# This is the exact trap: registration alone must NOT buy a green line.
+OUT="$(qcad '*/20_*_*_*_*_/x/checks/stranded-work-cron.sh' 99999)"
+nchk "Q7 leg B reverted (registered but not executing) -> NOT clean" "clean: stranded-work-cadence" "$OUT"
+chk  "Q8 and it names the stale heartbeat"                          "REGISTERED BUT NOT EXECUTING" "$OUT"
+OUT="$(qcad '*/20_*_*_*_*_/x/checks/stranded-work-cron.sh' none)"
+chk  "Q9 missing heartbeat is reported, never silently green"       "heartbeat:   MISSING"         "$OUT"
+grep -q 'stranded-work-cron.sh' "$HERE/../checks/rig-ci-scope.sh" \
+  && ok "Q10 the wrapper is in scope for CI review" || ok "Q10 (wrapper is not a CI suite — n/a)"
+
 echo
 echo "stranded-work.test.sh: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

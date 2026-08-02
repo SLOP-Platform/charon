@@ -39,7 +39,10 @@
 #   reported. The patch-id test can only ever SUPPRESS on positive proof of landing; every
 #   inconclusive path reports, annotated UNVERIFIED. See SW_SQUASH_SCAN below.
 #
-# THE FIVE SHAPES (each one was REAL on this rig; each has a fail-on-revert test)
+# THE EIGHT SHAPES (each one was REAL on this rig; each has a fail-on-revert test)
+#   Shapes 6-8 were added after the detector's FIRST REAL MISS: a 96-commit backlog that the
+#   original five shapes could not see. Shape 6 was being detected and MISNAMED; shapes 7-8 were
+#   not represented at all. Narrow coverage, not a broken check, is what let the backlog build.
 #   1 unpushed-branch    local branch with commits reachable from no remote ref AND whose content
 #                        is not provably landed on base (see SQUASH-MERGE AWARENESS).
 #   2 dirty-worktree     worktree with uncommitted/untracked changes and NO live claim marker.
@@ -52,6 +55,15 @@
 #                        which is the same FALSE-RECEIPT class as a proofless done-marker: it
 #                        looks green because nothing ever ran. Every rig PR predated the rig CI
 #                        workflow, so this was the normal case, not an edge case.
+#   6 ahead-of-remote    branch that TRACKS a remote but is ahead of it. Already detected by the
+#                        shape-1 walk; it was reported AS shape 1, which is the wrong triage
+#                        instruction (see scan_unpushed_branches). Relabelled, not re-scanned.
+#   7 stash              refs/stash entries: content on no branch and no remote, invisible to
+#                        every branch/worktree audit, destroyed silently by `stash clear`/prune.
+#                        PER-REPO (one stash list per common git dir), never per-worktree.
+#   8 detached-head      worktree on an anonymous HEAD carrying commits reachable from no branch
+#                        and no remote. Emitted BEFORE the dirty check: a CLEAN detached checkout
+#                        is still stranded, and `git status` has nothing to say about it.
 #
 # NEVER-FALSE-GREEN CONTRACT
 #   Shapes 3-5 need PR state. If `gh` is missing, rate-limited, offline, or the repo has no
@@ -229,38 +241,118 @@ _wt_id(){ local b; b="$(basename "$1")"; printf '%s' "${b#charon-fleet-}"; }
 
 # ── the four scans ────────────────────────────────────────────────────────────────────────────
 
-# SHAPE 1: local branch with commits on no remote ref.
+# SHAPES 1 + 6: local branch with commits on no remote ref.
+#
+# WHY THIS SPLITS INTO TWO SHAPES [[fix-root-cause-never-workaround]]
+#   `--not --remotes` already CAUGHT the ahead-of-upstream case — a branch that was pushed once
+#   and then grew 5 more local commits has those 5 commits on no remote ref, so n>0 and it was
+#   reported. It was reported under the WRONG NAME: "unpushed-branch". That mislabel is not
+#   cosmetic. It is why the 96-commit backlog read as noise: an operator scanning a wall of
+#   "unpushed-branch" lines reads them as "branches I never pushed", triages the ones with no
+#   remote, and skips the rest — while the ahead-of-remote rows are the ones with a LIVE PR
+#   whose head is silently missing commits, i.e. the higher-severity half.
+#   So this is a RELABEL of an existing detection (via @{upstream}), NOT a new scan. Same walk,
+#   same cost, same suppression rules; only the shape name and the message differ.
 scan_unpushed_branches(){
-  local repo="$1" base="$2" b n
+  local repo="$1" base="$2" b n up ahead shape
   while IFS= read -r b; do
     [ -n "$b" ] || continue
     [ "$b" = "$base" ] && continue
     n="$(git -C "$repo" rev-list --count "$b" --not --remotes 2>/dev/null || echo 0)"
     [ "${n:-0}" -gt 0 ] 2>/dev/null || continue
+    # Does this branch have a remote counterpart OF ITS OWN NAME? Only then are its commits
+    # "ahead of a remote" rather than "never pushed".
+    # PRECISION THAT MATTERS: `git checkout -b foo origin/master` sets foo's upstream to
+    # origin/MASTER. A naive @{upstream} test therefore calls every freshly-branched, never-pushed
+    # branch "ahead-of-remote" — which is the mislabel this shape exists to FIX, just inverted.
+    # So the upstream's branch component must equal $b AND that ref must actually exist.
+    local rem merge upb
+    rem="$(git -C "$repo" config --get "branch.$b.remote" 2>/dev/null || true)"
+    merge="$(git -C "$repo" config --get "branch.$b.merge" 2>/dev/null || true)"
+    upb="${merge#refs/heads/}"
+    up=""
+    if [ -n "$rem" ] && [ "$upb" = "$b" ] \
+       && git -C "$repo" rev-parse --verify -q "$rem/$b" >/dev/null 2>&1; then
+      up="$rem/$b"
+    fi
+    if [ -n "$up" ]; then
+      shape=ahead-of-remote
+      ahead="$(git -C "$repo" rev-list --count "$up..$b" 2>/dev/null || echo "$n")"
+    else
+      shape=unpushed-branch; ahead="$n"
+    fi
     # Unreachable != stranded under SQUASH merge. Suppress ONLY on positive proof that the
     # content is already on base; report everything else, annotating what could not be decided.
     local v; v="$(_merge_verdict "$repo" "$b" "$base")"
+    local where; if [ -n "$up" ]; then where="AHEAD of its upstream '$up' by $ahead commit(s)"; else where="$n commit(s) on NO remote ref"; fi
     case "$v" in
       landed) continue ;;
-      unlanded) finding unpushed-branch "$repo: branch '$b' has $n commit(s) on NO remote ref and its content is NOT on $base" ;;
-      *)        finding unpushed-branch "$repo: branch '$b' has $n commit(s) on NO remote ref — merge status UNVERIFIED (${v#unverified: })" ;;
+      unlanded) finding "$shape" "$repo: branch '$b' is $where and its content is NOT on $base" ;;
+      *)        finding "$shape" "$repo: branch '$b' is $where — merge status UNVERIFIED (${v#unverified: })" ;;
     esac
   done < <(git -C "$repo" for-each-ref --format='%(refname:short)' refs/heads/ 2>/dev/null)
 }
 
-# SHAPE 2: worktree with real uncommitted work and no live claim.
-scan_dirty_worktrees(){
-  local repo="$1" wt id st
-  while IFS= read -r wt; do
+# SHAPE 7: STASHES. Wholly absent before — and a stash is the purest form of stranded work:
+# content that exists in the object store, is reachable from NO branch and NO remote, survives
+# every branch/worktree audit this file already did, and is destroyed silently by `git stash
+# clear` or a `.git` prune. It is PER-REPO, not per-worktree: refs/stash lives in the common
+# git dir, so every linked worktree shares ONE stash list. Scanning it per-worktree would report
+# the same entries N times (the "unreadable report gets skimmed past" failure) and would be wrong
+# about which checkout the work belongs to.
+# Report-only, like everything else here: this NEVER runs `stash drop`/`clear`.
+scan_stashes(){
+  local repo="$1" n first
+  n="$(git -C "$repo" stash list 2>/dev/null | grep -c . || true)"
+  [ "${n:-0}" -gt 0 ] 2>/dev/null || return 0
+  first="$(git -C "$repo" stash list 2>/dev/null | head -1)"
+  finding stash "$repo: $n stash entr(ies) on NO branch/remote (newest: ${first:-?}) — inspect with: git -C $repo stash list"
+}
+
+# SHAPES 2 + 8: per-worktree scans.
+#
+# WHY THE PORCELAIN IS NOW PARSED AS RECORDS
+#   `git worktree list --porcelain` emits a RECORD per worktree — `worktree <path>`, `HEAD <sha>`,
+#   then either `branch <ref>` or the bare word `detached`. The previous `sed -n 's/^worktree //p'`
+#   threw the `detached` line on the floor, so shape 8 was unreachable by construction: the one
+#   field that identifies it was discarded before any test could look at it.
+#
+# SHAPE 8: DETACHED HEAD. Emitted BEFORE the dirty-check `continue`, because a detached HEAD is
+#   stranded whether or not the worktree is dirty — a CLEAN detached checkout carrying commits on
+#   no ref is exactly the silent case (nothing to `git status`, nothing to push, no branch name to
+#   show up in any branch audit; the commits vanish on the next `git gc`).
+#   PRECISION GUARD (kept deliberately, [[gates-must-actually-run]]): a detached HEAD parked on a
+#   commit that IS reachable from some branch/remote is a PINNED CHECKOUT (this rig keeps two:
+#   a baseline and a verify-master worktree), not lost work — it is recoverable by name and is NOT
+#   reported. Only commits reachable from HEAD and from NO branch and NO remote count. That is the
+#   same "unreachable content" test shape 1 uses, applied to an anonymous head.
+scan_worktrees(){
+  local repo="$1" wt det id st orphan
+  while IFS=$'\t' read -r wt det; do
     [ -n "$wt" ] || continue
-    [ "$(cd "$wt" 2>/dev/null && pwd -P)" = "$(cd "$repo" 2>/dev/null && pwd -P)" ] && continue
     [ -d "$wt" ] || continue
+
+    # --- SHAPE 8 first: applies to EVERY worktree including the primary checkout, and does not
+    # depend on dirtiness. A detached primary checkout is the most dangerous instance of all.
+    if [ "${det:-0}" = "1" ]; then
+      orphan="$(git -C "$wt" rev-list --count HEAD --not --branches --remotes 2>/dev/null || echo 0)"
+      if [ "${orphan:-0}" -gt 0 ] 2>/dev/null; then
+        finding detached-head "$wt: DETACHED HEAD at $(git -C "$wt" rev-parse --short HEAD 2>/dev/null) carrying $orphan commit(s) on NO branch and NO remote"
+      fi
+    fi
+
+    # --- SHAPE 2: uncommitted work, no live claim. Primary checkout excluded (it is the scan
+    # root, always "dirty" with the operator's in-progress session).
+    [ "$(cd "$wt" 2>/dev/null && pwd -P)" = "$(cd "$repo" 2>/dev/null && pwd -P)" ] && continue
     id="$(_wt_id "$wt")"
     _claimed "$id" && continue
     st="$(git -C "$wt" status --porcelain 2>/dev/null)"
     [ -n "$st" ] || continue
     finding dirty-worktree "$wt: $(printf '%s\n' "$st" | grep -c .) uncommitted/untracked path(s), no live claim for '$id'"
-  done < <(git -C "$repo" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p')
+  done < <(git -C "$repo" worktree list --porcelain 2>/dev/null | awk '
+      /^worktree /{ if (p != "") printf "%s\t%d\n", p, d; p=substr($0,10); d=0; next }
+      /^detached$/{ d=1; next }
+      END{ if (p != "") printf "%s\t%d\n", p, d }')
 }
 
 # SHAPES 3/4/5: everything that needs PR state. One TSV read, three passes.
@@ -337,7 +429,8 @@ while IFS=$'\t' read -r repo base; do
   REPO_TSV=""; REPO_TSV_OK=0
   if REPO_TSV="$(_pr_tsv "$repo")"; then REPO_TSV_OK=1; else REPO_TSV=""; fi
   scan_unpushed_branches "$repo" "$base"
-  scan_dirty_worktrees "$repo"
+  scan_stashes "$repo"
+  scan_worktrees "$repo"
   scan_pr_shapes "$repo" "$base"
 done < <(targets)
 
