@@ -685,18 +685,15 @@ def forward_with_failover(handler, srv) -> None:
                         # for 503/transient-402, never for 429).
                         if bt is not None and status == 402 and not obs.transient:
                             prov = route.provider or route.label
-                            if srv.observer.has_multiple_exhausted_models(prov):
+                            if _has_live_sibling(prov, srv.pools, bt):
                                 bt.record_exhaustion(prov)
                             else:
                                 import logging
                                 logging.getLogger("charon.forwarder").warning(
-                                    "PROVIDER EXHAUSTION GUARD: provider %r "
-                                    "returned 402 on model %r but provider-level "
-                                    "exhaustion signal not yet present (need 2+ "
-                                    "models exhausted) — not parking provider. "
-                                    "Model excluded from routing; sibling models "
-                                    "remain eligible.",
-                                    prov, okey)
+                                    "SOLE-LEG GUARD: provider %r deterministically "
+                                    "exhausted (402) but has no live sibling in any "
+                                    "pool — NOT auto-parking it (would strand traffic "
+                                    "with no fallback).", prov)
                     # a 404 ("model gone") is model-level — do NOT cool the provider.
                     if more:  # count only providers we actually move PAST
                         failovers.append({"provider": route.label, "status": status,
