@@ -1225,7 +1225,7 @@ while true; do
     else
       echo "[$DROID] SKIP $id: NO runnable model for work_class '$wclass' at cost band '$CANON' or ANY band spill-up was allowed to reach (all detained/capped, or the COST-CAP refused a costlier band — see the COST-CAP line above; the ticket is DETAINED and stays claimable, it will retry when a cheaper leg frees). NOT running a detained/capped model and NOT spending above the ceiling." >&2
       bash "$FLEET/release.sh" "$id" >/dev/null 2>&1 || true; current=""
-      bash "$FLEET/loop-guard.sh" record "$id" "$DROID" >/dev/null 2>&1 \
+bash "$FLEET/loop-guard.sh" record "$id" "$DROID" --reason launcher-refused >/dev/null 2>&1 \
         || echo "[$DROID] LOOP-GUARD: $id quarantined (no runnable model after spill-up for '$wclass')." >&2
       continue
     fi
@@ -1295,7 +1295,7 @@ while true; do
   elif [ "$lg_rc" -ne 0 ]; then
     echo "[$DROID] FATAL: could not create worktree $wt off $base_ref — REFUSING to launch into the main checkout $REPO. Releasing $id for retry." >&2
     bash "$FLEET/release.sh" "$id" || true; current=""
-    bash "$FLEET/loop-guard.sh" record "$id" "$DROID" \
+    bash "$FLEET/loop-guard.sh" record "$id" "$DROID" --reason launcher-refused \
       || echo "[$DROID] LOOP-GUARD: $id quarantined (repeated worktree-create failures)."
     continue
   fi
@@ -1384,7 +1384,9 @@ $spec"
       # run, loop-guard.sh quarantines it (claim.sh then skips it) so we can't spin forever on
       # a parked/blocked/bad-prompt ticket and starve the next ready one. It prints the
       # escalation itself and exits 2 on quarantine.
-      bash "$FLEET/loop-guard.sh" record "$id" "$DROID" \
+      # The agent exited 0 (SUCCESS) but produced no commits — this is a genuine model/ticket
+      # fault and MUST count toward quarantine (infra failures exit non-zero).
+      bash "$FLEET/loop-guard.sh" record "$id" "$DROID" --reason genuine \
         || echo "[$DROID] LOOP-GUARD: $id quarantined for this board — skipping it from now on."
       continue
     fi
@@ -1494,7 +1496,19 @@ $report_block" \
     bash "$FLEET/release.sh" "$id" || true; current=""
     # LOOP-GUARD: a non-zero exit is also a zero-commit release — count it so repeated
     # hard failures on the SAME id are quarantined rather than re-claimed forever.
-    bash "$FLEET/loop-guard.sh" record "$id" "$DROID" \
+    # Map CHARON_RUN_RESULT to --reason so infra faults (EXHAUSTED, PREREQ-MISSING) do
+    # NOT quarantine tickets — only genuine model/ticket faults do.
+    _lg_reason=""
+    if [ -r "${outlog:-}" ]; then
+      _lg_result="$(grep -E '^CHARON_RUN_RESULT=' "${outlog:-}" 2>/dev/null | tail -1 | sed 's/^CHARON_RUN_RESULT=//')"
+      case "${_lg_result}" in
+        EXHAUSTED)       _lg_reason="exhausted" ;;
+        PREREQ-MISSING)  _lg_reason="launcher-refused" ;;
+        SUCCESS)         _lg_reason="genuine" ;;
+      esac
+    fi
+    [ -n "$_lg_reason" ] && _lg_args=(--reason "$_lg_reason") || _lg_args=()
+    bash "$FLEET/loop-guard.sh" record "$id" "$DROID" "${_lg_args[@]}" \
       || echo "[$DROID] LOOP-GUARD: $id quarantined for this board (repeated non-zero exits) — skipping it from now on."
     echo "[$DROID] $id session exited non-zero — released for retry."
     # SESSION-REPORT-WIRE: a session that REFUSED via non-zero exit is "the most valuable report
@@ -1510,5 +1524,6 @@ $report_block" \
     else
       echo "[$DROID] $id: no outlog on a non-zero exit — skipping report (no transcript to derive from)." >&2
     fi
+    unset _lg_reason _lg_result _lg_args
   fi
 done
