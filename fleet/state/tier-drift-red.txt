@@ -1,0 +1,35 @@
+# tier-drift-red.txt — the HARD-FAIL set for validate_board.sh check 2f (TIER-DRIFT).
+#
+# WHAT THIS FILE IS. Check 2f re-derives a ticket's capability tier from work_class /
+# difficulty / owns (fleet/capability/tier_classify.py) and compares it to the declared
+# `tier:`. A mismatch is an advisory WARN by DEFAULT. The ids listed here are the ones
+# where a mismatch is a HARD RED that refuses the wave launch.
+#
+# WHY IT IS GIT-TRACKED. `fleet/state/*` is blanket-gitignored; `.gitignore` carries an
+# explicit `!fleet/state/tier-drift-red.txt` negation for this file. Without the file the
+# gate cannot go RED in ANY configuration — the exact toothless shape it originally
+# shipped in (defect F1). fleet/tests/tier-drift.test.sh case (a) red-proofs BOTH the
+# file and the negation; delete either and CI goes red.
+#
+# SELECTION RULE (not a hand-picked list — re-derivable, see tier-drift.test.sh case a4):
+#   every ticket whose `owns:` touches a SECURITY surface, i.e. the set for which
+#   tier_classify.SEC_RE matches and classify_tier() returns
+#   ("frontier", "security-critical path (ratchet: never trade capability)").
+#   Rationale: a hand-set cheap tier on credential / egress / provider-key work routes
+#   that work onto a weak model chain. Capability is never traded on those paths, so the
+#   drift must refuse rather than advise. Every other tier drift stays a WARN.
+#
+# To extend: add the ticket id on its own line. Comments (#) and blanks are ignored.
+FIX-PROVIDER-KEY-EXFIL
+WCI-DEC-SRC-CHARON-PROVIDERS-PY
+DTC-3
+EGRESS-KEY-CANARY
+F29-PROVIDERS-DATA
+FT-CONFIG-SURFACE
+MODEL-DISCOVERY
+PROVIDER-PROBE-FIX
+PROVIDER-URL-HELPER
+RESPONSE-ADAPTER-UNIVERSAL
+SECRET-HOTROTATE
+SECRET-SCAN-ENVVAR-FP
+SR-5

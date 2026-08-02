@@ -28,6 +28,16 @@ mk_fleet(){
   # hermetic fixture MUST carry the checks/ dir or gate-parity fails "No such file" -> false RED
   # that silently reds the whole rig CI queue (2026-07-24 fixture-drift fix).
   cp -r "$SRC/checks" "$d/checks"
+  # HERMETIC TIER-RANKS STUB (2026-08-01). Same fixture-drift class as the checks/ copy above:
+  # validate_board check 2 loads the canonical tier set by shelling out to `charon tier ranks`
+  # and FAILS CLOSED when it yields nothing. The product CLI is NOT installed on the CI runner,
+  # so this suite passed on any box with `charon` on PATH and went RED on every PR with
+  # "tier-check-failed: ... produced no tier ranks". CHARON_TIER_RANKS_CMD is the documented test
+  # seam (validate_board.sh:264). validate_board still refuses any stub missing economy/strong/
+  # frontier, and the LIVE preflight still calls the real command — this disarms nothing.
+  { printf '%s\n' 'low 1' 'med 2' 'high 3' 'economy 1' 'frontier 3' 'haiku 1' 'opus 3' 'sonnet 2' 'strong 2'; } > "$d/tier-ranks.out"
+  printf '#!/usr/bin/env bash\ncat "%s"\n' "$d/tier-ranks.out" > "$d/tier-ranks.sh"
+  chmod +x "$d/tier-ranks.sh"
   mkdir -p "$d/board/archive" "$d/state/done" "$d/state/claims" "$d/state/submitted" "$d/prompts"
   echo "$d"
 }
@@ -53,7 +63,7 @@ mk_ticket(){
 d="$(mk_fleet)"
 mk_ticket "$d" TICK-A feat/tick-a ""       ""
 mk_ticket "$d" TICK-B feat/tick-b "TICK-A" "build"
-out="$(CHARON_REPO="$d" bash "$d/validate_board.sh" 2>&1)"; rc=$?
+out="$(CHARON_REPO="$d" CHARON_TIER_RANKS_CMD="$d/tier-ranks.sh" bash "$d/validate_board.sh" 2>&1)"; rc=$?
 [ "$rc" = "0" ] && ok "valid board exits 0" || bad "valid board exits 0 (got $rc)"
 has "$out" "GREEN" "valid board reports GREEN"
 no  "$out" "  RED " "valid board has no RED lines"
@@ -66,7 +76,7 @@ mk_ticket "$d" TICK-B feat/tick-b "GHOST-NONE"  "build"  # dangling depends_on -
 mk_ticket "$d" TICK-C feat/tick-c "TICK-D"      "build"  # \
 mk_ticket "$d" TICK-D feat/tick-d "TICK-C"      "build"  #  > 2-node cycle -> dep-cycle
 mk_ticket "$d" TICK-E feat/tick-e "TICK-E"      "build"  # self-dep -> self-dep
-out="$(CHARON_REPO="$d" bash "$d/validate_board.sh" 2>&1)"; rc=$?
+out="$(CHARON_REPO="$d" CHARON_TIER_RANKS_CMD="$d/tier-ranks.sh" bash "$d/validate_board.sh" 2>&1)"; rc=$?
 [ "$rc" != "0" ] && ok "broken board exits non-zero" || bad "broken board exits non-zero (got 0)"
 has "$out" "bad-dep"   "broken board names the dangling dep (bad-dep)"
 has "$out" "dep-cycle" "broken board names the cycle (dep-cycle)"

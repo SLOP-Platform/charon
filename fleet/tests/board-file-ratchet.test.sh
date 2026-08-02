@@ -82,11 +82,40 @@ cat > "$wire/fleet/tests/board-file-ratchet.test.sh" <<'PROBE'
 echo RATCHeT_EXECUTED
 exit 23
 PROBE
-out="$(RIG_CI_ROOT="$wire" bash "$wire/fleet/checks/rig-ci-scope.sh" tests 2>&1)"; rc=$?
+# RE-ENTRANCY (repaired 2026-08-01). This probe is a WIRING assertion: it stands up a throwaway
+# tree containing ONLY a stub suite and asks the real rig-ci-scope.sh to run it, proving the
+# allowlist is actually executed and a suite's rc is actually propagated.
+#
+# IT WAS FAILING ON EVERY PR, and the failure was a FALSE SIGNAL. In CI this file is itself run BY
+# `rig-ci-scope.sh tests`, which exports RIG_CI_TESTS_ACTIVE=1 as its fork-bomb guard
+# [[fleet-selfcheck-forkbomb-class]]. The env var is inherited by everything below it, so the probe's
+# nested run short-circuited with "already inside a suite run — skipping nested re-entry" and rc 0,
+# and the assertion reported "registered suite did not execute". The guard was doing its job; the
+# probe was reading a CORRECT REFUSAL as a wiring defect.
+#
+# The guard is process-global (an env var) while the recursion hazard is per-TREE. `$wire` is a
+# different tree that contains exactly one (stub) suite and cannot recurse into this repo, so the
+# probe clears the inherited flag for that ONE hermetic call. This does NOT weaken the guard: the
+# guard is not modified, it is not bypassed for the real tree, and the same-tree short-circuit is
+# now itself red-proofed immediately below.
+out="$(env -u RIG_CI_TESTS_ACTIVE RIG_CI_ROOT="$wire" bash "$wire/fleet/checks/rig-ci-scope.sh" tests 2>&1)"; rc=$?
 if [ "$rc" -ne 0 ] && grep -q RATCHeT_EXECUTED <<<"$out" && grep -q 'suite FAILED (rc=23): fleet/tests/board-file-ratchet.test.sh' <<<"$out"; then
   ok "rig-ci tests command actually executes the ratchet suite and propagates RED"
 else
   bad "registered suite did not execute through rig-ci tests: $out"
+fi
+
+# FAIL-ON-REVERT for the FORK-BOMB GUARD ITSELF. Nothing asserted this before, which is why the
+# `env -u` above could have been mistaken for a way to disarm it. REVERT LINE:
+# fleet/checks/rig-ci-scope.sh cmd_tests -- the `if [ -n "${RIG_CI_TESTS_ACTIVE:-}" ]` short-circuit
+# and the `export RIG_CI_TESTS_ACTIVE=1` beneath it. Delete either and the same-tree nested run
+# below EXECUTES the stub instead of refusing, i.e. the self-referential
+# rig-ci-scope -> rig-ci.test -> rig-ci-scope cycle is unguarded again (the ~18,900-proc class).
+out="$(RIG_CI_TESTS_ACTIVE=1 RIG_CI_ROOT="$wire" bash "$wire/fleet/checks/rig-ci-scope.sh" tests 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ] && grep -q 'already inside a suite run' <<<"$out" && ! grep -q RATCHeT_EXECUTED <<<"$out"; then
+  ok "fork-bomb guard intact: a nested run short-circuits (rc 0) and executes NO suite"
+else
+  bad "RIG_CI_TESTS_ACTIVE no longer short-circuits a nested run (rc=$rc): $out"
 fi
 
 printf '%s\n' "board-file-ratchet tests: $PASS passed, $FAIL failed"

@@ -34,17 +34,98 @@ ROOT="$(mktemp -d)"
 trap 'rm -rf "$ROOT"' EXIT
 
 # mkfleet -> prints a fresh isolated fleet dir: real validate_board.sh + real classifier +
-# real checks/ + the shipped RED set + a SMALL board of REAL tickets (real tickets, so the
-# rest of validate_board's checks pass and the only thing this suite can move is 2f).
+# real checks/ + the shipped RED set + a SMALL SYNTHETIC board.
+#
+# HERMETICITY (2026-08-01 repair). This used to `cp` two LIVE tickets out of fleet/board/
+# (FIX-PROVIDER-KEY-EXFIL + DEGRADE-ALERT) so that validate_board's other checks would pass
+# on real content. That coupled a CI suite to MUTABLE board state and it broke exactly as
+# you would expect: DEGRADE-ALERT was archived to fleet/board/archive/ by a board-hygiene
+# sweep, every mkfleet call started printing `cp: cannot stat .../DEGRADE-ALERT.md`, the
+# fixture board silently lost a ticket, and (c1) went RED on every open PR. A second,
+# quieter coupling: the live FIX-PROVIDER-KEY-EXFIL declares `tier: strong` while it derives
+# `frontier`, so the CONTROL case could never be green regardless.
+# The fixtures below are SYNTHETIC and PARKED (parked tickets are skipped by validate_board's
+# launchability checks but are still SCANNED by the drift check — which is the only check
+# this suite is allowed to move). Nothing here reads fleet/board/ any more, so archiving,
+# retiring or re-tiering any real ticket can no longer red this suite.
+#
+# The ticket ID `FIX-PROVIDER-KEY-EXFIL` is deliberately retained: it must be a member of the
+# shipped RED set for cases (b)/(c) to exercise the hard-fail path rather than the WARN path.
+# Case (a4) is what keeps that link honest.
 mkfleet(){
   local d; d="$(mktemp -d -p "$ROOT")"
   mkdir -p "$d/state/done" "$d/board"
   cp "$SRC/validate_board.sh" "$d/"
   cp -r "$SRC/capability" "$SRC/checks" "$d/"
   cp "$REPO/$RED_SET_REL" "$d/state/"
-  cp "$SRC/board/FIX-PROVIDER-KEY-EXFIL.md" "$SRC/board/DEGRADE-ALERT.md" "$d/board/"
+  # RED-SET member, SECURITY surface -> derives `frontier`; declared tier MATCHES, so an
+  # undisturbed fixture board carries no drift at all (that is what (c1) asserts).
+  cat > "$d/board/FIX-PROVIDER-KEY-EXFIL.md" <<'FIXTURE'
+repo: charon
+tier: frontier
+priority: 2
+difficulty: 4
+work_class: bugfix
+branch: fix/provider-key-exfil
+parked: true
+note: |
+  FIXTURE — PARKED. Synthetic stand-in owned by fleet/tests/tier-drift.test.sh. Never launched.
+owns: src/charon/secrets.py
+depends_on:
+accept: |
+  FIXTURE. Security-surface ticket whose DERIVED tier is `frontier` (tier_classify SEC_RE).
+scope: |
+  FIXTURE for fleet/tests/tier-drift.test.sh. Not real work.
+ds: |
+  ## Dependencies & sequence
+  depends_on: NONE. Fixture only.
+FIXTURE
+  # NON-red-set, NON-security money-path ticket -> derives `strong`; declared tier matches.
+  # Present so the fixture board is never a single-ticket board (a 1-ticket scan is too close
+  # to the vacuous-scan case (f) to be a meaningful control).
+  cat > "$d/board/TIER-DRIFT-FIXTURE-CONTROL.md" <<'FIXTURE'
+repo: charon
+tier: strong
+priority: 1
+difficulty: 2
+work_class: money-path
+branch: feat/tier-drift-fixture-control
+parked: true
+note: |
+  FIXTURE — PARKED. Synthetic stand-in owned by fleet/tests/tier-drift.test.sh. Never launched.
+owns: src/charon/degrade_alert.py
+depends_on:
+accept: |
+  FIXTURE. Non-security money-path ticket whose DERIVED tier is `strong`.
+scope: |
+  FIXTURE for fleet/tests/tier-drift.test.sh. Not real work.
+ds: |
+  ## Dependencies & sequence
+  depends_on: NONE. Fixture only.
+FIXTURE
+  # validate_board check #6 (uncommitted-work) and the owns-path existence WARN both reach into
+  # the PRODUCT working tree via CHARON_REPO. Left unset they read whatever the operator's
+  # checkout happens to look like, so (c1) was green or red depending on unrelated dirty files.
+  # Point it at an empty clean git repo: the check still RUNS, it just runs on a known tree.
+  # HERMETIC TIER-RANKS STUB. validate_board.sh check 2 loads the canonical tier set by shelling out
+  # to `charon tier ranks` (src/charon/cli.py:_tier_ranks) and FAILS CLOSED when it produces nothing
+  # — correct behaviour, but the PRODUCT CLI is not installed on the CI runner, so every suite that
+  # runs validate_board went RED in CI while passing on any box with `charon` on PATH. That is a
+  # hermeticity leak in the SUITE, not a defect in the gate: a suite in the rig-ci allowlist must
+  # depend on nothing outside this repo. CHARON_TIER_RANKS_CMD is the documented seam
+  # (validate_board.sh:264 — "tests inject a hermetic stub"). The LIVE preflight is untouched and
+  # still calls the real command; validate_board also refuses any stub missing economy/strong/
+  # frontier, so this cannot be used to disarm the tier check.
+  { printf '%s\n' 'low 1' 'med 2' 'high 3' 'economy 1' 'frontier 3' 'haiku 1' 'opus 3' 'sonnet 2' 'strong 2'; } > "$d/tier-ranks.sh.out"
+  printf '#!/usr/bin/env bash\ncat "%s"\n' "$d/tier-ranks.sh.out" > "$d/tier-ranks.sh"
+  chmod +x "$d/tier-ranks.sh"
+  git init -q -b master "$d/prodrepo" 2>/dev/null
+  git -C "$d/prodrepo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m seed 2>/dev/null
   printf '%s' "$d"
 }
+# Every validate_board invocation in this suite goes through vboard() so the CHARON_REPO
+# isolation above cannot be forgotten at a call site.
+vboard(){ CHARON_REPO="$1/prodrepo" CHARON_TIER_RANKS_CMD="$1/tier-ranks.sh" bash "$1/validate_board.sh" 2>&1; }
 mistier(){ sed -i 's/^tier: .*/tier: economy/' "$1/board/FIX-PROVIDER-KEY-EXFIL.md"; }
 drift(){ python3 "$1/capability/tier_classify.py" drift 2>&1; }
 
@@ -73,6 +154,65 @@ if git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
 else
   bad "(a3) cannot verify tracking: $REPO is not a git repo (fail-closed, not assumed-tracked)"
 fi
+# (a4) ANTI-PADDING. (a2) only counts LINES, so the cheapest way to "fix" a red (a2) is to paste
+# five arbitrary ids in and call the gate armed. This asserts the set matches its own documented
+# SELECTION RULE: every id resolves to a real ticket (live board or archive) whose `owns:` is a
+# SECURITY surface, i.e. tier_classify returns ("frontier", "security-critical path ..."). A padded
+# id fails because it resolves to nothing; a demoted id fails because it stops deriving frontier.
+# REVERT LINE: fleet/state/tier-drift-red.txt's contents, and tier_classify.SEC_RE.
+a4_out="$(python3 - "$REPO" "$REPO/$RED_SET_REL" <<'PY' 2>&1
+import os, re, sys
+repo, redset = sys.argv[1], sys.argv[2]
+sys.path.insert(0, os.path.join(repo, "fleet", "capability"))
+import tier_classify as tc
+def field(txt, k):
+    m = re.search(r'^%s:[ \t]*(.*)$' % k, txt, re.M)
+    return m.group(1).strip() if m else ''
+ids = [l.strip() for l in open(redset, encoding='utf-8')
+       if l.strip() and not l.lstrip().startswith('#')]
+bad = []
+for tid in ids:
+    path = next((p for p in (os.path.join(repo, 'fleet/board', tid + '.md'),
+                             os.path.join(repo, 'fleet/board/archive', tid + '.md'))
+                 if os.path.isfile(p)), None)
+    if path is None:
+        bad.append(f"{tid}: no such ticket in fleet/board/ or fleet/board/archive/ (padding?)")
+        continue
+    txt = open(path, encoding='utf-8', errors='replace').read()
+    _, _, sec, _, _, _ = tc._signals(field(txt, 'owns') or '')
+    if not sec:
+        bad.append(f"{tid}: owns is NOT a security surface — outside the documented selection rule")
+print("\n".join(bad))
+sys.exit(1 if bad else 0)
+PY
+)"
+if [ -z "$a4_out" ]; then
+  ok "(a4) every RED-set id is a real ticket on a SECURITY surface (set is not padded)"
+else
+  bad "(a4) RED set violates its own selection rule:
+$a4_out"
+fi
+
+# (a5) STUB PARITY. mkfleet pins a literal tier-ranks table so the suite runs on a box with no
+# `charon` (the CI runner). A pinned literal can DRIFT from the product SSOT, and a drifted stub
+# would let a tier this rig no longer recognises pass a fixture. When the real CLI IS available
+# (the operator's box, the live tree) the two must agree. Where it is NOT available this prints an
+# explicit SKIP rather than a PASS — an unrunnable check is never counted as a passed one.
+# REVERT LINE: the pinned `printf '%s\n' 'low 1' ...` table inside mkfleet, and
+# src/charon/cli.py:_tier_ranks.
+_d="$(mkfleet)"
+if command -v charon >/dev/null 2>&1; then
+  if diff -q <(charon tier ranks 2>/dev/null | sort) <(sort "$_d/tier-ranks.sh.out") >/dev/null 2>&1; then
+    ok "(a5) the pinned tier-ranks stub matches the live \`charon tier ranks\` SSOT"
+  else
+    bad "(a5) pinned tier-ranks stub has DRIFTED from \`charon tier ranks\`:
+$(diff <(charon tier ranks 2>/dev/null | sort) <(sort "$_d/tier-ranks.sh.out") 2>&1)"
+  fi
+else
+  echo "SKIP: (a5) stub-vs-product tier-ranks parity — \`charon\` is not on PATH here (expected on"
+  echo "      the CI runner; this assertion runs on any box with the product installed). NOT counted"
+  echo "      as a pass."
+fi
 
 echo "== (b) a mis-tiered RED-SET ticket drives the classifier to the RED sentinel (F1) =="
 # REVERT LINE: fleet/capability/tier_classify.py, the `drift` branch — `return DRIFT_RED_RC if
@@ -96,13 +236,13 @@ fi
 echo "== (c) validate_board turns that RED into a RED PREFLIGHT, end to end (F1+F2) =="
 # REVERT LINE: fleet/validate_board.sh check 2f — the `if _line.startswith("RED "):
 # red.append(...)` branch and the `_td.returncode == _TIER_DRIFT_RED_RC` handling.
-d="$(mkfleet)"; out="$(bash "$d/validate_board.sh" 2>&1)"; rc=$?
+d="$(mkfleet)"; out="$(vboard "$d")"; rc=$?
 if [ "$rc" -eq 0 ] && ! printf '%s\n' "$out" | grep -q 'tier-drift'; then
   ok "(c1) CONTROL: an undisturbed board is GREEN (rc 0) with no tier-drift line"
 else
   bad "(c1) CONTROL: undisturbed board should be GREEN with no tier-drift (rc=$rc, out: $out)"
 fi
-mistier "$d"; out="$(bash "$d/validate_board.sh" 2>&1)"; rc=$?
+mistier "$d"; out="$(vboard "$d")"; rc=$?
 if [ "$rc" -ne 0 ] \
    && printf '%s\n' "$out" | grep -q 'tier-drift: FIX-PROVIDER-KEY-EXFIL declared=economy derived=frontier'; then
   ok "(c2) mis-tiered security ticket -> validate_board RED (rc=$rc), wave does NOT launch"
@@ -116,7 +256,7 @@ echo "== (d) FAIL-CLOSED: a MISSING classifier is RED, not silently green (F2) =
 # with no RED, no WARN and no stderr, because python3 exits 2 on a missing file and the old
 # code accepted rc 2 as success.
 d="$(mkfleet)"; mv "$d/capability/tier_classify.py" "$d/capability/tier_classify.py.bak"
-out="$(bash "$d/validate_board.sh" 2>&1)"; rc=$?
+out="$(vboard "$d")"; rc=$?
 if [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -q 'tier-drift-check-missing'; then
   ok "(d1) classifier absent -> validate_board RED 'tier-drift-check-missing' (rc=$rc)"
 else
@@ -136,7 +276,7 @@ echo "== (e) FAIL-CLOSED: rc 2 from the check itself is a HARD FAILURE (F2) =="
 # is exactly what a renamed `drift` subcommand or a broken import looks like — passes silently.
 d="$(mkfleet)"
 printf '#!/usr/bin/env python3\nimport sys\nsys.exit(2)\n' > "$d/capability/tier_classify.py"
-out="$(bash "$d/validate_board.sh" 2>&1)"; rc=$?
+out="$(vboard "$d")"; rc=$?
 if [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -q 'tier-drift-check-failed'; then
   ok "(e1) classifier exiting 2 -> validate_board RED 'tier-drift-check-failed' (rc=$rc)"
 else
