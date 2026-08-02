@@ -25,8 +25,8 @@ moved in two reports, say so explicitly and why.
 ## 2 — THE P0 QUEUE, BLAST-RADIUS ORDERED
 | # | ticket | why here |
 |---|---|---|
-| 1 | `BOARD-VIEW-MISMATCH` | status.sh says `ready`, claim.sh silently skips. 5 hidden filters, no reason surfaced, `--only` silently overridden. **Until this lands you cannot trust the board.** |
-| 2 | `ZERO-COMMIT-SPIN` | 8 tickets were quarantined+INVISIBLE for claim->no-op->release. Cleared 2026-08-02, but SPEND-METRIC-TRUSTWORTHY re-quarantined within MINUTES — the spin is LIVE |
+| **1** | **`ZERO-COMMIT-SPIN` — INVESTIGATE FIRST** | **The fleet claims work and produces NOTHING while looking busy.** Re-quarantined within MINUTES of clearing (count=3, 15:40:28Z) so it is LIVE. Decisive evidence: NO gate-result and NO agent-log exist for the ticket, while the SAME droid has a full session log for a different one — **the session never starts**, and the failure leaves no artifact. First hypothesis to test: both spinning tickets are `repo: charon` PRODUCT tickets claimed by a RIG droid (the product worktree path already broke `land-needs-push` today the same way). 8 tickets hit this, including P0s minted hours earlier |
+| 2 | `BOARD-VIEW-MISMATCH` | status.sh says `ready`, claim.sh silently skips. 5 hidden filters, no reason surfaced, `--only` silently overridden. Makes exclusion VISIBLE — but visibility of nothing is still nothing, which is why the spin outranks it |
 | 3 | `GRAPHIFY-AFFECTED-WIRE` | the blast-radius query itself, 0 call sites. Everything else is prioritised by hand until it is wired |
 | 4 | `WIRING-DONE-CONTRACT` | done.sh proves MERGED, never REACHABLE. This is why built-but-inert keeps happening |
 | 5 | `FLEET-STATUS-BOARD` + `MISSING-CLASS-DETECTORS` | registry + bidirectional meta-check, and detectors for the 9 classes that have none. A check that stops running must show MISSING |
