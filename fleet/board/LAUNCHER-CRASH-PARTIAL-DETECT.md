@@ -45,4 +45,4 @@ scope: |
   work is presented for merge — adversarial review before land (a wrong label could hide real
   work or ship partial work). Build-rig only.
 ds: After DROID-LIFECYCLE-REAP (both edit fleet-droid.sh stand-down path). High value — stops
-crash-partial work being mistaken for complete.
+  crash-partial work being mistaken for complete.

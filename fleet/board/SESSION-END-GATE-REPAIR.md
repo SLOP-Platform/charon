@@ -70,7 +70,7 @@ note: |
   either fold this work into it or state why it is superseded. Do not build a third attempt at the
   same thing without checking [[no-rig-as-product-adopt-dont-handroll]].
 
-D&S — Deps & Sequence:
+## Dependencies & Sequence
   - Depends on: nothing. `end-session.sh` is uncontended.
   - HIGHEST-VALUE close-path fix: this session lost nothing only because leak-guard refused 19
     worktree deletions and the manager swept by hand. Neither is a control.

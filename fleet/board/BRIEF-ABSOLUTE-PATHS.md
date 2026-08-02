@@ -53,6 +53,6 @@ note: |
     d. ANTI-OVER-BLOCK: an absent judgment file still yields `NOT-REPORTED` as designed.
   Report every `$VAR`-in-brief instance found by the sweep, fixed or ticketed.
 
-D&S — Deps & Sequence:
+## Dependencies & Sequence
   - `fleet/fleet-droid.sh` is contended (LOOP-GUARD-REASON-WIRE, LAUNCHER-CRASH-PARTIAL-DETECT).
     Coordinate: if LOOP-GUARD-REASON-WIRE is mid-flight, sequence after it.

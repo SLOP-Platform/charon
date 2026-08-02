@@ -1,11 +1,13 @@
 repo: charon-private
 tier: strong
-priority: 0 # inherited: blocks a P0 ticket
+  # priority inherited: blocks a P0 ticket
+priority: 0
 difficulty: 3
 work_class: rig-meta
 branch: feat/marker-proof-mechanize
 depends_on: DONE-SH-INTEGRITY-FIX, GITHUB-LIMITS-HARDENING, FOREMAN-WIRE, REPO-MAP-CONVERGE, BENCH-OOB-GRADING
-real-dep: DONE-SH-INTEGRITY-FIX — shared single-owner of fleet/done.sh, and the DIRECT predecessor:
+real-dep: |
+  DONE-SH-INTEGRITY-FIX — shared single-owner of fleet/done.sh, and the DIRECT predecessor:
   it fixes how done.sh MATCHES proof (loose owns-touch false-close, wrong-repo resolution). This
   ticket fixes whether done.sh may write a marker with NO proof at all. Requiring proof before the
   matcher is trustworthy would only harden a matcher that still names the WRONG PR. Land that first,

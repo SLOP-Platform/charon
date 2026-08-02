@@ -1,6 +1,7 @@
 repo: charon-private
 tier: strong
-priority: 0 # inherited: blocks a P0 ticket
+  # priority inherited: blocks a P0 ticket
+priority: 0
 difficulty: 3
 work_class: refactor
 branch: feat/repo-map-converge
@@ -14,7 +15,8 @@ real-dep: REPO-DECL-CENTRAL — it migrates the FIRST consumer set (handoff.sh, 
   (validate_board.sh, preflight.sh, checks/base-integrity.sh). Same pattern, and the convergence gate
   added here would go RED against the un-migrated first set, so it must land after.
 owns: fleet/validate_board.sh, fleet/preflight.sh, fleet/checks/base-integrity.sh, fleet/checks/repo-map-single-home.sh, fleet/tests/repo-map-converge.test.sh
-serial_justified: the 5 owned surfaces are the CALL SITES of ONE map plus the gate that enforces it —
+serial_justified: |
+  the 5 owned surfaces are the CALL SITES of ONE map plus the gate that enforces it —
   converging them is the entire ticket, and splitting per-file recreates the exact
   re-implemented-per-consumer defect being fixed. It is also unsafe in halves: the single-home gate
   goes RED against any consumer not yet migrated, so a partial migration ships a permanently-red gate

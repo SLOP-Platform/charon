@@ -63,7 +63,7 @@ note: |
     e. ANTI-OVER-BLOCK: an empty canary list is GREEN and changes nothing about today's behaviour.
   Then seed the list with the 6 suites above and show the run output.
 
-D&S — Deps & Sequence:
+## Dependencies & Sequence
   - Depends on MERGE-DROP-RATCHET: both edit `fleet/checks/rig-ci-scope.sh`. MERGE-DROP-RATCHET is
     already merged (PR #291), so this is sequencing, not a block.
   - Feeds: FIXTURE-BYPASS-GATE's baseline-to-zero work — the canary is how those 6 suites get

@@ -92,7 +92,8 @@ ds: |
     SSOT-DRIFT-GATE's SSOT-REGISTRY.tsv. Data feed only, no code edit, no build dep either direction.
   wave: economy refill 2026-07-16. Do FIRST — zero-dep economy work feeding an idle economy tab.
   repo: charon-private (rig).
-note: Created 2026-07-16 from fleet/session-notes/2026-07-16-evidence/audit-harvest.md item 5. Zero-dep,
+note: |
+  Created 2026-07-16 from fleet/session-notes/2026-07-16-evidence/audit-harvest.md item 5. Zero-dep,
   economy, READY NOW. ADVERSARIAL REVIEW REQUIRED (trust). BLOCKER baked into accept: the owned TSV is
   gitignored/untracked (.gitignore:10) — must be `git add -f`'d or the PR lands empty.
 </content>

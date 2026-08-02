@@ -1,6 +1,7 @@
 repo: charon-private
 tier: strong
-priority: 0 # inherited: blocks a P0 ticket
+  # priority inherited: blocks a P0 ticket
+priority: 0
 difficulty: 2
 work_class: rig-meta
 branch: feat/capture-wiring-timeout-fix

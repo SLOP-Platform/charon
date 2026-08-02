@@ -69,7 +69,8 @@ ds: |
   soft-follow-on: background-poller registration rides F29-REGISTRY-SLICE's MODULE_SPECS after F29 lands (deferred,
     not owned here). DELETE-STATIC-RANK (#6) depends_on THIS ticket (must be live-verified first).
   repo: charon (product).
-note: ADR-0016 #3, ADOPT-NOT-BUILD (renamed from LIVE-PRICE-PULL 2026-07-12 per PRICING-TOOLS-EVAL.md). NEW disjoint
+note: |
+  ADR-0016 #3, ADOPT-NOT-BUILD (renamed from LIVE-PRICE-PULL 2026-07-12 per PRICING-TOOLS-EVAL.md). NEW disjoint
   file — READY, runs now (concurrent with FAIL-LOUD-CONTRACT).
   UN-PARKED 2026-07-16 (operator-approved, crash-recovery session): the `parked: true` flag contradicted this
   note ("READY, runs now") and its own concurrency condition was already met — FAIL-LOUD-CONTRACT was submitted

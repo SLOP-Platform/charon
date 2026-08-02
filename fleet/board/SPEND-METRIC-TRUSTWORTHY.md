@@ -67,7 +67,7 @@ note: |
   Reviewer != builder. The reviewer must confirm the new number cannot silently UNDER-report
   either — an under-reporting cap is a runaway with extra steps.
 
-D&S — Deps & Sequence:
+## Dependencies & Sequence
   - Related to FORWARDER-COST-ORDER-FALLBACK (in flight): that ticket falls back to `cost_rank`
     when the meter is empty. This ticket makes the meter itself honest. Independent, but note the
     ordering path consumes this number — coordinate if both touch the same call site.

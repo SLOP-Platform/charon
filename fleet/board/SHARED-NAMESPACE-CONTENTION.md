@@ -89,7 +89,7 @@ note: |
        possibly-duplicate one
   Then run the real allocator and report the leaked-name count before/after.
 
-D&S — Deps & Sequence:
+## Dependencies & Sequence
   - Depends on: nothing.
   - Blocks: nothing, but every future session pays the tax until it lands.
   - Related: STOP-WORKER-GRACEFUL-EXIT (#283) also owns `fleet/spawn-worker.sh`'s sibling

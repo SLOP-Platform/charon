@@ -1,5 +1,6 @@
 tier: economy
-priority: 0 # inherited: blocks a P0 ticket
+  # priority inherited: blocks a P0 ticket
+priority: 0
 difficulty: 1
 work_class: ci-infra
 branch: feat/sync-schedule

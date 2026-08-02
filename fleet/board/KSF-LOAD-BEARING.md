@@ -88,7 +88,7 @@ note: |
   - `ksf gate` running in keystone CI — paste the workflow diff and a green run.
   - `fleet/state/KSF-CLASS-REGISTER.md` landed.
 
-D&S — Deps & Sequence:
+## Dependencies & Sequence
   - Depends on: nothing. The audit is done; both reports exist.
   - Blocks: any future convergence decision (formerly FRAMEWORK-CONVERGE), and the 10 uncovered
     classes, which cannot be gated by a framework that does not run.

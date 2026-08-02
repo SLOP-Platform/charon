@@ -79,7 +79,7 @@ note: |
   - Size / dep-count are NOT rejection criteria. Ops burden and control direction ARE.
   - Wire NOTHING in this ticket. Recommend; a separate ticket wires.
 
-D&S — Deps & Sequence:
+## Dependencies & Sequence
   - Depends on: nothing. Pure measurement, collision-free (owns only its own state file).
   - Sibling: DEADCODE-TOOL-REDERIVE covers the STATIC axis. Read it; extend its matrix with a
     runtime column instead of starting a second one.

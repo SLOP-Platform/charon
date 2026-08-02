@@ -12,15 +12,20 @@ serial_justified: One cohesive enforcement contract — the preflight scan-chain
   faked-green"). Splitting ships a partially-wired gate — the exact built-but-inert class this
   work exists to close.
 depends_on: RECONCILE-BOARD-PR-DONE, RECONCILE-OWNS-TRACKED, RECONCILE-GATE-WIRED, RECONCILE-REVIEW-GATE, MARKER-PROOF-MECHANIZE
-real-dep: RECONCILE-BOARD-PR-DONE — build dep: this ticket wires fleet/checks/reconcile-board-pr-done.sh
+real-dep: |
+  RECONCILE-BOARD-PR-DONE — build dep: this ticket wires fleet/checks/reconcile-board-pr-done.sh
   into the firing layers; the check file must exist before it can be inserted. dep-kind: build.
-real-dep: RECONCILE-OWNS-TRACKED — build dep: wires fleet/checks/reconcile-owns-tracked.sh into
+real-dep: |
+  RECONCILE-OWNS-TRACKED — build dep: wires fleet/checks/reconcile-owns-tracked.sh into
   the firing layers; the check must exist first. dep-kind: build.
-real-dep: RECONCILE-GATE-WIRED — build dep: wires fleet/checks/reconcile-gate-wired.sh into the
+real-dep: |
+  RECONCILE-GATE-WIRED — build dep: wires fleet/checks/reconcile-gate-wired.sh into the
   firing layers; the check must exist first. dep-kind: build.
-real-dep: RECONCILE-REVIEW-GATE — build dep: wires fleet/checks/reconcile-review-gate.sh into the
+real-dep: |
+  RECONCILE-REVIEW-GATE — build dep: wires fleet/checks/reconcile-review-gate.sh into the
   firing layers (land.sh BLOCK point); the check must exist first. dep-kind: build.
-real-dep: MARKER-PROOF-MECHANIZE — shared single-owner of fleet/preflight.sh scan-chain region;
+real-dep: |
+  MARKER-PROOF-MECHANIZE — shared single-owner of fleet/preflight.sh scan-chain region;
   this ticket inserts into the SAME chain. Rebase behind the existing preflight edit chain
   (MARKER-PROOF-MECHANIZE -> REPO-MAP-CONVERGE -> SYNC-SCHEDULE — transitively ordered), do not
   run concurrently. dep-kind: build/rebase.

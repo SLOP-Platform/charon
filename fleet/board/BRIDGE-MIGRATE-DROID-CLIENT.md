@@ -65,7 +65,7 @@ note: |
     been WATCHED RED against an externally-specified break, then GREEN. Paste both transcripts.
   - Report the new consumer count (was 7) and what remains.
 
-D&S — Deps & Sequence:
+## Dependencies & Sequence
   - Depends on: nothing to start. `session-ctl.sh` is landed in master and working.
   - Blocks: the remaining 5 consumer migrations, then DURABLE-BRIDGE-PHASE-2 (parked) and the
     ~3,073 LOC deletion.

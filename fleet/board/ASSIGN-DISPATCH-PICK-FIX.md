@@ -32,5 +32,6 @@ scope: |
   Correctness fix on the rig's model-dispatch picker (which real work/spend is routed to).
   Rig-only, no product change. The test file itself is NOT owned/rewritten by this ticket — only
   the SUT (assign.py) changes to satisfy the existing contract.
-ds: Now — rig-only, disjoint from other open tickets (no owns collision found). MONEY-adjacent:
+ds: |
+  Now — rig-only, disjoint from other open tickets (no owns collision found). MONEY-adjacent:
   flag for adversarial review before land (real work gets routed off a wrong pick today).

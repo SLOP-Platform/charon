@@ -83,7 +83,7 @@ note: |
   Then run the real flow: make a board change through the new path, land it, and show
   `behind=0 ahead=0` with no manual reset.
 
-D&S — Deps & Sequence:
+## Dependencies & Sequence
   - Depends on: SYNC-SCHEDULE (merge-order only — land that first; it is built and PR-open).
   - Blocks: nothing, but every session pays a manual `git reset --hard` until it lands — and that
     reset is DENY-LISTED to the manager, so it costs an operator interrupt every time.

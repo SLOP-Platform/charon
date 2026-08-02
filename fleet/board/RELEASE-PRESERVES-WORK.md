@@ -67,7 +67,7 @@ note: |
        This is the assertion that closes the duplicate-work loop — prove it.
   Then dogfood: run against the four real stranded tickets and show each retained.
 
-D&S — Deps & Sequence:
+## Dependencies & Sequence
   - Depends on: nothing. `release.sh` is uncontended.
   - Pairs with BRANCH-GATE-DIFF-SCOPE (that one makes stranded branches pushable again; this one
     stops work being stranded in the first place). Independent.

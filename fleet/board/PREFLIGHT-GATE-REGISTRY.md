@@ -102,7 +102,7 @@ note: |
   - Do NOT add new gates. UNREVIEWED-WORK-ALARM is being built in parallel and will be added as a
     registry ROW by the manager after this lands — leave room for it, do not implement it.
 
-D&S — Deps & Sequence:
+## Dependencies & Sequence
   - Depends on: nothing to BUILD. The five depends_on entries are merge-order only (see real-dep).
   - Blocks: UNREVIEWED-WORK-ALARM's wiring (its check is built in parallel, wired after this lands),
     and it unblocks the five contending preflight.sh tickets by ending the collision.

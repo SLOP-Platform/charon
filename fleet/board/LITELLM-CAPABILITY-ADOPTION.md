@@ -81,7 +81,7 @@ note: |
     `Router.__init__` signature, so this decision register cannot silently drift when litellm
     upgrades. Watch it go RED (add a fake param / remove a real one), then GREEN. Paste both.
 
-D&S — Deps & Sequence:
+## Dependencies & Sequence
   - Depends on: nothing to DECIDE. Implementation of any ADOPT verdict is sequenced AFTER
     GW-CUTOVER-LIVE-WIRE (which itself needs LITELLM-ORDER-PRECALL).
   - Blocks: the value of the whole litellm adoption — the cutover alone lands parity, not benefit.

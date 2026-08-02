@@ -61,6 +61,6 @@ note: |
     e. a normal non-force push is unaffected.
   Then dogfood: run against `fix/shared-namespace-contention` and show it refuses.
 
-D&S — Deps & Sequence:
+## Dependencies & Sequence
   - `fleet/land-push.sh` is owned by BRANCH-GATE-DIFF-SCOPE (MERGED 2026-08-01 as PR #338), so
     that contention is resolved. Confirm no live owner before editing; if one appears, sequence.
