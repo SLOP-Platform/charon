@@ -196,26 +196,6 @@ class SpendDecision:
     reason: str = ""
 
 
-class ObsTarget(enum.Enum):
-    """Observability export backends."""
-
-    JSONL = "jsonl"
-    PROMETHEUS = "prometheus"
-    WEBHOOK = "webhook"
-    LANGFUSE = "langfuse"
-
-
-@dataclass(frozen=True)
-class ObsEvent:
-    """One observability event emitted at a gateway hook point."""
-
-    event_type: str
-    provider: str | None = None
-    model: str | None = None
-    timestamp: float = 0.0
-    data: dict = field(default_factory=dict)
-
-
 @dataclass(frozen=True)
 class GuardrailViolation:
     """A single guardrail hit — request or response."""

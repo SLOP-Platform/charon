@@ -111,7 +111,7 @@ class TestAdapterScopingAndDisposition:
         empty_disposition.write_text("{}")
         monkeypatch.setattr(M, "DISPOSITION_PATH", empty_disposition)
 
-        passed, undisposed, dead, schema_issues = M.check(repo_root=tmp_path)
+        passed, undisposed, dead, schema_issues, roster_issues = M.check(repo_root=tmp_path)
         assert passed is False
         assert schema_issues == []
         assert undisposed == ["charon.used_module.throwaway_unreachable_probe"]
@@ -128,7 +128,7 @@ class TestAdapterScopingAndDisposition:
         }))
         monkeypatch.setattr(M, "DISPOSITION_PATH", disposition)
 
-        passed, undisposed, dead, schema_issues = M.check(repo_root=tmp_path)
+        passed, undisposed, dead, schema_issues, roster_issues = M.check(repo_root=tmp_path)
         assert passed is True
         assert undisposed == []
         assert dead == ["charon.used_module.throwaway_unreachable_probe"]
@@ -145,7 +145,7 @@ class TestAdapterScopingAndDisposition:
         }))
         monkeypatch.setattr(M, "DISPOSITION_PATH", disposition)
 
-        passed, undisposed, dead, schema_issues = M.check(repo_root=tmp_path)
+        passed, undisposed, dead, schema_issues, roster_issues = M.check(repo_root=tmp_path)
         assert passed is False
         assert len(schema_issues) == 2  # empty reason + invalid disposition value
 
@@ -155,7 +155,7 @@ class TestCleanCodebase:
     must pass — every currently-known 0-caller symbol is disposed."""
 
     def test_current_codebase_passes(self) -> None:
-        passed, undisposed, _dead, schema_issues = M.check()
+        passed, undisposed, _dead, schema_issues, roster_issues = M.check()
         assert schema_issues == []
         assert undisposed == [], (
             f"new dead symbol(s) not tracked in {M.DISPOSITION_PATH.name}: {undisposed}"

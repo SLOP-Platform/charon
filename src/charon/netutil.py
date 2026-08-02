@@ -81,10 +81,12 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 # Built ONCE at import. `urllib.request.build_opener` instantiates `HTTPSHandler`,
 # which calls `ssl.create_default_context()` — a full system CA-trust-store load,
 # measured at ~12.4 ms — so building it per request added ~12.7 ms of GIL-holding
-# CPU to EVERY outbound call: both forwarder legs, every discover/keyprobe/balance
-# probe, and (worst) `speculative_execution`'s N-way thread race, which serialises
-# on it because the cost is CPU-bound C work. `OpenerDirector.open` holds no
-# per-request state, so a module-global instance is safe to share across threads.
+# CPU to EVERY outbound call: both forwarder legs and every discover/keyprobe/
+# balance probe. (The original worst case was `speculative_execution`'s N-way
+# thread race, which serialised on it because the cost is CPU-bound C work; that
+# module was retired 2026-07-24, but the optimisation stands on the remaining
+# callers.) `OpenerDirector.open` holds no per-request state, so a module-global
+# instance is safe to share across threads.
 # The default `ProxyHandler` is retained, so HTTP_PROXY/HTTPS_PROXY still work —
 # but note it snapshots `getproxies()` at import rather than per call.
 _OPENER = urllib.request.build_opener(_NoRedirect())

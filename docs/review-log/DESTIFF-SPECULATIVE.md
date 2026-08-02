@@ -59,3 +59,18 @@ classification + post-race walk preserves both:
 * `tests/test_speculative_execution.py` — 9 new tests (classify × 5, race × 4)
 
 No off-owns changes. No new deps. Stdlib-only privileged core preserved.
+
+---
+
+## RETIRED WITH ITS SUBJECT (2026-07-24, INERT-INSTANCE-DETECT)
+
+`src/charon/speculative_execution.py` has been deleted. It was *instance-inert*
+the whole time: the gateway constructed `SpeculativeExecutor` and stored it on
+the server, but nothing ever called `execute()`, so the failover hardening
+described above — the `failover_loop.invoke_with_failover` adoption, the
+`_classify` mapping, the 9 tests — protected a code path that never ran once.
+
+Kept as a record for one reason: **do not later cite this fragment as evidence
+that speculative execution has failover coverage.** It has no coverage because
+it has no code. The `failover_loop` primitive itself is unaffected and remains
+in use by its other callers.

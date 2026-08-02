@@ -13,7 +13,7 @@
   },
   "charon.cache.format_stats": {
     "disposition": "keep-detector-false-positive-module-unreachable-cascade",
-    "reason": "Referenced 3x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade — false positive, not dead code."
+    "reason": "Referenced 3x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
   },
   "charon.context_shaper.ShapeResult": {
     "disposition": "keep-pending-wiring-rider",
@@ -243,14 +243,6 @@
     "disposition": "keep-detector-false-positive-module-unreachable-cascade",
     "reason": "Referenced 11x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
   },
-  "charon.types.ObsEvent": {
-    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
-    "reason": "Referenced 21x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
-  },
-  "charon.types.ObsTarget": {
-    "disposition": "keep-detector-false-positive-module-unreachable-cascade",
-    "reason": "Referenced 25x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
-  },
   "charon.types.QualityRecord": {
     "disposition": "keep-detector-false-positive-module-unreachable-cascade",
     "reason": "Referenced 5x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
@@ -262,5 +254,35 @@
   "charon.types.SpendDecision": {
     "disposition": "keep-detector-false-positive-module-unreachable-cascade",
     "reason": "Referenced 8x in src/tests (import/instantiate/annotate/test) but flagged dead via the detector's module-unreachable cascade \u2014 false positive, not dead code."
+  },
+  "charon.request_inspector.RequestInspector": {
+    "disposition": "wire",
+    "reason": "Instance-inert (R43-WIRING-AUDIT row 9, SR-4 re-confirmed): constructed by the _MODULE_SPECS table at gateway.py:88-89, stored at proxy_server.py:577 via self.modules.get(\"request_inspector\"), and inspect() is never reached from _handle() -> forward_with_failover(). WIRE \u2014 this is the ONLY one of the six with a REAL planned consumer, so it is the one case where the retire default is overturned: ticket RFL-3 (PARKED, not archived, so still live work) and its written brief specifies vision-aware route exclusion built directly on srv.request_inspector.inspect(messages).has_images, and 6 of 8 RFL-3 dogfood attempts independently produced that exact call site in forwarder.py (diff + provenance captured in the dogfood-salvage record on the ticket (build-rig doc, out of tree) before the dogfood-worktree reap). RFL-3's change IS the WIRING-AUDIT-MATRIX intervention for this module (insert the inspect() call pre-forward alongside the guardrails scan). Cost to wire: ~28 lines in forwarder.py, already drafted six times. Cost to retire instead: lose the only image/token/tool request-shape detection the gateway has, and strand RFL-3. The wiring itself is downstream work \u2014 not done here (ticket DO (c)). STATUS 2026-07-24 (INERT-INSTANCE-DETECT, operator sign-off D3): the other FIVE of the six were RETIRED and deleted (Observability, SpeculativeExecutor, SessionAffinity, ConsensusRouter, VirtualKeyManager) \u2014 their wiring-map owners R44/R45 do not exist as tickets and are not consumers by scope. This entry is the sole survivor and the sole remaining KNOWN_INSTANCE_INERT roster row: RequestInspector stays CONSTRUCTED and UNWIRED on purpose, held open for RFL-3. If RFL-3 is ever archived without landing the inspect() call site, this module loses its consumer and the retire default applies to it too \u2014 do not let it sit here indefinitely on the strength of a parked ticket.",
+    "inert_class": true
+  },
+  "charon.capability.grades_import.GradesImport": {
+    "disposition": "keep-detector-instance-inert-false-positive",
+    "reason": "Instance-inert detector false positive: GradesImport has 5 callable methods (load_into, reconcile_with_real, is_provisional, provenance_of, real_samples) but none of their names appear in any instance-variable \u2014 the heuristic cannot distinguish method-name collisions from genuine invocations and errs on the side of not flagging. The class IS genuinely used in production; this entry documents the detector limitation.",
+    "inert_class": true
+  },
+  "charon.capability.taxonomy.Classification": {
+    "disposition": "keep-detector-instance-inert-false-positive",
+    "reason": "Instance-inert detector false positive: Classification has a callable name() method (unusual for a frozen dataclass). The name() method is accessed as an attribute in practice (via dotted access like c.name), not called as c.name(...), but the detector's heuristic collects all dotted .method(...) patterns and cannot resolve attribute-vs-call without type information.",
+    "inert_class": true
+  },
+  "charon.ports.agent_launch.OpencodeRenderer": {
+    "disposition": "keep-detector-instance-inert-false-positive",
+    "reason": "Instance-inert detector false positive: OpencodeRenderer has a callable render() method that IS invoked at runtime via the AgentRenderer protocol dispatch, but the invocation goes through a Protocol interface (caller holds AgentRenderer, not OpencodeRenderer) which the heuristic cannot resolve statically.",
+    "inert_class": true
+  },
+  "charon.types.CapSet": {
+    "disposition": "keep-detector-instance-inert-false-positive",
+    "reason": "Instance-inert detector false positive: CapSet has a callable covers() method that IS invoked in production (capability/taxonomy.py and related modules), but the invocation pattern involves method calls on objects typed as the parent protocol/interface rather than the concrete CapSet type, which the heuristic cannot resolve statically.",
+    "inert_class": true
+  },
+  "charon.startup_check.V": {
+    "disposition": "keep-detector-instance-inert-false-positive",
+    "reason": "Instance-inert detector false positive: `V` is not a module-level class at all. It is a throwaway function-LOCAL ast.NodeVisitor subclass, declared and instantiated inside the very function that uses it (src/charon/startup_check.py defines `class V(ast.NodeVisitor)` inside _parse_forwarder_for_attrs and again inside _collect_self_attrs, each followed immediately by `V().visit(...)`). The symbol scan walks class definitions without tracking enclosing function scope, so it sees a class with zero module-level callers and reports it as instance-inert. The construction site is one line below the definition in both cases; deleting `V` would break startup_check outright.",
+    "inert_class": true
   }
 }
