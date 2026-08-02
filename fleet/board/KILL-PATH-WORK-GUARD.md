@@ -12,7 +12,8 @@ substrate-novel: |
   it attributable to the droid I am about to kill" — a question about the rig's own worktree/claim
   topology. `git status --porcelain` is the primitive and is used directly; there is no library to
   adopt for the policy of refusing a kill.
-depends_on: STOP-WORKER-GRACEFUL-EXIT
+depends_on: STOP-WORKER-GRACEFUL-EXIT, CLAIM-READER-CANONICAL
+dep-kind: build
 note: |
   OPERATOR DIRECTIVE 2026-08-01, verbatim: **"all/any droid kill paths MUST have a mechanized check
   for work that reviews and commits."**

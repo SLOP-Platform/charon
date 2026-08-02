@@ -314,3 +314,114 @@ ticket_for_branch(){
   done
   return 1
 }
+
+# ══ CANONICAL CLAIM-FILE READER ═════════════════════════════════════════════════════════
+# state/claims/<TICKET> has TWO LIVE WRITERS and therefore TWO on-disk shapes:
+#   LEGACY (claim.sh:337)          ONE line:  `<tier>-<pid> <ISO8601Z>`
+#   LEASE  (work-lease.sh:write_lease / session-bridge)  a `key: value` block:
+#       ticket: <id>
+#       session: <owner>        <- the owner id; `<tier>-<pid>` for a droid tab,
+#       worktree: <path>           a bare session name for a manager/bridge lease
+#       heartbeat: <epoch>
+#       claimed: <epoch>
+# BOTH shapes are present in the SAME directory RIGHT NOW — this is not a migration with a
+# cutover, it is a permanent dual format, so every reader must handle both.
+#
+# THE DEFECT THIS EXISTS TO END (measured 2026-08-01): reap-orphans.sh read the owner with
+# `awk '{print $1}'` against a comment asserting the legacy shape. On a LEASE file that awk
+# emits field 1 of EVERY line — the literal `ticket:` and four more tokens — so the PID parse
+# failed, and the failure DEGRADED TO A SILENT `SKIP` counted as "live (untouched)" with exit
+# 0. Net effect: a genuinely dead droid's claim was NEVER released, the ticket froze as
+# `claimed` forever, and the board silently lost claimable depth with nothing on stderr.
+#
+# TWO INVARIANTS, both load-bearing:
+#   1. LOUD  — a claim that cannot be understood is a FINDING, never a skip. Use
+#      claim_unreadable_report() and make the sweep exit non-zero.
+#   2. FAIL-CLOSED — an unreadable claim is NEVER released. Releasing a claim you cannot
+#      parse can hand a LIVE droid's ticket to a second droid, and "one checkout, one agent"
+#      is a hard rule. Unknown means KEEP.
+
+# claim_is_lease <claim-file> — true when the file is in the LEASE (key: value) shape.
+claim_is_lease(){ head -n1 "${1:-/dev/null}" 2>/dev/null | grep -q '^ticket:[[:space:]]*[^[:space:]]'; }
+
+# claim_field <key> <claim-file> -> value ("" when absent). LEASE shape only; reuses the
+# ONE board-field parser (_vm_meta) rather than adding a second `key: value` grammar.
+claim_field(){ [ -f "${2:-}" ] || return 1; _vm_meta "$1" "$2"; }
+
+# claim_owner <claim-file> -> owner id on stdout, rc 0.
+#   rc 1 and NOTHING on stdout when the file is in neither shape. Callers MUST treat rc 1 as
+#   UNKNOWN OWNER and fail closed.
+claim_owner(){
+  local cf="${1:-}" v
+  [ -f "$cf" ] || return 1
+  if claim_is_lease "$cf"; then
+    v="$(claim_field session "$cf")"
+  else
+    # The legacy shape is EXACTLY two fields, `<droid-id> <ISO8601Z>` — require both. A
+    # one-token line is not a claim in either shape, and accepting it would hand callers a
+    # confident-looking owner for a file nobody can actually interpret.
+    v="$(awk 'NR==1{ if (NF < 2) exit; print $1; exit }' "$cf" 2>/dev/null)"
+    # A trailing colon means a `key:` line reached the legacy arm — that is NOT an owner id,
+    # it is the exact mis-read this reader replaces. Refuse it rather than return `ticket:`.
+    case "$v" in *:) v="" ;; esac
+  fi
+  [ -n "$v" ] || return 1
+  printf '%s' "$v"
+}
+
+# claim_worktree <claim-file> -> worktree path ("" for the legacy shape, which has none).
+claim_worktree(){ local cf="${1:-}"; [ -f "$cf" ] || return 1; claim_is_lease "$cf" && claim_field worktree "$cf"; }
+
+# claim_owner_pid <owner-id> -> pid, rc 0. rc 1 when the id carries no `<tier>-<pid>` PID
+# (a manager/bridge lease owner such as `BOARD-FRONTMATTER-GATE` legitimately has none —
+# that is NOT an error, it just means PID liveness does not apply; use heartbeat).
+claim_owner_pid(){
+  local id="${1:-}" pid="${1#*-}"
+  [ -n "$id" ] && [ "$pid" != "$id" ] || return 1
+  case "$pid" in ''|*[!0-9]*) return 1;; esac
+  printf '%s' "$pid"
+}
+
+# claim_liveness <claim-file> [stale_seconds] -> prints `live|dead|unknown <reason>`.
+#   rc 0 = live, rc 1 = dead, rc 2 = UNKNOWN (unreadable — caller MUST keep the claim).
+# ONE liveness notion for the whole rig; no script may invent a second.
+#   PID beats heartbeat when the owner carries one: `kill -0` is ground truth, whereas a
+#   heartbeat can be stale on a live process (a droid mid-build heartbeats on its own cadence)
+#   or fresh on a dead one (the writer died after its last write).
+claim_liveness(){
+  local cf="${1:-}" stale="${2:-900}" owner pid hb now age
+  [ -f "$cf" ] || { printf 'unknown no such claim file'; return 2; }
+  if ! owner="$(claim_owner "$cf")"; then
+    printf 'unknown claim file matches NEITHER the legacy nor the lease shape'; return 2
+  fi
+  if pid="$(claim_owner_pid "$owner")"; then
+    if kill -0 "$pid" 2>/dev/null; then printf 'live owner=%s pid=%s alive' "$owner" "$pid"; return 0; fi
+    printf 'dead owner=%s pid=%s not running' "$owner" "$pid"; return 1
+  fi
+  hb="$(claim_field heartbeat "$cf" 2>/dev/null)" || hb=""
+  if [ -n "$hb" ] && [ "$hb" -eq "$hb" ] 2>/dev/null; then
+    now="$(date +%s)"; age=$((now - hb))
+    if [ "$age" -lt "$stale" ]; then printf 'live owner=%s heartbeat=%ss ago' "$owner" "$age"; return 0; fi
+    printf 'dead owner=%s heartbeat=%ss ago (over %ss)' "$owner" "$age" "$stale"; return 1
+  fi
+  printf 'unknown owner=%s carries no <tier>-<pid> PID and the claim has no heartbeat' "$owner"
+  return 2
+}
+
+# claim_unreadable_report <claim-file> <tool> [detail] — THE loud report for an unreadable
+# claim. stderr, banner-prefixed to match the rig's existing HOLD convention, and it names
+# both writers so the operator can tell drift from corruption. Never releases anything.
+claim_unreadable_report(){
+  local cf="${1:-}" tool="${2:-claim-reader}" detail="${3:-}"
+  {
+    printf '!!!!!! UNREADABLE CLAIM  %s  (%s)\n' "$(basename "${cf:-?}")" "$tool"
+    [ -n "$detail" ] && printf '       %s\n' "$detail"
+    printf '       file: %s\n' "$cf"
+    printf '       expected EITHER legacy `<tier>-<pid> <ISO8601Z>` (claim.sh) OR a lease\n'
+    printf '       block with a `session:` field (work-lease.sh). It matched NEITHER.\n'
+    printf '       CLAIM HELD, NOT RELEASED — releasing an unparseable claim can hand a LIVE\n'
+    printf '       droid'"'"'s ticket to a second droid.\n'
+    printf '       first 5 lines:\n'
+    head -n5 "$cf" 2>/dev/null | sed 's/^/         | /'
+  } >&2
+}

@@ -32,8 +32,11 @@ while read -r pid etime args; do
   tier="$(grep -oE 'fleet-droid\.sh +[a-z]+' <<<"$args" | awk '{print $2}')"
   [ -n "$tier" ] || continue
   droid="$tier-$pid"; on="(idle/claiming)"
+  # Owner via the ONE canonical claim reader (_lib.sh:claim_owner) — `awk 'NR==1{print $1}'`
+  # returned the literal `ticket:` on a work-lease.sh lease block, so a droid holding a lease
+  # never matched here and always displayed as "(idle/claiming)".
   for cf in "$S"/claims/*; do [ -e "$cf" ] || continue
-    [ "$(awk 'NR==1{print $1}' "$cf")" = "$droid" ] && { on="$(basename "$cf")"; break; }; done
+    [ "$(claim_owner "$cf" 2>/dev/null)" = "$droid" ] && { on="$(basename "$cf")"; break; }; done
   printf '  %-25s %-7s %-9s %s\n' "$droid" "$tier" "$etime" "$on"; ndroid=$((ndroid+1))
 done < <(ps -eo pid=,etime=,args= 2>/dev/null | grep '[f]leet-droid\.sh')
 [ "$ndroid" -eq 0 ] && printf '  (no droid tabs running)\n'
@@ -51,7 +54,7 @@ for f in "$B"/*.md; do
   if   [ -e "$S/done/$id" ];      then st=DONE;    note="-"; rdone=$((rdone+1))
   elif [ -e "$S/submitted/$id" ]; then st=PR-OPEN; note="$(age_of "$S/submitted/$id") ago"; propen=$((propen+1))
   elif [ -e "$S/needs-push/$id" ]; then st=NEEDS-PUSH; note="committed, NO PR — land-needs-push.sh $id"
-  elif [ -e "$S/claims/$id" ];    then st=claimed; note="$(awk 'NR==1{print $1}' "$S/claims/$id") · $(age_of "$S/claims/$id")"; claimed=$((claimed+1))
+  elif [ -e "$S/claims/$id" ];    then st=claimed; note="$(claim_owner "$S/claims/$id" 2>/dev/null || echo 'UNREADABLE-CLAIM') · $(age_of "$S/claims/$id")"; claimed=$((claimed+1))
   elif is_parked "$f"; then st=PARKED
     pv="$(parked_value "$f")"
     # A bare `parked: true` carries no reason — the reason (if any) lives in note:. A prose

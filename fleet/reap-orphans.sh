@@ -13,8 +13,10 @@
 #      (`p0_worktree_setup`) fixes the silent-discard by REUSE-ing the surviving branch;
 #      the cleanup of dead claims is still needed (this script).
 #
-# THIS SCRIPT: scans state/claims/*, parses the droid PID from the claim's owner
-# (`<tier>-<pid>`), and for any claim whose PID is DEAD (`kill -0` fails) acts:
+# THIS SCRIPT: scans state/claims/*, reads the owner + liveness through the ONE canonical
+# claim reader (_lib.sh: claim_owner / claim_liveness — it handles BOTH live claim shapes,
+# claim.sh's legacy one-liner and work-lease.sh's `key: value` lease block), and for any
+# claim whose owner is DEAD acts:
 #
 #   if branch has origin/master..HEAD unique commits:
 #     PRESERVE — the work is valuable.
@@ -69,6 +71,12 @@ done
 # shellcheck source=leak-guard.sh
 . "$SRC/leak-guard.sh"
 
+# CANONICAL CLAIM READER (_lib.sh: claim_owner / claim_liveness / claim_unreadable_report).
+# Sourced BEFORE this file's own canon(), so the archive-aware canon() below still wins — the
+# only thing adopted from _lib.sh here is the claim-file grammar, which must have ONE home.
+# shellcheck source=_lib.sh
+. "$SRC/_lib.sh"
+
 # canon: case-insensitive board lookup (matches the convention claim.sh / release.sh use)
 canon(){ local w="$1" f b; for f in "$BOARD"/*.md "$BOARD"/archive/*.md; do
   [ -e "$f" ] || continue; b="$(basename "$f" .md)"
@@ -76,18 +84,11 @@ canon(){ local w="$1" f b; for f in "$BOARD"/*.md "$BOARD"/archive/*.md; do
   return 1; }
 meta(){ awk -F': ' -v k="$1" '$1==k{sub(/^[^:]*: ?/,"");print;exit}' "$2" 2>/dev/null; }
 
-# pid_from_droid <droid-id>
-#   Droid ids are `<tier>-<pid>` (e.g. `frontier-11931`). The PID is everything after the
-#   FIRST `-`. Validates it's all digits — else the id format is unexpected and we skip.
-pid_from_droid(){
-  local did="$1"
-  local pid="${1#*-}"
-  [ "$pid" != "$1" ] || return 1
-  case "$pid" in ''|*[!0-9]*) return 1;; esac
-  echo "$pid"
-}
-
-alive(){ kill -0 "$1" 2>/dev/null; }
+# pid_from_droid / alive — RETIRED as local copies. Droid-id PID parsing is now
+# _lib.sh:claim_owner_pid and liveness is _lib.sh:claim_liveness (which is PID-first and
+# falls back to `heartbeat:` for lease owners that carry no PID). Two private copies of the
+# claim grammar is exactly how this script drifted off the format in the first place.
+REAP_STALE_S="${REAPER_STALE_S:-900}"
 
 # safe_wt_remove <repo> <wt> <id> — thin wrapper honoring needs-push (the reaper's
 # worktree-removal step). `safe_worktree_remove` is sourced from leak-guard.sh.
@@ -115,16 +116,24 @@ for cf in "${files[@]}"; do
     n_dead_clean=$((n_dead_clean+1))
     continue
   fi
-  # The claim file is `<droid-id> <iso-ts>` (see claim.sh printf). The droid id may contain
-  # spaces? No — claim.sh writes `<tier>-<pid>` (no spaces). Read the first whitespace-
-  # separated field.
-  droid_id="$(awk '{print $1}' "$cf" 2>/dev/null)"
-  pid="$(pid_from_droid "$droid_id" 2>/dev/null)" || {
-    echo "SKIP    $id  (claim owner '$droid_id' has no parseable PID — format drift?)"
-    n_skipped_live=$((n_skipped_live+1)); continue
-  }
-  if alive "$pid"; then
-    echo "LIVE    $id  droid=$droid_id pid=$pid (ALIVE — left untouched)"
+  # OWNER + LIVENESS via the ONE canonical claim reader (_lib.sh). This script used to read
+  # the owner with `awk '{print $1}'` against a comment asserting the legacy one-line shape.
+  # work-lease.sh now also writes a `key: value` LEASE block into the SAME directory, and on
+  # one of those the awk returned the literal `ticket:`, the PID parse failed, and the whole
+  # thing degraded to a SILENT `SKIP` counted as live with exit 0 — so a genuinely dead droid
+  # was never reaped and its ticket froze as `claimed` forever.
+  live_reason="$(claim_liveness "$cf" "$REAP_STALE_S")"; live_rc=$?
+  if [ "$live_rc" -eq 2 ]; then
+    # UNKNOWN. LOUD (stderr + non-zero exit) and FAIL-CLOSED: the claim is KEPT. Releasing a
+    # claim we cannot parse can hand a live droid's ticket to a second droid.
+    claim_unreadable_report "$cf" reap-orphans "$live_reason"
+    echo "UNREADABLE  $id  ($live_reason) — claim HELD, reported as an ERROR"
+    n_errors=$((n_errors+1)); continue
+  fi
+  droid_id="$(claim_owner "$cf")" || droid_id="?"
+  pid="$(claim_owner_pid "$droid_id" 2>/dev/null)" || pid="-"
+  if [ "$live_rc" -eq 0 ]; then
+    echo "LIVE    $id  droid=$droid_id pid=$pid ($live_reason — left untouched)"
     n_skipped_live=$((n_skipped_live+1)); continue
   fi
   # DEAD. Resolve the ticket's repo/worktree/branch.
@@ -268,5 +277,11 @@ echo "reap-orphans: done ($([ "$APPLY" = 1 ] && echo 'applied' || echo 'dry-run'
 echo "  live (untouched): $n_skipped_live"
 echo "  dead+preserve:    $n_dead_preserve"
 echo "  dead+clean:       $n_dead_clean"
-[ "$n_errors" -gt 0 ] && { echo "  errors:           $n_errors"; exit 1; }
+[ "$n_errors" -gt 0 ] && {
+  echo "  errors:           $n_errors"
+  echo "!!!!!! reap-orphans: $n_errors claim(s) could not be acted on — see the stderr findings above." >&2
+  echo "       NOTHING was released for them. A silent skip here is how dead claims freeze tickets," >&2
+  echo "       so this exits non-zero on purpose." >&2
+  exit 1
+}
 exit 0

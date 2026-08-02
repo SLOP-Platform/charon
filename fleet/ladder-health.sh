@@ -229,13 +229,32 @@ if [ -s "$SORTED" ]; then
       fi
     elif in_set "$id_lo" "$CLAIMED_SET"; then
       claim_file="$STATE/claims/$id"
-      droid_name="$(awk 'NR==1{print $1}' "$claim_file" 2>/dev/null || echo "?")"
-      claim_ts="$(awk 'NR==1{print $2}' "$claim_file" 2>/dev/null || echo "?")"
+      # BOTH claim shapes via the canonical reader (_lib.sh). The bare awk reported every
+      # work-lease.sh lease as droid `ticket:` claimed since `<ID>`, which then failed the
+      # droid_alive check below and mislabelled a LIVE holder as STALE.
+      droid_name="$(claim_owner "$claim_file" 2>/dev/null || echo "UNREADABLE-CLAIM")"
+      if claim_is_lease "$claim_file"; then
+        claim_ts="$(claim_field claimed "$claim_file" 2>/dev/null || echo "?")"
+      else
+        claim_ts="$(awk 'NR==1{print $2}' "$claim_file" 2>/dev/null || echo "?")"
+      fi
       reason="CLAIMED"
       detail="by $droid_name since $claim_ts"
-      if ! droid_alive "$droid_name"; then
-        detail="$detail — STALE (droid process not alive)"
-      fi
+      # Liveness through the ONE canonical notion (_lib.sh:claim_liveness) — PID-first with a
+      # `heartbeat:` fallback for lease owners that carry no PID. droid_alive() alone matched a
+      # `fleet-droid.sh` command line, so EVERY work-lease.sh lease (owner = a session name, not
+      # a running droid tab) was mislabelled STALE. rc 2 = unreadable, which is a finding, not a
+      # verdict — it must never read as either alive or dead.
+      # `|| claim_live_rc=$?` (not a bare `; claim_live_rc=$?`) because this script runs under
+      # `set -e`: a non-zero command substitution in an assignment aborts the whole script, and
+      # claim_liveness returns non-zero for BOTH of its normal verdicts.
+      claim_live_rc=0
+      claim_live_reason="$(claim_liveness "$claim_file" 2>/dev/null)" || claim_live_rc=$?
+      case "$claim_live_rc" in
+        1) detail="$detail — STALE ($claim_live_reason)" ;;
+        2) detail="$detail — !!!!!! UNREADABLE CLAIM ($claim_live_reason) — held, NOT released" ;;
+        *) droid_alive "$droid_name" || detail="$detail — $claim_live_reason" ;;
+      esac
     elif is_parked_check "$parked" "$note"; then
       reason="PARKED"
       detail="unclaimable"

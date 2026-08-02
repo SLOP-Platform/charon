@@ -10,7 +10,9 @@ for f in "$B"/*.md; do
   if   [ -e "$S/done/$id" ];      then st=DONE
   elif [ -e "$S/submitted/$id" ]; then st=PR-OPEN
   elif [ -e "$S/needs-push/$id" ]; then st="NEEDS-PUSH"
-  elif [ -e "$S/claims/$id" ];    then st="claimed:$(awk '{print $1}' "$S/claims/$id")"
+  # claim_owner (_lib.sh) reads BOTH claim shapes; the bare awk printed `claimed:ticket:`
+  # for every work-lease.sh lease block.
+  elif [ -e "$S/claims/$id" ];    then st="claimed:$(claim_owner "$S/claims/$id" 2>/dev/null || echo UNREADABLE)"
   elif ! deps_done "$dep"; then st="blocked"
   else st=ready; fi
   printf '%-6s %-8s %-22s %-10s %s\n' "$id" "$(meta tier "$f")" "$(meta branch "$f")" "$st" "${dep:-—}"

@@ -9,16 +9,18 @@
 # released into a re-claimable void — that silent release is leak #3 (the pool re-offers a ticket
 # whose rejected/unpushed work then gets silently discarded on the next `git worktree add -B`).
 #
-# FORMATS — this script reads BOTH claim formats (CLAIM-RECONCILE-INERT accept-2):
-#   • Old format: `<droid-id> <iso-ts>` (claim.sh line-1 printf). Liveness = PID.
-#   • Bridge format: multi-line key=value (session-bridge MCP). Liveness = `heartbeat:` field.
-#   The claim_field() helper transparently reads either, adopting the same dual-format strategy
-# as work-lease.sh:claim_epoch() (work-lease.sh:126-130).
+# FORMATS — both live claim shapes are read through the ONE canonical reader in _lib.sh
+# (claim_owner / claim_worktree / claim_liveness / claim_unreadable_report):
+#   • Legacy: `<droid-id> <iso-ts>` (claim.sh line-1 printf).
+#   • Lease:  a `key: value` block (work-lease.sh:write_lease / session-bridge MCP); the owner
+#             is the `session:` field, liveness falls back to `heartbeat:` when it has no PID.
+# This file previously carried PRIVATE copies of that grammar and reap-orphans.sh carried a
+# THIRD copy which had drifted off the on-disk format entirely. One grammar, one home.
 #
 # ADOPT-FIRST (no second merge-check, no second PID-check):
-#   • DEAD/ALIVE — `<tier>-<pid>` parse + `kill -0` for old format (reap-orphans.sh:82-90
-#     semantics); `heartbeat:` field + threshold for bridge format. Liveness notions are
-#     adopted from their respective sources — this script creates no third liveness signal.
+#   • DEAD/ALIVE — _lib.sh:claim_liveness, PID-first (`kill -0`, ground truth) with a
+#     `heartbeat:` + threshold fallback for lease owners that carry no PID. This script
+#     creates no second liveness signal, and an UNREADABLE claim is LOUD + fail-closed.
 #   • MERGE-PROOF — done.sh is THE sanctioned marker writer: its merge-proof (merged_pr_for_branch /
 #     merged_pr_touching_owns, done.sh:35-68/132-148) writes the terminal marker AND removes the
 #     claim ONLY when the merge is proven, and fail-closes (exit 3, NOTHING touched) otherwise.
@@ -77,31 +79,22 @@ for arg in "$@"; do
   esac
 done
 
-# pid_from_droid / alive — old-format PID liveness (reap-orphans.sh:82-90).
-pid_from_droid(){
-  local pid="${1#*-}"
-  [ "$pid" != "$1" ] || return 1
-  case "$pid" in ''|*[!0-9]*) return 1;; esac
-  echo "$pid"
-}
-alive(){ kill -0 "$1" 2>/dev/null; }
+# CANONICAL CLAIM READER — claim_owner / claim_worktree / claim_liveness /
+# claim_unreadable_report all live in _lib.sh now. This file used to carry PRIVATE copies of
+# claim_field / is_bridge_format / pid_from_droid, and reap-orphans.sh carried a THIRD,
+# different copy that had already drifted off the on-disk format. One grammar, one home.
+# Sourced BEFORE this file's own archive-aware canon(), which therefore still wins.
+# shellcheck source=_lib.sh
+. "$SRC/_lib.sh"
 
-# claim_field <field> <file> -> value. Reads BOTH formats transparently.
-# Bridge format: grep for "^field: *value". Old format: fallback for known fields.
-claim_field(){
-  local f="$1" cf="$2" val
-  val="$(grep -m1 "^${f}:" "$cf" 2>/dev/null | sed "s/^${f}: *//")" && [ -n "$val" ] || val=""
-  if [ -z "$val" ]; then
-    case "$f" in
-      heartbeat) val="$(awk 'NR==1{print $2; exit}' "$cf" 2>/dev/null)" || val="" ;;
-      ticket)   val="$(basename "$cf")" ;;
-    esac
-  fi
-  [ -n "$val" ] && printf '%s' "$val"
+# claim_field keeps ONE legacy-shape convenience the shared reader deliberately omits: on a
+# legacy one-liner the second field is the ISO claim timestamp, which this script displays.
+claim_ts(){
+  local cf="$1" v
+  if claim_is_lease "$cf"; then v="$(claim_field claimed "$cf")"
+  else v="$(awk 'NR==1{print $2; exit}' "$cf" 2>/dev/null)"; fi
+  [ -n "$v" ] && printf '%s' "$v"
 }
-
-# is_bridge_format <file> — true if first line starts "ticket:".
-is_bridge_format(){ head -1 "$1" 2>/dev/null | grep -q "^ticket:"; }
 
 # canon: case-insensitive board+archive lookup (mirrors done.sh / reap-orphans.sh canon()).
 canon(){ local w="$1" f b; for f in "$BOARD"/*.md "$BOARD"/archive/*.md; do
@@ -261,7 +254,7 @@ classify_marker(){
   return 20
 }
 
-n_live=0; n_retired=0; n_held=0; n_skipped=0; n_would_retire=0; n_would_hold=0
+n_live=0; n_retired=0; n_held=0; n_skipped=0; n_would_retire=0; n_would_hold=0; n_unreadable=0
 n_orphan_residue=0; n_orphan_held=0; n_orphan_walked=0
 n_orphan_would_retire=0; n_orphan_would_hold=0
 
@@ -292,35 +285,28 @@ for cf in "${files[@]}"; do
   id_raw="$(basename "$cf")"
   id_display="$id_raw"
 
-  # ── liveness check (format-aware) ──────────────────────────────────────
-  if is_bridge_format "$cf"; then
-    # Bridge format: liveness = heartbeat within threshold.
-    hb="$(claim_field heartbeat "$cf")"
-    if [ -n "$hb" ] && [ "$hb" -eq "$hb" ] 2>/dev/null; then
-      now="$(date +%s)"
-      age=$((now - hb))
-      if [ "$age" -lt "$STALE_S" ]; then
-        echo "LIVE    $id_raw  heartbeat=${age}s ago (within ${STALE_S}s threshold)"
-        n_live=$((n_live+1)); continue
-      fi
-      echo "STALE   $id_raw  heartbeat=${age}s ago (exceeds ${STALE_S}s threshold)"
-    fi
-    droid_id="$(claim_field session "$cf")"
-    [ -z "$droid_id" ] && droid_id="bridge"
-    wt="$(claim_field worktree "$cf")"
-  else
-    # Old format: PID-based liveness.
-    droid_id="$(awk '{print $1}' "$cf" 2>/dev/null)"
-    pid="$(pid_from_droid "$droid_id" 2>/dev/null)" || {
-      echo "SKIP    $id_raw  (claim owner '$droid_id' has no parseable PID — format drift, leaving as-is)"
-      n_skipped=$((n_skipped+1)); continue
-    }
-    if alive "$pid"; then
-      echo "LIVE    $id_raw  droid=$droid_id pid=$pid (ALIVE — left untouched)"
-      n_live=$((n_live+1)); continue
-    fi
-    wt=""
+  # ── liveness check — ONE canonical reader (_lib.sh:claim_liveness) ─────
+  # This block used to branch on format itself and keep a private copy of the grammar; the
+  # else-arm then read the owner with `awk '{print $1}'`, the same read that had already
+  # silently broken reap-orphans.sh. claim_liveness is PID-first with a heartbeat fallback,
+  # so a lease whose `session:` is `<tier>-<pid>` is now judged by `kill -0` (ground truth)
+  # rather than by a heartbeat a dead process can no longer contradict.
+  live_reason="$(claim_liveness "$cf" "$STALE_S")"; live_rc=$?
+  if [ "$live_rc" -eq 2 ]; then
+    # UNREADABLE. LOUD + FAIL-CLOSED: reported to stderr as a finding, claim KEPT. Never
+    # release a claim we cannot parse — that can hand a live droid's ticket to a second one.
+    claim_unreadable_report "$cf" reconcile-stale-claims "$live_reason"
+    echo "UNREADABLE  $id_raw  ($live_reason) — claim HELD, NOT released; reported as an ERROR"
+    n_skipped=$((n_skipped+1)); n_unreadable=$((n_unreadable+1)); continue
   fi
+  droid_id="$(claim_owner "$cf")" || droid_id=""
+  [ -n "$droid_id" ] || droid_id="bridge"
+  wt="$(claim_worktree "$cf" 2>/dev/null)" || wt=""
+  if [ "$live_rc" -eq 0 ]; then
+    echo "LIVE    $id_raw  droid=$droid_id ($live_reason — left untouched)"
+    n_live=$((n_live+1)); continue
+  fi
+  echo "STALE   $id_raw  droid=$droid_id ($live_reason)"
 
   # ── worktree guard: protect live work BEFORE canon ────────────────────
   # A claim whose worktree is dirty or has unpushed commits is NEVER released,
@@ -504,7 +490,7 @@ else
   echo "  would-hold:       $n_would_hold"
   echo "  held (unresolved):$n_held"
 fi
-[ "$n_skipped" -gt 0 ] && echo "  skipped (no PID): $n_skipped"
+[ "$n_skipped" -gt 0 ] && echo "  skipped (unreadable): $n_skipped"
 if [ "$ORPHANS" -eq 1 ]; then
   echo "  --orphans:"
   echo "    walked:    $n_orphan_walked"
@@ -515,5 +501,12 @@ if [ "$ORPHANS" -eq 1 ]; then
     echo "    residue:   ${n_orphan_would_retire:-0}   (would-clear under --apply)"
     echo "    held:      ${n_orphan_would_hold:-0}   (would-HOLD)"
   fi
+fi
+# An UNREADABLE claim is a FINDING, never a silent skip. It is the failure that froze tickets
+# as `claimed` forever with exit 0 and nothing on stderr, so it now exits non-zero.
+if [ "$n_unreadable" -gt 0 ]; then
+  echo "!!!!!! reconcile-stale-claims: $n_unreadable claim(s) UNREADABLE — see the stderr findings above." >&2
+  echo "       NOTHING was released for them (fail-closed). Exiting non-zero on purpose." >&2
+  exit 1
 fi
 exit 0
