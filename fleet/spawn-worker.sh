@@ -177,6 +177,35 @@ WINDOW="${5:-1}"
 # manager lives there; pass it explicitly for product tickets.
 WORKDIR="${6:-/home/stack/charon-private}"
 PROMPT="${7:-}"
+
+# ── WORKTREE-LEAK GUARD, TUI PATH (added 2026-08-02) ─────────────────────────────────────────
+# THE CLASS THIS CLOSES: the headless path (fleet-droid.sh) has ALWAYS created the worktree
+# BEFORE the model runs, so the model cannot choose to write into the main checkout. The TUI path
+# had NO equivalent guard and DEFAULTED to the main checkout — so every TUI worker launched
+# without an explicit WORKDIR was aimed at main by construction. That is not a droid discipline
+# problem; it is a missing guard on one of two launch paths, which is why it kept recurring.
+# MEASURED 2026-08-02: a droid left +58 lines of ZEN-GO-ROUTING-POLICY work uncommitted in the
+# PRODUCT MAIN CHECKOUT while a clean worktree for its own branch already existed and sat unused.
+# Nothing alarmed; it surfaced only as three `uncommitted-work` REDs in validate_board.sh.
+#
+# Fail CLOSED and LOUD: refuse to launch a PROMPTED worker into a repo ROOT. An unprompted
+# worker (no PROMPT) is an interactive shell for a human and is left alone — a human choosing to
+# sit in the main checkout is not the leak class.
+if [ -n "$PROMPT" ]; then
+  for _root in /home/stack/charon-private /home/stack/code/charon /home/stack/code/keystone; do
+    if [ "${WORKDIR%/}" = "$_root" ]; then
+      echo "spawn-worker: REFUSING to launch a prompted worker in the MAIN CHECKOUT '$WORKDIR'." >&2
+      echo "  Work done here is owned by no branch, trips no ownership gate, and is discovered" >&2
+      echo "  only as an 'uncommitted-work' RED after the fact (the leak-guard class)." >&2
+      echo "  Create the ticket's worktree and pass it as arg 6:" >&2
+      echo "    git -C $_root worktree add <WT_PATH> -b <branch> origin/master" >&2
+      echo "    bash fleet/spawn-worker.sh <NAME> <MODEL> <PORT> '<#hex>' 1 <WT_PATH> \"<prompt>\"" >&2
+      echo "  Override ONLY with a stated reason: SPAWN_ALLOW_MAIN_CHECKOUT=1" >&2
+      [ "${SPAWN_ALLOW_MAIN_CHECKOUT:-0}" = "1" ] || exit 5
+      echo "spawn-worker: SPAWN_ALLOW_MAIN_CHECKOUT=1 — proceeding into the main checkout ANYWAY." >&2
+    fi
+  done
+fi
 WT=/mnt/c/Users/$(/mnt/c/Windows/System32/cmd.exe /c "echo %USERNAME%" 2>/dev/null | tr -d '\r\n')/AppData/Local/Microsoft/WindowsApps/wt.exe
 [ -x "$WT" ] || WT=$(command -v wt.exe 2>/dev/null) || { echo "spawn-worker: wt.exe not found" >&2; exit 2; }
 
