@@ -41,8 +41,17 @@ rank(){ echo "${RANK[$1]:-0}"; }
 drank=$(rank "$CHECK_TIER")
 
 # ── Temp workspace ────────────────────────────────────────────────────────────
-TMPDIR="$(mktemp -d)"; trap 'rm -rf "$TMPDIR"' EXIT
-INDEX="$TMPDIR/index"
+# TRAP-EXPANSION HAZARD (2026-08-01 incident — same class as fleet/review-pool.sh:220).
+# This was `TMPDIR="$(mktemp -d)"; trap 'rm -rf "$TMPDIR"' EXIT`. Two defects:
+#   (1) It ASSIGNS TMPDIR, the variable `mktemp`/`python`/`git` all read to pick a temp
+#       root. Every child of this script therefore silently re-rooted its scratch under
+#       our private dir, and our EXIT trap then `rm -rf`'d the lot.
+#   (2) The single-quoted trap body expands when the trap FIRES, so it deletes whatever
+#       TMPDIR happens to name at exit — not necessarily the dir we created.
+# Fix (same shape both sites): a distinct, non-shadowing name, and expand the path AT
+# TRAP-DEFINITION TIME so the trap carries a literal path.
+LH_WORK="$(mktemp -d)"; trap "rm -rf $(printf '%q' "$LH_WORK")" EXIT
+INDEX="$LH_WORK/index"
 
 # ── Delimiter: pipe (|) — NOT tab.  Tab is an IFS whitespace character so bash's
 # `read` collapses consecutive tabs into a single delimiter, which silently drops
@@ -139,14 +148,14 @@ if [ "${#TICKET_FILES[@]}" -gt 0 ]; then
 fi
 
 # ── Sort: priority ASC, blocking DESC, blast DESC, difficulty DESC, id ASC ───
-SORTED="$TMPDIR/sorted"
+SORTED="$LH_WORK/sorted"
 sort -t'|' -k7,7n -k10,10rn -k8,8rn -k9,9rn -k1,1 "$INDEX" 2>/dev/null > "$SORTED" || true
 
 # ── State-set files (for exclusion lookups) ───────────────────────────────────
-CLAIMED_SET="$TMPDIR/claimed"
-SUBMITTED_SET="$TMPDIR/submitted"
-DONE_SET="$TMPDIR/done"
-LG_SET="$TMPDIR/lg"
+CLAIMED_SET="$LH_WORK/claimed"
+SUBMITTED_SET="$LH_WORK/submitted"
+DONE_SET="$LH_WORK/done"
+LG_SET="$LH_WORK/lg"
 build_set(){ local dst="$1" src_dir="$2"
   [ -d "$src_dir" ] || { : > "$dst"; return 0; }
   ls -1 "$src_dir" 2>/dev/null | tr 'A-Z' 'a-z' > "$dst" || true

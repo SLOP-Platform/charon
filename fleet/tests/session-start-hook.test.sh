@@ -15,19 +15,28 @@
 # Run:  bash fleet/tests/session-start-hook.test.sh   (exit 0 = all pass)
 set -uo pipefail
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# SANDBOX CONTAINMENT + FAIL-CLOSED (2026-08-01). This file is the PROVEN source of the 16
+# `t <t@t>` commits (subjects c1..c4) and the `f.txt` blob now sitting on origin/master. The
+# mechanism is exactly the pair below: this script runs under `set -uo pipefail` (no `-e`), and
+# the `export GIT_AUTHOR_EMAIL=t@t` on the next line applies to EVERY git command in the process.
+# So when $D was deleted mid-run, `( cd "$D/seed" ... )` fell through and the `git add`/`git
+# commit` on the following line ran against the CURRENT WORKING DIRECTORY — the live checkout —
+# and committed there as `t <t@t>`. sandbox_cd makes that fall-through impossible.
+# shellcheck source=fleet/tests/lib/sandbox.sh
+source "$SRC/tests/lib/sandbox.sh"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 PASS=0; FAIL=0
 ok(){  PASS=$((PASS+1)); echo "PASS: $1"; }
 bad(){ FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 
-D="$(mktemp -d)"
-trap 'rm -rf "$D"' EXIT
+D="$(sandbox_mk session-start-hook)"
+trap "rm -rf $(printf '%q' "$D")" EXIT
 
 # --- build a throwaway "origin" (bare) + a "product" clone + a "rig" clone -----------------
 git init --quiet --bare "$D/origin.git"
 git clone --quiet "$D/origin.git" "$D/seed"
 (
-  cd "$D/seed"
+  sandbox_cd "$D/seed"
   echo "one" > f.txt && git add f.txt && git commit --quiet -m c1
   echo "two" >> f.txt && git add f.txt && git commit --quiet -m c2
   git branch -M master
@@ -35,8 +44,8 @@ git clone --quiet "$D/origin.git" "$D/seed"
 )
 git clone --quiet "$D/origin.git" "$D/product"
 git clone --quiet "$D/origin.git" "$D/rig"
-(cd "$D/product" && git checkout --quiet -B master origin/master)
-(cd "$D/rig"     && git checkout --quiet -B master origin/master)
+( sandbox_cd "$D/product" && git checkout --quiet -B master origin/master)
+( sandbox_cd "$D/rig"     && git checkout --quiet -B master origin/master)
 
 run_hook(){
   SESSION_START_PRODUCT="$D/product" \
@@ -59,7 +68,7 @@ esac
 
 echo "== (b) STALE-CLEAN: origin advances, clones behind, working trees clean -> FF then OK =="
 (
-  cd "$D/seed"
+  sandbox_cd "$D/seed"
   echo "three" >> f.txt && git add f.txt && git commit --quiet -m c3
   git push --quiet origin master
 )
@@ -79,7 +88,7 @@ origin_sha="$(git -C "$D/seed" rev-parse --short HEAD)"
 
 echo "== (c) STALE-DIRTY: origin advances again, clone has an uncommitted tracked change -> FAIL LOUD =="
 (
-  cd "$D/seed"
+  sandbox_cd "$D/seed"
   echo "four" >> f.txt && git add f.txt && git commit --quiet -m c4
   git push --quiet origin master
 )

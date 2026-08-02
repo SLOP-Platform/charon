@@ -28,6 +28,23 @@ FAIL=0
 # the gate. Any test spawned below inherits it via the exported env.
 export CHARON_GATE_ACTIVE=1
 
+# SANDBOX CONTAINMENT (2026-08-01 incident). Every fleet test builds its fixtures with a
+# bare `mktemp -d`, and `mktemp` roots its output at $TMPDIR. Nothing constrained $TMPDIR,
+# so a caller that exported one pointing INSIDE a git work tree made every test sandbox —
+# nested `git init` repos, `git worktree add` checkouts, pytest basetemps — land inside the
+# repo under test. That is the single root behind all three failure faces documented in
+# fleet/tests/lib/sandbox.sh: droid tabs killed by `git add` exit 128 on embedded repos,
+# ~118 tests "killed (no exit status recorded)" when one tool rm -rf'd the shared root, and
+# 16 `t <t@t>` commits reaching origin/master from tests that fell through to the live repo.
+#
+# `sandbox_init` re-roots $TMPDIR at a validated out-of-tree location and EXPORTS it, so all
+# 124 test files below inherit containment without any of them being modified. It aborts
+# loudly (exit 99) if no safe root exists rather than proceeding into the tree — the gate
+# not running is a far better outcome than the gate writing to the live checkout.
+# shellcheck source=fleet/tests/lib/sandbox.sh
+source "$FLEET/tests/lib/sandbox.sh"
+sandbox_init
+
 if [ -d "$TESTS_DIR" ]; then
   shopt -s nullglob
   tests=("$TESTS_DIR"/*.test.sh)

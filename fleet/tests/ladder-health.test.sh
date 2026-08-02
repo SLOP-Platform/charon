@@ -12,6 +12,8 @@
 # Run:  bash fleet/tests/ladder-health.test.sh   (exit 0 = all pass)
 set -uo pipefail
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=fleet/tests/lib/sandbox.sh
+source "$SRC/tests/lib/sandbox.sh"
 PASS=0; FAIL=0
 ok(){   PASS=$((PASS+1)); echo "  ok   $1"; }
 bad(){  FAIL=$((FAIL+1)); echo "  FAIL $1"; }
@@ -21,8 +23,16 @@ chk(){  # chk <desc> <needle> <haystack>
 nchk(){ case "$3" in *"$2"*) bad "$1 (unexpected '$2')";; *) ok "$1";; esac; }
 
 # ── Build an isolated temp fleet ──────────────────────────────────────────────
+# SANDBOX CONTAINMENT (2026-08-01 incident). `mk_fleet` returns the mktemp dir ITSELF, so the
+# per-block cleanup below used to be `rm -rf "$(dirname "$FLEET")"` — i.e. rm -rf of the
+# SANDBOX'S PARENT, which is $TMPDIR, the temp root SHARED BY EVERY CONCURRENT TEST. Under
+# fleet/gate.sh's bounded-concurrency fan-out this fired 12 times per run and deleted every
+# other test's fixtures mid-flight: the measured result was 124/124 tests reporting
+# "killed (no exit status recorded)", i.e. fleet/gate.sh was completely unrunnable, plus one
+# reviewer green that was purely an artefact of the suite never having run. Cleanup must name
+# the sandbox, never a path derived by walking UP out of it.
 mk_fleet(){
-  local d; d="$(mktemp -d)"
+  local d; d="$(sandbox_mk ladder-health)"
   cp "$SRC/ladder-health.sh" "$SRC/_lib.sh" "$SRC/repo-registry.sh" "$d/" 2>/dev/null || true
   # validate_board.sh required (Python, needs capability/ too)
   mkdir -p "$d/board" "$d/state/claims" "$d/state/submitted" "$d/state/done" "$d/state/loop-guard"
@@ -71,7 +81,7 @@ chk "a1 QUARANTINED P0 surfaced"    "QUARANTINED" "$OUT"
 chk "a2 QUARANTINED names the id"   "Q-P0"        "$OUT"
 chk "a3 QUARANTINED has reason"     "zero-commit"  "$OUT"
 nchk "a4 QUARANTINED P0 is NOT reported CLAIMABLE" "CLAIMABLE.*Q-P0" "$OUT"
-rm -rf "$(dirname "$FLEET")"
+sandbox_rm "$FLEET"
 
 # ==============================================================================
 echo "== (b) CLAIMED P0 with STALE droid is surfaced =="
@@ -88,7 +98,7 @@ chk "b1 CLAIMED P0 surfaced"       "CLAIMED"          "$OUT"
 chk "b2 CLAIMED names the id"      "STALE-CLAIM-P0"    "$OUT"
 chk "b3 CLAIMED names the droid"   "dead-droid-12345"  "$OUT"
 chk "b4 CLAIMED flagged STALE"     "STALE"             "$OUT"
-rm -rf "$(dirname "$FLEET")"
+sandbox_rm "$FLEET"
 
 # ==============================================================================
 echo "== (c) SUBMITTED P0 is surfaced =="
@@ -103,7 +113,7 @@ printf '2026-07-23T12:00:00Z\n' > "$FLEET/state/submitted/SUBMITTED-P0"
 OUT="$(run_health 5)"
 chk "c1 SUBMITTED P0 surfaced"     "SUBMITTED"     "$OUT"
 chk "c2 SUBMITTED names the id"    "SUBMITTED-P0"   "$OUT"
-rm -rf "$(dirname "$FLEET")"
+sandbox_rm "$FLEET"
 
 # ==============================================================================
 echo "== (d) DONE P0 is surfaced =="
@@ -117,7 +127,7 @@ mk_ticket "$FLEET" ALSO-READY 1
 OUT="$(run_health 5)"
 chk "d1 DONE P0 surfaced"          "DONE"           "$OUT"
 chk "d2 DONE names the id"         "DONE-P0"         "$OUT"
-rm -rf "$(dirname "$FLEET")"
+sandbox_rm "$FLEET"
 
 # ==============================================================================
 echo "== (e) PARKED P0 is surfaced =="
@@ -129,7 +139,7 @@ mk_ticket "$FLEET" ALSO-READY 1
 OUT="$(run_health 5)"
 chk "e1 PARKED P0 surfaced"        "PARKED"         "$OUT"
 chk "e2 PARKED names the id"       "PARKED-P0"       "$OUT"
-rm -rf "$(dirname "$FLEET")"
+sandbox_rm "$FLEET"
 
 # ==============================================================================
 echo "== (f) BLOCKED P0 names its undone dep(s) =="
@@ -143,7 +153,7 @@ OUT="$(run_health 5)"
 chk "f1 BLOCKED P0 surfaced"       "BLOCKED"        "$OUT"
 chk "f2 BLOCKED names the id"      "BLOCKED-P0"      "$OUT"
 chk "f3 BLOCKED names the dep"     "UNDONE-DEP"      "$OUT"
-rm -rf "$(dirname "$FLEET")"
+sandbox_rm "$FLEET"
 
 # ==============================================================================
 echo "== (g) BLOCKED P0 with a dep that has BOTH done + claimed markers =="
@@ -161,7 +171,7 @@ printf 'old-droid 2026-07-22T08:00:00Z\n' > "$FLEET/state/claims/DUAL-DEP"
 OUT="$(run_health 5)"
 chk "g1 done dep unblocks the ticket"      "BLOCKED-DUAL" "$OUT"
 chk "g2 done dep → ticket is CLAIMABLE"     "CLAIMABLE"    "$OUT"
-rm -rf "$(dirname "$FLEET")"
+sandbox_rm "$FLEET"
 
 # ==============================================================================
 echo "== (h) TIER: ticket tier > checker tier =="
@@ -175,7 +185,7 @@ OUT="$(run_health_all haiku)"
 chk "h1 TIER P0 surfaced"          "TIER"           "$OUT"
 chk "h2 TIER names the id"         "OPUS-ONLY-P0"    "$OUT"
 chk "h3 TIER mentions opus"        "opus"            "$OUT"
-rm -rf "$(dirname "$FLEET")"
+sandbox_rm "$FLEET"
 
 # ==============================================================================
 echo "== (i) BOARD_RED: validate_board failing blocks all =="
@@ -188,7 +198,7 @@ chmod +x "$FLEET/validate_board.sh"
 OUT="$(run_health 5)"
 chk "i1 BOARD_RED surfaced"        "BOARD_RED"      "$OUT"
 chk "i2 BOARD_RED names the id"    "BOARD-RED-P0"    "$OUT"
-rm -rf "$(dirname "$FLEET")"
+sandbox_rm "$FLEET"
 
 # ==============================================================================
 echo "== (j) parallelizability-refused surfaced =="
@@ -200,7 +210,7 @@ OUT="$(run_health_all haiku)"
 chk "j1 PARALLELIZABILITY-REFUSED surfaced"   "PARALLELIZABILITY-REFUSED"   "$OUT"
 chk "j2 names the id"                           "BIG-SPLITTABLE"              "$OUT"
 chk "j3 mentions the fix"                       "serial_justified"            "$OUT"
-rm -rf "$(dirname "$FLEET")"
+sandbox_rm "$FLEET"
 
 # ==============================================================================
 echo "== (k) Genuinely-claimable P0 reports CLAIMABLE =="
@@ -212,7 +222,7 @@ mk_ticket "$FLEET" ALSO-READY 1
 OUT="$(run_health 5)"
 chk "k1 CLAIMABLE P0 surfaced"     "CLAIMABLE"      "$OUT"
 chk "k2 CLAIMABLE names the id"    "CLAIMABLE-P0"     "$OUT"
-rm -rf "$(dirname "$FLEET")"
+sandbox_rm "$FLEET"
 
 # ==============================================================================
 echo "== (l) FAIL-ON-REVERT: if the body of ladder-health.sh is removed, a "
@@ -259,7 +269,7 @@ if echo "$OUT_REAL" | grep -q "QUARANTINED" && ! echo "$OUT_HOLLOW" | grep -q "Q
 else
   bad "l5 fail-on-revert: expected real to show QUARANTINED and hollow to NOT (real: $(echo "$OUT_REAL" | grep -c QUARANTINED), hollow: $(echo "$OUT_HOLLOW" | grep -c QUARANTINED))"
 fi
-rm -rf "$(dirname "$FLEET")"
+sandbox_rm "$FLEET"
 
 # ==============================================================================
 echo

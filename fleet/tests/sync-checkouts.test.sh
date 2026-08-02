@@ -43,13 +43,21 @@
 set -uo pipefail
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"        # .../fleet
 SYNC="$SRC/sync-checkouts.sh"
+# SANDBOX CONTAINMENT + FAIL-CLOSED (2026-08-01) — same class, same `f.txt`/`c1`/`c2` fixture
+# shape as session-start-hook.test.sh, which is the one that actually reached origin/master.
+# `set -uo pipefail` does not stop a subshell on a failed `cd`, and GIT_AUTHOR_EMAIL=t@t below
+# is exported process-wide, so a vanished $ROOT turned these fixtures into commits on the LIVE
+# checkout. sandbox_mk keeps the sandbox out of the tree; sandbox_cd aborts instead of falling
+# through to $PWD.
+# shellcheck source=fleet/tests/lib/sandbox.sh
+source "$SRC/tests/lib/sandbox.sh"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 PASS=0; FAIL=0
 ok(){  PASS=$((PASS+1)); echo "PASS: $1"; }
 bad(){ FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 
-ROOT="$(mktemp -d)"
-trap 'rm -rf "$ROOT"' EXIT
+ROOT="$(sandbox_mk sync-checkouts)"
+trap "rm -rf $(printf '%q' "$ROOT")" EXIT
 LOCKS="$ROOT/locks"; mkdir -p "$LOCKS"
 
 # mkpair -> prints a dir holding origin.git + a clone whose master is 1 commit BEHIND origin.
@@ -58,13 +66,13 @@ mkpair(){
   git init --quiet --bare "$d/origin.git"
   git clone --quiet "$d/origin.git" "$d/seed" 2>/dev/null
   (
-    cd "$d/seed"
+    sandbox_cd "$d/seed"
     echo one > f.txt && git add f.txt && git commit --quiet -m c1
     git branch -M master && git push --quiet origin master
   )
   git clone --quiet "$d/origin.git" "$d/co" 2>/dev/null
-  (cd "$d/co" && git checkout --quiet -B master origin/master)
-  ( cd "$d/seed" && echo two >> f.txt && git add f.txt && git commit --quiet -m c2 \
+  ( sandbox_cd "$d/co" && git checkout --quiet -B master origin/master)
+  ( sandbox_cd "$d/seed" && echo two >> f.txt && git add f.txt && git commit --quiet -m c2 \
     && git push --quiet origin master )
   printf '%s' "$d"
 }

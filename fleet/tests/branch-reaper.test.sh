@@ -59,6 +59,14 @@
 # Run:  bash fleet/tests/branch-reaper.test.sh   (exit 0 = all pass)
 set -uo pipefail
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# SANDBOX CONTAINMENT + FAIL-CLOSED (2026-08-01). Same class as session-start-hook.test.sh.
+# This suite is the highest-stakes instance of it: `set -uo pipefail` (no `-e`) plus a
+# process-wide `export GIT_AUTHOR_EMAIL=t@t` plus fixtures that `git init`/`git commit`/`git
+# push` means a vanished sandbox turns every `( cd "$root/..." && git ... )` below into a write
+# against the LIVE checkout — and one of those writes was published by land-push. sandbox_mk
+# keeps the fixtures out of the work tree; sandbox_cd aborts instead of running in $PWD.
+# shellcheck source=fleet/tests/lib/sandbox.sh
+source "$SRC/tests/lib/sandbox.sh"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 PASS=0; FAIL=0
 ok(){   PASS=$((PASS+1)); echo "PASS: $1"; }
@@ -75,10 +83,10 @@ check(){ [ "$2" = "$3" ] && ok "$1" || bad "$1 (expected '$3', got '$2')"; }
 # could never distinguish a working guard from a reaper that does nothing.
 TMPDIRS=()            # LOW-3: every mktemp -d root, so cleanup can remove ALL of them
 mk_repo(){
-  local root; root="$(mktemp -d)"; TMPDIRS+=("$root")
+  local root; root="$(sandbox_mk branch-reaper)"; TMPDIRS+=("$root")
   git init -q --bare "$root/origin.git"
   git init -q "$root/repo"
-  ( cd "$root/repo"
+  ( sandbox_cd "$root/repo"
     git checkout -q -b master
     printf 'base\n' > base.txt; git add base.txt; git commit -q -m base
     # merged throwaway: a commit on a side branch that gets fast-forwarded into master
@@ -104,7 +112,7 @@ mk_fleet(){
 }
 
 # mktmp — a tracked mktemp -d (LOW-3: nothing allocated by this suite may leak).
-mktmp(){ local d; d="$(mktemp -d)"; TMPDIRS+=("$d"); echo "$d"; }
+mktmp(){ local d; d="$(sandbox_mk branch-reaper)"; TMPDIRS+=("$d"); echo "$d"; }
 
 run_reaper(){
   # run_reaper <repo> <fleet_dir> <wt_glob> [args...]
@@ -118,7 +126,7 @@ run_reaper(){
 }
 
 echo "== (a) DRY-RUN default: merged branch reported REAP-able but NOT deleted =="
-root="$(mktemp -d)"; repo="$(mk_repo)"; fleet="$(mk_fleet "$root")"
+root="$(sandbox_mk branch-reaper)"; repo="$(mk_repo)"; fleet="$(mk_fleet "$root")"
 out="$(run_reaper "$repo" "$fleet" "$root/none-*" 2>&1)"; rc=$?
 check "a1 dry-run exit 0" "$rc" "0"
 echo "$out" | grep -q "REAP.*throwaway-merged" && ok "a2 merged branch flagged REAP-able" \
@@ -147,7 +155,7 @@ echo "$dry" | grep -q "REAP.*live-unmerged" \
   || ok "c2 unmerged branch NOT listed as REAP-able (merged-filter guard intact)"
 
 echo "== (d) LIVE-CLAIM worktree GUARD: claimed worktree SURVIVES --apply =="
-root2="$(mktemp -d)"; repo2="$(mk_repo)"; fleet2="$(mk_fleet "$root2")"
+root2="$(sandbox_mk branch-reaper)"; repo2="$(mk_repo)"; fleet2="$(mk_fleet "$root2")"
 wt_dir="$root2/repo-fleet-CL1"
 git -C "$repo2" worktree add -q "$wt_dir" -b feat/cl1 master >/dev/null 2>&1
 printf 'live\n' > "$fleet2/state/claims/CL1"      # LIVE claim marker — droid working it
@@ -159,7 +167,7 @@ echo "$out" | grep -q "KEEP.*$wt_dir" && ok "d2 claimed worktree flagged KEEP" \
                   || bad "d3 claimed worktree SURVIVED (was reaped — DATA LOSS)"
 
 echo "== (e) LIVE needs-push GUARD: worktree with needs-push marker preserved =="
-root3="$(mktemp -d)"; repo3="$(mk_repo)"; fleet3="$(mk_fleet "$root3")"
+root3="$(sandbox_mk branch-reaper)"; repo3="$(mk_repo)"; fleet3="$(mk_fleet "$root3")"
 wt3="$root3/repo-fleet-NP1"
 git -C "$repo3" worktree add -q "$wt3" -b feat/np1 master >/dev/null 2>&1
 printf 'stranded\n' > "$fleet3/state/needs-push/NP1"   # committed-but-unlanded work
@@ -169,7 +177,7 @@ check "e1 apply with needs-push exit 0" "$rc" "0"
                || bad "e2 needs-push worktree SURVIVED (was reaped — DATA LOSS)"
 
 echo "== (f) STALE worktree (no live claim) IS reaped under --apply =="
-root4="$(mktemp -d)"; repo4="$(mk_repo)"; fleet4="$(mk_fleet "$root4")"
+root4="$(sandbox_mk branch-reaper)"; repo4="$(mk_repo)"; fleet4="$(mk_fleet "$root4")"
 wt4="$root4/repo-fleet-STALE1"
 git -C "$repo4" worktree add -q "$wt4" -b feat/stale1 master >/dev/null 2>&1
 # NO claims/STALE1, NO needs-push/STALE1 -> stale, fair to reap.
@@ -190,7 +198,7 @@ echo "$out" | grep -q "branches: 0 reaped" && ok "g3 second run reaps 0 branches
                                              || bad "g3 second run reaps 0 branches"
 
 echo "== (h) REAL DIRTY GUARD: worktree with an uncommitted MODIFIED file SURVIVES --apply =="
-root5="$(mktemp -d)"; repo5="$(mk_repo)"; fleet5="$(mk_fleet "$root5")"
+root5="$(sandbox_mk branch-reaper)"; repo5="$(mk_repo)"; fleet5="$(mk_fleet "$root5")"
 wt5="$root5/repo-fleet-DIRTY1"
 git -C "$repo5" worktree add -q "$wt5" -b feat/dirty1 master >/dev/null 2>&1
 printf 'uncommitted edit\n' >> "$wt5/base.txt"        # tracked file, modified, NOT committed
@@ -208,7 +216,7 @@ grep -q 'uncommitted edit' "$wt5/base.txt" 2>/dev/null \
   || bad "h5 the uncommitted edit was destroyed"
 
 echo "== (i) DIRTY GUARD covers UNTRACKED files too =="
-root6="$(mktemp -d)"; repo6="$(mk_repo)"; fleet6="$(mk_fleet "$root6")"
+root6="$(sandbox_mk branch-reaper)"; repo6="$(mk_repo)"; fleet6="$(mk_fleet "$root6")"
 wt6="$root6/repo-fleet-UNTRACKED1"
 git -C "$repo6" worktree add -q "$wt6" -b feat/untracked1 master >/dev/null 2>&1
 printf 'scratch notes\n' > "$wt6/NOTES-not-added.txt"   # never `git add`ed
@@ -219,10 +227,10 @@ check "i1 apply exit 0" "$rc" "0"
   || bad "i2 untracked file was DESTROYED (untracked changes ignored — DATA LOSS)"
 
 echo "== (j) UNPUSHED-COMMIT GUARD: clean worktree with HEAD on no remote SURVIVES =="
-root7="$(mktemp -d)"; repo7="$(mk_repo)"; fleet7="$(mk_fleet "$root7")"
+root7="$(sandbox_mk branch-reaper)"; repo7="$(mk_repo)"; fleet7="$(mk_fleet "$root7")"
 wt7="$root7/repo-fleet-UNPUSHED1"
 git -C "$repo7" worktree add -q "$wt7" -b feat/unpushed1 master >/dev/null 2>&1
-( cd "$wt7" && printf 'real work\n' > work.txt && git add work.txt \
+( sandbox_cd "$wt7" && printf 'real work\n' > work.txt && git add work.txt \
   && git commit -q -m "stranded work — committed, never pushed" ) >/dev/null 2>&1
 # The tree is now CLEAN (status --porcelain is empty) — only the unpushed guard can save it.
 clean="$(git -C "$wt7" status --porcelain 2>/dev/null)"
@@ -235,7 +243,7 @@ check "j2 apply exit 0" "$rc" "0"
                         || bad "j4 the stranded commit was destroyed"
 
 echo "== (k) ANTI-OVER-BLOCK: clean + fully-pushed + unclaimed worktree IS reaped =="
-root8="$(mktemp -d)"; repo8="$(mk_repo)"; fleet8="$(mk_fleet "$root8")"
+root8="$(sandbox_mk branch-reaper)"; repo8="$(mk_repo)"; fleet8="$(mk_fleet "$root8")"
 wt8="$root8/repo-fleet-CLEAN1"
 git -C "$repo8" worktree add -q "$wt8" -b feat/clean1 master >/dev/null 2>&1
 # HEAD == master == origin/master, no local edits, no markers => nothing to preserve.
@@ -251,7 +259,7 @@ echo "$out" | grep -q "REAP.*$wt8" && ok "k4 clean+pushed worktree flagged REAP-
                || ok "k5 clean+pushed worktree reaped"
 
 echo "== (l) FAIL-CLOSED: worktree whose state cannot be determined SURVIVES =="
-root9="$(mktemp -d)"; repo9="$(mk_repo)"; fleet9="$(mk_fleet "$root9")"
+root9="$(sandbox_mk branch-reaper)"; repo9="$(mk_repo)"; fleet9="$(mk_fleet "$root9")"
 wt9="$root9/repo-fleet-OPAQUE1"
 git -C "$repo9" worktree add -q "$wt9" -b feat/opaque1 master >/dev/null 2>&1
 printf 'gitdir: /nonexistent/broken/path\n' > "$wt9/.git"   # git can no longer read this tree
@@ -285,7 +293,7 @@ echo "$outM" | grep -q "that is the LIVE checkout" \
 # take the repo with it; equality checks alone would sail straight past this.
 rootM2="$(mktmp)"
 mkdir -p "$rootM2/fam/inner/repo"
-( cd "$rootM2/fam/inner/repo" && git init -q . && printf 'x\n' > f.txt && git add f.txt \
+( sandbox_cd "$rootM2/fam/inner/repo" && git init -q . && printf 'x\n' > f.txt && git add f.txt \
   && git commit -q -m x ) >/dev/null 2>&1
 fleetM2="$(mk_fleet "$rootM2")"
 outM2="$(run_reaper "$rootM2/fam/inner/repo" "$fleetM2" "$rootM2/fam/*" --apply 2>&1)"; rc=$?
@@ -304,7 +312,7 @@ rootN="$(mktmp)"; repoN="$(mk_repo)"; fleetN="$(mk_fleet "$rootN")"
 victim="$rootN/precious-repo"
 git init -q --bare "$rootN/victim-origin.git"
 git init -q "$victim"
-( cd "$victim" && git checkout -q -b master && printf 'irreplaceable\n' > precious.txt \
+( sandbox_cd "$victim" && git checkout -q -b master && printf 'irreplaceable\n' > precious.txt \
   && git add precious.txt && git commit -q -m p \
   && git remote add origin "$rootN/victim-origin.git" && git push -q origin master ) >/dev/null 2>&1
 # Precondition: the victim is clean AND fully pushed, i.e. NOTHING but the family restriction
@@ -313,7 +321,7 @@ vclean="$(git -C "$victim" status --porcelain 2>/dev/null)"
 check "n1 victim is clean" "$vclean" ""
 vunp="$(git -C "$victim" rev-list --count HEAD --not --remotes 2>/dev/null)"
 check "n2 victim is fully pushed (only the family guard can save it)" "$vunp" "0"
-outN="$( cd "$rootN" && REAPER_REPO="$repoN" REAPER_FLEET_DIR="$fleetN" REAPER_WT_GLOB='*' \
+outN="$( sandbox_cd "$rootN" && REAPER_REPO="$repoN" REAPER_FLEET_DIR="$fleetN" REAPER_WT_GLOB='*' \
          REAPER_KEYS="" REAPER_BASE=master REAPER_PROTECTED="" \
          bash "$SRC/branch-reaper.sh" 2>&1 )"; rc=$?
 [ "$rc" -ne 0 ] && ok "n3 degenerate glob '*' ABORTS non-zero" \
@@ -326,7 +334,7 @@ echo "$outN" | grep -q "REAP.*precious-repo" \
 [ -f "$victim/precious.txt" ] && ok "n6 unrelated repo untouched" \
                                || bad "n6 unrelated repo was DESTROYED"
 # n7 — the weaker sibling case: no trailing '*' means prefix '<x>/xy' also admits '<x>/xyZ'.
-rc=0; ( cd "$rootN" && REAPER_REPO="$repoN" REAPER_FLEET_DIR="$fleetN" REAPER_WT_GLOB="$rootN/xy" \
+rc=0; ( sandbox_cd "$rootN" && REAPER_REPO="$repoN" REAPER_FLEET_DIR="$fleetN" REAPER_WT_GLOB="$rootN/xy" \
         REAPER_KEYS="" REAPER_BASE=master REAPER_PROTECTED="" \
         bash "$SRC/branch-reaper.sh" ) >/dev/null 2>&1 || rc=$?
 [ "$rc" -ne 0 ] && ok "n7 glob without trailing '*' ABORTS (sibling-prefix hazard)" \
@@ -349,7 +357,7 @@ baseN="$(basename "$rootN")"
 mkdir -p "$rootN/sub" "$rootN/a/b"
 i=8
 for badglob in "$rootN/./*" "/$rootN/*" "$rootN/sub/../*" "$rootN/a/b/../../../$baseN/*"; do
-  outB="$( cd "$rootN" && REAPER_REPO="$repoN" REAPER_FLEET_DIR="$fleetN" REAPER_WT_GLOB="$badglob" \
+  outB="$( sandbox_cd "$rootN" && REAPER_REPO="$repoN" REAPER_FLEET_DIR="$fleetN" REAPER_WT_GLOB="$badglob" \
            REAPER_KEYS="" REAPER_BASE=master REAPER_PROTECTED="" \
            bash "$SRC/branch-reaper.sh" 2>&1 )"; rc=$?
   [ "$rc" -ne 0 ] \
@@ -367,7 +375,7 @@ done
                                || bad "n12 unrelated repo was DESTROYED by a non-canonical glob"
 # n13 — the canonical family head must still be ACCEPTED. A normalisation check that rejects
 # legitimate globs would silently disable the reaper; this is the anti-overreach assertion.
-rc=0; ( cd "$rootN" && REAPER_REPO="$repoN" REAPER_FLEET_DIR="$fleetN" REAPER_WT_GLOB="$rootN/wt-*" \
+rc=0; ( sandbox_cd "$rootN" && REAPER_REPO="$repoN" REAPER_FLEET_DIR="$fleetN" REAPER_WT_GLOB="$rootN/wt-*" \
         REAPER_KEYS="" REAPER_BASE=master REAPER_PROTECTED="" \
         bash "$SRC/branch-reaper.sh" ) >/dev/null 2>&1 || rc=$?
 check "n13 canonical glob still accepted (normalisation is not over-broad)" "$rc" "0"
@@ -491,7 +499,7 @@ rootS="$(mktmp)"; repoS="$(mk_repo)"; fleetS="$(mk_fleet "$rootS")"
 wtS="$rootS/repo-fleet-ORPHAN1"
 git init -q --bare "$rootS/orphan-origin.git"
 git init -q "$wtS"
-( cd "$wtS"
+( sandbox_cd "$wtS"
   git checkout -q -b master
   printf 'irreplaceable\n' > precious.txt; git add precious.txt; git commit -q -m orphan
   git remote add origin "$rootS/orphan-origin.git"; git push -q origin master ) >/dev/null 2>&1

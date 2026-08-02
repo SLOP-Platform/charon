@@ -200,22 +200,38 @@ do_review(){
     return 1
   }
 
-  # Build prompt and run via CG
-  local TMPDIR; TMPDIR="$(mktemp -d)"
-  trap 'rm -rf "$TMPDIR"' EXIT
-  local brief="$TMPDIR/brief.txt"
-  local outlog="$TMPDIR/out.txt"
+  # Build prompt and run via CG.
+  #
+  # TRAP-EXPANSION HAZARD (2026-08-01 incident — do not revert either half of this):
+  # this used to be `local TMPDIR; TMPDIR="$(mktemp -d)"` + `trap 'rm -rf "$TMPDIR"' EXIT`.
+  # Both halves were wrong and they compounded:
+  #   (1) SHADOWING. `local TMPDIR` shadows the *inherited* TMPDIR env var, so the
+  #       `$(mktemp -d)` subshell saw TMPDIR="" and silently ignored the caller's chosen
+  #       temp root.
+  #   (2) LATE EXPANSION. A single-quoted trap body is expanded when the trap FIRES, not
+  #       when it is defined. The EXIT trap fires after this function's scope is gone, so
+  #       "$TMPDIR" no longer resolved to the mktemp dir — it resolved to the INHERITED
+  #       TMPDIR root, and the trap `rm -rf`'d the caller's entire temp root. That deleted
+  #       live test sandboxes out from under a concurrently running fleet/gate.sh (~118
+  #       tests reported "killed (no exit status recorded)") and produced one spurious green.
+  # Fix: a distinct, non-shadowing variable name, and expand the path AT TRAP-DEFINITION
+  # TIME (double quotes + printf %q) so the trap body carries a literal path that cannot be
+  # re-resolved to something else later.
+  local _rp_work; _rp_work="$(mktemp -d)"
+  trap "rm -rf $(printf '%q' "$_rp_work")" EXIT
+  local brief="$_rp_work/brief.txt"
+  local outlog="$_rp_work/out.txt"
   build_review_prompt "$diff_text" "$pr_url" "$author_droid" > "$brief"
 
   IFS=',' read -ra MODELS <<< "$CHARON_REVIEW_MODELS"
   local rc=0
-  CHARON_RUN_TIMEOUT_S="${CHARON_RUN_TIMEOUT_S:-300}" "$charon_run" "$TMPDIR" "$outlog" "$brief" "${MODELS[@]}" || rc=$?
+  CHARON_RUN_TIMEOUT_S="${CHARON_RUN_TIMEOUT_S:-300}" "$charon_run" "$_rp_work" "$outlog" "$brief" "${MODELS[@]}" || rc=$?
 
   # B2: CG failure (all models exhausted, timeout, infra fault) -> must NOT APPROVE
   if [ "$rc" -ne 0 ]; then
     echo "review-pool: CG review failed (rc=$rc) for $key" >&2
     _write_verdict "$key" "BOUNCE" "- CG review engine failed (rc=$rc)" "N/A" "$pr_title" "$pr_url" "$author_droid"
-    rm -rf "$TMPDIR"
+    rm -rf "$_rp_work"
     trap - EXIT
     return 1
   fi
@@ -225,7 +241,7 @@ do_review(){
   verdict_text="$(_parse_verdict "$outlog")" || {
     echo "review-pool: ERROR verdict parse failure for $key" >&2
     _write_verdict "$key" "BOUNCE" "- verdict parse failure (model output missing delimited verdict section)" "N/A" "$pr_title" "$pr_url" "$author_droid"
-    rm -rf "$TMPDIR"
+    rm -rf "$_rp_work"
     trap - EXIT
     return 1
   }
@@ -241,7 +257,7 @@ do_review(){
     *)
       echo "review-pool: invalid verdict type '$verdict_type' from model" >&2
       _write_verdict "$key" "BOUNCE" "- invalid verdict type from CG model: '$verdict_type'" "N/A" "$pr_title" "$pr_url" "$author_droid"
-      rm -rf "$TMPDIR"
+      rm -rf "$_rp_work"
       trap - EXIT
       return 1
       ;;
@@ -250,7 +266,7 @@ do_review(){
   _write_verdict "$key" "$verdict_type" "$findings" "$fail_revert" "$pr_title" "$pr_url" "$author_droid"
   rm -f "$CLAIM_DIR/$key"
   echo "review-pool: verdict for $key = $verdict_type" >&2
-  rm -rf "$TMPDIR"
+  rm -rf "$_rp_work"
   trap - EXIT
 }
 

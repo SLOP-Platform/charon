@@ -89,6 +89,20 @@ jobs:
           RIG_CI_HEAD: ${{ github.sha }}
         run: bash fleet/checks/rig-ci-scope.sh board
 
+      # SANDBOX CONTAINMENT (2026-08-01 incident). Two static defects let test sandboxes be
+      # created INSIDE the work tree and then let a test run git against the LIVE checkout:
+      # a fire-time-expanded EXIT trap over a `local` path (which rm -rf'd the shared temp root
+      # and made fleet/gate.sh unrunnable — 124/124 tests "killed"), and in-tree fixture residue
+      # (which made a blanket `git add` die with exit 128 and kill the droid tab). Full writeup:
+      # fleet/tests/lib/sandbox.sh. Cheap enough (one grep pass + one find) to run every PR.
+      #
+      # This is also the check's FIRING LAYER of record: fleet/checks/reconcile-gate-wired.sh
+      # REDs any declared check that is never invoked from a real firing layer, and CI is the
+      # right one here — preflight.sh has five live `owns:` claims and an arbitration ruling
+      # over it, so wiring there would mean co-writing a contended file for no added coverage.
+      - name: Sandbox containment (no in-tree test sandboxes, no fire-time trap expansion)
+        run: bash fleet/checks/sandbox-containment.sh
+
       - name: Show test allowlist
         run: bash fleet/checks/rig-ci-scope.sh suites
 
