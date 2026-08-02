@@ -49,7 +49,185 @@ src = ["src", "tests", "tools"]
 extend-exclude = ["tools/_vendor"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP"]
+# RUFF-SEC-RULES-ON (2026-08-01): security-rule ratchet ON. `S` (the bandit ports
+# inside the linter we already run on every file) and `BLE` (blind-except) are now
+# selected. This is a ratchet: security-is-a-ratchet forbids weakening the select
+# list once landed — tests/test_lint_security_rules.py goes RED if either family
+# is removed. Standalone bandit covers the rig tooling diff scope; ruff S runs the
+# same checks over src+tests+tools on every PR.
+select = ["E", "F", "I", "B", "UP", "S", "BLE"]
+
+[tool.ruff.lint.per-file-ignores]
+# ──────────────────────────────────────────────────────────────────────────────
+# S/BLE BASELINES — explicit per-file, per-rule baselines, each with a reason.
+# NOT a blanket noqa sweep: every entry pins the exact file + rule that fired when
+# the families were switched on (measured 2026-08-01: 70 src findings, 4616 test
+# findings, 13 tools findings) and why it stays. New files are fully checked.
+# RUFF-SEC-RULES-ON owns ONLY pyproject.toml + tests/test_lint_security_rules.py,
+# so src/tools line-edits were out of scope; fixes land as narrowly-scoped
+# per-file baselines, and a ticket owning the file should shrink its entry.
+# Tests: asserts are the pytest idiom and fixtures deliberately hold sample
+# secrets, bind test servers to 0.0.0.0, and spawn processes — S rules flagging
+# those are test-only noise. S602 (subprocess shell=True) is deliberately NOT
+# baselined for tests: a new shell=True anywhere under tests/ still goes RED.
+"tests/**" = [
+    "S101",   # assert is the test idiom (pytest)
+    "S104",   # test servers deliberately bind 0.0.0.0 to exercise the bind path
+    "S105",   # fixture "secret" values / env-var-name constants
+    "S106",   # fixture passwords in test scaffolding
+    "S107",   # fixture password args
+    "S108",   # hardcoded tmp paths in fixtures
+    "S110",   # best-effort teardown in test harnesses
+    "S310",   # urllib opens against local test servers
+    "S603",   # subprocess in test helpers (argv form, no shell)
+    "S607",   # bare tool names resolved via PATH in test helpers
+    "BLE001", # broad teardown/cleanup catches in test harnesses
+]
+# src/ — per-file baselines for the findings that fired on switch-on. The genuine
+# security-relevant ones (S602 shell=True, S104 bind-all) are pinned to their exact
+# file with a reason — not swept — so they stay visible until a source-owning
+# ticket lands the line-level fix.
+"src/charon/__init__.py" = [
+    # BLE001: version-probe fallback — import error → "0+unknown".
+    "BLE001",
+]
+"src/charon/acceptance.py" = [
+    # S602 shell=True — the ONE genuine shell=True finding. AcceptanceCheck's job
+    # IS to run user-configured commands verbatim (that is the feature); the code
+    # already carries `# noqa: S602` on the shell=True row, one row below the
+    # subprocess.run() call site so ruff's line-scoped suppression misses it.
+    # Relocating the noqa is a src edit — out of RUFF-SEC-RULES-ON owns — so this
+    # stays pinned to this file until a ticket owning acceptance.py lands the fix.
+    "S602",
+]
+"src/charon/adapters/acp.py" = [
+    # S603: Popen with an argv list, no shell, static command.
+    # S101: guarded internal invariant assert (self._proc bound).
+    # S110: best-effort log-handle close (already `# noqa: BLE001` inline).
+    "S603", "S101", "S110",
+]
+"src/charon/adapters/review_mock.py" = [
+    # S105: enum member named PASS holding the string "pass" — not a credential.
+    "S105",
+]
+"src/charon/api.py" = [
+    # S110/BLE001: best-effort process kill during shutdown.
+    # S112/BLE001: corrupt/unparseable ledger dir → omit, never crash the listing.
+    "S110", "BLE001", "S112",
+]
+"src/charon/cli.py" = [
+    # BLE001: broad catches that surface the exception loudly or continue by
+    # design (e.g. diagnostics must never block startup).
+    # S110: best-effort startup diagnostics.
+    # S603: subprocess.run with argv lists (sys.executable/git), no shell.
+    # S607: bare `git` resolved via PATH (intentional).
+    "BLE001", "S110", "S603", "S607",
+]
+"src/charon/config/keyprobe.py" = [
+    # S110/BLE001: /models probe failure falls through to the completion probe.
+    "S110", "BLE001",
+]
+"src/charon/connect.py" = [
+    # S105: _TOKEN_ENV is an ENV VAR NAME ("CHARON_GATEWAY_TOKEN"), not a secret.
+    "S105",
+]
+"src/charon/console_router.py" = [
+    # BLE001: setup write failure → generic 400 so the message never leaks a path.
+    "BLE001",
+]
+"src/charon/coordinator.py" = [
+    # BLE001: reviewer timeout/unavailable/crash ⇒ fail closed.
+    "BLE001",
+]
+"src/charon/decompose_planner.py" = [
+    # S101: sentinel-injection invariant in the planner test seam.
+    "S101",
+]
+"src/charon/engine/claim.py" = [
+    # S101: post-liveness guarded assert (existing is not None).
+    "S101",
+]
+"src/charon/engine/scheduler.py" = [
+    # S110/BLE001: best-effort kill of a stuck backend.
+    # BLE001: one unit's crash is its own result (pool isolation).
+    "S110", "BLE001",
+]
+"src/charon/forwarder.py" = [
+    # S110/BLE001: best-effort body parse / frame read; provider-unreachable
+    # failover; per-request isolation in the forwarding loop.
+    "S110", "BLE001",
+]
+"src/charon/gate_runner.py" = [
+    # S603: subprocess.run(cmd) where CHECKS is a static argv list, no shell.
+    "S603",
+]
+"src/charon/gateway.py" = [
+    # S105: _TOKEN_ENV is an ENV VAR NAME, not a secret.
+    # S104: false positive — `cfg.host == "0.0.0.0"` is a string equality to pick
+    # the LAN console URL for a log line; no socket bind happens at this site.
+    "S105", "S104",
+]
+"src/charon/gitutil.py" = [
+    # S603: subprocess.run(["git", *args]) argv form, no shell.
+    # S607: bare `git` resolved via PATH (intentional).
+    "S603", "S607",
+]
+"src/charon/land.py" = [
+    # S603: subprocess.run(["git", "-C", repo, ...]) argv form, no shell.
+    # S607: bare `git` resolved via PATH (intentional).
+    "S603", "S607",
+]
+"src/charon/lifecycle.py" = [
+    # S603: subprocess.call(argv) list form, no shell.
+    "S603",
+]
+"src/charon/parallel.py" = [
+    # BLE001: one unit's failure never corrupts a sibling (per-unit isolation).
+    "BLE001",
+]
+"src/charon/proxy_response.py" = [
+    # S112: skip unparseable SSE frames (already `# noqa: BLE001` inline).
+    "S112",
+]
+"src/charon/proxy_server.py" = [
+    # S110: best-effort frame read (already `# noqa: BLE001` inline).
+    "S110",
+]
+"src/charon/routing_proxy.py" = [
+    # S110: best-effort frame read (already `# noqa: BLE001` inline).
+    "S110",
+]
+"src/charon/scanners.py" = [
+    # S603: subprocess.run(["ruff", "check", ...]) argv form, no shell.
+    # S607: bare `ruff` resolved via PATH (intentional).
+    "S603", "S607",
+]
+"src/charon/service/app.py" = [
+    # S105: _TOKEN_ENV is an ENV VAR NAME, not a secret.
+    "S105",
+]
+"src/charon/service/worker.py" = [
+    # BLE001: poll error is logged and the worker continues.
+    "BLE001",
+]
+# tools/ — dev-only scripts (not product code); per-rule reasons.
+"tools/check_coverage_ssot.py" = [
+    # BLE001: unparseable/missing manifest → {} default (best-effort).
+    "BLE001",
+]
+"tools/check_public_clean.py" = [
+    # S603: subprocess.run(["git", ...]) argv form, no shell.
+    # S607: bare `git` resolved via PATH (intentional).
+    "S603", "S607",
+]
+"tools/check_wiring_alignment.py" = [
+    # S110/BLE001: best-effort entrypoint counting → emit count, never crash.
+    "S110", "BLE001",
+]
+"tools/dogfood_litellm_router.py" = [
+    # S101: assert-driven dogfood script (exit code = assert outcome).
+    "S101",
+]
 
 [tool.mypy]
 python_version = "3.11"
