@@ -13,7 +13,11 @@
 #  * MODEL is REQUIRED with no default. opencode's default is gpt-5.4, whose pool is
 #    [nanogpt, openrouter] — BOTH DEAD. A defaulted spawn lands the whole fleet on a dead pool.
 #  * The prompt is NOT passed here: `--prompt` was verified NOT to auto-submit. Push it after the
-#    worker is up with: fleet/session-ctl.sh launch <port> "<prompt>"
+#    worker is up with (CORRECTED 2026-08-02 — the previous form omitted the base_url and both
+#    positional slots, and FAILS: session-ctl.sh takes <base_url> FIRST, then the verb):
+#      fleet/session-ctl.sh http://127.0.0.1:<PORT> launch <agent> <model> "<prompt>"
+#    Defaults if the slots are omitted: agent=build, model=charon/deepseek-v4-flash
+#    (see session-ctl.sh:26 for the base_url arg and :120-122 for the agent/model slots).
 #
 # ============================================================================
 # TUI-READINESS GATE  (was bug 3a — fixed 2026-07-27, see WORKER-LIFECYCLE-FIX)
