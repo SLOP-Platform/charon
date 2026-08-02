@@ -17,10 +17,12 @@ A genuinely unknown attr is INERT when it never appears on the invocation
 surface; UNKNOWN (fail-closed RED) when it DOES appear on the invocation
 surface but is not in the known module set (stale analysis).
 
-The six known-dead modules (request_inspector, session_affinity, observability,
+The known-dead modules (request_inspector, session_affinity, observability,
 speculative_executor, consensus_router, virtual_key_manager) are a TEST
-FIXTURE — the derivation reproduces them independently and they never appear
-as a hardcoded list in this implementation.
+FIXTURE — they never appear as a hardcoded list in this implementation, and
+the derivation classifies them INERT independently. Several have since been
+DELETED from proxy_server.py; the derivation must (and does) keep classifying
+such uninvoked attrs INERT without any edit here.
 
 ## gateway.py wiring snippet (do NOT apply — gateway.py has 4 concurrent owners)
 Insert into ``gateway.run()`` after the egress self-test block (after line 800)

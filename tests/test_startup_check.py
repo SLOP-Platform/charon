@@ -3,10 +3,20 @@
 Verifies that the classification is DERIVED from the invocation surface
 (forwarder.py + chain_for), not recited from a hand-maintained list.
 
+- DERIVATION IS PROVEN AGAINST SYNTHETIC SOURCE: ``_parse_module_attr_names``
+  is pointed at a temp .py file the parser has never seen, holding SIX
+  PHANTOM module names that appear nowhere in the real codebase. All six
+  must come back, and nothing else. A hand-maintained list cannot pass this.
+  (This deliberately does NOT depend on any particular dead module still
+  existing in proxy_server.py — dead code is what this detector exists to get
+  DELETED, so anchoring the proof to it would make cleanup break the proof.)
 - SIX known-dead modules (constructed but zero invocation sites) are
   classified as INERT. This is a TEST FIXTURE — the six names appear ONLY
-  in the tests, never in the implementation.
+  in the tests, never in the implementation. Names already deleted from
+  proxy_server.py stay in the fixture: an unknown, uninvoked attr must still
+  classify INERT.
 - SIX genuinely-wired modules (on the request path) are classified as ACTIVE.
+  These are also the NON-VACUITY anchor for the derived module set.
 - NON-VACUOUS: zero modules inspected → RED (empty classification).
 - RED-PROOF BY EXTERNAL BREAK: the break is SPECIFIED, not chosen.
   #1: a genuinely NEW module (phantom), invoked nowhere → INERT (no list edit).
@@ -15,6 +25,7 @@ Verifies that the classification is DERIVED from the invocation surface
   (RED), never defaulted to ACTIVE.
 """
 
+import charon.startup_check as startup_check
 from charon.startup_check import (
     _INVOKED_ATTRS,
     _MODULE_ATTRS,
@@ -36,6 +47,29 @@ _INERT_FIXTURE = frozenset({
     "virtual_key_manager",
 })
 
+# ── test fixture: SIX phantom module names ────────────────────────────
+# These strings appear NOWHERE in src/ — they exist only inside a synthetic
+# source file written at test time. They are the proof that _MODULE_ATTRS is
+# genuinely PARSED out of source, not recited.
+_PHANTOM_FIXTURE = (
+    "phantom_alpha",
+    "phantom_beta",
+    "phantom_gamma",
+    "phantom_delta",
+    "phantom_epsilon",
+    "phantom_zeta",
+)
+
+_SYNTHETIC_PROXY_SERVER = '''
+class SyntheticServer:
+    def __init__(self):
+        _mod_param_names = (
+            "phantom_alpha", "phantom_beta", "phantom_gamma",
+            "phantom_delta", "phantom_epsilon", "phantom_zeta")
+        for _mn in _mod_param_names:
+            self.modules[_mn] = None
+'''
+
 # ── test fixture: the six known-wired modules ─────────────────────────
 _ACTIVE_FIXTURE = frozenset({
     "spend_limiter",
@@ -48,15 +82,47 @@ _ACTIVE_FIXTURE = frozenset({
 
 
 class TestModuleAttrsDerived:
-    """The module attribute set (_MODULE_ATTRS) is derived from
-    proxy_server.py.__init__._mod_param_names, not hand-maintained."""
+    """The module attribute set (_MODULE_ATTRS) is DERIVED by AST-parsing
+    ``_mod_param_names`` out of proxy_server.py, never hand-maintained.
 
-    def test_contains_all_six_inert_fixture(self):
-        for attr in _INERT_FIXTURE:
+    Proven two ways:
+    - ``test_parses_six_phantom_names_from_synthetic_source``: point the parser
+      at a synthetic source file it has never seen, containing SIX phantom
+      names that exist nowhere in src/. All six must come back and nothing
+      else. Only a real parser can pass this; a hardcoded list cannot.
+    - ``test_contains_all_six_active_fixture``: the live derived set is
+      non-empty and still contains the six genuinely-wired modules
+      (non-vacuity, anchored to wired code rather than to dead code).
+    """
+
+    def test_parses_six_phantom_names_from_synthetic_source(self, tmp_path,
+                                                            monkeypatch):
+        """RED-PROOF: derivation is real parsing, not recital.
+
+        The six phantom names appear in NO real source file, so a
+        hand-maintained/hardcoded implementation cannot produce them.
+        """
+        synthetic = tmp_path / "synthetic_proxy_server.py"
+        synthetic.write_text(_SYNTHETIC_PROXY_SERVER, encoding="utf-8")
+        monkeypatch.setattr(startup_check, "_PROXY_SERVER_PATH", str(synthetic))
+
+        parsed = startup_check._parse_module_attr_names()
+
+        for name in _PHANTOM_FIXTURE:
+            assert name in parsed, (
+                f"{name} must be derived by parsing _mod_param_names "
+                f"from the synthetic source; got {sorted(parsed)}")
+        assert len(parsed) == 6, (
+            f"expected exactly the 6 phantom names, got {sorted(parsed)}")
+
+    def test_module_attrs_nonvacuous(self):
+        """NON-VACUITY: the live derived set is non-empty and contains the six
+        genuinely-wired modules. Anchored to WIRED code, so deleting dead code
+        (this detector's whole purpose) can never make the proof fail."""
+        assert _MODULE_ATTRS, "_MODULE_ATTRS must be non-empty"
+        for attr in _ACTIVE_FIXTURE:
             assert attr in _MODULE_ATTRS, (
                 f"{attr} must be in _MODULE_ATTRS (derived from _mod_param_names)")
-        assert len(_MODULE_ATTRS) >= 12, (
-            f"expected at least 12 module attrs, got {len(_MODULE_ATTRS)}")
 
     def test_contains_all_six_active_fixture(self):
         for attr in _ACTIVE_FIXTURE:
