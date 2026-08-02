@@ -33,6 +33,22 @@ tail -5 fleet/state/cron-rescue.log         # rescue half must be running too
 ```
 **A registered job that never executes reads as clean. That is the failure mode. Check leg B.**
 
+## 0b — SURFACE THE OPERATOR ACTION LIST TO THE HUMAN, RIGHT AFTER GROUNDING
+
+The tracked `fleet/hooks/session-start.sh` now prints it UNCONDITIONALLY at boot (verified
+2026-08-02 by running the hook). **Report it to the operator in your first substantive reply** —
+do not just let it scroll past.
+```
+bash fleet/pending.sh list          # if you need it again mid-session
+```
+WHY IT IS IN THE HOOK AND NOT ONLY IN PREFLIGHT: `preflight.sh:909` does print it, but that line
+sits BEHIND the reconcile-merged output, which ran to hundreds of lines on 2026-08-02 and starved
+every late leg — a 200s-capped preflight never reached it at all. **An action list the session does
+not see is an action list that does not exist**: operator action #15 (~10 commissioned review
+verdicts) went UNREAD for THREE sessions exactly this way.
+TRIAGE IT, do not just print it — most entries are STALE. Retire what is closed and say which are
+genuinely still open, because a noisy list is the mechanism by which the real ones get missed.
+
 ## 1 — REPORT PROGRESS ON THIS LIST EVERY 5 COMPLETED TASKS
 Print: item · state · evidence (sha/PR/command output). No prose-only claims. If an item has not
 moved in two reports, say so explicitly and why.

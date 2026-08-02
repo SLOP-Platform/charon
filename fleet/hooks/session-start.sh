@@ -108,6 +108,22 @@ if [ -f "$GRAPHIFY_FRESHNESS_SH" ]; then
   bash "$GRAPHIFY_FRESHNESS_SH" update 2>&1 || true
 fi
 
+# --- OPERATOR ACTIONS: surface them at GROUNDING time, not buried in preflight -------------
+# WHY HERE: preflight.sh DOES print this list (preflight.sh:909) but it sits BEHIND the
+# reconcile-merged output, which on 2026-08-02 ran to hundreds of lines and starved every late
+# leg — a 200s-capped preflight never reached it at all. An action list the session does not see
+# is an action list that does not exist: operator action #15 (~10 commissioned review verdicts)
+# went UNREAD for THREE sessions this way.
+# Printed UNCONDITIONALLY and EARLY, guarded so it can never block session boot.
+PENDING_SH="$FLEET/pending.sh"
+if [ -r "$PENDING_SH" ]; then
+  echo ""
+  echo "=== OPERATOR ACTIONS — things needing the HUMAN (surface these to them) ==="
+  bash "$PENDING_SH" list 2>&1 || echo "session-start: WARN pending.sh failed — operator actions NOT surfaced"
+  echo "=== end operator actions ==="
+  echo ""
+fi
+
 # This is a SessionStart hook: never block session boot on repo drift. The banner above is
 # the signal; the operator/session reconciles. (settings.json also wraps the call in `|| true`.)
 exit 0
