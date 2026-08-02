@@ -234,18 +234,27 @@ cmd_syntax(){
 }
 
 cmd_board(){
-  local n=0 f
+  local n=0 g=0 f t
   # Refuse BEFORE the loop. n=0 must mean "the diff genuinely carried no ticket files", never
   # "I could not compute the diff at all" — those two are indistinguishable in the output line.
   _require_scope || return $RED
+  # Resolve the diff base ONCE for the grandfathering comparison (see _ticket_grandfathered).
+  # Empty is FAIL-CLOSED there: every ticket is checked, i.e. exactly today's behaviour.
+  _SCOPE_BASE="$(_resolve_scope 2>/dev/null | awk '{print $1}')"
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     [ -f "$ROOT/$f" ] || continue
+    t="$(basename "$f" .md)"
+    if _ticket_grandfathered "$f" "$ROOT/$f"; then
+      g=$((g+1))
+      info "skip $t (grandfathered — this PR changed no substrate-relevant field; formatting/data-only edit)"
+      continue
+    fi
     n=$((n+1))
-    _check_ticket "$ROOT/$f" "$(basename "$f" .md)"
+    _check_ticket "$ROOT/$f" "$t"
   done < <(_scoped_board_files)
   # The diff WAS computed (guarded above), so n=0 here is a real, trustworthy "nothing to check".
-  echo "board: $n changed ticket(s) checked (marker-independent checks only; diff scope resolved)"
+  echo "board: $n changed ticket(s) checked, $g grandfathered (marker-independent checks only; diff scope resolved)"
 
   # n=0 used to be a clean GREEN even when the PR was 900 lines of new code, because the substrate
   # gate only ever saw fleet/board/*.md files. "Land code with no ticket" was therefore the cheapest
@@ -272,6 +281,93 @@ _is_parked(){
   case "$p" in true|yes|1) return 0;; esac
   grep -qi '^note:' "$1" && grep -q 'PARKED' "$1" && return 0
   return 1
+}
+
+# ---- GRANDFATHERING SCOPE: SEMANTIC, NOT BYTE ------------------------------------------------
+# THE DEFECT THIS CLOSES (measured 2026-08-01): the per-ticket checks were scoped to "this file
+# appears in the diff", which conflates two different things —
+#     (1) this ticket's WORK changed        -> it must justify substrate, D&S, owns-format;
+#     (2) this ticket's FILE was touched    -> may be a pure syntax/format repair.
+# Under (2) a meaning-preserving YAML fix re-opens years of accumulated debt on unrelated tickets.
+# Concretely: repairing 23 tickets whose frontmatter did not parse (the fail-open in
+# substrate_first_gate.base_board_owns, PR #365) put them in a diff for the first time since they
+# were written, and 21 pre-existing REDs fired — 13 of them "no 'substrate:' field". The gate made
+# the repair of a gate defect UNLANDABLE. That is the gate-hardening-strands-work class, and it is
+# exactly how `--force` habits start.
+#
+# THE RULE: a ticket ALREADY PRESENT on the base ref keeps its grandfathered status when none of
+# the fields the verdict DEPENDS ON changed. If every input to a check is identical, the check can
+# only reach the identical verdict — so re-running it discovers nothing new and blocks work that
+# changed nothing.
+#
+# THIS NARROWS WHEN THE CHECK FIRES. IT DOES NOT LOOSEN WHAT IT CHECKS:
+#   * a NEW ticket (absent from the base ref) is ALWAYS fully checked — no grandfathering;
+#   * ANY change to work_class / repo / branch / difficulty / substrate / substrate-novel /
+#     substrate-retest / parked, or to the SET of owns paths, is fully checked exactly as today;
+#   * LOSING a D&S section is fully checked (a ratchet — gaining one can never make a verdict
+#     worse, losing one always can);
+#   * nothing is added to the "pass" side: a grandfathered ticket is SKIPPED, never asserted green.
+#
+# COMPARISON IS SEMANTIC, NOT BYTES. Values come from `_field` — the SAME line reader the checks
+# themselves consume, so "the inputs did not change" is literally true of the checks that run.
+# `owns:` compares as a SET of repo-relative paths, so a reorder, or rewriting an ABSOLUTE
+# dev-box path to its repo-relative form, denotes the same owned files and stays grandfathered.
+# Byte comparison was rejected: it is exactly the rule that already failed.
+_SUBSTRATE_RELEVANT_KEYS="work_class repo branch difficulty substrate substrate-novel substrate-retest parked"
+
+# _repo_rel <path> -> the repo-relative path this entry DENOTES.
+# An ABSOLUTE owns entry is malformed by this gate's own owns-format rule, so rewriting one to the
+# repo-relative path it denotes changes NO owned file — and must therefore not re-open the
+# ticket's unrelated debt (that would be the same defect this scope fix exists to close, one level
+# down). The leading components are dropped one at a time until the remainder EXISTS in the repo;
+# an absolute path that resolves nowhere here is left ALONE, so it compares as different and the
+# ticket is CHECKED. Fail-closed on ambiguity.
+_repo_rel(){
+  local p="${1#./}" rest
+  case "$p" in
+    /*) rest="${p#/}"
+        while [ -n "$rest" ]; do
+          [ -e "$ROOT/$rest" ] && { printf '%s' "$rest"; return 0; }
+          case "$rest" in */*) rest="${rest#*/}";; *) break;; esac
+        done
+        printf '%s' "$p"; return 0 ;;
+    *)  printf '%s' "$p" ;;
+  esac
+}
+
+# _norm_owns <owns-value> -> the owned paths as a comparable, repo-relative, sorted SET.
+_norm_owns(){
+  local e out=""
+  while IFS= read -r e; do
+    e="$(printf '%s' "$e" | sed 's#^[[:space:]]*##; s#[[:space:]]*$##')"
+    [ -n "$e" ] || continue
+    out="$out$(_repo_rel "$e")"$'\n'
+  done < <(printf '%s\n' "${1:-}" | tr ',' '\n')   # trailing \n: `read` drops an unterminated last field
+  printf '%s' "$out" | grep -v '^[[:space:]]*$' | LC_ALL=C sort | paste -sd, - 2>/dev/null
+}
+
+_ds_present(){ grep -qiE '##[[:space:]]*dependencies[[:space:]]*&[[:space:]]*sequence|^ds:' "$1"; }
+
+# _ticket_fingerprint <file> -> the verdict-relevant inputs, one key per line.
+_ticket_fingerprint(){
+  local f="$1" k
+  for k in $_SUBSTRATE_RELEVANT_KEYS; do printf '%s=%s\n' "$k" "$(_field "$f" "$k")"; done
+  printf 'owns=%s\n' "$(_norm_owns "$(_field "$f" owns)")"
+}
+
+# _ticket_grandfathered <repo-rel-path> <worktree-file> — 0 iff this PR changed nothing the
+# per-ticket verdict depends on. FAIL CLOSED: any doubt (no base sha, unreadable base blob,
+# mktemp failure) returns non-zero, i.e. CHECK IT.
+_ticket_grandfathered(){
+  local rel="$1" f="$2" tmp same=1
+  [ -n "${_SCOPE_BASE:-}" ] || return 1
+  git -C "$ROOT" cat-file -e "${_SCOPE_BASE}:${rel}" 2>/dev/null || return 1  # NEW ticket -> check
+  tmp="$(mktemp 2>/dev/null)" || return 1
+  if ! git -C "$ROOT" show "${_SCOPE_BASE}:${rel}" >"$tmp" 2>/dev/null; then rm -f "$tmp"; return 1; fi
+  [ "$(_ticket_fingerprint "$tmp")" = "$(_ticket_fingerprint "$f")" ] || same=0
+  if _ds_present "$tmp" && ! _ds_present "$f"; then same=0; fi   # ratchet: losing D&S always REDs
+  rm -f "$tmp"
+  [ "$same" -eq 1 ]
 }
 
 _check_ticket(){
