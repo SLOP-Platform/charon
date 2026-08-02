@@ -84,3 +84,23 @@ detector for a problem healthchecks.io or Prometheus already solves, we have rep
 class this ticket exists to close — inside the fix for that class. Adopt the substrate; build only
 the novel slice (the EXPECTATION model: "work was available and nothing was produced" is our
 semantics, not an off-the-shelf metric).
+
+### CORRECTION 2026-08-02 — I MISREAD D4. deadcode/vulture ARE the right tool for the STATIC half
+
+The paragraph above says "WRONG TOOL, do NOT spend time here". That is WRONG for the static
+half and the operator caught it. PRIORITY-TODO D4 is a diagnosis PLUS A FIX, and I quoted only the
+diagnosis:
+  > "Do not tune confidence up; use `exclude` + a whitelist ratchet GENERATED ONLY AFTER known
+  >  inertness is fixed, or it freezes the bugs in permanently."
+That ratchet IS the answer to the confidence-80 blind spot — not abandoning the tools.
+It is also ALREADY BUILT: ticket `DEADCODE-TOOLS-WIRE` is live and **PR #209 (product, OPEN DRAFT)
+adopts vulture+deadcode as a ratchet**. It sat in the open-PR list all session unread.
+
+THE ACTUAL SPLIT — two different questions, two different tools, do not conflate them:
+  * STATIC  "is this code called from anywhere in the source?"  -> vulture/deadcode WITH the D4
+    ratchet (exclude + whitelist generated after known inertness is fixed). Covered by
+    DEADCODE-TOOLS-WIRE / PR #209 — REVIEW AND LAND IT rather than rebuilding it.
+  * RUNTIME "did this process run / did this worker produce / did this artifact appear?" -> NOT
+    static analysis at any confidence setting. This is where dead-man's-switch and metrics tooling
+    belong, and where we have ZERO adoptions.
+This ticket owns ONLY the runtime half. Do not re-derive the static half; land PR #209.
