@@ -239,6 +239,33 @@ docker exec charon-gateway-1 ls -l /data    secrets.json 0600 present; NO system
 gh api rate_limit                           graphql 0/5000 at reset; REST core 5000/5000
 ```
 
+
+## F10. REVIEWER POOLS SPIN AND DRAIN THE API QUOTA — LAUNCH THEM WITH A STAND-DOWN
+
+MEASURED 2026-08-02: a reviewer tab reached `cycle 461/0` in minutes while launched with
+`--wait 5`. So `--wait` is IGNORED — that is the known review-pool.sh defect (`main_loop "$CMD"`
+silently drops `--wait/--retries`), and `--retries 0` means NEVER stand down. Each cycle runs
+`syncing review queue` = a `gh` GraphQL call.
+**This was the GraphQL drain.** Killing the pools took graphql from **0/5000 to 3784/5000
+immediately.** It is why land-push could not verify CI all session and why every board push
+needed the logged `--force`.
+RULES until PR #392's REST+ETag cutover lands:
+  - launch reviewers with a FINITE retry budget, never `--retries 0`
+  - keep the pool SMALL (1-2), and check `gh api rate_limit` before scaling
+  - if `cycle N/0` climbs fast, the wait is being dropped — kill them, do not wait it out
+```
+pgrep -f 'bash .*review-pool\.sh' | xargs -r kill      # stop a spinning pool
+gh api rate_limit --jq '.resources.graphql'             # confirm recovery
+```
+
+## F11. THE SESSION TASK LIST IS NOT DURABLE — IT DIES WITH THE SESSION
+Last session tracked 24 items in the harness task list; 15 were still open at close and NONE of
+them would have survived. Anything that matters must become a BOARD TICKET or a line in this
+file. The harness list is a working set, not a record.
+Converted at close 2026-08-02: SPILL-UP-CEILING-SSOT · LAND-PUSH-WORKTREE-STATE ·
+SUBSTRATE-OWNS-WORD-BOUNDARY · LAUNCHER-LEAKGUARD-NONFATAL · BRIDGE-RESTORES-DISABLED-MODELS ·
+MODELS-JSON-STRUCTURAL-LIMITS.
+
 ---
 
 # ⛔⛔ UNTRACKED WORK PILEUP — MEASURED 2026-08-02 ⛔⛔
