@@ -2,6 +2,7 @@ repo: charon-private
 tier: strong
 priority: 0
 difficulty: 4
+priority_note: RANKED #1 — see LIVE EVIDENCE section
 work_class: rig-meta
 branch: fix/zero-commit-spin
 depends_on:
@@ -36,3 +37,36 @@ accept: |
 
 P0, no inbound deps. Pairs with BOARD-VIEW-MISMATCH: that one makes exclusion VISIBLE, this one
 removes the cause. Land either order.
+
+## LIVE EVIDENCE 2026-08-02T15:40Z — THE WORK NEVER STARTS
+
+Re-quarantined WITHIN MINUTES of being cleared: `droid=strong-2780986 count=3
+quarantined=2026-08-02T15:40:28Z`. The spin is ACTIVE.
+
+DECISIVE OBSERVATION — there is **NO session log and NO gate result** for this ticket:
+  - `fleet/state/gate-results/*SPEND-METRIC*`  -> does not exist
+  - `fleet/state/agent-logs/*SPEND-METRIC*`    -> does not exist
+  - the SAME droid has a full, normal session log for another ticket:
+    `fleet/state/agent-logs/strong-2780986-BASH-INERT-COVERAGE.txt` (real work, reading files)
+
+So this is NOT "the model produced bad work". The session NEVER STARTS. The failure is between
+CLAIM and SESSION-START, and it leaves no artifact — which is why it was invisible until the
+guard counted to three.
+
+HYPOTHESIS TO TEST FIRST (cheap, and it fits the data): **both spinning tickets are
+`repo: charon` (PRODUCT) tickets claimed by a RIG-launched droid.** The same droid's runs record
+holds SPEND-METRIC-TRUSTWORTHY and RESCUE-TRIAGE-PRODUCT — both product-repo. Suspect the
+product worktree/repo resolution path (repo-registry.sh hardcodes
+`/home/stack/code/charon-fleet-<id>`; a product ticket whose worktree lives elsewhere was already
+observed today to break `land-needs-push.sh` for LITELLM-CAPABILITY-ADOPTION).
+Second candidate: p0-worktree-setup refusing on a dirty/unpushed existing worktree — observed
+today killing tabs outright with leak-guard refusals.
+
+WHY THIS IS RANKED ABOVE VISIBILITY WORK: BOARD-VIEW-MISMATCH makes exclusion visible, but
+visibility of nothing is still nothing. This defect means the fleet CLAIMS WORK AND PRODUCES
+NOTHING while looking busy — measured today: 8 tickets, including P0s minted hours earlier, and
+a near-zero throughput window that read as healthy.
+
+ACCEPTANCE ADDITION: instrument the claim->session-start path so a no-op leaves an ARTIFACT
+naming the refusal. A failure that writes nothing cannot be diagnosed after the fact, which is
+the reason this survived long enough to quarantine 8 tickets.
