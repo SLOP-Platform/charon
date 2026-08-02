@@ -12,6 +12,27 @@ CATEGORY_PRESETS_DATA: dict[str, dict] = {
         "downgrade_prone": True,
         "note": "Free tiers can silently route to a different model — failover-guarded.",
     },
+    "github_models": {
+        "base_url": "https://models.inference.ai.azure.com",
+        "key_env": "GITHUB_TOKEN",
+        "strip_v1": False,
+        "note": "GitHub Models — Azure-hosted inference, GitHub-issued token, "
+                "OpenAI-compatible chat. Free tier is rate-limited (per-day).",
+    },
+    "featherless": {
+        "base_url": "https://api.featherless.ai/v1",
+        "key_env": "FEATHERLESS_API_KEY",
+        "max_context": 32768,
+        "note": "Featherless.ai — OpenAI-compatible chat; free tier carries a 32K "
+                "session-context cap (max_context).",
+    },
+    "ollama_cloud": {
+        "base_url": "https://ollama.com/v1",
+        "key_env": "OLLAMA_API_KEY",
+        "note": "Ollama.com hosted cloud free/turbo tier — DISTINCT from the LOCAL "
+                "'ollama' preset (localhost:11434). OpenAI-compatible; key required "
+                "even on the free tier.",
+    },
     "cline-pass": {
         "base_url": "https://api.cline.bot/api/v1",
         "key_env": "CLINE_PASS_API_KEY",
