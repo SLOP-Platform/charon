@@ -45,11 +45,12 @@
 #   board-lock.sh paths ............................. print the guarded path prefixes
 #
 # Exit codes: 0 ok | 1 CONFLICT (another holder) | 3 master moved under holder | 4 unlocked board
-#             commit refused | 5 usage | 6 nothing to commit / bad pathspec | 70 could not lock
-#             (fail-closed)
+#             commit refused | 5 usage | 6 nothing to commit / bad pathspec | 7 unparseable ticket
+#             frontmatter | 70 could not lock (fail-closed)
 #
 # Test hooks (hermetic): BOARD_LOCK_STALE_S, BOARD_LOCK_WAIT_S, BOARD_LOCK_FLOCK_FILE,
-# BOARD_LOCK_PATHS (space-separated repo-relative prefixes), BOARD_LOCK_BYPASS (LOUD + logged).
+# BOARD_LOCK_PATHS (space-separated repo-relative prefixes), BOARD_LOCK_BYPASS (LOUD + logged),
+# BOARD_LOCK_FM_BYPASS (LOUD + logged; frontmatter parse-check only).
 set -uo pipefail
 
 FLEET="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -225,6 +226,139 @@ cmd_status(){
 
 cmd_paths(){ printf '%s\n' $BOARD_PATHS; }
 
+# ------------------------------------------------------- frontmatter parse-check (SHIFT LEFT)
+# WHY THIS EXISTS (2026-08-01, FIVE breakages in ONE session):
+#   LOOP-GUARD-REASON-WIRE, CAPTURE-WIRING-TIMEOUT-FIX, MODEL-HARDCODE-PURGE, REVIEWER-TAB-POOL
+#   and LAUNCHER-GATE-SETE-KILL all shipped the SAME defect — a prose value containing ': ' or a
+#   backtick written as a PLAIN scalar instead of a block scalar. YAML reads `key: One guard: the
+#   wire` as a nested mapping and dies with "mapping values are not allowed here"; a leading
+#   backtick is a RESERVED indicator and dies with "found character '`' that cannot start any
+#   token". Neither is exotic — both are what prose does to unquoted YAML.
+#
+# THE COST WAS NOT THE TYPO, IT WAS THE LATENCY. The only thing that parsed ticket frontmatter was
+# fleet/checks/rig-ci-scope.sh -> substrate-first-gate.sh, which runs at PUSH. So each of the five
+# was discovered 1-3 commits AFTER it was written and cost a full push cycle to fix. board-lock.sh
+# already gates EVERY board write (it is the enforced choke point — see the header), so it is the
+# earliest place the defect can be caught, and catching it here costs one local parse.
+#
+# NO THIRD CONVENTION. The split is not reimplemented here: this calls the SAME
+# fleet/checks/substrate_first_gate.py:read_frontmatter() that the downstream gate calls, so the
+# splitting rule, the parser, the error text and the suggested fix are BY CONSTRUCTION identical.
+# (That module's convention: board tickets have NO leading `---` delimiter — frontmatter is the
+# leading run of lines, CRLF/CR-normalised, ending at the first line matching
+# _HALT = ^(#{1,6}\s|---\s*$|</?[A-Za-z][\w-]*\s*/?>) — a markdown heading, a lone `---` rule, or a
+# raw HTML-ish tag — and that run is fed to yaml.safe_load. Empty or non-mapping => RED.)
+# PyYAML is the ADOPTED parser for exactly this job (fleet/state/EVAL-REGISTRY.md: "PyYAML …
+# ADOPT — shipped, pinned PyYAML 6.0.3"), so there is nothing to re-decide and nothing to add.
+#
+# DIFF-SCOPED, exactly like the downstream gate. Only the ticket files THIS commit carries are
+# parsed — a pre-existing broken ticket someone else owns must never wedge an unrelated board
+# write, and it is not this commit's defect to fix. The path regex is rig-ci-scope.sh's
+# _scoped_board_files regex verbatim: ^fleet/board/[^/]+\.md$ — top level only, so board/archive/
+# (retired tickets, which the substrate gate also excludes) is out of scope.
+#
+# FAIL-CLOSED, per this file's standing rule: no python3, no PyYAML, or a missing rule module =>
+# REFUSE. "I could not tell" is never a pass. The refusal names the audited escape.
+_FM_RE='^fleet/board/[^/]+\.md$'
+
+# _staged_board_tickets <pathspec>... — repo-relative ticket files this commit will carry.
+# ACMR (not D): a DELETED ticket has no content to parse.
+_staged_board_tickets(){
+  git diff --cached --name-only --diff-filter=ACMR -- "$@" 2>/dev/null | grep -E "$_FM_RE" || true
+}
+
+# _frontmatter_check <pathspec>... — rc 0 = every carried ticket parses (or nothing to check),
+# rc 7 = at least one does not. Prints the file, the line, the parse error and the fix.
+_frontmatter_check(){
+  local files; files="$(_staged_board_tickets "$@")"
+  [ -n "$files" ] || return 0                     # no tickets in this commit: nothing to say
+
+  # The audited escape. A genuinely broken PRE-EXISTING ticket must not permanently wedge the
+  # board, so there is a way through — but it is LOUD and it lands in state/board-lock.log, the
+  # same shape as BOARD_LOCK_BYPASS. BOARD_LOCK_BYPASS itself also disables this: it is the
+  # broader "let this board commit through unchecked" escape and this check is inside that scope.
+  if [ -n "${BOARD_LOCK_FM_BYPASS:-}" ] || [ -n "${BOARD_LOCK_BYPASS:-}" ]; then
+    printf '%s\n' "FRONTMATTER PARSE-CHECK BYPASSED — a board commit was allowed through UNPARSED." \
+                  "files: $(printf '%s' "$files" | tr '\n' ' ')" \
+                  "The downstream gate (rig-ci-scope -> substrate-first-gate) will still red on it." \
+                  "This is an audited escape, not a silent one." | _loud
+    return 0
+  fi
+
+  local mod="$FLEET/checks/substrate_first_gate.py"
+  if [ ! -f "$mod" ]; then
+    _die "BOARD-LOCK REFUSED (fail-closed): missing rule module $mod — cannot parse ticket frontmatter."
+    _die "  Audited escape (LOUD + logged): BOARD_LOCK_FM_BYPASS=1 bash $FLEET/board-lock.sh commit ..."
+    return 7
+  fi
+
+  # ONE python3 for the whole set, each ticket as its OWN argv entry (never a space-joined
+  # string — a path is not a word list). read_frontmatter() owns the file read (UTF-8 strict),
+  # the CRLF/CR normalisation, the split and the parse — we add nothing but the loop.
+  local -a argv=(); local f
+  while IFS= read -r f; do [ -n "$f" ] && argv+=("$f"); done <<<"$files"
+
+  local out rc=0
+  out="$(FM_FLEET="$FLEET" python3 - "${argv[@]}" <<'PY' 2>&1
+import os, sys
+sys.path.insert(0, os.path.join(os.environ["FM_FLEET"], "checks"))
+try:
+    import substrate_first_gate as gate   # THE parser of record — never a second copy of it
+except SystemExit:
+    raise                                 # module exits 1 at import when PyYAML is absent
+except Exception as exc:                  # any import failure is fail-closed, never a pass
+    sys.stderr.write("cannot import substrate_first_gate (%s)\n" % exc)
+    sys.exit(2)
+
+bad = 0
+for path in sys.argv[1:]:
+    try:
+        gate.read_frontmatter(path)
+    except gate.TicketError as exc:
+        bad += 1
+        print("%s: %s" % (path, exc))
+sys.exit(1 if bad else 0)
+PY
+  )" || rc=$?
+  [ "$rc" -eq 0 ] && return 0
+
+  # rc 1 is the only "a ticket did not parse" verdict. ANY other non-zero (2 = import failure,
+  # 127 = no python3, 1-from-import = no PyYAML) is INFRASTRUCTURE, and it still REFUSES — but it
+  # must not be dressed up as a ticket defect, or the fix message sends the author hunting a typo
+  # that is not there.
+  if [ "$rc" -ne 1 ]; then
+    _die "BOARD-LOCK REFUSED (fail-closed): could not run the frontmatter parse-check (rc $rc)."
+    printf '%s\n' "$out" | sed 's|^|  |' >&2
+    _die "  Audited escape (LOUD + logged): BOARD_LOCK_FM_BYPASS=1 bash $FLEET/board-lock.sh commit ..."
+    _log "frontmatter-infra-refused rc=$rc files=$(printf '%s' "$files" | tr '\n' ' ')"
+    return 7
+  fi
+
+  {
+    echo "################################################################"
+    echo "# BOARD-WRITE REFUSED: a ticket in this commit has UNPARSEABLE frontmatter."
+    echo "#"
+    printf '%s\n' "$out" | sed 's|^|#   |'
+    echo "#"
+    echo "# This is the SAME parse the CI gate runs (fleet/checks/substrate-first-gate.sh, via"
+    echo "# rig-ci-scope.sh). Committing it now only moves the failure to push time, 1-3 commits"
+    echo "# later — which is what this check exists to stop. Fix it here, for free."
+    echo "#"
+    echo "# The usual cause is PROSE in a plain scalar: a value containing ': ' or starting with a"
+    echo "# backtick. Quote the value or make it a block scalar (\`key: |\`):"
+    echo "#"
+    echo "#     serial_justified: |"
+    echo "#       One guard: the wire is cohesive."
+    echo "#"
+    echo "# Audited escape (LOUD + logged, not silent), for a genuinely broken PRE-EXISTING ticket"
+    echo "# that must not wedge the board:"
+    echo "#   BOARD_LOCK_FM_BYPASS=1 bash $FLEET/board-lock.sh commit --session <s> -m '<msg>' -- <paths>"
+    echo "################################################################"
+  } >&2
+  _log "frontmatter-refused files=$(printf '%s' "$files" | tr '\n' ' ')"
+  return 7
+}
+
 # ---------------------------------------------------------------- the choke point
 # commit --session <s> -m <msg> [--keep] -- <path>...
 #
@@ -260,6 +394,11 @@ _commit_locked(){
     _die "board-lock: no staged change under the given pathspec — nothing to commit (refusing an empty commit)."
     return 6
   fi
+
+  # SHIFT-LEFT PARSE CHECK. Runs AFTER staging (so it sees exactly the ticket set this commit
+  # carries) and BEFORE `git commit` (so a refusal leaves NOTHING committed and the hold still
+  # held — the author fixes the value and re-runs the same command). See _frontmatter_check.
+  _frontmatter_check "$@" || return $?
 
   # BOARD_LOCK_COMMIT is the token the pre-commit hook verifies. It is exported ONLY for this one
   # `git commit`, so it cannot leak into an agent's ad-hoc commit later in the session.

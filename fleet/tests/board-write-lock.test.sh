@@ -48,6 +48,14 @@ FLEET="$TMP/fleet"
 mkdir -p "$FLEET/hooks" "$FLEET/board" "$FLEET/state"
 cp "$REAL_FLEET/board-lock.sh"    "$FLEET/board-lock.sh"
 cp "$REAL_FLEET/hooks/pre-commit" "$FLEET/hooks/pre-commit"
+# FIXTURE-DRIFT GUARD (2026-08-01, same class as board-correctness.test.sh's checks/ copy):
+# board-lock.sh's commit path now parses the frontmatter of every ticket it carries, through
+# fleet/checks/substrate_first_gate.py — the SAME module the CI gate uses. That check is
+# FAIL-CLOSED, so a hermetic fleet WITHOUT checks/ makes every board commit refuse (exit 7) and
+# reds this whole suite for a reason that has nothing to do with the write lock. The fixture must
+# carry the real dependency. Frontmatter behaviour itself is proven by
+# fleet/tests/board-lock-frontmatter.test.sh, not here.
+cp -r "$REAL_FLEET/checks" "$FLEET/checks"
 chmod +x "$FLEET/board-lock.sh" "$FLEET/hooks/pre-commit"
 BL="$FLEET/board-lock.sh"
 
@@ -64,7 +72,11 @@ ln -sf "$FLEET/hooks/pre-commit" "$REPO/.git/hooks/pre-commit"
 
 mkdir -p "$REPO/fleet/state"
 printf 'id\tstatus\n' > "$REPO/fleet/state/ROADMAP.tsv"
-printf 'seed\n' > "$REPO/fleet/board/SEED.md"
+# SEED.md must be a REAL ticket now: bare 'seed' is a YAML string, not a mapping, and the
+# frontmatter parse-check refuses it (as the CI gate does). Every '<X> edit' append below is a
+# markdown heading, so it lands in the BODY — frontmatter ends at the first heading — which keeps
+# the fixture parseable while still proving "the writer's content survived the refusal".
+printf 'repo: charon\ntier: strong\nwork_class: docs\n' > "$REPO/fleet/board/SEED.md"
 printf 'lane-b original\n' > "$REPO/other-lane.txt"
 git -C "$REPO" add -A >/dev/null 2>&1
 git -C "$REPO" -c core.hooksPath=/dev/null commit -q -m seed --no-verify
@@ -73,7 +85,7 @@ BASE_SHA="$(git -C "$REPO" rev-parse HEAD)"
 run(){ ( cd "$REPO" && "$@" ) >"$TMP/out" 2>"$TMP/err"; echo $?; }
 
 echo "== 1. ENFORCEMENT: an UNLOCKED board commit is refused; the locked one is allowed"
-printf 'A edit\n' >> "$REPO/fleet/board/SEED.md"
+printf '# A edit\n' >> "$REPO/fleet/board/SEED.md"
 git -C "$REPO" add fleet/board/SEED.md >/dev/null
 rc="$(run git commit -q -m 'board-hygiene: sneak it in')"
 # git reports its OWN 1 when a hook rejects, so assert git refused AND that the gate arm itself
@@ -96,7 +108,7 @@ echo "== 2. PATHSPEC-LIMITED: a FOREIGN staged path is not swept, and survives i
 # Lane B stages an unrelated path (this stands for the staged `git mv` that was swept).
 printf 'lane-b staged work\n' > "$REPO/other-lane.txt"
 git -C "$REPO" add other-lane.txt >/dev/null
-printf 'A edit 2\n' >> "$REPO/fleet/board/SEED.md"
+printf '# A edit 2\n' >> "$REPO/fleet/board/SEED.md"
 rc="$(run bash "$BL" commit --session A -m 'board-hygiene: A2' -- fleet/board/SEED.md)"
 [ "$rc" = "0" ] && ok "scoped commit succeeded with a foreign path staged" || bad "scoped commit failed (exit $rc): $(cat "$TMP/err")"
 files="$(git -C "$REPO" show --name-only --format= HEAD)"
@@ -113,7 +125,7 @@ git -C "$REPO" reset -q >/dev/null 2>&1
 echo "== 3. TWO CONCURRENT WRITERS: one refused, loser loses nothing"
 rc="$(run bash "$BL" acquire A)"
 [ "$rc" = "0" ] && ok "writer A takes the hold (exit 0)" || bad "A could not acquire (exit $rc)"
-printf 'B edit\n' >> "$REPO/fleet/board/SEED.md"      # B's in-flight edit, on disk
+printf '# B edit\n' >> "$REPO/fleet/board/SEED.md"      # B's in-flight edit, on disk
 rc_b="$(run bash "$BL" commit --session B -m 'board-hygiene: B' -- fleet/board/SEED.md)"
 [ "$rc_b" = "1" ] && ok "writer B REFUSED while A holds (exit 1)" || bad "B was not refused (exit $rc_b)"
 grep -q 'BOARD-LOCK CONFLICT' "$TMP/err" && ok "B's refusal names the holder" || bad "conflict message missing"
@@ -139,7 +151,7 @@ rc="$(run bash "$BL" acquire D)"; [ "$rc" = "0" ] || bad "D acquire failed (exit
 printf 'someone-elses-land\n' > "$REPO/unrelated.txt"       # another lane lands: HEAD moves
 git -C "$REPO" add unrelated.txt >/dev/null
 git -C "$REPO" -c core.hooksPath=/dev/null commit -q -m 'land: other lane' --no-verify
-printf 'D edit\n' >> "$REPO/fleet/board/SEED.md"
+printf '# D edit\n' >> "$REPO/fleet/board/SEED.md"
 rc="$(run bash "$BL" commit --session D -m 'board-hygiene: D' -- fleet/board/SEED.md)"
 [ "$rc" = "3" ] && ok "commit REFUSED because HEAD moved under the holder (exit 3)" || bad "master-moved not detected (exit $rc)"
 grep -q 'BASE MOVED UNDER THE BOARD LOCK' "$TMP/err" && ok "master-moved refusal is LOUD, naming both shas" \
