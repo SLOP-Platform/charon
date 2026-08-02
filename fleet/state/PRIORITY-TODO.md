@@ -595,6 +595,15 @@ was running and may overlap; let it land first.
   13 inert items, not fixtures.
 - **D3. KS29 / KS30** — remain `designed` on the roadmap. Decide from what D1 catches in its first
   week rather than as a design bet.
+- **D4-CORRECTION (2026-08-02):** D4's diagnosis is right AND it carries a FIX that was quoted only
+  half the time — "use `exclude` + a whitelist ratchet generated only AFTER known inertness is
+  fixed". That ratchet IS the answer to the confidence-80 blind spot, and it is **already built**:
+  `DEADCODE-TOOLS-WIRE` is live with **open draft PR #209**. Land it; do not re-derive it.
+- **SEC.C CORRECTION (2026-08-02):** the claim "16 `|| return 0` fail-open guards in preflight.sh"
+  is **FALSE**. Measured: `|| return 0` = **1**; `|| true` = **38**, and those 38 are cleanup and
+  the deliberate "never block session boot" idiom. A first review of preflight repeated the error
+  worse ("39 fail-open guards") by conflating the two constructs. **There is exactly ONE
+  leg-level fail-open.** Do not launch an audit against a miscount.
 - **D4.** Dead-code tools do NOT answer the wiring question. Measured: vulture flags `litellm_plane`
   with 7 hits at confidence 60 but **0 at confidence 80** (the recommended tuning would blind us to
   the one case that mattered); neither vulture nor deadcode ever says "this module has no
