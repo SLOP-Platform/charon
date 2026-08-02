@@ -75,3 +75,32 @@ note: |
   UN-PARKED 2026-07-16 (operator-approved, crash-recovery session): the `parked: true` flag contradicted this
   note ("READY, runs now") and its own concurrency condition was already met — FAIL-LOUD-CONTRACT was submitted
   as PR #151. Stale flag, not a live directive. Owns a NEW disjoint file, so no collision risk.
+
+## RE-SCOPE 2026-08-02 (operator-directed): THIS IS THE FALLBACK PATH, NOT THE PRIMARY
+
+Operator: "why are costs not being derived directly from the providers?" The answer reorders
+this ticket's place in the money path.
+
+PRIMARY is now provider-reported cost, owned by SPEND-METRIC-TRUSTWORTHY: take the number the
+provider itself returns (OpenRouter /api/v1/generation gives actual cost per request; most
+OpenAI-compatible providers return real `usage` in the response body). That is authoritative and
+has NO price table to rot.
+
+THIS TICKET becomes the FALLBACK: a live-fetched price feed used only when the provider does not
+report cost. That is still necessary — not every provider reports — but it is no longer the
+thing the money path stands on, and it must not be built as if it were.
+
+CONSEQUENCE FOR THE DESIGN:
+ 1. An unpriced model must resolve to UNKNOWN, never to a synthesised floor. The existing
+    fabricated est_cost floor is exactly how the meter reported ~$223 once and $1,185 for two
+    days of August against ~$1.34 of real spend. Removing the floor is part of this ticket even
+    though the floor lives elsewhere — a feed that lands while the floor survives changes nothing.
+ 2. Price data is LIVE DATA (doctrine sec.14): model names and free status rot. Verified today —
+    `minimax-m3-free` billed $0.1542 despite `-free` in its name. The feed must re-read free
+    status and price EVERY cycle, not seed once.
+ 3. Coverage is the acceptance metric, not existence: today 10 of 861 models are priced. State
+    the coverage number before and after, and gate on it.
+
+DEPENDENCY DIRECTION (was implicit, now explicit): SPEND-METRIC-TRUSTWORTHY consumes this feed,
+not the reverse. Neither blocks the other — provider-reported cost works today for the providers
+that report it, and should not wait on full price coverage.
