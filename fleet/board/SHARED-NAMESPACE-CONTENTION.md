@@ -6,6 +6,24 @@ priority: 0
 branch: fix/shared-namespace-contention
 depends_on:
 owns: fleet/claim-jedi-name.sh, fleet/tests/claim-jedi-name.test.sh, fleet/spawn-worker.sh, fleet/tests/scratch-namespace.test.sh
+manager_commits_to_fold: |
+  FOLD-IN NOTICE (operator decision L, 2026-08-02). This ticket owns `fleet/spawn-worker.sh` and
+  carries ~25 unpushed commits. TWO commits were landed to that file on MASTER while this ticket
+  was claimed, so this branch WILL conflict there and must rebase rather than overwrite:
+    * `c9aa586` — WORKTREE-LEAK GUARD on the TUI path. spawn-worker.sh now REFUSES (exit 5) a
+      PROMPTED launch whose WORKDIR is a repo ROOT (/home/stack/charon-private,
+      /home/stack/code/charon, /home/stack/code/keystone); override is
+      SPAWN_ALLOW_MAIN_CHECKOUT=1. Red-proofed both ways. This closed a REAL leak: a droid had
+      left +58 uncommitted lines in the PRODUCT main checkout while its own clean worktree sat
+      unused, and nothing alarmed.
+    * an earlier header-comment correction — spawn-worker.sh:16 used to tell callers to start TUI
+      work via `session-ctl.sh launch`, which POSTs to the GLOBAL session store that NO TUI
+      drives. The model then runs HEADLESS while the tab sits on the splash screen. That comment
+      caused the exact failure it warned about, twice (2026-07-27 and again 2026-08-02). The
+      correct mechanism is the 7th positional PROMPT arg -> /tui/append-prompt + /tui/submit-prompt.
+  KEEP BOTH on rebase. Neither is optional: one is a fail-closed guard with a red-proof, the other
+  removes a documented trap. If this branch's version of spawn-worker.sh wins the merge silently,
+  BOTH regressions return.
 serial_justified: |
   ONE class with two instances that must be fixed together: a shared mutable namespace with no
   separation between QUERY and CLAIM, and no cleanup of orphaned claims. Fixing the name allocator
