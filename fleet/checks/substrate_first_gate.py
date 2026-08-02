@@ -77,6 +77,9 @@ _HALT = re.compile(r"^(#{1,6}\s|---\s*$|</?[A-Za-z][\w-]*\s*/?>)")
 _UNESCAPED_PIPE = re.compile(r"(?<!\\)\|")
 _FENCE = re.compile(r"^\s*(```|~~~)")
 _SEP_CELL = re.compile(r"^:?-{2,}:?$")
+# A LIVE board ticket is a TOP-LEVEL fleet/board/<id>.md — never board/archive/, board/retired/
+# or board/briefs/. Same shape as rig-ci-scope.sh's _scoped_board_files, deliberately.
+_LIVE_BOARD_TICKET = re.compile(r"^fleet/board/[^/]+\.md$")
 
 
 class TicketError(Exception):
@@ -365,12 +368,24 @@ def changed_files(root: str) -> list[str] | None:
     return [f for f in (out or "").split("\n") if f.strip()]
 
 
-def base_board_owns(root: str) -> tuple[list[str], bool]:
+def base_board_owns(root: str) -> tuple[list[str], bool, list[tuple[str, str]]]:
     """Every `owns:` path declared by a LIVE board ticket ON THE BASE REF.
 
-    Returns (owns_entries, resolved). `resolved` is False when the base board cannot be
-    read at all (no diff range, git ls-tree/show failing) — the caller must FAIL CLOSED
-    (treat every touched code file as unowned => RED) rather than silently pass.
+    Returns (owns_entries, resolved, unparseable). `resolved` is False when the base board
+    cannot be read at all (no diff range, git ls-tree/show failing) — the caller must FAIL
+    CLOSED (treat every touched code file as unowned => RED) rather than silently pass.
+
+    `unparseable` is [(path, reason), ...] for every in-scope base ticket whose frontmatter
+    the parser REJECTED. It exists because this function used to `except TicketError:
+    continue` — FAIL-OPEN ON THE OWNER, FAIL-CLOSED ON THE OWNED. A ticket that owned the
+    changed files but did not parse was dropped from `owns_entries`, and the caller then
+    asserted "code owned by NO live board ticket", which is FALSE: the true statement is
+    "a ticket owns it and I could not read it". A gate that drops evidence silently and then
+    reports the absence of evidence as proof of absence. Measured blast radius when this was
+    found (2026-08-01): 23 LIVE tickets, ~21% of the board, silently unowned; one branch
+    (fix/shared-namespace-contention, PR #345) unpushable with a message that was not true.
+    The caller MUST surface these, never swallow them — see the module docstring, which has
+    said "A ticket the gate cannot parse is a RED, never a silent skip" since v2.
 
     The base board is resolved at the BASE-REF TIP (RIG_CI_BASE, i.e. origin/master) — NOT the
     merge-base fork point. A ticket minted+landed SEPARATELY (the real fleet workflow) may land
@@ -383,31 +398,38 @@ def base_board_owns(root: str) -> tuple[list[str], bool]:
     """
     base = _base_ref_tip(root)
     if not base:
-        return [], False  # no resolvable base => cannot prove ownership => fail closed
+        return [], False, []  # no resolvable base => cannot prove ownership => fail closed
     listing = _git(root, "ls-tree", "-r", "--name-only", base, "fleet/board/")
     if listing is None:
-        return [], False  # base board unreadable => fail closed
+        return [], False, []  # base board unreadable => fail closed
     entries: list[str] = []
+    unparseable: list[tuple[str, str]] = []
     for path in listing.split("\n"):
         path = path.strip()
-        if not path.endswith(".md") or not path.startswith("fleet/board/"):
+        # SCOPE: top-level fleet/board/<id>.md ONLY — the same shape rig-ci-scope.sh's
+        # _scoped_board_files uses. The previous filter excluded only "/archive/", so
+        # `fleet/board/retired/` (RETIRED work) and `fleet/board/briefs/` (not tickets at all)
+        # still granted LIVE ownership. That is a second fail-open in the same function: a
+        # retired ticket could satisfy the "this code is owned" question forever.
+        if not _LIVE_BOARD_TICKET.match(path):
             continue
-        if "/archive/" in path:
-            continue  # retired/done tickets are not LIVE owners
         content = _git(root, "show", f"{base}:{path}")
         if content is None:
-            return [], False  # a listed ticket we cannot read => fail closed
+            return [], False, []  # a listed ticket we cannot read => fail closed
         try:
             fm = parse_frontmatter(content)
-        except TicketError:
-            continue  # an unparseable base ticket grants no ownership (it is not a live owner)
+        except TicketError as exc:
+            # NOT a silent skip. An unparseable ticket may be the very owner of the changed
+            # files; dropping it makes the caller's "no owner" verdict a lie. Collect + surface.
+            unparseable.append((path, str(exc)))
+            continue
         if is_parked(fm):
             continue  # parked = staged, not a live owner
         for entry in _owns_entries(field(fm, "owns")):
             if " " in entry or "\t" in entry or entry.startswith("("):
                 continue  # prose / descriptive owns, not a real path
             entries.append(entry)
-    return entries, True
+    return entries, True, unparseable
 
 
 def _path_owned(path: str, owns_entries: list[str]) -> bool:
@@ -851,17 +873,30 @@ def cmd_pr_has_ticket(gate: Gate) -> int:
 
     # Resolve every owns: path declared by a LIVE ticket on the BASE ref. FAIL CLOSED if the
     # base board is unreadable — an unresolvable base is "assume unowned", never a silent pass.
-    owns_entries, resolved = base_board_owns(gate.root)
+    owns_entries, resolved, unparseable = base_board_owns(gate.root)
     if not resolved:
         print("  RED  substrate: pr-has-ticket: could not resolve the BASE-ref board owns "
               "(base ref unreadable) — cannot prove these code files are ticketed, so RED "
               "(fail-closed).")
         return 1
 
+    # A ticket the gate could not read is NEVER silent from here on. WHERE it is surfaced is
+    # deliberate: an unparseable ticket can only ever ADD ownership, never remove it, so it can
+    # only change a NEGATIVE verdict. Disclosing it as INFO on the positive paths and as the
+    # RED itself on the negative path keeps every message TRUE without wedging the whole fleet
+    # (and without wedging the very PR that repairs the board).
+    def _disclose() -> None:
+        print(f"  INFO substrate: pr-has-ticket: {len(unparseable)} base-ref board ticket(s) "
+              "could not be parsed and were NOT counted as owners — repair their frontmatter "
+              f"({', '.join(p for p, _ in unparseable[:6])}"
+              f"{'...' if len(unparseable) > 6 else ''}).")
+
     unowned = [f for f in code if not _path_owned(f, owns_entries)]
     if not unowned:
         print(f"  INFO substrate: pr-has-ticket: {len(code)} code file(s) all covered by an "
               "EXISTING base-ref board ticket's owns:")
+        if unparseable:
+            _disclose()
         return 0
 
     # Some touched code file is owned by no base-ref ticket. A board/*.md minted in THIS diff
@@ -870,11 +905,37 @@ def cmd_pr_has_ticket(gate: Gate) -> int:
     if tickets:
         print(f"  INFO substrate: pr-has-ticket: {len(code)} code file(s) associated with "
               f"{len(tickets)} board ticket(s) minted in this change")
+        if unparseable:
+            _disclose()
         return 0
 
+    # NEGATIVE VERDICT — and this is exactly where the old code lied. An unparseable base ticket
+    # may be the very OWNER of these files, so "no live board ticket owns this" is NOT a claim
+    # the gate is entitled to make while it cannot read part of the board. Say the TRUE thing,
+    # name the tickets, and give the fix. The old silent `continue` turned "I could not read the
+    # owner" into "there is no owner" — a false statement that blocked real branches (PR #345)
+    # with the wrong reason, which is the exact pressure that manufactures `--force` habits.
+    if unparseable:
+        print(f"  RED  substrate: pr-has-ticket: {len(unparseable)} base-ref board ticket(s) "
+              "could NOT BE PARSED, so the ownership question cannot be answered "
+              "(fail-closed — this is NOT a claim that your code is unticketed):")
+        for path, reason in unparseable[:10]:
+            print(f"         {path}: {reason}")
+        if len(unparseable) > 10:
+            print(f"         ... and {len(unparseable) - 10} more")
+        print("       Any one of them may be the OWNER of "
+              f"{', '.join(unowned[:4])}{'...' if len(unowned) > 4 else ''}. Repair the "
+              "frontmatter above (quote the value or make it a block scalar, `key: |`) and "
+              "re-run — do NOT assume this change is unticketed.")
+        return 1
+
+    # Reaching here means the WHOLE in-scope base board parsed (the unparseable branch above
+    # returns first), so this assertion is now backed by a complete read — which is precisely
+    # what made the pre-fix version of this message a lie.
     print("  RED  substrate: this change touches CODE owned by NO live board ticket "
-          f"({', '.join(unowned[:4])}{'...' if len(unowned) > 4 else ''}) — no base-ref ticket "
-          "`owns:` covers these files and no fleet/board/*.md ticket is minted in this diff.\n"
+          f"({', '.join(unowned[:4])}{'...' if len(unowned) > 4 else ''}) — every base-ref "
+          "ticket parsed, none of their `owns:` covers these files, and no fleet/board/*.md "
+          "ticket is minted in this diff.\n"
           "       Code with no ticket is code the substrate-first question was never asked about "
           "[[adopt-substrate-build-only-novel-slice]].\n"
           "       Add or update the board ticket that owns these files.")

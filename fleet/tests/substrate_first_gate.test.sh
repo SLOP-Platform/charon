@@ -78,10 +78,10 @@ if mode == "revert":
     # Simulate the PRE-FIX gate: the base-ref owns resolution did not exist, so a touched
     # code file was never matched against any base ticket's owns. Restoring that (no owns
     # resolved, but base still 'resolvable') must send the OWNED-file case (a) back to RED.
-    g.base_board_owns = lambda root: ([], True)
+    g.base_board_owns = lambda root: ([], True, [])
 elif mode == "failclosed":
     # base board unresolvable -> the gate must fail closed (RED).
-    g.base_board_owns = lambda root: ([], False)
+    g.base_board_owns = lambda root: ([], False, [])
 gate = g.Gate("/nonexistent/registry.md", repo)  # pr-has-ticket does not read the registry
 sys.exit(g.cmd_pr_has_ticket(gate))
 PY
