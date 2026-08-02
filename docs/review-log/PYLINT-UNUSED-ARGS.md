@@ -20,7 +20,10 @@ an argument-specific signal).
   so test argument names must avoid those prefixes (used `spare`, `extra_arg`,
   `cfg`).
 - `self`/`cls` are exempt; `@classmethod` other args are NOT exempt.
-- The 46-product / 3-tools baseline from DEADCODE-TOOL-REDERIVE was confirmed.
+- The 46-product baseline from DEADCODE-TOOL-REDERIVE was confirmed in this
+  worktree (`pylint --disable=all --enable=W0613 src` reports 46 findings).
+  The 3-ksf portion lives in the separate keystone_framework checkout, which
+  is not present here, so it could not be re-verified from this ticket.
 
 ## Files owned
 - `tests/test_pylint_unused_args.py`
