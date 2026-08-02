@@ -2,7 +2,7 @@ repo: charon
 tier: frontier
 priority: 0
 difficulty: 4
-work_class: fix
+work_class: money-path
 branch: fix/money-security-lane
 depends_on:
 owns: docs/review-log/MONEY-SECURITY-LANE.md

@@ -2,7 +2,7 @@ repo: charon-private
 tier: strong
 priority: 0
 difficulty: 3
-work_class: fix
+work_class: bugfix
 branch: fix/session-close-unblock
 depends_on:
 owns: fleet/state/SESSION-CLOSE-UNBLOCK.md, docs/review-log/SESSION-CLOSE-UNBLOCK.md
