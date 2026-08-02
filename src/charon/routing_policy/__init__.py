@@ -162,14 +162,14 @@ def build_routes_and_pools(
     ``cost_class: "premium"`` are GATED OUT of pool chains — they're usable only
     when explicitly requested or in a premium role, never the cheap-first default.
 
-    Models with ``"enabled": false`` are excluded from routes and pools."""
+    Models with ``"enabled": false`` are no longer silently excluded — discovery is
+    the sole source of membership; operator intent to disable a provider must live
+    in an explicit, attributable control (e.g. drain policy, pool removal)."""
     providers_cfg = providers_cfg or {}
     metered_costs = metered_costs or {}
     routes: dict[str, _UpstreamRoute] = {}
     for mid, spec in registry.items():
         if isinstance(spec, dict):
-            if spec.get("enabled") is False:
-                continue
             r = route_from_spec(spec, providers_cfg, model_id=mid,
                                 enforce_preset_allowlist=enforce_preset_allowlist)
             if r is not None:

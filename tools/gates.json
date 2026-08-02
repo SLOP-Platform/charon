@@ -139,6 +139,18 @@
     "work_units": "test_*.py files under tests/ parsed"
   },
   {
+    "id": "dogfood-gate",
+    "name": "Dogfood gate — real-routing-path observable effects",
+    "domain": "dogfood",
+    "enforcer": "tools/check_dogfood.py",
+    "covers": "observable routing effects through the real load_pools/choose_from_pool selection path (pool ordering, selection decisions, exhaustion, code-safe filtering)",
+    "ci_step": true,
+    "invariant": "The real routing path produces observable effects on every surface an operator inspects (pool ordering, selection, failover, code-safe filtering, cost-class priority); a zero-catalog is RED",
+    "red_proof": "tests/e2e/test_dogfood_gate.py",
+    "min_work_units": 9,
+    "work_units": "observable routing assertions exercised against real config"
+  },
+  {
     "id": "charon-gate",
     "name": "Unified CHARON GATE runner",
     "domain": "gate",

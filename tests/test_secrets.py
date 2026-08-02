@@ -124,6 +124,34 @@ def test_providers_add_unknown_without_base_url_errors(monkeypatch, tmp_path):
     assert cli.main(["providers", "add", "totally-unknown"]) == 2
 
 
+def test_force_refresh_overwrites_resident_key(monkeypatch, tmp_path):
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    secrets.set_secret("HOTROTATE_TEST_KEY", "rotated-value")
+    try:
+        monkeypatch.setenv("HOTROTATE_TEST_KEY", "stale-value")
+        secrets.apply_to_env()
+        assert os.environ["HOTROTATE_TEST_KEY"] == "stale-value"
+        secrets.apply_to_env(force_refresh=True)
+        assert os.environ["HOTROTATE_TEST_KEY"] == "rotated-value"
+    finally:
+        os.environ.pop("HOTROTATE_TEST_KEY", None)
+
+
+def test_force_refresh_respects_sensitive_skip(monkeypatch, tmp_path):
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    (tmp_path / "secrets.json").write_text(
+        '{"LD_PRELOAD": "/evil.so", "GOOD_KEY": "ok"}')
+    for v in ("LD_PRELOAD", "GOOD_KEY"):
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.setenv("GOOD_KEY", "stale")
+    secrets.apply_to_env(force_refresh=True)
+    try:
+        assert "LD_PRELOAD" not in os.environ
+        assert os.environ["GOOD_KEY"] == "ok"
+    finally:
+        os.environ.pop("GOOD_KEY", None)
+
+
 def test_providers_add_custom_with_base_url(monkeypatch, tmp_path):
     monkeypatch.setenv("CHARON_HOME", str(tmp_path))
     rc = cli.main(["providers", "add", "mygw", "--base-url", "http://localhost:9/v1",
