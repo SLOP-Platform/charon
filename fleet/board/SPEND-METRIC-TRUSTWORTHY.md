@@ -138,3 +138,29 @@ CONSEQUENCE FOR ROUTING: cheapest-per-token must NOT be the sort key. The key is
 ACCEPTED task for that work_class x tier, which is a model x provider property (quantization,
 hardware, hidden prompts) — see GRADE-MODEL-PROVIDER-PAIR. A price feed informs this; it never
 decides it alone.
+
+
+## OPERATOR DECISION 2026-08-02: MONTHLY CAP = $50 — STAGED, NOT YET ARMED
+
+The operator has set the monthly ceiling: **monthly_limit_usd = 50.00** (global; there is no
+per-provider cap today). This is DECIDED — do not re-litigate it, IMPLEMENT it.
+
+WHY IT IS NOT ARMED YET, measured 2026-08-02: `/data/spend.json` reads
+`spent_usd = 1185.4428735774175` for month `2026-08`, against ~$1.34 of REAL measured spend.
+`SpendLimits.check()` refuses a request when `projected > limit`. Setting 50 against a counter
+reading 1185 means EVERY request is refused the moment the gateway restarts — **the fleet stops
+routing entirely.** Arming a correct cap against a broken counter is an outage, not a control.
+
+ARM IT IN THIS ORDER — this ticket's own deliverables are the prerequisite:
+ 1. Land provider-reported cost (this ticket): per-provider attribution, unpriced -> UNKNOWN,
+    NEVER a synthesised floor. The fabricated `est_cost` floor is what produced 1185 and the
+    earlier fictional ~223.
+ 2. RESET the corrupted August counter once the accrual is trustworthy — the historical value is
+    not recoverable and must not be carried forward as if it were real.
+ 3. THEN set `monthly_limit_usd = 50.00` and verify with a live request that the cap enforces at
+    the boundary and NOT before it.
+ 4. Fail-on-revert: seed spend just under 50 and prove a request passes; seed just over and prove
+    it is refused with a clear reason.
+ACCEPTANCE ADDITION: the cap must fail LOUD and NAMED when it trips ("monthly cap $50 reached,
+$X spent") — a silent refusal is indistinguishable from a dead provider, which is the exact
+confusion this fleet has already spent a session untangling.
