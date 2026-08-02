@@ -85,6 +85,8 @@ they are independent and can run in parallel tabs — say so, do not serialise b
 | **6** | `TOOLS-FULLY-WIRED-CAMPAIGN` — **LEDGER PHASE ONLY** | **L8 operator's #1 + L6 makes everything else measurable.** Define the bar (W1 reachable · W2 invoked on cadence · W3 **SEEN TO FAIL** · W4 findings reach a human · W5 unused capability enabled or explicitly declined) and build the row-per-tool ledger from the EXISTING audit. Cheap. Remediation is phase 3 — the ledger is not |
 | **7** | `GRAPHIFY-AFFECTED-WIRE` | **L3 feeds #8 + L8 tools.** 0 call sites vs 114 for `update`. Build it first and WIRING-DONE-CONTRACT gets reachability for free instead of hand-rolling a second traversal |
 
+| **7b** | `DIVERGED-BRANCH-TRIAGE` — **reporting half only** | **L4 cost-to-value + L6 surfacing.** 7 branches report at-risk EVERY cycle and always will (diverged; content SAFE on `rescue/*`). The cadence detector reports `n=8` every 20 min and **SEVEN are permanent — the brand-new work-loss alarm is ~87% noise on day one**, so a genuinely NEW stranded branch would be invisible in it. Add a distinct `diverged-parked` shape counted SEPARATELY. **Do NOT suppress them** — silence is how the class returns |
+
 **PHASE 2 — STOP NEW DEBT AT SOURCE.** Every day these are absent, more debt lands. Prevention before cleanup.
 | # | ticket | deciding lens |
 |---|---|---|
@@ -97,6 +99,7 @@ they are independent and can run in parallel tabs — say so, do not serialise b
 |---|---|---|
 | **11** | `PR-QUEUE-DRIVE` | **L5 compounding + L8.** 67 open PRs, **52 DRAFTS, up from 42 in one session** — the launcher opens a draft per ticket and nothing merges, so it grows with throughput. TOKEN-LEAN: reviewer tabs off-Claude, `--retries` FINITE, 1-2 tabs until #392 lands |
 | **12** | `PR-AUTOMATION-EVAL` | **L2 stops it re-forming + L3 after the drain.** Draining by hand produces the measured friction the bar must be written from. Both halves, 5 disqualifying criteria, adversarial pass REQUIRED |
+| **12b** | `DIVERGED-BRANCH-TRIAGE` — **triage half** | **L5 compounding, L7 does NOT apply (content is safe).** Per-branch merge decisions: superseded / still-wanted / dead. `feat/ft-limits-groq-reconcile` shows **706** local-only commits — verify that is a broken upstream ref before treating it as 706 pieces of work. **NEVER force-push to resolve a divergence** — the remote side holds commits the local lacks |
 | **13** | `TOOLS-FULLY-WIRED-CAMPAIGN` — remediation · `INERT-CHECKS-WIRE` · `MONIT-INSTALL-OR-RETIRE` · land **PR #209** · `LITELLM-COST-ADOPT` · ruff/mypy/shellcheck chain | **L8 operator's #1, executed.** The ledger from #6 says what to fix; this is fixing it. monit must be INSTALLED-and-proven or RETIRED — a paper adoption blocks the search for a real one |
 
 **PHASE 4 — DETECTION LAYER.** Register into it only what is already proven to fire.
