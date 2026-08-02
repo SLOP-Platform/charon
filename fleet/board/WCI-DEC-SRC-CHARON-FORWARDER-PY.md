@@ -5,8 +5,9 @@ difficulty: 3
 work_class: refactor
 branch: feat/wci-dec-src-charon-forwarder-py
 owns: src/charon/forwarder.py
-depends_on: FORWARDER-COST-ORDER-FALLBACK, ORDER-A-COST-PRIMARY-LAND
+depends_on:
 dep-kind: build
+parked: true
 auto_generated: wci-contention
 wci_contention_target: src/charon/forwarder.py
 wci_contention_count: 6
@@ -43,3 +44,6 @@ ds: |
   Sequenced STRICTLY AFTER every live owner above: this ticket rewrites the file they are
   editing, so it must not run concurrently with them (that is the collision it exists to
   end, not to cause). Concurrency-safe once they land — it owns a single path.
+stale: |
+  PARKED 2026-08-01 by fleet/wci-contention.sh --generate: owner FORWARDER-COST-ORDER-FALLBACK carries a justified 'serial_justified:' — the file is serial BY DESIGN.
+  The contention this ticket tracked is gone; it is retired rather than left to accrete.
