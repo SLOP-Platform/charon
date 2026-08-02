@@ -1,6 +1,6 @@
 repo: charon-private
 tier: strong
-priority: 1
+priority: 0
 difficulty: 4
 work_class: design-review
 branch: chore/pr-queue-drive
@@ -102,3 +102,43 @@ note: |
   pass of this one. That is merge-order, not a build prereq — none of the three blocks another.
 - **SERIAL AGAINST ITSELF.** Exactly one lane drives this queue at a time. A second concurrent
   driver would re-stale the first one's freshly refreshed bases and double the merge-queue churn.
+
+## SCOPE + PRIORITY RAISE 2026-08-02 (operator-directed): DRAIN THE DRAFTS
+
+Operator: process any PRs and draft PRs as a HIGH priority, token-lean.
+
+MEASURED AT SESSION CLOSE: **67 open PRs — 46 rig (35 draft) + 21 product (17 draft).** It was 42
+at the start of the session. **The fleet creates PRs faster than anything lands them.** 52 drafts is
+the largest pool of FINISHED-BUT-UNDELIVERED work on the board — the same "stops before the terminal
+gate" class as unpushed commits, only one stage later.
+
+WHY DRAFTS ACCUMULATE, mechanically: `fleet-droid.sh` ends every ticket by opening a DRAFT PR and
+never merges (correct — the manager gates). So drafts are the launcher's normal output. Nothing
+drains them, so the queue grows monotonically with fleet throughput. **A faster fleet makes this
+worse, not better.**
+
+TOKEN-LEAN EXECUTION — this must NOT run through Claude:
+  1. Reviewer tabs are OFF-CLAUDE and are the correct vehicle:
+     `bash fleet/reviewer-tab.sh --tier strong --wait 5 --retries <FINITE>`
+     **NEVER `--retries 0`** — that plus the dropped `--wait` is what drained the entire GraphQL
+     quota on 2026-08-02 (cycle 461 in minutes; killing the pools took graphql 0/5000 -> 3784/5000).
+  2. Quota is the binding constraint until PR #392's REST+ETag cutover lands. Check
+     `gh api rate_limit` BEFORE scaling the pool; keep it to 1-2 until then.
+  3. Manager merges; reviewers review. Do not have Claude read diffs — that is what the pool is for.
+
+TRIAGE ORDER (highest-value first, not oldest-first):
+  a. Drafts whose work is DONE and merely unreviewed -> review, land.
+  b. Drafts superseded by later work -> CLOSE with evidence. Closing is success; a superseded draft
+     is noise that makes the real queue unreadable.
+  c. Drafts that are stale-based -> refresh via GitHub `update-branch` (NOT `gh run rerun`, which
+     reuses the cached merge ref and cannot clear a stale-base red).
+  d. Already BOUNCED, do not re-land blind: #317 #320 #334 #342 #343 #346 #360 #371.
+  e. Conflicted PRs get ZERO CI and read as mergeable-looking — treat as unverified, never as green.
+
+ACCEPTANCE: report the draft count before and after each batch. If the count does not FALL, the
+lane is not working — say so rather than reporting activity.
+
+## Dependencies & Sequence
+
+Raised to P0 by operator directive. Depends on UNBLOCK-REVIEW-INFRA (the #392 REST cutover) for
+sustainable throughput, but do NOT wait for it — a 1-2 tab pool can start draining now within quota.
