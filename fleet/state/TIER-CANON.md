@@ -64,6 +64,17 @@ gemini-3.1-pro all blend well above $1.50). A model priced at exactly
 a threshold rounds UP to the more expensive band (conservative for
 budget-tap purposes — a $0.30 model is `strong`, not `economy`).
 
+### Cost-driven spill-up ceiling
+
+The MOST EXPENSIVE cost band a cost-driven spill-up may escalate INTO.
+FAIL CLOSED: absent, empty, malformed, or off-axis → no spill-up at all
+(the ceiling defaults to the ticket's own starting band). The ceiling
+lives here (the cost-band SSOT), not in a separate config, because it
+is a routing-cost policy on the same axis this file defines. Read by
+`fleet/fleet-droid.sh:276` (`spill_ceiling_tier()`).
+
+    SPILL_UP_COST_CEILING = strong
+
 ### Price input — the `price_per_mtok` map
 
 The $/Mtok figure itself comes from an explicit `price_per_mtok: dict
