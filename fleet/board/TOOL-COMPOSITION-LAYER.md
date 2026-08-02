@@ -86,3 +86,21 @@ D&S — Deps & Sequence:
   - Depends on: nothing (read-only study).
   - Related: KSF-LOAD-BEARING (the framework that "gates only itself"), ENGINE-CONVERGE.
   - Sequence: research only. No build without an operator decision on the outcome.
+
+## Dependencies & Sequence
+
+- **depends_on: none.** Read-only study over the board, graphify's `graph.json`, memory and the
+  gate-gap ledger. Every input already exists.
+- **RUN IT NOW, AHEAD OF THE THREE RECONCILERS IT FEEDS.** `EVAL-REGISTRY-DERIVE` (tools),
+  `CRON-REGISTRY-VISIBLE` (scheduled jobs) and `PRIORITY-DROPOUT-AUDIT` (work items) are all
+  instances of ONE class — "a list and reality disagree, silently" — and each needs the SAME join
+  between `owns:`, the code map and live state. Without this research they will hand-roll three
+  private joins that drift apart. This ticket is what makes them share one.
+- Reopened 2026-08-02 (see `reopened:`) because the archived DONE marker had no deliverable.
+  Re-verify the ticket's own central measurement before building on it — `registry-discovery.sh`
+  being the only `graph.json` consumer, and its zero `owns:` references — since it is now ~2 days
+  old and this rig's facts rot fast `[[confirm-dont-trust-documentation]]`.
+- Related but NOT blocking: `KSF-PLUGIN-FRAMEWORK-RESUME` asks whether KSF is the right HOST for
+  a shared framework; this asks what the COMPOSITION layer between tools should be. Disjoint
+  owns, and they inform each other — read its findings if it lands first.
+- Deliverable is a RESEARCH NOTE. No build, no wiring, no adoption without an operator decision.
