@@ -90,6 +90,10 @@ _OPENAI_SHAPE_PRESETS = frozenset({
     "deepseek", "chutes", "groq", "together", "mistral", "fireworks", "sambanova",
     "replicate", "xai", "cohere", "openai", "huggingface", "neuralwatt",
     "perplexity", "lmstudio", "jan", "ollama", "vllm", "local",
+    # FT-CATALOG-SEED: the three new free-tier presets are plain
+    # OpenAI-compatible chat-completions APIs (no wire/adapter override), so
+    # they join the canonical-shape registry (see feat/ft-catalog-seed).
+    "github_models", "featherless", "ollama_cloud",
 })
 
 # Presets whose declared upstream `wire` is NOT OpenAI-compatible -- their
