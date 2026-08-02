@@ -134,3 +134,34 @@ Done contract additions:
 Raised with PR-QUEUE-DRIVE (queue #6): that ticket DRAINS the current 52 by hand, this one stops the
 backlog re-forming. Do both — draining without automation just refills, automating without draining
 leaves 52 stranded.
+
+### HARD CONSTRAINT (operator, 2026-08-02): PROPERLY, NOT BLINDLY
+
+"It's closing PRs / draft PRs PROPERLY with whatever oversight and review is required — not doing
+it blindly."
+
+**The automation is a DELIVERY MECHANISM for a review bar that has already been SATISFIED. It is
+never a substitute for the bar.** A merge queue that lands work faster than we can verify it is a
+regression, not an improvement — it converts a review backlog into a defect backlog, which is
+strictly worse because the defects are then on master.
+
+MEASURED THE SAME DAY, and this is the whole argument: **6 of 8 PRs in one review round were
+BOUNCED.** Two shapes accounted for nearly all of them —
+  (a) a safety property asserted in PROSE that the code does not implement (#360 claimed atomic
+      config write three times; `grep -n os.replace` = 0, the real write was `cp -p`);
+  (b) a suite that passes against a MOCK of the component under test and therefore cannot fail on
+      revert (#334 byte-identical 21/0 with the change reverted).
+**Blind auto-merge on green CI would have landed every one of those**, because CI was green on all
+of them. Green CI is not evidence of correctness here; it is evidence that the tests ran.
+
+THEREFORE, evaluate every candidate on these first — a tool that cannot do this is disqualified
+however good its merge queue is:
+ 1. Can it BLOCK on an explicit human/agent verdict, not merely on CI status?
+ 2. Can it require the ADVERSARIAL review to have run, and treat a missing verdict as BLOCKING
+    rather than as absent-therefore-fine? (Fail-closed on absence — today's `land-push` CI gate
+    fails OPEN on "no PR exists", which is exactly the wrong default.)
+ 3. Can it distinguish "CI green" from "reviewed"? Anything that conflates them is disqualified.
+ 4. Does it handle a CONFLICTED PR correctly? Those get ZERO checks and read as mergeable-looking —
+    a queue that treats no-checks as not-failing will merge unverified work.
+ 5. Is the merge decision AUDITABLE after the fact — who/what approved, on what evidence?
+The prize is removing the LATENCY and the polling cost, not removing the judgement.
