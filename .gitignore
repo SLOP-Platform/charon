@@ -141,3 +141,8 @@ graphify-out/
 # every PR. Happened 2026-08-02 with .worktrees/preflight-daemon-seam and silently broke the
 # merge gate. This is the worktree-leak class landing in the repo itself.
 .worktrees/
+
+# ...and rescued WIP backups. A "backup" inside the blanket fleet/state/* ignore is NOT durable —
+# that mistake was made twice on 2026-08-02. Negated so a rescue survives a fresh clone.
+!fleet/state/wip-backup-*/
+!fleet/state/wip-backup-*/**

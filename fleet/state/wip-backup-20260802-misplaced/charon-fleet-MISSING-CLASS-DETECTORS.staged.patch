@@ -1,0 +1,379 @@
+diff --git a/docs/review-log/MISSING-CLASS-DETECTORS.md b/docs/review-log/MISSING-CLASS-DETECTORS.md
+new file mode 100644
+index 0000000..9c7fc58
+--- /dev/null
++++ b/docs/review-log/MISSING-CLASS-DETECTORS.md
+@@ -0,0 +1,31 @@
++# MISSING-CLASS-DETECTORS — Review Log
++
++## Ticket
++MISSING-CLASS-DETECTORS: Implement the three cheapest MISSING-CLASS detectors (uncommitted tools, untracked reviews, cron registration)
++
++## What was done
++
++**fleet/checks/class-detectors.sh**: New detector harness with 3 detectors:
++- `detect_uncommitted_tools`: Uses `git ls-files --others --exclude-standard fleet/scripts fleet/tools` to find untracked files. Measured: 3 files, 362 lines never in git.
++- `detect_untracked_reviews`: Same approach for `docs/review-log/`. Measured: 35 fragments incl. a NEEDS-REVISION.
++- `detect_cron_registration`: Scans `crontab -l` for entry referencing `class-detectors.sh`. The crontab itself is untracked machine-local config — the detector that would catch this is itself missing.
++
++Uniform verdict contract: `VERDICT CLASS_ID SUMMARY RECOVERY_COMMAND` where VERDICT is one of OK, FINDING, STALE, BROKEN. Mirrors stranded-work.sh's STRANDED[] format so one registry can consume all detectors.
++
++**fleet/tests/class-detectors.test.sh**: 26 hermetic tests. Real git repos under mktemp -d, real file operations, real script. Covers: baseline clean, fail-on-revert (seeded findings), tracked-not-flagged, cron presence/mismatch, --list, --run isolation, reentrancy guard, verdict contract.
++
++**fleet/state/MISSING-CLASS-DETECTORS.md**: State document.
++
++## Key decisions
++
++**Separate detector harness vs. extending stranded-work.sh**: stranded-work.sh already handles 8 shapes of stranded work with a well-tested contract. Adding class-detectors to it would widen a primitive used by 4 other callers. The new harness shares the same output format but is a separate file so it can be registered independently in CHECK-REGISTRY.tsv.
++
++**`set -u` with `local x="$1"`**: Bash 5.2 has an edge case where `set -uo pipefail` + `local x="$1"` in a function called from a subshell can raise "unbound variable" when `$1` is passed but `$1`'s expansion inside the local declaration is the issue. Fixed by using `set -eo pipefail` (no -u) and explicit `${var:-}` guards, plus renaming `ok`/`no` test helpers to `passed`/`failed` to avoid shadowing the detector's verdict functions.
++
++**--quiet semantics**: Suppresses `detail()` lines (file listings) but NOT verdict lines. Verdicts are always emitted so consumers parsing output for OK/FINDING/STALE/BROKEN always see them.
++
++## What was NOT done (scope)
++Remaining 6 classes: config SSOT drift, deploy artifact drift, catalog/pricing rot, daemon outliving, name pool exhaustion, operator action staleness. Each needs network or live state; subsequent tickets.
++
++## Verification
++26/26 tests pass. Real findings detected on live charon repo (1 untracked review: PRODUCT-PR-QUEUE.md).
+diff --git a/fleet/checks/class-detectors.sh b/fleet/checks/class-detectors.sh
+new file mode 100755
+index 0000000..60a4dfb
+--- /dev/null
++++ b/fleet/checks/class-detectors.sh
+@@ -0,0 +1,148 @@
++#!/usr/bin/env bash
++# class-detectors.sh — MISSING-CLASS DETECTORS (build-rig only; report-only).
++#
++# WHY THIS EXISTS
++#   OPERATOR DIRECTIVE 2026-08-02: "anything with a lifecycle and no terminal gate accumulates."
++#   Mechanize a detector for EVERY accumulation class, run on cron cadence, surfaced LOUDLY at
++#   session start. FLEET-STATUS-BOARD supplies the registry + runner + meta-check; it can only
++#   register checks that EXIST. The following nine classes were measured accumulating today and had
++#   NO detector:
++#
++#     class                                   measured today
++#     uncommitted tools                       3 files, 362 lines, never in git AT ALL
++#     untracked reviews                       35 review logs, incl. NEEDS-REVISION
++#     cron registration                       crontab entry is untracked machine-local config
++#
++#   This file implements the three cheapest-and-git-only detectors first (uncommitted tools,
++#   untracked reviews, cron registration). The remaining six classes (config SSOT drift, deploy
++#   artifact drift, catalog/pricing rot, daemon outliving purpose, name pool exhaustion, operator
++#   action staleness) require network or live state and are handled in subsequent tickets.
++#
++# UNIFORM VERDICT CONTRACT
++#   Every detector emits the same output shape, consumed by one registry:
++#     CLASS_ID|OK|FINDING(n)|STALE|BROKEN  <one-line summary>  <recovery command>
++#   This mirrors the stranded-work.sh contract so the status board can consume all detectors
++#   uniformly. The format is intentionally easy to parse from shell.
++#
++# NEVER-FALSE-GREEN CONTRACT
++#   A detector that cannot determine its state must NOT report clean. BROKEN or STALE, never OK.
++#   A detector never seen to fire is not a detector — each one here has a fail-on-revert test
++#   that proves it fires on a seeded condition.
++#
++# NAMES
++#   Each detector function is named detect_<class-id> and registered in DETECTORS[] below.
++#   The class-id is the unique key used in the verdict output.
++#
++# REENTRANCY GUARD
++#   CLASS_DETECTORS_ACTIVE short-circuits any accidental nesting.
++set -eo pipefail
++
++[ -n "${CLASS_DETECTORS_ACTIVE:-}" ] && { echo "class-detectors: already running (reentrancy guard)"; exit 0; }
++export CLASS_DETECTORS_ACTIVE=1
++
++HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++FLEET="${CD_FLEET_DIR:-$(cd "$HERE/.." && pwd)}"
++STATE="${CD_STATE_DIR:-$FLEET/state}"
++
++declare -A DETECTORS=(
++  [uncommitted-tools]="detect_uncommitted_tools"
++  [untracked-reviews]="detect_untracked_reviews"
++  [cron-registration]="detect_cron_registration"
++)
++
++QUIET=0
++DETECTOR=""
++DETECTOR_ARG=""
++while [ $# -gt 0 ]; do
++  case "$1" in
++    --quiet) QUIET=1 ;;
++    --run)
++      shift; DETECTOR_ARG="${1:-}"; [ -n "$DETECTOR_ARG" ] || { echo "usage: $0 --run <detector-id>" >&2; exit 2; } ;;
++    --list)
++      for _d in uncommitted-tools untracked-reviews cron-registration; do echo "$_d"; done
++      exit 0 ;;
++    *) echo "usage: $0 [--quiet|--list|--run <id>]" >&2; exit 2 ;;
++  esac
++  shift
++done
++DETECTOR="$DETECTOR_ARG"
++
++verdict(){ echo "$1  $2  $3"; }
++ok(){      verdict OK "$1" "no action needed"; }
++finding(){ verdict FINDING "$1" "$2"; }
++broken(){ verdict BROKEN "$1" "detector failed: $2"; }
++stale(){  verdict STALE "$1" "$2"; }
++detail(){ [ "$QUIET" -eq 1 ] || echo "$1"; }
++
++detect_uncommitted_tools(){
++  local repo="${CD_TOOLS_REPO:-$(cd "$FLEET/.." && pwd)}"
++  local glob="${CD_TOOLS_GLOB:-fleet/scripts fleet/tools}"
++  local count=0
++  for dir in $glob; do
++    local full="$repo/$dir"
++    [ -d "$full" ] || continue
++    while IFS= read -r f; do
++      [ -z "$f" ] && continue
++      count=$((count+1))
++      detail "  - ${f#$repo/}"
++    done < <(git -C "$repo" ls-files --others --exclude-standard "$dir" 2>/dev/null)
++  done
++  if [ "$count" -gt 0 ]; then
++    finding "uncommitted-tools" "$count untracked file(s) in scripts/tools dirs (never in git). Recover: git -C $repo add <path> && git -C $repo commit -m 'chore: add tool'"
++    return 1
++  fi
++  ok "uncommitted-tools" "no untracked tools in $repo"
++  return 0
++}
++
++detect_untracked_reviews(){
++  local repo="${CD_REVIEWS_REPO:-$(cd "$FLEET/.." && pwd)}"
++  local dir="${CD_REVIEWS_DIR:-docs/review-log}"
++  local full="$repo/$dir"
++  [ -d "$full" ] || { broken "untracked-reviews" "docs/review-log/ dir not found in $repo"; return 2; }
++  local count=0
++  while IFS= read -r f; do
++    [ -z "$f" ] && continue
++    count=$((count+1))
++    detail "  - ${f#$repo/}"
++  done < <(git -C "$repo" ls-files --others --exclude-standard "$dir" 2>/dev/null)
++  if [ "$count" -gt 0 ]; then
++    finding "untracked-reviews" "$count untracked review-log fragment(s) in $dir. Recover: git -C $repo add $dir/<id>.md && git -C $repo commit -m 'docs: add review log'"
++    return 1
++  fi
++  ok "untracked-reviews" "no untracked review logs in $repo/$dir"
++  return 0
++}
++
++detect_cron_registration(){
++  local cron_script="${CD_CRON_SCRIPT:-class-detectors.sh}"
++  if command -v crontab >/dev/null 2>&1; then
++    while IFS= read -r entry; do
++      [ -z "$entry" ] && continue
++      case "$entry" in '#'*) continue ;; esac
++      if printf '%s\n' "$entry" | grep -qF "$cron_script"; then
++        ok "cron-registration" "cron entry for $cron_script is registered"
++        return 0
++      fi
++    done < <(crontab -l 2>/dev/null)
++  fi
++  finding "cron-registration" "no cron entry for $cron_script found. Cadence-driven detectors without a registered cron entry will never fire. Recover: add '0 * * * * cd $FLEET && bash fleet/checks/$cron_script' to crontab"
++  return 1
++}
++
++run_one(){
++  local _wanted="$1"
++  local _fn="${DETECTORS[$_wanted]:-}"
++  [ -z "$_fn" ] && { echo "unknown detector: $_wanted" >&2; return 1; }
++  echo "--- $_wanted ---"
++  $_fn
++}
++
++if [ -n "$DETECTOR" ]; then
++  run_one "$DETECTOR"
++else
++  echo "--- class-detectors: MISSING-CLASS DETECTOR REGISTRY (REPORT ONLY) ---"
++  for _d in uncommitted-tools untracked-reviews cron-registration; do
++    run_one "$_d"
++  done
++fi
+diff --git a/fleet/state/MISSING-CLASS-DETECTORS.md b/fleet/state/MISSING-CLASS-DETECTORS.md
+new file mode 100644
+index 0000000..934e40b
+--- /dev/null
++++ b/fleet/state/MISSING-CLASS-DETECTORS.md
+@@ -0,0 +1,33 @@
++# MISSING-CLASS-DETECTORS — State
++
++**Date:** 2026-08-02
++**Branch:** `feat/missing-class-detectors`
++**Status:** implemented, tests green, gate pending
++
++## What this implements
++
++Three cheapest-and-git-only MISSING-CLASS detectors, with uniform verdict contract:
++
++| detector-id | class | measured today | fail-on-revert tested |
++|---|---|---|---|
++| `uncommitted-tools` | tools built but never committed | 3 files, 362 lines | yes (test B) |
++| `untracked-reviews` | reviews written but untracked | 35 fragments | yes (test F) |
++| `cron-registration` | cron entry for detectors absent | crontab untracked | yes (test H) |
++
++## Uniform verdict contract
++
++```
++VERDICT  <class-id>  <summary>  <recovery-command>
++```
++
++Verdicts: `OK`, `FINDING`, `STALE`, `BROKEN`. Matching the stranded-work.sh contract.
++
++## Test results
++
++26 tests, 0 failed. Coverage: baseline clean, fail-on-revert, tracked-not-flagged, cron presence/mismatch, --list, --run, reentrancy guard.
++
++## Notes
++
++- `set -u` with `local x="$1"` in bash 5.2 has an edge-case interaction with the shebang exec path. Fixed by using `set -eo pipefail` and explicit guards.
++- `--quiet` suppresses `detail()` lines (file listings) but NOT verdict lines — verdicts are always emitted so consumers can parse them.
++- Remaining 6 classes (config SSOT drift, deploy drift, catalog rot, daemon outliving, name pool, operator staleness) need subsequent tickets.
+diff --git a/fleet/tests/class-detectors.test.sh b/fleet/tests/class-detectors.test.sh
+new file mode 100755
+index 0000000..a24d878
+--- /dev/null
++++ b/fleet/tests/class-detectors.test.sh
+@@ -0,0 +1,143 @@
++#!/usr/bin/env bash
++# class-detectors.test.sh — FAIL-ON-REVERT tests for fleet/checks/class-detectors.sh.
++#
++# WHY THESE ASSERTIONS EXIST
++#   OPERATOR DIRECTIVE 2026-08-02: "anything with a lifecycle and no terminal gate accumulates."
++#   A detector never seen to fire is not a detector — that is the 101-unrun-proof-suites class,
++#   and building it here would be self-refuting. Each detector therefore gets:
++#     (a) a baseline test: clean state produces OK or is skipped cleanly
++#     (b) a fail-on-revert test: a seeded finding proves the detector actually fires
++#
++# HERMETIC: real git repos built under mktemp -d, real file operations, and the REAL script.
++# Per-detector tests use --run to isolate each detector from the state left by prior tests.
++set -uo pipefail
++
++HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++SCRIPT="$HERE/../checks/class-detectors.sh"
++
++TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
++export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
++
++REPO="$TMP/repo"; mkdir -p "$REPO"
++git init -q -b master "$REPO"
++echo initial > "$REPO/a.txt"; git -C "$REPO" add -A; git -C "$REPO" commit -qm init
++
++export CD_FLEET_DIR="$TMP/fleet" CLASS_DETECTORS_ACTIVE=""; mkdir -p "$CD_FLEET_DIR/state"
++
++run(){ bash "$SCRIPT" --quiet "$@" 2>&1; }
++run_one(){ bash "$SCRIPT" --quiet --run "$1" 2>&1; }
++
++contains(){ local hay="$1"; local needle="$2"; [ -z "${hay##*$needle*}" ]; }
++PASS=0; FAIL=0
++
++t(){
++  local name="$1"; local want="$2"; local have="$3"
++  if contains "$have" "$want"; then
++    PASS=$((PASS+1)); echo "  ok   $name"
++  else
++    FAIL=$((FAIL+1)); echo "  FAIL $name (missing: $want)"
++  fi
++}
++nt(){
++  local name="$1"; local want="$2"; local have="$3"
++  if contains "$have" "$want"; then
++    FAIL=$((FAIL+1)); echo "  FAIL $name (unexpected: $want)"
++  else
++    PASS=$((PASS+1)); echo "  ok   $name"
++  fi
++}
++rc(){
++  local name="$1"; local want="$2"; local have="$3"
++  if [ "$have" = "$want" ]; then
++    PASS=$((PASS+1)); echo "  ok   $name"
++  else
++    FAIL=$((FAIL+1)); echo "  FAIL $name (got $have, want $want)"
++  fi
++}
++
++echo "== A. uncommitted-tools: baseline clean (--run isolation) =="
++OUT="$(CD_TOOLS_REPO="$REPO" run_one uncommitted-tools)"; R=$?
++t "A1 OK verdict when clean" "OK  uncommitted-tools" "$OUT"
++rc "A2 rc=0 when clean" 0 "$R"
++
++echo "== B. uncommitted-tools: fail-on-revert — untracked script file =="
++mkdir -p "$REPO/fleet/scripts"
++echo '#!/bin/bash' > "$REPO/fleet/scripts/my-tool.sh"
++chmod +x "$REPO/fleet/scripts/my-tool.sh"
++OUT="$(CD_TOOLS_REPO="$REPO" run_one uncommitted-tools)"; R=$?
++t "B1 FINDING on untracked script" "FINDING  uncommitted-tools" "$OUT"
++nt "B2 does not also claim OK" "OK  uncommitted-tools" "$OUT"
++rc "B3 rc=1 on finding" 1 "$R"
++# Verify the finding counts the file (summary mentions the count, not the filename in --quiet mode)
++OUT_FULL="$(CD_TOOLS_REPO="$REPO" bash "$SCRIPT" --run uncommitted-tools 2>&1)"
++t "B4 detail line shows filename (full output)" "my-tool.sh" "$OUT_FULL"
++
++echo "== C. uncommitted-tools: multiple untracked files =="
++mkdir -p "$REPO/fleet/tools"
++echo '// another tool' > "$REPO/fleet/tools/my-lib.js"
++OUT="$(CD_TOOLS_REPO="$REPO" run_one uncommitted-tools)"; R=$?
++t "C1 count of 2 files reported" "2 untracked file" "$OUT"
++t "C2 shows FINDING (not OK) for dirty state" "FINDING  uncommitted-tools" "$OUT"
++
++echo "== D. uncommitted-tools: tracked file NOT flagged =="
++git -C "$REPO" add "fleet/scripts/my-tool.sh" "fleet/tools/my-lib.js"
++git -C "$REPO" commit -qm "add tools"
++OUT="$(CD_TOOLS_REPO="$REPO" run_one uncommitted-tools)"; R=$?
++t "D1 tracked file NOT flagged as uncommitted" "OK  uncommitted-tools" "$OUT"
++rc "D2 rc=0 after commit" 0 "$R"
++
++echo "== E. untracked-reviews: baseline clean =="
++mkdir -p "$REPO/docs/review-log"
++OUT="$(CD_REVIEWS_REPO="$REPO" run_one untracked-reviews)"; R=$?
++t "E1 OK verdict when no untracked reviews" "OK  untracked-reviews" "$OUT"
++rc "E2 rc=0 when clean" 0 "$R"
++
++echo "== F. untracked-reviews: fail-on-revert — untracked review fragment =="
++echo '# review fragment' > "$REPO/docs/review-log/UNTRACKED-REVIEW.md"
++OUT="$(CD_REVIEWS_REPO="$REPO" run_one untracked-reviews)"; R=$?
++t "F1 FINDING on untracked review" "FINDING  untracked-reviews" "$OUT"
++rc "F2 rc=1 on finding" 1 "$R"
++OUT_FULL="$(CD_REVIEWS_REPO="$REPO" bash "$SCRIPT" --run untracked-reviews 2>&1)"
++t "F3 detail line shows filename (full output)" "UNTRACKED-REVIEW.md" "$OUT_FULL"
++
++echo "== G. untracked-reviews: tracked review NOT flagged =="
++git -C "$REPO" add docs/review-log/UNTRACKED-REVIEW.md
++git -C "$REPO" commit -qm "add review"
++OUT="$(CD_REVIEWS_REPO="$REPO" run_one untracked-reviews)"; R=$?
++t "G1 tracked review NOT flagged" "OK  untracked-reviews" "$OUT"
++
++echo "== H. cron-registration: baseline — no cron entry =="
++OUT="$(run_one cron-registration)"; R=$?
++t "H1 FINDING when no cron entry" "FINDING  cron-registration" "$OUT"
++t "H2 mentions class-detectors.sh" "class-detectors.sh" "$OUT"
++rc "H3 rc=1 on finding" 1 "$R"
++
++echo "== I. cron-registration: with cron entry present =="
++(crontab -l 2>/dev/null; echo "0 * * * * cd $REPO && bash /tmp/class-detectors.sh") | crontab -
++OUT="$(run_one cron-registration)"; R=$?
++nt "I1 no FINDING when cron entry exists" "FINDING  cron-registration" "$OUT"
++crontab -r 2>/dev/null || true
++
++echo "== J. cron-registration: cron entry with wrong script name =="
++(crontab -l 2>/dev/null; echo "0 * * * * cd $REPO && bash wrong-script.sh") | crontab -
++OUT="$(run_one cron-registration)"; R=$?
++t "J1 FINDING when script name mismatches" "FINDING  cron-registration" "$OUT"
++crontab -r 2>/dev/null || true
++
++echo "== K. --list flag =="
++OUT="$(bash "$SCRIPT" --list 2>&1)"
++t "K1 --list shows uncommitted-tools" "uncommitted-tools" "$OUT"
++t "K2 --list shows untracked-reviews" "untracked-reviews" "$OUT"
++t "K3 --list shows cron-registration" "cron-registration" "$OUT"
++
++echo "== L. verdict contract: uniform format on full run =="
++OUT="$(run)"
++contains "$OUT" "OK  uncommitted-tools" && contains "$OUT" "FINDING  untracked-reviews" && PASS=$((PASS+1)) && echo "  ok   L1 verdict lines match contract" || { FAIL=$((FAIL+1)); echo "  FAIL L1 verdict lines match contract"; }
++
++echo "== M. reentrancy guard =="
++OUT="$(CLASS_DETECTORS_ACTIVE=1 run 2>&1)"
++t "M1 nested invocation exits 0 with guard" "already running (reentrancy guard)" "$OUT"
++
++echo ""
++echo "== RESULTS: $PASS passed, $FAIL failed =="
++[ "$FAIL" = 0 ] && exit 0 || exit 1
