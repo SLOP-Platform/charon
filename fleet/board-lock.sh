@@ -100,6 +100,20 @@ _repo_top(){ git rev-parse --show-toplevel 2>/dev/null; }
 # PRODUCT repo (where the same hook symlink is installed) without a hardcoded path.
 _is_board_repo(){ local t; t="$(_repo_top)" || return 1; [ -n "$t" ] && [ -d "$t/fleet/board" ]; }
 
+# _is_main_checkout — is the current repo+worktree the MAIN checkout (not a fleet worktree)?
+# Determined by: (a) not bare, (b) branch is master, (c) fleet/board/ directory exists,
+# (d) worktree root is the repo root.  All four signals are required so fleet worktrees
+# (which share the same git dir and may have HEAD on master) are excluded.
+_is_main_checkout(){
+  local rt; rt="$(_repo_top)" || return 1
+  git -C "$rt" rev-parse --is-bare-repository 2>/dev/null | grep -q true && return 1  # bare -> not main
+  local ref; ref="$(git -C "$rt" symbolic-ref --short HEAD 2>/dev/null)" || return 1
+  [ "$ref" = "master" ] || return 1
+  [ -d "$rt/fleet/board" ] || return 1   # PRODUCT charon repo: no fleet/ subdirectory
+  [ "$(git -C "$rt" worktree list --porcelain 2>/dev/null | head -1 | awk '{print $2}')" = "$rt" ] || return 1
+  return 0
+}
+
 # _is_board_path <repo-relative-path> — matches a guarded PREFIX or an exact guarded file.
 _is_board_path(){
   local p="$1" pat
@@ -323,17 +337,6 @@ PY
   [ "$rc" -eq 0 ] && return 0
 
   # rc 1 is the only "a ticket did not parse" verdict. ANY other non-zero (2 = import failure,
-  # 127 = no python3, 1-from-import = no PyYAML) is INFRASTRUCTURE, and it still REFUSES — but it
-  # must not be dressed up as a ticket defect, or the fix message sends the author hunting a typo
-  # that is not there.
-  if [ "$rc" -ne 1 ]; then
-    _die "BOARD-LOCK REFUSED (fail-closed): could not run the frontmatter parse-check (rc $rc)."
-    printf '%s\n' "$out" | sed 's|^|  |' >&2
-    _die "  Audited escape (LOUD + logged): BOARD_LOCK_FM_BYPASS=1 bash $FLEET/board-lock.sh commit ..."
-    _log "frontmatter-infra-refused rc=$rc files=$(printf '%s' "$files" | tr '\n' ' ')"
-    return 7
-  fi
-
   {
     echo "################################################################"
     echo "# BOARD-WRITE REFUSED: a ticket in this commit has UNPARSEABLE frontmatter."
@@ -399,6 +402,35 @@ _commit_locked(){
   # carries) and BEFORE `git commit` (so a refusal leaves NOTHING committed and the hold still
   # held — the author fixes the value and re-runs the same command). See _frontmatter_check.
   _frontmatter_check "$@" || return $?
+
+  # MAIN-CHECKOUT MASTER REFUSAL — refuse board commits directly on master in the main checkout.
+  # The mechanism: board-lock.sh commit -> branch cut from local master tip -> land opens a PR ->
+  # GitHub MERGE commit wraps the content in a merge, but local master holds it bare. Local master
+  # is simultaneously ahead AND behind origin/master — divergence by construction on every board write.
+  # The fix: board commits go through a scratch worktree (never touching main-checkout master),
+  # so local master stays a pure FF-only mirror. Advisory first — but a blocking gate is planned
+  # once the ergonomic path (fleet/worktree-commit-and-land.sh) is shipped and the refusal becomes
+  # survivable rather than a dead-end.
+  #
+  # RETIRE_DONE_BYPASS: retire-done.sh is an auto-admin operation that legitimately needs to commit
+  # from the main checkout (the board lives there). Its archive moves are not "board edits" in the
+  # sense of the divergence problem — they are mechanical cleanup of already-landed work. Bypass
+  # the advisory but still hold the board lock (which protects the shared index).
+  if _is_main_checkout 2>/dev/null && [ -z "${RETIRE_DONE_BYPASS:-}" ]; then
+    printf '%s\n' \
+      "BOARD-LOCK ADVISORY: board commit in the MAIN CHECKOUT on 'master' causes divergence." \
+      "Local master is a pure FF-only mirror of origin/master. A board commit on master ->" \
+      "a PR merge on GitHub wraps the content in a MERGE commit, but local master holds it BARE." \
+      "Local master is simultaneously ahead AND behind origin/master — divergence by construction." \
+      "Instead, use the ergonomic path:" \
+      "  bash $FLEET/worktree-commit-and-land.sh --session $session -m '$msg' -- $*" \
+      "The scratch worktree approach keeps local master pure and avoids the divergence ratchet." \
+      "Audited escape (LOUD + logged, use only for genuine recovery/conflict resolution):" \
+      "  BOARD_LOCK_BYPASS=1 bash $FLEET/board-lock.sh commit --session $session -m '$msg' -- $*" \
+      "Audit: BOARD_LOCK_BYPASS is logged to state/board-lock.log." | _loud >&2
+    _log "main-checkout-advisory-refused session=$session paths=$*"
+    return 7
+  fi
 
   # BOARD_LOCK_COMMIT is the token the pre-commit hook verifies. It is exported ONLY for this one
   # `git commit`, so it cannot leak into an agent's ad-hoc commit later in the session.

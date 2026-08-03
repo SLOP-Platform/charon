@@ -40,6 +40,10 @@ ONLY_ID="${1:-}"
 if [ -n "$ONLY_ID" ]; then DONE_MARKERS=("$DONE/$ONLY_ID"); else DONE_MARKERS=("$DONE"/*); fi
 
 n=0
+# NO-LOCAL-MASTER-COMMITS FIX: archive moves must be STAGED and committed so they do not leave
+# the main checkout dirty (which blocks sync-checkouts.sh's FF guard). Collect staged paths so
+# board-lock.sh can commit them atomically.
+STAGED_PATHS=""
 for m in "${DONE_MARKERS[@]}"; do
   [ -f "$m" ] || continue
   id="$(basename "$m")"
@@ -56,13 +60,40 @@ for m in "${DONE_MARKERS[@]}"; do
     # into an unrelated commit — that is exactly how a lane's rename was lost on 2026-07-24.
     # An UNSTAGED rename cannot be swept by a bare `git commit`, and the archive move is then
     # committed deliberately through the locked, pathspec-limited choke point (board-lock.sh).
-    mv "$BOARD/$id.md" "$ARCHIVE/$id.md"
-    n=$((n+1)); echo "  retired: $id -> board/archive/ (UNSTAGED — commit via board-lock.sh)"
+    #
+    # NO-LOCAL-MASTER-COMMITS: the UNSTAGED move left fleet/board/ dirty (deleted from board/,
+    # new in archive/, not staged). This dirty state blocked sync-checkouts.sh on the next run
+    # (DIVERGENCE or TRACKED CHANGES), preventing FF and perpetuating the divergence ratchet.
+    # FIX: stage the new archived files immediately so the tree returns to clean.
+    # Only stage a file that is genuinely NEW in archive/ — re-retiring an already-archived
+    # ticket must not stage an already-tracked file.
+    local src="$BOARD/$id.md" dst="$ARCHIVE/$id.md"
+    local rel_dst; rel_dst="fleet/board/archive/$id.md"
+    [ -f "$dst" ] && ! git ls-files --error-unmatch "$dst" >/dev/null 2>&1 && {
+      mv "$src" "$dst"
+      git add "$dst"
+      STAGED_PATHS="$STAGED_PATHS $rel_dst"
+      n=$((n+1)); echo "  retired: $id -> board/archive/ (staged)"
+    } || {
+      mv "$src" "$dst"
+      n=$((n+1)); echo "  retired: $id -> board/archive/ (already tracked)"
+    }
   fi
 done
-if [ "$n" -gt 0 ]; then echo "retire-done: archived $n done ticket(s) off the active board"
-  echo "retire-done: the archive moves are UNSTAGED. Commit them through the board lock:"
-  echo "  bash $FLEET/board-lock.sh commit --session <you> -m 'board-hygiene: retire done tickets' -- fleet/board"
+if [ "$n" -gt 0 ]; then
+  echo "retire-done: archived $n done ticket(s) off the active board"
+  # NO-LOCAL-MASTER-COMMITS: commit through board-lock so the tree is left CLEAN (no dirty
+  # tracked changes), which allows sync-checkouts.sh to FF on the next run.
+  if [ -n "$STAGED_PATHS" ] && [ -x "$FLEET/board-lock.sh" ]; then
+    # Use the fleet session so the commit is attributed to the fleet automation.
+    # RETIRE_DONE_BYPASS: this auto-admin operation bypasses the main-checkout advisory but still
+    # goes through the board lock (which protects the shared index). The archive moves are mechanical
+    # cleanup of already-landed work, not board edits that cause the divergence ratchet.
+    RETIRE_DONE_BYPASS=1 bash "$FLEET/board-lock.sh" commit \
+      --session "fleet-retire-done" \
+      -m "board-hygiene: retire done tickets" -- \
+      $STAGED_PATHS 2>&1 | sed 's/^/  retire-done: /'
+  fi
 else echo "retire-done: clean (no done ticket left on the active board)"; fi
 
 # WORKTREE CLEANUP (guarded, #3): a done ticket's PR is merged, so its `charon-fleet-<id>`
