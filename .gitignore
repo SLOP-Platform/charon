@@ -146,3 +146,7 @@ graphify-out/
 # that mistake was made twice on 2026-08-02. Negated so a rescue survives a fresh clone.
 !fleet/state/wip-backup-*/
 !fleet/state/wip-backup-*/**
+
+# ...and session handoffs — the file the next session reads FIRST. A handoff inside the blanket
+# fleet/state/* ignore is a handoff that does not survive a fresh clone.
+!fleet/state/HANDOFF-*.md

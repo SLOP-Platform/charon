@@ -1,3 +1,14 @@
+# ⛔⛔⛔ STOP — READ THE 2026-08-02 HANDOFF FIRST ⛔⛔⛔
+#
+#   fleet/state/HANDOFF-2026-08-02-sifo-dyas.md
+#
+# It SUPERSEDES this file's queue for one session, carries the operator's U/V decisions with
+# their reasoning, and contains the lessons from a session the operator judged UNPRODUCTIVE.
+# Work ITS queue in order. Do not re-derive priorities from the sections below.
+#
+# KNOWN-WRONG in this file: section L claims SESSION-END-PUSH-GATE was dropped. FALSE — it
+# landed via PR #130. Done-marker misattributed, ROADMAP row stale.
+
 # BOOTSTRAP — COPY-PASTE THIS INTO THE NEXT SESSION
 
 ```
