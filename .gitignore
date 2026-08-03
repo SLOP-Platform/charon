@@ -134,3 +134,10 @@ graphify-out/
 # wrong and the command/rule that fixes each. Blanket fleet/state/* would keep it on-disk only,
 # which is the exact failure mode it documents (§F11: state that dies with the session).
 !fleet/state/SESSION-RETRO-PREV.md
+
+# Stray git worktrees must never be COMMITTED. A worktree dir that gets `git add`ed is recorded
+# as a GITLINK (mode 160000) with no .gitmodules entry, which makes every CI checkout fail with
+# "fatal: No url found for submodule path ... in .gitmodules" -> git exit 128 -> rig-ci RED on
+# every PR. Happened 2026-08-02 with .worktrees/preflight-daemon-seam and silently broke the
+# merge gate. This is the worktree-leak class landing in the repo itself.
+.worktrees/
