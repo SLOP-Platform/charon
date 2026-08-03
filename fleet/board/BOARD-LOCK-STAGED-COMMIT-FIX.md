@@ -4,7 +4,7 @@ priority: 0
 difficulty: 1
 work_class: bugfix
 branch: fix/board-lock-staged-commit
-depends_on:
+depends_on: NO-LOCAL-MASTER-COMMITS
 owns: fleet/board-lock.sh, fleet/worktree-commit-and-land.sh, fleet/tests/board-lock-staged-commit.test.sh
 serial_justified: |
   One precondition and its red-proof, in one file. Splitting the guard from its test is how a
