@@ -443,6 +443,7 @@ detect_needs_push(){
   for m in "$NEEDS_PUSH_DIR"/*; do
     [ -f "$m" ] || continue
     id="$(basename "$m")"; rid="$(_np_red_id "$id")"
+    _vm_refresh "$id"
     if [ -e "$DONE_DIR/$id" ] && verify_merged "$id"; then
       rm -f "$m"
       [ "$(_red_status "$rid")" = open ] && cmd_close "$rid" --override "auto: merge-verified; stale needs-push cleared" >/dev/null 2>&1 || true
@@ -504,6 +505,7 @@ done_merge_gate(){
       [ "$(_red_status "$rid")" = open ] && cmd_close "$rid" --override "auto: override recorded on marker" >/dev/null 2>&1 || true
       continue
     fi
+    _vm_refresh "$id"
     if verify_merged "$id"; then
       [ "$(_red_status "$rid")" = open ] && cmd_close "$rid" --override "auto: done marker merge-verified" >/dev/null 2>&1 || true
       continue

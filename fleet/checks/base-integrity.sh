@@ -60,8 +60,8 @@ bfile="$FLEET/board/$id.md"
 [ -f "$bfile" ] || bfile="$FLEET/board/archive/$id.md"
 [ -f "$bfile" ] || { echo "base-integrity.sh: no board file for $id" >&2; exit 2; }
 
-repo="$(_vm_repo)"
-[ -d "$repo/.git" ] || [ -f "$repo/.git" ] || { echo "base-integrity.sh: product repo not found at $repo (set VERIFY_MERGED_REPO)" >&2; exit 2; }
+repo="$(_vm_repo "$id")"
+[ -d "$repo/.git" ] || [ -f "$repo/.git" ] || { echo "base-integrity.sh: repo not found at $repo (repo field '$(_vm_ticket_repo_field "$id")' for $id; set VERIFY_MERGED_REPO or CHARON_FLEET_REPO)" >&2; exit 2; }
 
 # Resolve the base ref: --base flag > ticket `base:` meta > origin/master.
 base_ref="$base_override"
@@ -70,7 +70,7 @@ base_ref="$base_override"
 
 # FETCH FIRST — a stale local origin/master ref is the whole failure mode. Best-effort, offline-skippable.
 if [ -z "${BASE_INTEGRITY_OFFLINE:-}" ]; then
-  _vm_refresh
+  _vm_refresh "$id"
 fi
 
 # Base ref must resolve to a real commit in the product repo, else we cannot verify containment.

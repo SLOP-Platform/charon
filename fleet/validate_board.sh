@@ -93,15 +93,39 @@ PRODUCT_REPO = os.environ.get("CHARON_REPO", "/home/stack/code/charon")
 #   "charon" (the PRODUCT repo), which let a rig ticket (REPO-DECL-CENTRAL) be merge-proven by a
 #   product-side commit and gate DESTRUCTIVE actions (worktree deletion) on a wrong-repo proof. The
 #   default is now REMOVED — absent is a HARD RED, not a warning (a warning is what the old default
-#   effectively was). The accepted keys ARE this map; do NOT add a second copy — REPO-MAP-CONVERGE
-#   owns converging the map's duplicates, but the KEYS here are the validator's source of truth for
-#   "is this a known repo" and are re-derived from repo-registry.sh's case arms (kept in lockstep).
-REPO_ROOTS = {
-    "charon": PRODUCT_REPO, "product": PRODUCT_REPO,
-    "keystone": "/home/stack/code/keystone", "ksf": "/home/stack/code/keystone",
-    "charon-private": "/home/stack/charon-private", "rig": "/home/stack/charon-private",
-    "fleet": "/home/stack/charon-private",
-}
+#   effectively was). The map is DERIVED from repo-registry.sh (REPO-MAP-CONVERGE): a single
+#   shell invocation emits every known key+path at load time; the charon/product key gets the
+#   test-fixture env override (CHARON_REPO) applied on top. No hand-maintained parallel dict.
+# REPO_ROOTS is DERIVED from the canonical source (repo-registry.sh), not hand-maintained.
+# A single shell invocation emits every known key+path; the env override for charon/product
+# (CHARON_REPO, test-fixture support) is applied on top. Fail-closed: an unrunnable registry
+# yields {} so the "known key" check fails on EVERY key, never silently admits an unknown one.
+def _make_repo_roots():
+    result = {}
+    reg = os.path.join(fleet, "repo-registry.sh")
+    if os.path.isfile(reg):
+        try:
+            out = subprocess.run(
+                ["bash", "-c",
+                 f"source \"$0\"; for k in $(repo_known_keys); do "
+                 f"repo_resolve \"$k\" \"\" 2>/dev/null && printf '%s %s\\n' \"$k\" \"$RR_PATH\"; done",
+                 reg],
+                capture_output=True, text=True, timeout=10
+            )
+            for line in out.stdout.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split(None, 1)
+                if len(parts) == 2:
+                    result[parts[0]] = parts[1]
+        except Exception:
+            pass
+    result["charon"] = PRODUCT_REPO
+    result["product"] = PRODUCT_REPO
+    return result
+
+REPO_ROOTS = _make_repo_roots()
 # repo_key(d) — the canonical lowercase repo key, or "" if absent. Callers that need a ROOT for
 # owns-path resolution fall back to PRODUCT_REPO ONLY inside repo_root() (a non-failing resolver
 # so the owns-existence WARN check never crashes); the MANDATORY rule below is what actually FAILS
