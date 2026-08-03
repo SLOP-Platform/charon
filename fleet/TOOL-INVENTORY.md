@@ -29,8 +29,7 @@ bottom of this file for the wiring).
 - `graphify diagnose multigraph` — reports same-endpoint edge-collapse risk (graph QA).
 - Live graph for charon: `/home/stack/code/charon/graphify-out/graph.json` (5.5MB, rebuilt 2026-07-13).
 - `graphify-mcp` — same capabilities exposed as an MCP server for in-session tool calls instead of shelling out.
-
-## 2. Keystone Framework (KSF)
+- `fleet/checks/blast-radius.sh [repo-root] <file-or-symbol> [file-or-symbol...]` — wired into `fleet/reuse-check.sh` so it fires automatically on every reuse-check call. Given one or more changed files or node identifiers, queries the live `graphify-out/graph.json` and reports direct dependents, direct dependencies, and the `AFFECTED`/`NO_CONNECTIONS` verdict. The primary entry point for PRIORITY-TODO A5 ("graph built, never queried"). Suppress with `BLAST_RADIUS=0` (hermetic/no-graph cases). Exit 0 always — advisory only. Three distinct failure modes: `NODE_NOT_FOUND` (node not in graph), `GRAPH_READ_ERROR` (can't read graph), and `NO_CONNECTIONS` (orphan — distinguishable from the first two).
 
 - **Real location**: `/home/stack/code/keystone` (sibling dev checkout, package `keystone-framework`, console script `ksf = ksf.cli:main`). NOT installed on global PATH — invoke via its own venv: `/home/stack/code/keystone/.venv/bin/ksf --repo-root <target-repo> <command>`.
 - Charon's `/home/stack/code/charon/.ksf/keystone.db` is a real SQLite DB (tables `decisions`, `built_inventory`, `backlog`, all empty — initialized but never populated; nothing has registered a module/decision against it yet).
