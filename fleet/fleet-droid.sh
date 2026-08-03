@@ -1305,6 +1305,17 @@ bash "$FLEET/loop-guard.sh" record "$id" "$DROID" --reason launcher-refused >/de
   bash "$FLEET/work-lease.sh" bind "$id" "$wt" "$DROID" >/dev/null 2>&1 || true
   # Snapshot the main checkout so the post-session leak detector can spot NEW stray work in it.
   main_before="$(git -C "$REPO" status --porcelain 2>/dev/null)"
+  # BRIEF-ABSOLUTE-PATHS: render shell variables in JOIN-PROMPT.md to concrete absolute paths so
+  # the model never has to expand them — $FLEET and $DROID exist only in the launcher's environment
+  # and expand to empty in the model's shell, silently degrading judgment paths to relative.
+  render_join_prompt() {
+    local content
+    content="$(cat "$FLEET/JOIN-PROMPT.md")"
+    content="${content//\$FLEET/$FLEET}"
+    content="${content//\$DROID/$DROID}"
+    content="${content//\$id/$id}"
+    printf '%s' "$content"
+  }
   # LAUNCHER NOTE wins over JOIN-PROMPT step 1: the worktree already exists and is the CWD.
   launcher_note="=== LAUNCHER NOTE (overrides step 1 of the join prompt) ===
 Your isolated worktree ALREADY EXISTS and is your current working directory:
@@ -1314,7 +1325,7 @@ Verify you are in $wt (run: pwd), then begin at the implementation step. NEVER e
 checkout $REPO — only files under $wt.
 "
   prompt="$launcher_note
-$(cat "$FLEET/JOIN-PROMPT.md")
+$(render_join_prompt)
 
 === YOUR ASSIGNED TICKET: $id ===
 $spec"
