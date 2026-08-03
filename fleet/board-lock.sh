@@ -392,8 +392,21 @@ _commit_locked(){
     case "$p" in -*) _die "board-lock: refusing option-like pathspec '$p'"; return 6;; esac
   done
 
-  git add -- "$@" || { _die "board-lock: 'git add' failed (nothing staged — git add is all-or-nothing)"; return 6; }
+  # BOARD-LOCK-STAGED-COMMIT-FIX (2026-08-02): `git add` exiting non-zero is NOT by itself a
+  # reason to refuse. It legitimately fails for paths that are ALREADY CORRECTLY STAGED —
+  # a deletion staged by `git rm --cached` (the path no longer exists on disk, so `git add`
+  # reports "did not match any files"), the source side of a `git mv`, or a force-staged
+  # gitignored path. The AUTHORITATIVE question is the one asked immediately below: "is there
+  # staged content under this pathspec?" Let THAT decide.
+  # Why this matters more than a one-line bug: the old hard-fail forced BOARD_LOCK_BYPASS twice
+  # in a single session for routine deletions, and a safety tool that trains its own bypass
+  # stops being a safety tool.
+  _add_err=""
+  _add_err="$(git add -- "$@" 2>&1)" || true
   if [ -z "$(git diff --cached --name-only -- "$@" 2>/dev/null)" ]; then
+    # Nothing staged under the pathspec: NOW the add failure (if any) is the real diagnosis, so
+    # surface git's own stderr rather than a generic message that hides the cause.
+    [ -n "$_add_err" ] && _die "board-lock: git add: $_add_err"
     _die "board-lock: no staged change under the given pathspec — nothing to commit (refusing an empty commit)."
     return 6
   fi
