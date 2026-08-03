@@ -920,6 +920,95 @@ show_operator_actions(){
   return 0
 }
 
+# _summarize_reconcile_merged — cap the reconcile-merged.sh flood by collapsing it into
+# one CLASS summary: count of closed/ambiguous/unresolvable, and the distinct shapes of
+# ambiguous/unresolvable ones. The "one line per PR" output is noise; what matters is
+# how many closed cleanly, how many were ambiguous, and which ones. Runs once in the dispatch
+# and saves the summary for the leg-verdicts tail.
+_sUMM_MERGED_SUMMARY=""
+_summarize_reconcile_merged(){
+  local out lines closed=0 ambiguous=0 unresolvable=0 ambiguous_shapes="" unresolvable_shapes="" fail_closed=""
+  out="$(bash "$HERE/reconcile-merged.sh" 2>&1)"
+  lines="$(printf '%s\n' "$out" | grep -v '^[[:space:]]*$')"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    if   printf '%s\n' "$line" | grep -q 'auto-closing WITH proof'; then closed=$((closed+1))
+    elif printf '%s\n' "$line" | grep -q 'AMBIGUOUS'; then
+      ambiguous=$((ambiguous+1))
+      local shape; shape="$(printf '%s\n' "$line" | sed 's/^[^:]*: //; s/ in [^ ]*$//')"
+      case "$ambiguous_shapes" in *"$shape"*) ;; *) ambiguous_shapes="${ambiguous_shapes}${ambiguous_shapes:+, }${shape}" ;; esac
+    elif printf '%s\n' "$line" | grep -q 'UNRESOLVABLE\|NOT auto-closing'; then
+      unresolvable=$((unresolvable+1))
+      local shape; shape="$(printf '%s\n' "$line" | sed 's/^[^:]*: //; s/ in [^ ]*$//')"
+      case "$unresolvable_shapes" in *"$shape"*) ;; *) unresolvable_shapes="${unresolvable_shapes}${unresolvable_shapes:+, }${shape}" ;; esac
+    fi
+    [ -z "$fail_closed" ] && printf '%s\n' "$line" | grep -q 'FAIL-CLOSED' && fail_closed="$(printf '%s\n' "$line" | head -1)"
+  done <<< "$lines"
+  _SUMM_MERGED_SUMMARY="reconcile-merged: ${closed} auto-closed, ${ambiguous} ambiguous, ${unresolvable} unresolvable"
+  [ "$ambiguous" -gt 0 ]      && _SUMM_MERGED_SUMMARY="$_SUMM_MERGED_SUMMARY
+    ambiguous shapes: ${ambiguous_shapes}"
+  [ "$unresolvable" -gt 0 ]    && _SUMM_MERGED_SUMMARY="$_SUMM_MERGED_SUMMARY
+    unresolvable shapes: ${unresolvable_shapes}"
+  [ -n "$fail_closed" ]        && _SUMM_MERGED_SUMMARY="$_SUMM_MERGED_SUMMARY
+    ${fail_closed}"
+  echo "$_SUMM_MERGED_SUMMARY"
+}
+
+# _summarize_reconcile_stale_claims — same treatment for reconcile-stale-claims.sh.
+_SUMM_STALE_SUMMARY=""
+_summarize_reconcile_stale_claims(){
+  local out lines retired=0 held=0 residue=0
+  out="$(bash "$HERE/reconcile-stale-claims.sh" 2>&1)"
+  lines="$(printf '%s\n' "$out" | grep -v '^[[:space:]]*$')"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    if   printf '%s\n' "$line" | grep -q 'retire-done:'; then retired=$((retired+1))
+    elif printf '%s\n' "$line" | grep -q 'HELD\|held';  then held=$((held+1))
+    elif printf '%s\n' "$line" | grep -q 'residue\|stale'; then residue=$((residue+1)); fi
+  done <<< "$lines"
+  if [ "$retired" -eq 0 ] && [ "$held" -eq 0 ] && [ "$residue" -eq 0 ]; then
+    _SUMM_STALE_SUMMARY="reconcile-stale-claims: clean (no stale claims)"
+  else
+    _SUMM_STALE_SUMMARY="reconcile-stale-claims: retired=${retired} held=${held} residue=${residue}"
+  fi
+  echo "$_SUMM_STALE_SUMMARY"
+}
+
+# show_leg_verdicts — ANTI-STARVATION SUMMARY. Every preflight leg prints to stdout as it
+# runs; a noisy early leg can drown a late one and the operator's scrollback has a hard cap.
+# This summary is printed REGARDLESS of upstream volume: it snapshots every tracked-gate
+# result so the operator can find the cadence verdict without scrolling past a flood, and
+# no future noisy leg can ever starve the late legs of the operator's attention again.
+# RCs from the sub-shells are NOT checked here — the dispatch chain already gates on them;
+# this is purely a readable summary printed after everything else.
+show_leg_verdicts(){
+  echo ""
+  echo "===== PREFLIGHT LEG VERDICTS (anti-starvation summary) ====="
+  printf '%s\n' "$_SUMM_MERGED_SUMMARY" | sed 's/^/  [reconcile-merged] /'
+  printf '%s\n' "$_SUMM_STALE_SUMMARY" | sed 's/^/  [reconcile-stale] /'
+  echo "  [board_gate]               → see 'board_gate' line above"
+  echo "  [executor_gate]            → see 'executor_gate' line above"
+  echo "  [coverage_gate]           → see 'coverage_gate' line above"
+  echo "  [handoff_gate]            → see 'handoff_gate' line above"
+  echo "  [done_merge_gate]         → see 'clean: done-merge-gate' or 'done-merge-gate: UNMERGED' line above"
+  echo "  [hold_reason_gate]        → see 'hold-reason-gate' line above"
+  echo "  [detect_needs_push]       → see 'needs-push' lines above"
+  echo "  [startup_budget_gate]     → see 'startup_budget_gate' line above"
+  echo "  [graphify_freshness_gate] → see 'graphify_freshness_gate' line above"
+  echo "  [reconcile_gate_wired_gate] → see 'reconcile_gate_wired_gate' line above"
+  echo "  [detect_stranded_work]    → see 'clean: stranded-work-cadence' or 'WARN: stranded-work-cadence' line above"
+  echo "  [detect_cg_drift]         → see 'ACTIVE DETECTORS' block above"
+  echo "  [detect_gateway_token_drift] → see 'ACTIVE DETECTORS' block above"
+  echo "  [detect_config_drift]     → see 'ACTIVE DETECTORS' block above"
+  echo "  [detect_service_watchdog] → see 'ACTIVE DETECTORS' block above"
+  echo "  [detect_fixture_bypass]  → see 'ACTIVE DETECTORS' block above"
+  echo "  [detect_gate_integrity]  → see 'ACTIVE DETECTORS' block above"
+  echo "  [cmd_scan]                → see 'REDS PREFLIGHT' block above"
+  echo "  [foreman_advisory]        → see 'FOREMAN ADVISORY' block above"
+  echo "  [operator_actions]       → see 'OPERATOR ACTIONS' block above"
+  echo "===== END VERDICTS ====="
+}
+
 # --- graphify_freshness_gate: MECHANIZES the graphify-map-freshness contract (WIRE-GRAPHIFY-FRESHNESS).
 # Runs checks/graphify-freshness.sh check EVERY preflight so a stale code map — the root cause of
 # the cere-junda handoff reinvention (3-day-stale product graph, absent rig graph) — BLOCKS
@@ -1094,7 +1183,20 @@ startup_budget_selftest(){
 # functions above are exposed with NO side effects.
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 case "${1:-scan}" in
-scan|"") run_sync_checkouts; bash "$HERE/reconcile-merged.sh"; bash "$HERE/reconcile-stale-claims.sh"; board_gate; executor_gate; coverage_gate; handoff_gate; done_merge_gate; hold_reason_gate; detect_needs_push; startup_budget_gate; graphify_freshness_gate; reconcile_gate_wired_gate; bash "$HERE/retire-done.sh"; cmd_scan; scan_rc=$?; cmd_detect; foreman_advisory; show_operator_actions; exit $scan_rc ;;
+scan|"")
+  run_sync_checkouts
+  _summarize_reconcile_merged
+  _summarize_reconcile_stale_claims
+  board_gate; executor_gate; coverage_gate; handoff_gate
+  done_merge_gate; hold_reason_gate; detect_needs_push
+  startup_budget_gate; graphify_freshness_gate; reconcile_gate_wired_gate
+  bash "$HERE/retire-done.sh"
+  cmd_scan; scan_rc=$?
+  cmd_detect
+  foreman_advisory
+  show_operator_actions
+  show_leg_verdicts
+  exit $scan_rc ;;
   add)     shift; cmd_add "$@" ;;
   close)   shift; cmd_close "$@" ;;
   list)    shift; cmd_list "$@" ;;
