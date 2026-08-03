@@ -1,0 +1,5 @@
+OBSERVABLE:   MET — `fleet/tests/auto-done-on-merge.test.sh` exercises all 7 cases via gh PATH shim with zero network; 19/19 pass.
+RAN:          Ran the 243-line hermetic test suite (gh stubbed, isolated temp repos for rig+product) — confirmed (a) rig ticket closes, (b) product still closes, (c) cross-repo branch name collision isolated, (d) zero GraphQL, (e) idempotent, (f) fail-closed on undetermined repo, (g) fail-closed on per-PR confirmation mismatch.
+READ:         The 468-line reconcile-merged.sh already had the correct architecture (branch/owns precedence, creation-PR guard, fail-closed verify_merged). The single defect was `REPO_SLUG` resolved once from the product origin remote — `target_slugs()` now derives all slugs from the board's `repo:` keys, `_slug_matches()` scopes each PR to its source repo, and `\037` replaces IFS=$'\t' for field splitting. No mechanism needed rewriting, only wiring + scoping.
+BRIEF-ERRORS: none
+NEXT:         Verify the real board scan (preflight) picks up the fix on next run — confirm RIG-TICK is closed if still submitted, and check GRADE-MODEL-PROVIDER-PAIR unblocks.
