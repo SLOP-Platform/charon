@@ -457,3 +457,79 @@ def test_record_exhaustion_counter_distinguishes_auto_from_manual_park():
     bt.record_exhaustion("auto")
     assert bt.counters().get("auto_park", 0) == 1
     assert bt.is_parked("auto")
+
+
+# ---------------------------------------------------------------------------
+# 4. SOLE-LEG GUARD SCOPE — a single-leg passthrough pool must not suppress
+#    auto-park for a provider that IS replaceable in its real (multi-leg) pools.
+#    Measured live 2026-08-02: with single-leg pools counted as orphanable,
+#    _has_live_sibling returned False for ALL 17 providers on the deployed
+#    config, so record_exhaustion never ran and drained legs took traffic
+#    forever.
+# ---------------------------------------------------------------------------
+
+
+def _live_shaped_pools(base_a: str, base_b: str) -> dict:
+    """The LIVE pool shape: one shared multi-leg pool plus the provider-specific
+    single-leg passthrough pools the config registers for every provider."""
+    ra = UpstreamRoute(base_a, "ka", provider="drained", upstream_model="ma")
+    rb = UpstreamRoute(base_b, "kb", provider="healthy", upstream_model="mb")
+    return {
+        "v": [ra, rb],                 # real 2-leg pool — "drained" IS replaceable
+        "drained-only-model": [ra],    # e.g. gpt-5.4-pro -> [openrouter]
+        "healthy-only-model": [rb],    # e.g. glm-5.2-hf  -> [huggingface]
+    }
+
+
+def test_single_leg_pool_does_not_suppress_auto_park() -> None:
+    """A single-provider pool is NOT an orphanable pool. ``_has_live_sibling``
+    must ignore it and still authorise parking a provider that has a live
+    sibling in every MULTI-provider pool it belongs to.
+
+    FAIL-ON-REVERT: counting single-leg pools (the pre-fix behaviour) returns
+    False here — the exact defect that made auto-park dead code live."""
+    from charon.forwarder import _has_live_sibling
+
+    bt = BalanceTracker()
+    pools = _live_shaped_pools("http://127.0.0.1:1", "http://127.0.0.1:2")
+    assert _has_live_sibling("drained", pools, bt) is True, (
+        "SOLE-LEG GUARD OVER-BROAD: a single-provider passthrough pool was "
+        "treated as orphanable, suppressing auto-park for a provider that is "
+        "fully replaceable in its real multi-leg pool")
+
+
+def test_provider_only_in_single_leg_pools_is_still_never_parked() -> None:
+    """Unchanged conservative semantics: a provider with NO multi-provider pool
+    has no evidence of an alternative anywhere → still refused."""
+    from charon.forwarder import _has_live_sibling
+
+    bt = BalanceTracker()
+    pools = {"only": [UpstreamRoute("http://127.0.0.1:1", "k", provider="lonely")]}
+    assert _has_live_sibling("lonely", pools, bt) is False
+
+
+def test_deterministic_402_auto_parks_despite_single_leg_passthrough_pool():
+    """END-TO-END on the live pool shape: a deterministic drained-key 402 must
+    auto-park the provider and drop it from rotation even though that provider
+    is also the sole leg of a provider-specific passthrough pool.
+
+    FAIL-ON-REVERT: pre-fix, ``bt.is_parked("drained")`` stays False and the
+    drained provider is dispatched again on request 2 — forever."""
+    a, base_a = _up([(402, "deterministic"), (402, "deterministic")])
+    b, base_b = _up([(200, None)], return_model="mb")
+    bt = BalanceTracker()
+    gw = _gw_with_balance(_live_shaped_pools(base_a, base_b), bt)
+    try:
+        status, body, _ = _req(gw.url + "/v1/chat/completions", {"model": "v"})
+        assert status == 200 and body["model"] == "mb"
+        assert bt.is_parked("drained"), (
+            "SOLE-LEG GUARD suppressed auto-park because the provider owns a "
+            "single-leg passthrough pool — this is the live defect: every "
+            "provider owns one, so no provider could ever be parked")
+        status2, body2, _ = _req(gw.url + "/v1/chat/completions", {"model": "v"})
+        assert status2 == 200 and body2["model"] == "mb"
+        assert a.calls == 1, "parked provider was dispatched again"
+    finally:
+        gw.shutdown()
+        a.shutdown()
+        b.shutdown()

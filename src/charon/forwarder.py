@@ -308,13 +308,33 @@ def _has_live_sibling(provider: str, pools: dict[str, list], bt) -> bool:
     with a live sibling would then let us park it and orphan pool B. So we
     require a live sibling in *every* owning pool before allowing a park, and
     return False for a provider with no pool membership at all (never park a
-    provider we have no evidence has an alternative)."""
+    provider we have no evidence has an alternative).
+
+    SINGLE-PROVIDER POOLS ARE NOT ORPHANABLE AND ARE SKIPPED. A pool whose only
+    provider is *provider* has no alternative leg whether or not we park it —
+    the request 402s either way — so it is not evidence against parking. Before
+    this exclusion the guard was UNIVERSALLY suppressing auto-park on the live
+    gateway: the config registers one single-leg passthrough pool per provider-
+    specific model id (``gpt-5.4-pro -> [openrouter]``, ``deepseek-v4-flash-go
+    -> [opencode-go]``, ``glm-5.2-hf -> [huggingface]``, ...), so EVERY provider
+    owned at least one and ``record_exhaustion`` was dead code for all 17 live
+    providers — drained legs kept taking traffic and relaying "Insufficient
+    balance" to callers forever (measured 2026-08-02). Traffic for a single-leg
+    pool is still served after its provider is parked: ``forward_with_failover``
+    's pre-flight "all routes excluded -> use the full chain" never-strand
+    fallback re-admits a parked sole leg when it is the only candidate.
+
+    A provider that belongs ONLY to single-leg pools still returns False
+    (``owned`` stays 0) — unchanged "no evidence of an alternative" semantics."""
     if not pools:
         return False
     owned = 0
     for _pool_id, routes in pools.items():
         labels = {r.provider or r.label for r in routes}
         if provider not in labels:
+            continue
+        if len(labels) < 2:
+            # Single-provider pool — no alternative to orphan. Not evidence.
             continue
         owned += 1
         pool_has_live_sibling = False
