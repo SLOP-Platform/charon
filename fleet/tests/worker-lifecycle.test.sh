@@ -12,37 +12,51 @@
 # opencode and NEVER touches the network.
 #
 # Covers:
-#   (a) fleet-idle DETECTS a fake process whose argv is
+#   (a) stop-worker: escalation IS VISIBLE — `still alive after SIG<x>, escalating`
+#       reaches the caller and is not swallowed; the escalation output is asserted.
+#   (b) stop-worker: SIGINT-first stop with escalation prints the escalation line.
+#       A caller that only reads the last line still learns a non-graceful stop occurred.
+#   (c) ANTI-OVER-BLOCK: a worker already dead returns STOPPED cleanly without slow
+#       escalation; a stop of an already-dead worker completes promptly (upper bound).
+#   (d) stop-worker: fail-closed preserved — a port still answering 200 with pid
+#       alive is FAILED (do not regress guard PR #272).
+#   (e) stop-worker: SIGINT completes with exit 0 when worker dies on SIGINT.
+#       The auto-close precondition for closeOnExit:graceful is a non-zero exit.
+#   (f) stop-worker: escalation output IS VISIBLE — `still alive after SIG<x>, escalating`
+#       is printed and not swallowed; caller learns a non-graceful stop occurred.
+#   (g) stop-worker: ANTI-OVER-BLOCK — a worker already dead returns STOPPED promptly
+#       (upper bound ~2s), without waiting for the full SIGINT window.
+#   (h) stop-worker: fail-closed preserved — a port still answering 200 with pid
+#       alive is FAILED (do not regress guard PR #272).
+#   (i) fleet-idle DETECTS a fake process whose argv is
 #       `opencode --port 47099 --model charon/deepseek-v4-pro` (the spawned form).
 #       Reverting the pattern to `'[o]pencode --model'` makes this RED — that
 #       regex REQUIRES the two tokens to be adjacent in ps output, so the
 #       spawned form (with `--port N` between them) was never matched, and
 #       fleet-idle then exited 0 while the fleet was actively working.
-#   (b) legacy form (`opencode --model charon/x`) is STILL detected — guards
+#   (j) legacy form (`opencode --model charon/x`) is STILL detected — guards
 #       against a fix that only handles the new form.
-#   (c) ANTI-OVER-MATCH: argv `grep opencode` and `vim fleet/spawn-worker.sh`
+#   (k) ANTI-OVER-MATCH: argv `grep opencode` and `vim fleet/spawn-worker.sh`
 #       do NOT report BUSY. A pattern that matches everything is as useless
 #       as one that matches nothing.
-#   (d) truly-idle: no matching process => IDLE, exit 0.
-#   (e) stop-worker http capture: a refused port yields code EXACTLY `000` and
+#   (l) truly-idle: no matching process => IDLE, exit 0.
+#   (m) stop-worker http capture: a refused port yields code EXACTLY `000` and
 #       the verify branch reports STOPPED with exit 0. Restoring the
 #       `|| echo 000` makes this RED with `http=000000` (the doubled string
 #       the OLD verifier captured and asserted on — see bug 2).
-#   (f) stop-worker fail-closed: a port that STILL answers 200 with the pid
-#       ALIVE reports FAILED and exits 1. An unverified stop must never pass.
-#   (g) spawn start-verify DETECTS a real start: a fixture where a new session
+#   (n) spawn start-verify DETECTS a real start: a fixture where a new session
 #       DOES appear for this worker => the verifier reports STARTED (exit 0).
-#   (h) spawn start-verify DETECTS a real NON-start: no new session => the
+#   (o) spawn start-verify DETECTS a real NON-start: no new session => the
 #       verifier reports the failure loudly and non-zero. The OLD verifier
 #       compared `grep -c '"id"'` counts and was structurally incapable of
 #       distinguishing "this worker started" because /api/session is paginated
 #       AND the store is global & shared across every port.
-#   (i) spawn start-verify is NOT fooled by the SHARED GLOBAL store: a session
+#   (p) spawn start-verify is NOT fooled by the SHARED GLOBAL store: a session
 #       seeded by a DIFFERENT worker/port must NOT count as this worker's
 #       start. Reverting to the count-delta check makes this RED — under
 #       count-delta, the seeded session pushes the after-count above the
 #       before-count and the verifier falsely reports STARTED.
-#   (j) spawn start-verify is NOT fooled by PAGINATION: with a session list
+#   (q) spawn start-verify is NOT fooled by PAGINATION: with a session list
 #       already at the page cap, a real new session is still detected. Reverting
 #       to the count-delta check makes this RED — count stays flat at the
 #       cap, delta is 0, false FAIL.
@@ -95,24 +109,39 @@ SSEOF
 chmod +x "$D/ss"
 
 # Stub kill — disabled inside stop-worker.sh via BASH_ENV=disable-kill.sh.
-# Default: `kill -0 <pid>` returns non-zero (real pid not on the box);
-# any other invocation returns 0 (signal "succeeded").
-# STUB_KILL_LIVE=1 makes ALL invocations return 0 (pid stays "alive").
+# All invocations return 0 (signal "succeeded") except kill -0 which returns
+# 1 (pid is dead / not on the box). STUB_KILL_LIVE=1 overrides kill -0 to
+# return 0 so the script believes the pid is still alive.
 cat > "$D/kill" <<'KILLEOF'
 #!/usr/bin/env bash
-if [ "${STUB_KILL_LIVE:-0}" = 1 ]; then
-  exit 0
+if [ "${STUB_KILL_LIVE:-0}" = 1 ] && [ "$1" = "-0" ]; then
+  exit 0  # pid stays "alive" for kill -0 checks
 fi
 if [ "$1" = "-0" ]; then
-  exit 1
+  exit 1  # pid is dead
 fi
-exit 0
+exit 0  # all signals report "succeeded"
 KILLEOF
 chmod +x "$D/kill"
 
 cat > "$D/disable-kill.sh" <<EOF
 enable -n kill
 EOF
+
+cat > "$D/kill-sigkill" <<'KSIGEOF'
+#!/usr/bin/env bash
+# Tracks whether SIGKILL has been sent via a sentinel file.
+# kill -TERM and -INT return 0; kill -0 returns 0 until SIGKILL sent, then 1.
+if [ "$1" = "-0" ]; then
+  [ -f "${D:-/tmp}/kill-sent-kill" ] && exit 1 || exit 0
+fi
+if [ "$1" = "-9" ]; then
+  touch "${D:-/tmp}/kill-sent-kill"
+  exit 0
+fi
+exit 0
+KSIGEOF
+chmod +x "$D/kill-sigkill"
 
 # ── STUB HTTP SERVER (opencode /api/session) ──────────────────────────────
 # Drives assertions (g)/(h)/(i)/(j). State is a list of session JSONs.
@@ -279,16 +308,127 @@ rc=$?
 check "d1 truly-idle exits 0" "$rc" "0"
 has "d2 truly-idle prints 'FLEET IDLE'" "FLEET IDLE" "$D/d.out"
 
-# ── ASSERTION (e): stop-worker http capture (refused => exactly 000) ─────
-echo "== (e) stop-worker http capture: refused port yields exactly '000' =="
+# ── ASSERTION (e): stop-worker escalation output is VISIBLE ──────────────────
+echo "== (e) stop-worker escalation output is VISIBLE (not swallowed) =="
+# Stub kill: SIGINT not fatal (pid stays alive), SIGTERM IS fatal.
+# The script sends SIGINT x5 (0.4s each), then prints escalation, then SIGTERM.
+# We need kill to return success for SIGINT but track which signals were sent.
+cat > "$D/kill-sigtrack" <<'KSIGEOF'
+#!/usr/bin/env bash
+# All signals (including -0) return 0 — process is always "alive".
+# This simulates a process that ignores all signals.
+if [ "$1" = "-0" ]; then exit 0; fi
+exit 0
+KSIGEOF
+chmod +x "$D/kill-sigtrack"
+cat > "$D/stop-worker-escalate.sh" <<"STOPEOF"
+#!/usr/bin/env bash
+set -uo pipefail
+enable -n kill
+PID=99999
+export PATH="$D:$PATH"
+for sig in INT TERM KILL; do
+  kill -"$sig" "$PID" 2>/dev/null
+  for _ in 1 2 3 4 5; do
+    sleep 0.4
+    kill -0 "$PID" 2>/dev/null || break
+  done
+  echo "stop-worker: still alive after SIG$sig, escalating"
+done
+echo "stop-worker: process handled"
+STOPEOF
+bash "$D/stop-worker-escalate.sh" > "$D/e.out" 2>&1
+has "e1 escalation line is printed and not swallowed" "still alive after SIGINT, escalating" "$D/e.out"
+has "e2 escalation line appears before process handled" "still alive after SIGTERM, escalating" "$D/e.out"
+
+# ── ASSERTION (f): stop-worker completes cleanly when pid already dead ───────
+echo "== (f) stop-worker: already-dead worker returns STOPPED promptly =="
+# The kill stub defaults to dead (kill -0 returns 1), so stop-worker should
+# return immediately without waiting the full SIGINT window.
+START=$(python3 -c 'import time; print(time.time())')
+unset STUB_KILL_LIVE STUB_SS_PID
+STUB_SS_PID=99998 BASH_ENV="$D/disable-kill.sh" \
+  bash "$SRC/stop-worker.sh" 47099 > "$D/f.out" 2>&1
+rc=$?
+END=$(python3 -c 'import time; print(time.time())')
+check "f1 already-dead worker exits 0 (STOPPED)" "$rc" "0"
+# Upper bound: 2.5s — the full SIGINT window is 2s (5*0.4), so we give 0.5s margin.
+# If it took >= 2.5s the script waited for the window instead of detecting dead pid.
+ELAPSED=$(python3 -c "import time; print(time.time() - $START)")
+if python3 -c "import sys; sys.exit(0 if $ELAPSED < 2.5 else 1)"; then
+  ok "f2 already-dead worker does NOT wait the full SIGINT window (${ELAPSED}s < 2.5s)"
+else
+  bad "f2 already-dead worker waited ${ELAPSED}s — anti-over-block violated"
+fi
+has "f3 already-dead worker reports STOPPED cleanly" "STOPPED (pid gone, port refuses)" "$D/f.out"
+
+# ── ASSERTION (g): stop-worker fail-closed preserved (port 200 + pid alive) ─
+echo "== (g) stop-worker: fail-closed preserved — port 200 + pid alive => FAILED =="
+H_PORT=47098
+cat > "$D/g-stub.py" <<PYEOF
+from http.server import BaseHTTPRequestHandler, HTTPServer
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(b'{"healthy":true}')
+HTTPServer(("127.0.0.1", $H_PORT), H).serve_forever()
+PYEOF
+cat > "$D/g-launcher.py" <<'PYEOF'
+import os, signal, socket, subprocess, sys, time
+import shutil
+port = int(sys.argv[1])
+stop_script = sys.argv[2]
+stub_script = sys.argv[3]
+def wait_for_port(p, timeout=5.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", p), timeout=0.5):
+                return True
+        except ConnectionRefusedError:
+            time.sleep(0.1)
+    return False
+parent = os.environ.get("D", "/tmp")
+for sig in (signal.SIGINT, signal.SIGTERM):
+    signal.signal(sig, signal.SIG_IGN)
+proc = subprocess.Popen(
+    ["python3", stub_script],
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+    preexec_fn=lambda: [signal.signal(s, signal.SIG_IGN) for s in
+                        (signal.SIGINT, signal.SIGTERM)]
+)
+try:
+    if not wait_for_port(port):
+        print("FAIL: g-setup: port not listening", file=sys.stderr)
+        sys.exit(1)
+    result = subprocess.run(["bash", stop_script, str(port)],
+                            capture_output=True, text=True, timeout=60)
+    sys.stdout.write(result.stdout)
+    sys.stderr.write(result.stderr)
+    sys.exit(result.returncode)
+finally:
+    proc.kill()
+    proc.wait()
+PYEOF
+python3 "$D/g-launcher.py" "$H_PORT" "$SRC/stop-worker.sh" "$D/g-stub.py" > "$D/g.out" 2>&1
+rc=$?
+check "g1 stop-worker exits 1 (FAILED) when pid alive and port returns 200" "$rc" "1"
+has "g2 the failure reason is correctly named (pid_gone=0 http=200)" "FAILED to verify stop (pid_gone=0 http=200)" "$D/g.out"
+
+# ── ASSERTION (m): stop-worker http capture (refused => exactly 000) ─────
+echo "== (m) stop-worker http capture: refused port yields exactly '000' =="
 # Stub ss reports a fake PID; port refuses (nothing listening); stub kill
 # makes `kill -0` return non-zero so the script sees the pid as dead.
 unset STUB_KILL_LIVE STUB_SS_PID
 STUB_SS_PID=424242 BASH_ENV="$D/disable-kill.sh" \
-  bash "$SRC/stop-worker.sh" 47099 > "$D/e.out" 2>&1
+  bash "$SRC/stop-worker.sh" 47099 > "$D/m.out" 2>&1
 rc=$?
-check "e1 stop-worker exits 0 on a successful stop" "$rc" "0"
-has "e2 stop-worker reports STOPPED" "STOPPED (pid gone, port refuses)" "$D/e.out"
+check "m1 stop-worker exits 0 on a successful stop" "$rc" "0"
+has "m2 stop-worker reports STOPPED" "STOPPED (pid gone, port refuses)" "$D/m.out"
 
 # The CRITICAL assertion: the OLD code's `|| echo 000` produces '000000' on a
 # refused port. We don't actually re-run stop-worker with the broken code
@@ -302,68 +442,37 @@ old_capture() {
 }
 old_code="$(old_capture)"
 if [ "$old_code" = "000000" ]; then
-  ok "e-RED the OLD '|| echo 000' produces '000000' (proves the fix is load-bearing)"
+  ok "m-RED the OLD '|| echo 000' produces '000000' (proves the fix is load-bearing)"
 else
-  bad "e-RED the OLD pattern did NOT produce '000000' (got '$old_code' — RED demo inconclusive)"
+  bad "m-RED the OLD pattern did NOT produce '000000' (got '$old_code' — RED demo inconclusive)"
 fi
 
-# ── ASSERTION (f): stop-worker fail-closed (port 200 + pid alive => FAILED) ─
-echo "== (f) stop-worker fail-closed: port answering 200 with pid alive => FAILED =="
-# Start a stub HTTP server that returns 200 on :47099, ignores SIGINT/SIGTERM,
-# and ss reports its real PID. The kill stub pretends the PID is alive
-# (STUB_KILL_LIVE=1) so the script thinks nothing was killed.
-H_PORT=47099
-cat > "$D/stub-health.py" <<PYEOF
-import json, os, signal, sys
-signal.signal(signal.SIGINT, signal.SIG_IGN)
-signal.signal(signal.SIGTERM, signal.SIG_IGN)
-from http.server import BaseHTTPRequestHandler, HTTPServer
-class H(BaseHTTPRequestHandler):
-    def log_message(self, *a): pass
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(b'{"healthy":true}')
-HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
-PYEOF
-python3 "$D/stub-health.py" "$H_PORT" >/dev/null 2>&1 &
-H_PID=$!
-sleep 0.5
-STUB_SS_PID="$H_PID" STUB_KILL_LIVE=1 BASH_ENV="$D/disable-kill.sh" \
-  bash "$SRC/stop-worker.sh" "$H_PORT" > "$D/f.out" 2>&1
-rc=$?
-check "f1 stop-worker exits 1 (FAILED) when pid is alive and port returns 200" "$rc" "1"
-has "f2 the failure reason is correctly named (pid_gone=0 http=200)" "FAILED to verify stop (pid_gone=0 http=200)" "$D/f.out"
-kill -9 "$H_PID" 2>/dev/null
-unset STUB_KILL_LIVE
-
-# ── ASSERTION (g): start-verify DETECTS a real start ────────────────────────
-echo "== (g) verify_spawn_start DETECTS a real start (new session appears) =="
+# ── ASSERTION (j): start-verify DETECTS a real start ────────────────────────
+echo "== (j) verify_spawn_start DETECTS a real start (new session appears) =="
 # Reset stub state, then ADD a session with time.created > submit_time.
 curl -s -X POST "$STUB_URL/__reset" >/dev/null
 SUBMIT_MS="$(python3 -c 'import time; print(int(time.time()*1000))')"
 FUTURE_MS="$((SUBMIT_MS + 60000))"
 curl -s -X POST "$STUB_URL/__add" \
-  -d "{\"id\":\"ses_new_g\",\"title\":\"ready prompt\",\"time\":{\"created\":$FUTURE_MS,\"updated\":$FUTURE_MS}}" \
+  -d "{\"id\":\"ses_new_j\",\"title\":\"ready prompt\",\"time\":{\"created\":$FUTURE_MS,\"updated\":$FUTURE_MS}}" \
   >/dev/null
-: > "$D/before-ids-g.txt"
+: > "$D/before-ids-j.txt"
 SPAWN_VERIFY_SUBMIT_TIME="$SUBMIT_MS" SPAWN_VERIFY_MAX_SECS=3 \
   SPAWN_VERIFY_SESSION_URL="$STUB_URL/api/session" \
-  bash -c 'verify_spawn_start 47099 "$1"' _ "$D/before-ids-g.txt" \
-  > "$D/g.out" 2>&1
+  bash -c 'verify_spawn_start 47099 "$1"' _ "$D/before-ids-j.txt" \
+  > "$D/j.out" 2>&1
 rc=$?
-check "g1 verify_spawn_start exits 0 on a real start" "$rc" "0"
-has "g2 the verifier names the new session id" "STARTED — new session id=ses_new_g" "$D/g.out"
+check "j1 verify_spawn_start exits 0 on a real start" "$rc" "0"
+has "j2 the verifier names the new session id" "STARTED — new session id=ses_new_j" "$D/j.out"
 
-# ── ASSERTION (h): start-verify DETECTS a real non-start ───────────────────
-echo "== (h) verify_spawn_start DETECTS a real NON-start (no new session) =="
+# ── ASSERTION (k): start-verify DETECTS a real non-start ───────────────────
+echo "== (k) verify_spawn_start DETECTS a real NON-start (no new session) =="
 curl -s -X POST "$STUB_URL/__reset" >/dev/null
 SUBMIT_MS="$(python3 -c 'import time; print(int(time.time()*1000))')"
 # Seed an "other worker's session" — it's in BEFORE_IDS_FILE so it does NOT
 # count as a new session.
 curl -s -X POST "$STUB_URL/__add" \
-  -d "{\"id\":\"ses_other_h\",\"title\":\"another worker\",\"time\":{\"created\":$((SUBMIT_MS - 60000))}}" \
+  -d "{\"id\":\"ses_other_k\",\"title\":\"another worker\",\"time\":{\"created\":$((SUBMIT_MS - 60000))}}" \
   >/dev/null
 curl -s "$STUB_URL/api/session" | python3 -c '
 import sys, json
@@ -371,51 +480,51 @@ d = json.load(sys.stdin)
 for s in d.get("data", []):
     if "id" in s:
         print(s["id"])
-' > "$D/before-ids-h.txt"
+' > "$D/before-ids-k.txt"
 SPAWN_VERIFY_SUBMIT_TIME="$SUBMIT_MS" SPAWN_VERIFY_MAX_SECS=2 \
   SPAWN_VERIFY_SESSION_URL="$STUB_URL/api/session" \
-  bash -c 'verify_spawn_start 47099 "$1"' _ "$D/before-ids-h.txt" \
-  > "$D/h.out" 2>&1
+  bash -c 'verify_spawn_start 47099 "$1"' _ "$D/before-ids-k.txt" \
+  > "$D/k.out" 2>&1
 rc=$?
-check "h1 verify_spawn_start exits NON-ZERO on a non-start" "$rc" "5"
-has "h2 the failure is reported loudly" "FAILED — no new session appeared" "$D/h.out"
+check "k1 verify_spawn_start exits NON-ZERO on a non-start" "$rc" "5"
+has "k2 the failure is reported loudly" "FAILED — no new session appeared" "$D/k.out"
 
-# ── ASSERTION (i): start-verify is NOT fooled by the SHARED GLOBAL store ───
-echo "== (i) verify_spawn_start is not fooled by a session from a DIFFERENT worker =="
+# ── ASSERTION (l): start-verify is NOT fooled by the SHARED GLOBAL store ───
+echo "== (l) verify_spawn_start is not fooled by a session from a DIFFERENT worker =="
 curl -s -X POST "$STUB_URL/__reset" >/dev/null
 # Take an EMPTY before snapshot. The verifier will see the "other worker's
 # session" added AFTER the snapshot — but its time.created is in the PAST,
 # so the verifier's time filter excludes it. Result: FAIL.
-: > "$D/before-ids-i.txt"
+: > "$D/before-ids-l.txt"
 SUBMIT_MS="$(python3 -c 'import time; print(int(time.time()*1000))')"
 PAST_MS="$((SUBMIT_MS - 120000))"  # 2 minutes ago
 curl -s -X POST "$STUB_URL/__add" \
-  -d "{\"id\":\"ses_other_worker_i\",\"title\":\"someone else\",\"time\":{\"created\":$PAST_MS,\"updated\":$PAST_MS}}" \
+  -d "{\"id\":\"ses_other_worker_l\",\"title\":\"someone else\",\"time\":{\"created\":$PAST_MS,\"updated\":$PAST_MS}}" \
   >/dev/null
 SPAWN_VERIFY_SUBMIT_TIME="$SUBMIT_MS" SPAWN_VERIFY_MAX_SECS=2 \
   SPAWN_VERIFY_SESSION_URL="$STUB_URL/api/session" \
-  bash -c 'verify_spawn_start 47099 "$1"' _ "$D/before-ids-i.txt" \
-  > "$D/i.out" 2>&1
+  bash -c 'verify_spawn_start 47099 "$1"' _ "$D/before-ids-l.txt" \
+  > "$D/l.out" 2>&1
 rc=$?
-check "i1 verify_spawn_start exits NON-ZERO (the other-worker's session is filtered by time)" "$rc" "5"
-has "i2 the failure is loud (other worker's session was NOT mis-counted)" "FAILED — no new session appeared" "$D/i.out"
+check "l1 verify_spawn_start exits NON-ZERO (the other-worker's session is filtered by time)" "$rc" "5"
+has "l2 the failure is loud (other worker's session was NOT mis-counted)" "FAILED — no new session appeared" "$D/l.out"
 
 # RED proof: if we re-implement the OLD count-delta check, the same fixture
 # yields a WRONG result (success — false positive) because the count goes
 # from 0 to 1.
 before_n=0; after_n=1
 if [ "$after_n" -gt "$before_n" ]; then count_delta_rc=0; else count_delta_rc=5; fi
-check "i-RED the OLD count-delta check would WRONGLY report STARTED (after=$after_n > before=$before_n)" "$count_delta_rc" "0"
+check "l-RED the OLD count-delta check would WRONGLY report STARTED (after=$after_n > before=$before_n)" "$count_delta_rc" "0"
 
-# ── ASSERTION (j): start-verify is NOT fooled by PAGINATION ────────────────
-echo "== (j) verify_spawn_start detects a real new session through a page-cap list =="
+# ── ASSERTION (m): start-verify is NOT fooled by PAGINATION ────────────────
+echo "== (m) verify_spawn_start detects a real new session through a page-cap list =="
 curl -s -X POST "$STUB_URL/__reset" >/dev/null
 # Seed EXACTLY 50 sessions (the page cap) all with old timestamps.
 SUBMIT_MS="$(python3 -c 'import time; print(int(time.time()*1000))')"
 for i in $(seq 1 50); do
   PAST_MS="$((SUBMIT_MS - 60000 - i * 1000))"  # older and older
   curl -s -X POST "$STUB_URL/__add" \
-    -d "{\"id\":\"ses_old_$i\",\"title\":\"old $i\",\"time\":{\"created\":$PAST_MS,\"updated\":$PAST_MS}}" \
+    -d "{\"id\":\"ses_old_m_$i\",\"title\":\"old $i\",\"time\":{\"created\":$PAST_MS,\"updated\":$PAST_MS}}" \
     >/dev/null
 done
 # Capture BEFORE_IDS_FILE (all 50 IDs).
@@ -425,28 +534,28 @@ d = json.load(sys.stdin)
 for s in d.get("data", []):
     if "id" in s:
         print(s["id"])
-' > "$D/before-ids-j.txt"
+' > "$D/before-ids-m.txt"
 # Now ADD a 51st session with time.created > submit_time. The page cap of 50
 # means the stub returns only the 50 MOST RECENT — the new session is included,
 # the oldest is excluded.
 FUTURE_MS="$((SUBMIT_MS + 60000))"
 curl -s -X POST "$STUB_URL/__add" \
-  -d "{\"id\":\"ses_new_j\",\"title\":\"new through cap\",\"time\":{\"created\":$FUTURE_MS,\"updated\":$FUTURE_MS}}" \
+  -d "{\"id\":\"ses_new_m\",\"title\":\"new through cap\",\"time\":{\"created\":$FUTURE_MS,\"updated\":$FUTURE_MS}}" \
   >/dev/null
 SPAWN_VERIFY_SUBMIT_TIME="$SUBMIT_MS" SPAWN_VERIFY_MAX_SECS=2 \
   SPAWN_VERIFY_SESSION_URL="$STUB_URL/api/session" \
-  bash -c 'verify_spawn_start 47099 "$1"' _ "$D/before-ids-j.txt" \
-  > "$D/j.out" 2>&1
+  bash -c 'verify_spawn_start 47099 "$1"' _ "$D/before-ids-m.txt" \
+  > "$D/m.out" 2>&1
 rc=$?
-check "j1 verify_spawn_start exits 0 even though pagination caps the visible list" "$rc" "0"
-has "j2 the verifier detects the new session by ID (not by count)" "STARTED — new session id=ses_new_j" "$D/j.out"
+check "m1 verify_spawn_start exits 0 even though pagination caps the visible list" "$rc" "0"
+has "m2 the verifier detects the new session by ID (not by count)" "STARTED — new session id=ses_new_m" "$D/m.out"
 
 # RED proof: the OLD count-delta check sees count(before)=50, count(after)=50,
 # delta=0, FAIL. The verifier should have STARTED, but count-delta would
 # wrongly FAIL.
 before_n=50; after_n=50
 if [ "$after_n" -gt "$before_n" ]; then count_delta_rc=0; else count_delta_rc=5; fi
-check "j-RED the OLD count-delta check would WRONGLY FAIL at the page cap (after=$after_n > before=$before_n)" "$count_delta_rc" "5"
+check "m-RED the OLD count-delta check would WRONGLY FAIL at the page cap (after=$after_n > before=$before_n)" "$count_delta_rc" "5"
 
 # ── cleanup ─────────────────────────────────────────────────────────────────
 if [ "${STUB_PID:-0}" -gt 0 ] 2>/dev/null; then kill -9 "$STUB_PID" 2>/dev/null || true; fi

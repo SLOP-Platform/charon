@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # stop-worker.sh <PORT> — stop a spawned opencode worker, gracefully first.
-# Verified ladder: SIGINT -> SIGTERM -> SIGKILL. INT/TERM exit 0 in <1s, port refuses, proxy child
-# reaped, and the WT tab AUTO-CLOSES (closeOnExit: graceful). SIGKILL exits 9 and LEAVES TAB LITTER,
-# so it is a fallback only. Store is SQLite+WAL and reads cleanly after a mid-turn kill; only the
-# in-flight turn is lost. There is NO HTTP stop: /tui/execute-command is inert even with real
-# dot-form ids (app.exit, session.interrupt) — question closed.
+# Ladder: SIGINT -> SIGTERM -> SIGKILL (5 x sleep 0.4 == 2s each stage).
+# NOTE: exit codes are NOT guaranteed 0. Processes that do not exit within the 2s
+# window escalate to the next signal. A tab with closeOnExit:graceful only
+# auto-closes on exit 0 — non-zero exits leave the tab LITTERED. Store is
+# SQLite+WAL and reads cleanly after a mid-turn kill; only the in-flight turn
+# is lost. There is NO HTTP stop: /tui/execute-command is inert — question closed.
 set -uo pipefail
 PORT="${1:?usage: stop-worker.sh <PORT>}"
 PID=$(ss -lptn "sport = :$PORT" 2>/dev/null | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2)
