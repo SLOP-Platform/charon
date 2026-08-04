@@ -3,7 +3,7 @@ tier: economy
 priority: 2
 difficulty: 3
 work_class: ci-infra
-branch: feat/status-board-v1
+branch: feat/status-board-v2
 owns: fleet/status-board/generate.sh, fleet/status-board/board.html, fleet/tests/status-board.test.sh
 depends_on:
 dep-kind:
