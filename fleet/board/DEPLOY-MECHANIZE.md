@@ -35,6 +35,16 @@ note: |
     - STATUS-BOARD-V1 renders gates, tickets and PRs — but has NO deployed-version tile, so the one
       surface built to make state legible to the operator is blind to exactly this.
 
+  ## ⛔ SECOND, WORSE DRIFT FOUND 2026-08-04 — THE COMPOSE FILE WOULD ROLL PRODUCTION BACK ⛔
+  On the deployment host, `/home/stack/charon/docker-compose.yml` pins:
+      image: ghcr.io/slop-platform/charon:v0.3.3
+  ...while the RUNNING container is **v0.6.1**. Someone deployed v0.6.1 by hand and never updated
+  compose. Consequence: **any `docker compose up` on that host silently DOWNGRADES the live gateway
+  by three minor versions**, reverting every money-path fix since v0.3.3 — including D-012 the
+  moment it ships. A routine "restart the service" would do it, with no error and no warning.
+  ⇒ The drift check MUST compare THREE things, not two: the running image, the pinned image in
+  compose, and the latest published release. Two of those three disagreeing is the normal state here.
+
   ## SCOPE — DETECT FIRST, AUTOMATE SECOND. Do not invert this.
   1. **`fleet/checks/deploy-drift.sh`** — compare the RUNNING image tag on the deployment host
      against the latest published tag and against `origin/master`. Report three numbers: deployed
