@@ -415,6 +415,35 @@ Operator took the manager recommendation, option (a).
   `${{ vars.CI_RUNNER || 'ubuntu-latest' }}`, and it is currently **unset**) — but that has NO
   fallback.
 
+### Q-010 · 🔴 THE OPERATOR MUST CREATE A SECOND GITHUB IDENTITY 🔴 · asked 2026-08-04
+**SURFACE THIS EVERY SESSION UNTIL IT IS ANSWERED. The operator asked for it to be raised LOUDLY
+AND OFTEN.**
+
+**BLOCKS:** `require_code_owner_reviews` (and therefore the ONLY control that can stop a PR from
+neutering its own required check); reviewer!=builder attribution on every PR; and a second 5000-point
+API quota pool (operator action #31 — GraphQL exhaustion is on record as the binding constraint on
+landing anything fleet-wide).
+
+**Why nothing else can substitute — measured 2026-08-04:**
+- `CODEOWNERS` exists on master and names **`@Nnyan` as the sole owner** of `/.github/` and `/tools/`.
+- GitHub **forbids a PR author from approving their own PR**. Sole owner + sole author ⇒ every PR
+  touching those paths needs an approval that nobody can give.
+- `required_approving_review_count` is **0** and `enforce_admins` is **false**, so today the setting
+  would either deadlock or be bypassed by the admin — i.e. it enforces nothing against the actual
+  threat model (agent-authored PRs merged under the admin token).
+- ⚠️ **`charon-bot` is a REAL THIRD PARTY's account** (operator action #33, verified). It can never
+  be used. The account must be one the OPERATOR creates and controls.
+
+**When the identity exists, both of these — the first alone does nothing:**
+```
+gh api -X PATCH repos/SLOP-Platform/charon/branches/master/protection/required_pull_request_reviews \
+  --input <(echo '{"require_code_owner_reviews":true,"required_approving_review_count":1}')
+gh api -X PATCH repos/SLOP-Platform/charon/branches/master/protection \
+  --input <(echo '{"enforce_admins":true}')   # without this, the admin bypasses the review
+```
+
+---
+
 ### Q-001 · [CLOSED — see D-010] Re-score pass: which lane runs first? · asked 2026-08-03
 **Blocks:** the whole adopt/delete programme (D-001..D-004).
 Lane A = turn on what we own (config, days, cheapest). Lane B = delete the 73k-line bash rig onto
