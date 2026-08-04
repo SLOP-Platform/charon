@@ -4,6 +4,28 @@ difficulty: 2
 work_class: money-path
 priority: 0
 branch: fix/forwarder-cost-order-fallback
+parked: true
+parked_reason: |
+  BLOCKED ON THE PRICE FEED — parked 2026-08-04 after adversarial review, with two independent
+  executed proofs. It is not abandoned; it is unlandable until its prerequisite exists.
+    1. NO-OP AGAINST THE LIVE GATEWAY. derived_cost_rank deliberately ignores the hand-typed
+       cost_rank field (ADR-0016 step 6) and derives from cost_input/cost_output. Live
+       /data/models.json on 4-LOM: 861 models, 10 carry cost_input, 214 carry the DEPRECATED
+       cost_rank, and no deepseek-v4-flash leg is priced. Every paid leg therefore derives the
+       neutral rank 1000, ties, and the stable sort returns the chain unchanged. A probe on the
+       real live leg shape produced nv, or, ds, ng, cline — openrouter STILL ahead of deepseek,
+       i.e. the 2026-08-01 incident order — and the identical probe against origin/master gave a
+       byte-identical result. The branch's review-log asserted the opposite.
+    2. ACTIVE REGRESSION. The empty-meter sort clobbers order_chain_by_funding_class
+       (forwarder.py:438), silently overriding the operator's drain-then-park directive. Master's
+       order_pool_by_live_cost returned the chain unchanged on an empty meter, so funding-class
+       order survived to dispatch. 12 of 16 live providers are classified, so this is live: a PAYG
+       leg cheaper per token would be tried before a prepaid class-3 credit policy says to drain
+       first. Probe served payg on the branch and prepaid on master.
+  UNPARK WHEN EITHER holds: (a) cost_input/cost_output are populated in the live catalog —
+  models.dev/api.json is public, needs no key, carries 5,613 priced models and covers 17/17 of our
+  providers; or (b) the fallback is made SUBORDINATE to funding class instead of overriding it.
+  Until then this ticket must not hold a live owns: claim on src/charon/forwarder.py.
 depends_on:
 owns: src/charon/forwarder.py, tests/test_forwarder_cost_order.py
 serial_justified: |

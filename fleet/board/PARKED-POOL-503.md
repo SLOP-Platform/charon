@@ -3,16 +3,30 @@ tier: strong
 priority: 1
 difficulty: 3
 work_class: money-path
-branch: fix/parked-pool-503
+branch: fix/parked-pool-503-v2
 owns: src/charon/forwarder.py, tests/test_gateway_outcome.py
-depends_on: FORWARDER-COST-ORDER-FALLBACK
+depends_on:
 dep-kind: |
-  serialization — both tickets edit the SAME provider-ordering region of
-  src/charon/forwarder.py. FORWARDER-COST-ORDER-FALLBACK's fix is NOT on master (verified
-  2026-08-04: master still carries the old "R2: dynamic cheapest-first using live metered cost"
-  block at forwarder.py:530 and has no cost_rank fallback), and its PR #207 was CLOSED UNMERGED,
-  leaving commit be71807 stranded. Land that commit FIRST on a fresh branch, then build the 503
-  change on top. Do not attempt them in parallel.
+  DEPENDENCY DROPPED 2026-08-04 after adversarial review. This ticket was sequenced behind
+  FORWARDER-COST-ORDER-FALLBACK on the assumption that both had to touch the same
+  provider-ordering region. The review proved that commit (be71807) must NOT land, so the
+  dependency is void and the 503 work stands alone on origin/master.
+  WHY be71807 IS HELD (two independent, executed proofs — see the CHARON-PRICE-FEED blocker):
+    1. It is a NO-OP against the live gateway. derived_cost_rank deliberately ignores the
+       hand-typed cost_rank field (ADR-0016 step 6) and derives from cost_input/cost_output. Live
+       /data/models.json on 4-LOM: 861 models, 10 with cost_input, 214 with the deprecated
+       cost_rank, and NO deepseek-v4-flash leg priced. Every paid leg therefore derives rank 1000,
+       ties, and the stable sort returns the chain unchanged. A probe on the live leg shape gave
+       nv, or, ds, ng, cline — openrouter still ahead of deepseek, the 2026-08-01 incident order —
+       and the identical probe against origin/master was byte-identical. Its review-log claimed
+       the opposite.
+    2. It is an active REGRESSION: the empty-meter sort clobbers order_chain_by_funding_class
+       (forwarder.py:438), silently overriding the operator's drain-then-park directive. 12 of 16
+       live providers are classified, so this is live. Probe served payg on the branch and prepaid
+       on master.
+  BRANCH RENAMED to fix/parked-pool-503-v2: origin/fix/parked-pool-503 still carries the two
+  discarded commits and force-push is denied here, so the reworked single commit takes a fresh
+  name per the friction list.
 serial_justified: |
   The two owned surfaces are one behaviour change and its red-proof, not two
   independent workstreams. D-012 REQUIRES them in the SAME change — the existing test asserts the
