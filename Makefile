@@ -24,6 +24,13 @@ version:
 audit:
 	pip-audit || true
 
+# TOOL-ENABLE-RATCHET: bandit against the committed baseline floor -- fails
+# only on findings NEW since .bandit-baseline.json was generated. Not wired
+# into the `all`/CI gate (ruff's S-rule family already covers this ground
+# there per src/charon/scanners.py); this is the standalone deeper scan.
+security:
+	bandit -r src -b .bandit-baseline.json
+
 demo:
 	charon run --goal "create hello" --accept "test -f hello.txt" --backend mock --autonomy L1
 
