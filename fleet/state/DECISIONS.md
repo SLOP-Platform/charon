@@ -287,7 +287,98 @@ observability/alerting · cost accounting.
 exist · what adopting it would DELETE (lens L2). A gap with no candidate is a legitimate build —
 that is how the ~2,100-line novel slice earned its place.
 
-### Q-001 · Re-score pass: which lane runs first? · asked 2026-08-03
+### D-010 · LANE ORDER APPROVED (answers Q-001) · 2026-08-03
+Operator approved the manager recommendation: **Lane A first** (turn on what we own — it makes every
+later verdict measurable), **Lane C in parallel** (the three-axis re-evaluation; read-only so it
+cannot collide), **Lane B last** and as a **cutover-with-deletion, never an addition**. Lane C
+launched 2026-08-03. Q-001 is CLOSED.
+
+### D-011 · THE DISPLAY TOOL — AND ITS SCHEDULE (answers Q-002) · 2026-08-03
+Operator asked twice which tool, since n8n is wrong, and recalled monit. **They were right about
+monit — for one of the three jobs.** "Realtime code map + broken gates + feature-not-done" is THREE
+different jobs, which is why no single tool fits:
+
+| job | right tool | status on this box |
+|---|---|---|
+| process liveness / restart / alert-when-down | 🟢 **monit** | ALREADY partly adopted — `fleet/watchdog/` generates monit config from `fleet/state/service-registry.tsv`. Finish wiring it; do NOT stretch it to gates. |
+| status view over gates / tickets / PRs / work-loss | 🟢 **generated static HTML page** | STATUS-BOARD-V1, building 2026-08-03 |
+| code map / dependency graph / blast radius | 🟢 **graphify** (owned) rendered to HTML | graph.json already built by 114 call sites; `affected` has **0** call sites |
+| dashboards with HISTORY + alerting | 🟠 **Grafana** (+Prometheus) | LATER, only if trends/alerting are wanted |
+| event glue to external services (Slack/email/phone) | 🟠 **n8n is legitimate HERE** | not needed yet |
+
+**n8n is not wrong at everything — it is wrong at DISPLAY.** It is workflow automation ("when X, do
+Y") with a visual editor. Rendering a status page in it means fighting the tool.
+
+**Static page over Grafana for now, stated as a trade:** static = zero runtime, nothing to keep
+alive, no auth, versioned in git, opens from disk; loses charts, history, alerting, and is
+minutes-stale. Grafana = real dashboards + alerting; costs a server plus data sources to keep alive —
+**and keeping services alive is precisely what keeps failing here.** Revisit after living with v3.
+
+**SCHEDULE — each step gated on a NAMED precondition, not a date:**
+- **v1 — NOW (2026-08-03).** Snapshot only, three states (green / red / **grey UNPROVEN**), real
+  numbers including the ugly ones. Safe to build before the gates are trustworthy *precisely
+  because* it renders UNPROVEN honestly rather than green.
+- **v2 — after Lane A lands AND mutation testing (`mutmut`) is wired.** That is what answers
+  "can this gate actually go red" mechanically, so grey tiles can legitimately become green. Until
+  then most tiles stay grey, and that is correct.
+- **v3 — after v2: auto-regenerate** from CI runs + the existing 20-min cron. THIS is the
+  "realtime" step (minutes-fresh). Deliberately last: auto-publishing an untrustworthy page is worse
+  than having no page, because the operator would believe it.
+- **Grafana decision point — only after v3 has been lived with.**
+
+⛔ The ordering rule behind all of it: **a dashboard over unproven gates is a GREEN LIE.** On record
+here: 113 red-proof suites that never execute in CI, and a PASSING check reported as RED for weeks.
+
+### D-012 · FULLY-PARKED POOL MUST RETURN 503, NOT A SILENT 200 · 2026-08-04
+**Operator (answering Q1):** *"I don't want a situation where EVERYONE is parked but I understand it
+may be needed for some reason. CHange it to 503 don't allow it to leak."*
+
+Today `forwarder.py:481-487` restores the FULL chain — parked legs included — when every leg of a
+pool is parked, and serves a normal **200**. That is how money leaks while everything looks healthy.
+Measured 2026-08-03: `kimi-k2.6` (5/5 legs parked) and `minimax-m2.5` (2/2 parked) both served 200
+via openrouter.
+
+**CHANGE TO: a real 503.** Requirements, so the failure is diagnosable rather than merely loud —
+the operator explicitly accepted that some requests will now fail:
+- terminal **503**, never a success-shaped body;
+- the envelope must NAME EVERY LEG with its real per-leg status and a non-empty reason (i.e. reuse
+  the existing `all_providers_exhausted` shape, which already does this);
+- it must be distinguishable from "all legs tried and failed" — the reason here is
+  *"every leg is parked"*, which is an operator/config state, not an upstream failure;
+- `X-Charon-*` headers must report the truth (attempts = 0 upstream calls made).
+
+⚠ **`tests/test_gateway_outcome.py` MUST CHANGE WITH IT.** Its test
+`test_all_legs_parked_still_serves_a_real_200_and_never_strands` currently asserts the 200 and
+therefore CEMENTS the behaviour being removed. Invert it to assert the 503 + the named-legs envelope,
+and keep a red-proof. A good test locking in a bad decision is exactly why this note exists.
+
+### D-013 · TOOLS THAT ENFORCE NOTHING GET MOVED — NO NEED TO ASK · 2026-08-04
+**Operator (answering Q2):** *"Move them. Tools that do nothing should be moved to where it makes
+sense. NO need to ask me about that."*
+
+MEASURED 2026-08-03/04: `semgrep`, `gitleaks` and `bandit` have **371–384 successful runs on
+`Nnyan/charon-private`, and block nothing** — that repo is on a free plan and
+`gh api repos/Nnyan/charon-private/branches/master/protection` returns
+**403 "Upgrade to GitHub Pro or make this repository public"**, so no check can EVER be required
+there. The product repo `SLOP-Platform/charon` DOES have protection but requires only `["gate"]`
+(`strict:false`).
+
+**STANDING AUTHORITY GRANTED:** a tool that is running but enforcing nothing may be relocated to
+where it can enforce, without asking. Zero new tools, zero new LOC — it converts advisory theatre
+into a gate. Generalise it: **"green runs" is not evidence of enforcement; being a REQUIRED check
+is.** Verify with the `protection` endpoint, never by the presence of a passing workflow.
+
+### D-014 · SELF-HOSTED RUNNERS EXIST — CI VOLUME IS NOT FREE · 2026-08-04
+**Operator (answering Q3):** *"I think we can use them for SG and SLOP/mediastack. I believe we have
+them on two servers for 6-7 runners. 4-LOM and BB-8."*
+
+Consequence for the merge queue: a merge queue **re-runs checks against the updated base**, so it
+INCREASES CI volume. On GitHub-hosted public runners that is free; on 4-LOM/BB-8 it is real
+wall-clock on hardware that is also running the gateway and the fleet. **Therefore: enable the merge
+queue WITH A CONCURRENCY CAP, not wide open**, and confirm which jobs are `runs-on: self-hosted`
+before turning it on. Do not assume a job is GitHub-hosted.
+
+### Q-001 · [CLOSED — see D-010] Re-score pass: which lane runs first? · asked 2026-08-03
 **Blocks:** the whole adopt/delete programme (D-001..D-004).
 Lane A = turn on what we own (config, days, cheapest). Lane B = delete the 73k-line bash rig onto
 adopted substrate. Lane C = re-score the 76 EVAL-REGISTRY rows + 393 review artifacts under the
