@@ -1,0 +1,54 @@
+# charon-policy.yml — the git-tracked Semgrep policy ruleset (the ADOPTED engine's rules).
+#
+# WHAT THIS IS: a MERGE-BOUNDARY BACKSTOP for portability/publication policy that any contributor
+# or agent can violate. Semgrep is the maintained engine — this file is only the small,
+# git-tracked ruleset it runs. NEVER hand-roll a linter here; add a rule, not a parser.
+#
+# WHAT THIS IS NOT: this is the POLICY/CONVENTION tier. It is NOT the secret-scanner (gitleaks),
+# NOT the Python SAST (bandit), and NOT a provider-key-exfil security proof. It is ADDITIVE to
+# those. Do not conflate, and do not treat a green here as a security proof.
+#
+# RELATIONSHIP TO tools/check_public_clean.py: that gate scans every TRACKED file line-by-line for
+# the same publication tokens and is the authority for them. These two rules are a deliberate
+# second, independent engine over the PR DIFF, in the language the code is written in — they add
+# defense in depth, not a replacement. If the two ever disagree, check_public_clean wins.
+#
+# Keep the set SMALL and REAL: a rule that reds on legitimate product code gets disabled, which is
+# worse than no rule. Every rule below is verified to hold on the tree as of 2026-08-04.
+#
+# DELIBERATELY NOT PORTED from the build repo's copy of this ruleset:
+#   charon-no-hardcoded-anthropic-model (a string literal matching claude|anthropic|opus|sonnet|
+#   haiku|fable). Measured on this repo 2026-08-04: 14 tracked product files legitimately carry
+#   such literals, including src/charon/provider_presets/anthropic.py — the product is
+#   provider-agnostic and SHIPS an Anthropic preset. A rule that reds on every PR touching
+#   providers.py or model_catalog.py would be turned off within a week.
+rules:
+  # RULE 1 — flagship, load-bearing (the canary neuters THIS one).
+  # No hardcoded private-LAN host/IP. Hosts must come from env/config: a source-baked private
+  # address breaks fresh-install portability on any other machine AND leaks host topology into a
+  # public repository. Matches private-LAN IPv4 literals ONLY (10.x / 192.168.x / 172.16-31.x);
+  # loopback (localhost / 127.0.0.1) is deliberately NOT matched — it is legitimate in local test
+  # servers and carries no topology leak.
+  - id: charon-no-hardcoded-lan-host
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Hardcoded private-LAN IP literal. Read hosts from env/config, not a source-baked address.
+      An internal IP breaks fresh-install portability and leaks host topology into a public repo.
+      Loopback is fine; a LAN address is not.
+    patterns:
+      - pattern-regex: '["''](?:https?://)?(?:10\.[0-9]|192\.168\.|172\.(?:1[6-9]|2[0-9]|3[01])\.)[0-9.]+(?::[0-9]{2,5})?[^"'']*["'']'
+
+  # RULE 2 — no developer-machine absolute path in source.
+  # A hardcoded home-directory literal crosses a deploy boundary (it breaks on every other host,
+  # in a container, and on a fresh install) AND leaks a personal path into a public repo. Use an
+  # env-relative or repo-relative path.
+  - id: charon-no-devbox-abspath
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Developer-machine absolute path in source. Use an env-relative or repo-relative path.
+      Such a literal breaks on any other host and leaks a personal path into a public repo.
+    patterns:
+      # public-clean: allow — a path-detection rule must spell the path prefix it detects.
+      - pattern-regex: '["'']/home/[A-Za-z0-9_.-]+/[^"'']*["'']'

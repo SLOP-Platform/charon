@@ -1,0 +1,79 @@
+# semgrep.yml — MERGE-BLOCKING policy backstop using the ADOPTED Semgrep engine.
+#
+# WHAT THIS IS: the server-side, un-bypassable check for portability/publication policy drift. It
+# runs the maintained Semgrep engine over the git-tracked ruleset (.github/scripts/semgrep-rules/)
+# and BLOCKS MERGE on any finding that lands on a line the PR ADDED.
+#
+# WHAT THIS IS NOT: this is the POLICY/CONVENTION tier, NOT a security proof. It is ADDITIVE to
+# gitleaks (secrets), bandit (Python SAST) and tools/check_public_clean.py (which remains the
+# authority for publication tokens across every tracked file).
+#
+# ---------------------------------------------------------------------------------------------
+# RUNNER — HARD-PINNED to ubuntu-latest, deliberately. This repository is PUBLIC, and a
+# self-hosted runner on a public repo lets a FORK'S pull request execute arbitrary code on that
+# hardware. GitHub-hosted runners are free and unlimited for public repositories, so there is
+# nothing to gain and a real risk to take on. Do NOT swap this literal for a runner-label
+# variable lookup, and do NOT set a CI_RUNNER repository variable here.
+#
+# MAKING IT BLOCK: this workflow running green is NOT enforcement. Enforcement is being a REQUIRED
+# status check in branch protection for `master`. Add the "semgrep" context ONLY AFTER a real run
+# has been observed completing on a real PR — a required context that has never reported blocks
+# every PR forever.
+# ---------------------------------------------------------------------------------------------
+name: semgrep
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: semgrep-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  semgrep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          # fetch-depth 0 is LOAD-BEARING: --diff scoping needs base..head history to resolve the
+          # merge-base. A shallow checkout cannot, and the wrapper then FAILS CLOSED (exit 2)
+          # rather than scan nothing and report green. Do not lower this.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: "3.12"
+
+      # Adopt the maintained engine, PINNED TO AN EXACT VERSION. Why exact, not a range:
+      #   A merge-blocking gate must be DETERMINISTIC. A floating range lets a fresh CI pip
+      #   resolve to whatever is newest at run time, and semgrep's behaviour is not stable across
+      #   minors — e.g. `rules: []` errors on 1.161 but passes clean (exit 0) on >=1.170. A gate
+      #   whose verdict depends on which semgrep pip happened to fetch is a version-fragility we
+      #   refuse. 1.161.0 is the version the canary
+      #   (.github/scripts/tests/semgrep-canary.test.sh) is validated against. To bump: change
+      #   this pin, re-run the canary locally on the new version, land them together.
+      #   (The vacuous-ruleset guard is ALSO version-robust in the wrapper — belt and suspenders.)
+      - name: Install Semgrep (the adopted engine — pinned exact for a deterministic gate)
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet --disable-pip-version-check 'semgrep==1.161.0'
+          semgrep --version
+
+      # Prove the gate itself EXECUTES before trusting its verdict: the fail-on-revert canary must
+      # pass. If the canary reds, the gate is untrustworthy and CI reds.
+      - name: Canary — prove the gate fires and fails-on-revert
+        run: bash .github/scripts/tests/semgrep-canary.test.sh
+
+      # DIFF-SCOPED on purpose, and LINE-exact: only findings on lines THIS PR added block merge.
+      # A full-tree scan would red on pre-existing findings, and a gate that reds on an untouched
+      # tree gets disabled — the exact failure this gate exists to prevent.
+      - name: Semgrep policy scan (new findings only — exit 1 blocks merge)
+        env:
+          CHARON_CI_BASE: ${{ github.event.pull_request.base.sha || 'origin/master' }}
+          CHARON_CI_HEAD: ${{ github.sha }}
+        run: bash .github/scripts/semgrep.sh --diff
