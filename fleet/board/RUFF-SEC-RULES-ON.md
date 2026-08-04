@@ -12,7 +12,16 @@ substrate: |
   by adopting standalone bandit (fleet/checks/bandit.sh), which is a DIFFERENT tool covering
   overlapping ground; ruff's S rules are the same checks inside the linter already on every file,
   at no extra runtime and no new dependency.
-depends_on:
+depends_on: RELEASE-0-6-2
+dep-kind: merge-order
+real-dep: |
+  RELEASE-0-6-2 — MERGE-ORDER only, and it is the HEAD of the ruff/mypy chain
+  (RUFF-SEC-RULES-ON -> RUFF-PREVIEW-ON -> RUFF-ARG-C90-ON -> MYPY-STRICTNESS-3-FLAGS), so this one
+  edit sequences all four. RELEASE-0-6-2 touches ONE line of pyproject.toml (project.version) and no
+  [tool.*] block, so it is trivially rebasable and must land FIRST: it cuts the release that deploys
+  the D-012 money fix, which is still leaking in production while the gateway runs v0.6.1.
+  This whole collision is what the operator-approved pyproject DECOMPOSITION removes — moving
+  [tool.ruff] to ruff.toml and mypy to mypy.ini drops these tickets off pyproject.toml entirely.
 note: |
   REOPEN-equivalent — mint fresh rather than reopen, because the prior tickets were honestly done
   for their own scope.
