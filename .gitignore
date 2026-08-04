@@ -158,3 +158,6 @@ graphify-out/
 # other mechanisms failed to make decisions stick (see the file's own table); a decision ledger
 # that does not survive a fresh clone would be the seventh.
 !fleet/state/DECISIONS.md
+# ...and the Lane C three-axis tool re-evaluation (D-009). 120 lines of measured re-scoring that
+# would otherwise live only in a session transcript — the exact failure D-007 names.
+!fleet/state/LANE-C-*.md
