@@ -305,6 +305,16 @@ misleading comments instructing it are removed in PR #235. Self-hosted runners a
 
 **D. Rule on `park_cooldown.py`** (§6d): may park be split from cooldown in the sole-leg guard?
 
+**D2. `LITELLM-COST-ADOPT` — a droid's VERDICT was found orphaned; the ticket is still LIVE.**
+`state/judgment/mace-windu-LITELLM-COST-ADOPT.md` was sitting UNTRACKED in the PRODUCT checkout (the
+judgment dir lives in the RIG). I moved it to `fleet/state/judgment/`. Its verdict, unverified by
+me: *"No code change needed. Close ticket: ADOPTED-WIRED-EVIDENCE-FILED. The $1,185 vs $1.34 concern
+is two different ledgers (universal cap floor vs observer metered spend), not a bug."* The ticket has
+NO done marker and is still on the active board. **Verify that verdict, then close it or act on it.**
+This is the D-007 class in miniature: the work was done and the filing was dropped. It also explains
+the repeated `done.sh` warning "NO model-used provisional found … scorecard will NOT record this
+outcome" — droid capture refs are diverging from what `done.sh` looks for.
+
 **E. Q8 still open** — rig repo public (needs scrubbing 129 `fleet/*.sh` files containing internal
 IPs/paths) vs paid Team (~$4/mo). The org transfer is deferred behind this; deciding first means
 migrating once.
