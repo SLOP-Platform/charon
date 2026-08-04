@@ -150,3 +150,7 @@ graphify-out/
 # ...and session handoffs — the file the next session reads FIRST. A handoff inside the blanket
 # fleet/state/* ignore is a handoff that does not survive a fresh clone.
 !fleet/state/HANDOFF-*.md
+# ...and multi-session PLANs (same reasoning as handoffs, and the same failure this rig keeps
+# hitting: "a decision that lives only in a session's memory is not a decision"). A plan that is
+# held across sessions for an operator decision must survive a fresh clone.
+!fleet/state/PLAN-*.md

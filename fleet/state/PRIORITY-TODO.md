@@ -64,6 +64,52 @@ genuinely still open, because a noisy list is the mechanism by which the real on
 Print: item · state · evidence (sha/PR/command output). No prose-only claims. If an item has not
 moved in two reports, say so explicitly and why.
 
+## 2 — DRAFT-PR PILEUP: finished work that cannot merge (operator-directed 2026-08-03)
+
+**MEASURED 2026-08-03 — 46 of 62 open PRs are DRAFTS:**
+
+| repo | open PRs | drafts | share |
+|---|---|---|---|
+| charon-private (rig) | 36 | **24** | 67% |
+| Nnyan/charon (product) | 26 | **22** | 85% |
+
+**THE MECHANISM (this is the part that was never named):** droids open their PRs as **drafts**, and
+nothing ever promotes them. **A draft PR cannot be merged.** So work is written, committed, pushed,
+PR'd, correct — and permanently inert. Every prior session recorded the SYMPTOM ("almost every
+missing thing was FINISHED WORK NOBODY LANDED", handoff §3) without identifying that draft status is
+the gate. This is very likely a large fraction of the 233 `pushed-no-pr` / 46 `closed-pr-unlanded`
+backlog as well.
+
+**THE INSTANCE THAT PROVES THE COST — `GATE-PARITY-TIMEOUT-FLAKE` / PR #446:**
+- The fix was correct and measured good: `gate-parity.sh scan` **30.7s → 3.8s**, same verdict
+  (`parity holds`), exit 0. It OPTIMISED rather than raising the bound, per the derive-don't-guess
+  doctrine.
+- It sat as a **draft** for hours while the unfixed 30.7s copy on master (vs `validate_board.sh:600`'s
+  hardcoded `timeout=30`) reported a PASSING check as a board RED.
+- That RED **blocked the land of an unrelated plan document**, and previously blocked six legitimate
+  branch pushes (handoff §8c), training the `--force` habit — which is how a genuine RED eventually
+  gets ignored.
+- **The operator believed it was already fixed.** It was: committed, pushed, PR'd. Just not merged.
+  "Fixed" and "landed" are different states and only one of them has any effect.
+- Landed 2026-08-03 by marking #446 ready + update-branch + merge. `--force` was NOT needed: PR CI
+  runs the BRANCH's own gate-parity, so the fix verifies itself instead of being blocked by the bug
+  it fixes. **Use that pattern for any gate-fix PR.**
+- Same shape already on the roadmap and never actioned: R43 — *"audit delivered, PR #20 still DRAFT
+  (not merged)"*.
+
+**WHAT IS REQUIRED — A MECHANIZED SWEEP, NOT A MANUAL PASS** (operator, 2026-08-03: *"we know the
+draft-PR is an issue and they pile up, we need some mechanized way of going through these"*).
+Sketch, to be designed — **operator said TALK FIRST, do not build it unasked:**
+- Classify every draft from EVIDENCE, not from its title: `done-not-promoted` (CI green, branch has
+  real commits, owns-paths exist) | `genuine WIP` | `superseded` (content already on master) |
+  `abandoned` (stale base + dead claim).
+- Then act per class: promote+merge, leave with a reason, or close with evidence.
+- Run on a **CADENCE**, not once — L5 compounding. This file's own lens table already names
+  *"drafts grow monotonically"* as the example of lens 5, and it was still never ticketed.
+- Deciding lens: **L1 unblocks execution** (46 PRs of finished work is the single largest pool of
+  already-paid-for value on the board) + **L2 prevention at source** (the real fix is that droids
+  should not open drafts, or that promotion is automatic on green CI).
+
 # ⚖️ HOW TO PRIORITISE — THE NINE LENSES (apply ALL of them, every time)
 
 **Operator-directed 2026-08-02, made durable so it is not re-derived each session.** Blast radius
