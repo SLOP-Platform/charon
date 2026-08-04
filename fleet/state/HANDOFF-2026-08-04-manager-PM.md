@@ -296,6 +296,18 @@ rebased-branch-needs-a-fresh-name, #9b never-wait-on-`pgrep -f`, #14 verify-ever
 
 ---
 
+28. **`worktree-commit-and-land.sh` leaves an orphan `wcl/*` branch on EVERY FAILED land**, and
+    those accumulate in the stranded-work count forever. Measured at close 2026-08-04: **19 local
+    `wcl/*` branches, 6 of them on origin**; 14 were already merged into master (harmless noise) and
+    5 were leftovers from FAILED attempts. I verified and deleted the two from this session — both
+    redundant, their tickets having landed and then been RETIRED, so the content lives at
+    `fleet/board/archive/<TICKET>.md` on master, NOT at `fleet/board/<TICKET>.md`. **Check the
+    archive path before concluding a wcl/* branch holds unlanded work** — a naive `git diff
+    origin/master...wcl/...` says "differs" for every retired ticket and makes redundant branches
+    look like stranded work. Three older `wcl/*` from prior sessions were left alone deliberately.
+    ⇒ The script should delete its own scratch branch once the content is confirmed on master. Until
+    it does, the stranded count inflates by one per failed land.
+
 # 6 — 🔴 CARRIED FORWARD — LIVE DEFECTS AND UNFINISHED WORK 🔴
 
 ### 6a · Landed-but-never-worked — THE most expensive class here
