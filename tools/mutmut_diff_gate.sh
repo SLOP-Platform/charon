@@ -87,19 +87,22 @@ if [ -z "$CHANGED_PY" ]; then
   exit 0
 fi
 
-# Build an isolated copy of the tracked tree so the scoped [tool.mutmut] config
-# never touches the repo's own pyproject.toml.
+# Build an isolated copy of the tree so the scoped [tool.mutmut] config never
+# touches the repo's own pyproject.toml. A real `git clone --local` (not a
+# `git ls-files | tar` file copy) so the copy carries its own `.git` — the
+# suite's public-clean tests run `git ls-files` and fail closed without one.
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"; rm -rf .mutmut-cache mutants' EXIT
-if ! git ls-files -z | tar --null -T - -cf - | tar -xf - -C "$TMP"; then
+if ! git clone --quiet --local --no-hardlinks "$REPO_ROOT" "$TMP/src"; then
   fail "could not build the isolated run tree"
 fi
+TMP_TREE="$TMP/src"
 
 # Merge a diff-scoped [tool.mutmut] into the COPY's pyproject.toml. Any existing
 # [tool.mutmut] section is dropped so a wider one cannot shadow the scoped
 # config; also_copy= tools/ so tests that import `tools.*` resolve inside
 # mutmut's mutants/ sandbox.
-if ! python3 - "$TMP" $CHANGED_PY <<'PY'
+if ! python3 - "$TMP_TREE" $CHANGED_PY <<'PY'
 import sys
 from pathlib import Path
 
@@ -135,7 +138,7 @@ RUN_LOG="$(mktemp)"
 trap 'rm -rf "$TMP"; rm -rf .mutmut-cache mutants; rm -f "$RUN_LOG"' EXIT
 
 set +e
-( cd "$TMP" && timeout "${TIMEOUT_SECS}s" mutmut run --max-children 1 ) >"$RUN_LOG" 2>&1
+( cd "$TMP_TREE" && timeout "${TIMEOUT_SECS}s" mutmut run --max-children 1 ) >"$RUN_LOG" 2>&1
 RUN_RC=$?
 set -e
 
@@ -147,7 +150,7 @@ if grep -q "Filtered for specific mutants, but nothing matches" "$RUN_LOG"; then
 fi
 
 set +e
-RESULTS_ALL="$( cd "$TMP" && mutmut results --all true 2>/dev/null )"
+RESULTS_ALL="$( cd "$TMP_TREE" && mutmut results --all true 2>/dev/null )"
 RESULTS_RC=$?
 set -e
 if [ "$RESULTS_RC" -ne 0 ] || [ -z "$RESULTS_ALL" ]; then
