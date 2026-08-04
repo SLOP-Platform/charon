@@ -203,6 +203,62 @@ forgot) and this ledger's blocking edge (an `ASKED` row stops dependent work; a 
 be contradicted). **A verdict without a minted ticket and a landed diff is not done** — and no
 session may report it as done.
 
+### D-008 · LANGUAGE POLICY — REWRITE NOTHING; CHOOSE PER *NEW* COMPONENT · 2026-08-03
+**Operator approved 2026-08-03 and asked for it LOUD.**
+
+> ## 🔴 REWRITING WORKING CODE FOR LANGUAGE REASONS IS FORBIDDEN. 🔴
+> It produces **zero** features and costs weeks. It is the purest form of the two-steps-back
+> pattern. A session that proposes a Python→Go migration of working code is wrong; if the operator
+> wants it, they must say so explicitly and overrule this line.
+
+**Choose per NEW component:**
+
+| component shape | language | why |
+|---|---|---|
+| long-running daemons, supervisors, watchdogs, CLIs | 🟢 **Go** | single static binary, real concurrency, compiler catches it before it runs — precisely where bash failed |
+| web dashboard / any frontend | 🟢 **TypeScript** | do not render UI from Go or Python templates |
+| outcome grading, analysis, data/ML-shaped work, glue | 🟢 **Python + mypy strict** | already here, small, best agent corpus; safety is one config change we already own (D-004) |
+| anything | 🔴 **Rust** | slowest to write, agents get it wrong most often, nothing here needs its guarantees |
+| **state, concurrency, or anything long-lived** | 🔴 **NEVER bash again** | measured: **1,696 `set -e`-suppressed sites** = 1,696 places a script continues after a command already failed. Bash cannot be ratcheted into safety — there is no type checker for it. |
+
+**Bash is acceptable only for a script short enough to read on one screen that calls other programs
+and exits.** The moment it must remember state, coordinate with another process, or run for a long
+time, it must not be bash.
+
+**Why this is mostly moot for existing code:** D-001 already deletes most of the Python rather than
+rewriting it — ~6,500 lines of commodity gateway and ~6,700 lines of leaked orchestration go to
+adopted substrate. The language question applies to the ~2,100-line outcome-grading slice plus the
+decomposer, which work and are small. **The real language problem is 73,019 lines of bash, and its
+answer is deletion onto an adopted engine, not translation into Go.**
+
+#### D-008a · WHERE A SMALL GO SLICE *IS* WORTH IT (operator pushback, accepted)
+Yes — some slices earn Go on their own merits even while everything else stays put. Ranked:
+
+1. **The supervisor / reaper** — the process that keeps workers alive, enforces leases with fencing,
+   reaps orphans, and itself never dies. **This is the single best Go candidate**: it must survive
+   for days, handle signals, manage children, and never silently continue after an error. It maps
+   directly onto the top operator complaint (orphaned invisible droids that claim tickets and lose
+   work). ~500-1,000 lines.
+   ⛔ **SEQUENCING — do NOT build this before Q-001 is answered.** If a workflow engine is adopted
+   (Lane B), **the engine IS the supervisor**, and a hand-written Go one would rebuild the thing we
+   are about to adopt — rig-as-product, again. If an engine IS adopted, the Go slice shrinks to a
+   thin local agent that reports into it; still Go, much smaller.
+2. **Concurrent fan-out with deadlines** (launching/supervising N workers, cancel-at-timeout,
+   collect results). Go's context+goroutines make this correct by construction; bash does it with
+   background jobs and `wait`, which produced the fork-bomb class and the
+   `pgrep`-matched-a-droid-prompt incident.
+3. **Fast pre-commit / gate runner** — runs on EVERY commit, so startup cost is felt every time.
+   Go starts instantly; a Python interpreter + imports does not.
+4. **Any binary copied to another machine** (4-LOM, the Wyse boxes) — a static binary just runs;
+   Python needs an environment provisioned and kept in sync.
+
+**NOT worth Go even though it looks like it might be:** the outcome-grading/scoring logic (wants
+Python's ecosystem if grading gets smarter), one-shot analysis scripts (Python is faster to write),
+and anything that mostly calls an LLM API and parses JSON (no benefit).
+
+**Operator-facing rule of thumb:** *Go when it must stay alive, supervise, or be a binary you copy
+to another machine. Python when it thinks, analyses, or runs once.*
+
 ---
 
 ## ASKED — open, and what each one BLOCKS

@@ -11,7 +11,14 @@
 > - **D-003:** the failure is **enforcement, not recall** — adopt no memory product for it.
 > - **D-004:** turn on what we already own (**~20% enabled**) before adopting anything new.
 > - **D-005:** how the operator gets quality they can trust *without reading code*.
-> - **D-006:** `test_gateway_outcome.py` is owed — asked for, never delivered.
+> - **D-006:** `test_gateway_outcome.py` is owed — asked for, never delivered. *(built + landed 2026-08-03)*
+> - **D-007:** the class — this project converts requests into research and **drops the
+>   implementation**. A verdict without a minted ticket AND a landed diff is **not done**, and no
+>   session may report it as done.
+> - **D-008:** language policy. 🔴 **REWRITING WORKING CODE FOR LANGUAGE REASONS IS FORBIDDEN.** 🔴
+>   New components only: **Go** for daemons/supervisors/CLIs, **TypeScript** for frontend,
+>   **Python+mypy strict** for grading/analysis/glue, **never bash** for state or concurrency
+>   (1,696 measured `set -e`-suppressed sites). D-008a lists the small slices that *do* earn Go.
 >
 > **This file is 42KB and decisions got lost inside it.** That is precisely why the ledger exists and
 > is kept small. **Never copy a decision into here — point at the ledger.** Adding volume is the
