@@ -59,3 +59,10 @@ class RollingLatency:
         if lat is None:
             return False
         return lat > threshold_ms
+
+    def p95_ms(self, provider: str) -> float | None:
+        """p95 latency for ``provider`` — a NEW method with no covering test."""
+        with self._lock:
+            if provider not in self._latencies:
+                return None
+            return self._latencies[provider] * 1.33
