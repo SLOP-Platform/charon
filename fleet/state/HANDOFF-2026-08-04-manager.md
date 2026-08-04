@@ -1,3 +1,11 @@
+# ⛔ SUPERSEDED — READ `fleet/state/HANDOFF-2026-08-04-manager-PM.md` INSTEAD ⛔
+#
+# All FOUR actions in section 1 of this file are DONE (shellcheck #447, status-board #448,
+# D-012 503 #233, scanner relocation #234 — the scanners are now REQUIRED checks).
+# The PM handoff supersedes this file. Its section 4 is a LANDING RUNBOOK that this file
+# lacked, and its section 5 lists nine frictions this file did not warn about.
+# The section 4 friction list BELOW is still valid and still worth reading.
+
 # HANDOFF — session closed 2026-08-04 (early AM)
 
 > ## ⛔ READ `fleet/state/DECISIONS.md` FIRST. THIS FILE IS SECOND. ⛔
