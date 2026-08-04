@@ -12,6 +12,13 @@ BRIDGES that cache straight into the live router via
 freshly-discovered ``(provider, model)`` therefore routes with **zero manual
 mapping** on the next refresh.
 
+Price sourcing: most providers' ``/models`` carry no pricing, so the catalog
+would be blind to cost. ``models.dev/api.json`` (public, 5 600+ models with
+cost across 178 providers) is fetched as a supplementary price source, cached on
+the refresh TTL, and its per-1M-token prices are converted to per-token and
+merged into every entry that would otherwise have no price. The fetch is
+injectable (``price_source_fn``) so tests drive a mock.
+
 Hard constraints (why PRICE-REFRESHER was rejected — do NOT repeat):
   * WIRED, not a library: registered in ``gateway._MODULE_SPECS`` and its cache
     bridged onto ``srv.routes``/``srv.pools``/``srv.model_pricing`` via
@@ -21,7 +28,7 @@ Hard constraints (why PRICE-REFRESHER was rejected — do NOT repeat):
     already-bridged cache only.
   * STALE-BUT-USABLE: a provider poll that fails logs a red and keeps that
     provider's last-good entries — a refresh error never empties the catalog and
-    never blocks routing.
+    never blocks routing.  A models.dev fetch that fails keeps last-good prices.
 
 Precedence: the meter-observed per-(model,provider) cost still SUPERSEDES the
 quoted price once traffic exists — this module only feeds the *quote* into
@@ -34,6 +41,7 @@ import json
 import logging
 import threading
 import time
+import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -50,12 +58,29 @@ log = logging.getLogger("charon.catalog_refresh")
 # Injectable so tests drive an honest mock provider without real network.
 ListModelsFn = Callable[[str, "dict | None"], list[dict]]
 
+# A price source: () -> {member_id: {cost_input, cost_output?, free?}}.
+# Injectable so tests drive a mock without real network.
+# Returned values are per-token USD.
+PriceSourceFn = Callable[[], dict[str, dict[str, Any]]]
+
 # Fields carried from a /models entry into the routing registry.
 _PRICE_KEYS = ("cost_input", "cost_output", "free")
 _META_KEYS = ("context_window", "max_tokens", "reasoning", "vision", "audio",
               "cost_class")
 
 _DEFAULT_TTL_S = 3600.0
+
+# models.dev provider-key → internal provider name.
+# All 17 of our providers are covered — either an exact match or an alias below.
+_PROVIDER_ALIASES: dict[str, str] = {
+    "opencode-zen": "opencode",
+    "google-aistudio": "google",
+    "nanogpt": "nano-gpt",
+    "together": "togetherai",
+}
+
+# Scale factor: models.dev quotes USD per 1M tokens; _PRICE_KEYS expect per-token.
+_PER_MILLION = 1_000_000.0
 
 
 def _normalize(raw: str) -> str:
@@ -79,6 +104,49 @@ def _default_list_models(name: str, overrides: dict | None) -> list[dict]:
     api_key = _secrets.get_provider_key(
         name, key_env=preset.key_env, base_url=preset.base_url)
     return _providers_mod.list_models(name, overrides, api_key=api_key)
+
+
+def _default_price_source() -> dict[str, dict[str, Any]]:
+    """Fetch ``https://models.dev/api.json`` (public, no key) and compile a
+    ``{member_id: {cost_input, cost_output?, free?}}`` map with per-token USD.
+
+    models.dev quotes in USD per 1M tokens; this converts to per-token by
+    dividing by 1e6.  Provider names are mapped through ``_PROVIDER_ALIASES``
+    so the resulting member ids match our internal provider names.
+    """
+    url = "https://models.dev/api.json"
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        raw = json.loads(resp.read().decode("utf-8"))
+    result: dict[str, dict[str, Any]] = {}
+    for md_provider, md_data in raw.items():
+        if not isinstance(md_data, dict):
+            continue
+        provider = _PROVIDER_ALIASES.get(md_provider, md_provider)
+        models = md_data.get("models")
+        if not isinstance(models, dict):
+            continue
+        for model_id, model_data in models.items():
+            if not isinstance(model_data, dict):
+                continue
+            cost = model_data.get("cost")
+            if not isinstance(cost, dict):
+                continue
+            price: dict[str, Any] = {}
+            ci = cost.get("input")
+            if ci is not None and isinstance(ci, (int, float)):
+                price["cost_input"] = float(ci) / _PER_MILLION
+            co = cost.get("output")
+            if co is not None and isinstance(co, (int, float)):
+                price["cost_output"] = float(co) / _PER_MILLION
+            free_val = cost.get("free")
+            if free_val is not None:
+                price["free"] = bool(free_val)
+            if price:
+                result[f"{provider}/{model_id}"] = price
+    log.info("models.dev price source: %d entries from %d providers",
+             len(result), len(raw))
+    return result
 
 
 @dataclass
@@ -143,16 +211,20 @@ class CatalogRefresher:
         state_dir: str | Path | None = None,
         ttl_s: float = _DEFAULT_TTL_S,
         list_models_fn: ListModelsFn | None = None,
+        price_source_fn: PriceSourceFn | None = None,
     ) -> None:
         self._providers_cfg: dict = (
             providers_cfg if providers_cfg is not None
             else _load_providers(state_dir))
         self.ttl_s = float(ttl_s)
         self._list_models: ListModelsFn = list_models_fn or _default_list_models
+        self._price_source: PriceSourceFn = price_source_fn or _default_price_source
         self.cache = CatalogCache()
         # Number of provider polls attempted — a test asserts this stays 0 across
         # a forward_with_failover call (the off-hot-path guard).
         self.poll_count = 0
+        # Number of entries that have no pricing after all sources exhausted.
+        self.missing_price_count = 0
         self._lock = threading.Lock()
         self._server: GatewayProxyServer | None = None
         # Static config snapshot captured at bind(): discovered entries are always
@@ -160,13 +232,42 @@ class CatalogRefresher:
         self._base: tuple[dict, dict, dict, dict] | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
+        # models.dev price cache — fetched once per TTL, stale-but-usable on error.
+        self._price_cache: dict[str, dict[str, Any]] | None = None
+        self._price_cache_ts: float = 0.0
 
     # ── discovery (background / on-demand only — NEVER on the hot path) ──────
+    def _get_prices(self) -> dict[str, dict[str, Any]]:
+        """Return models.dev prices, cached on the refresh TTL.
+
+        A fetch that fails keeps the last-good cache (stale-but-usable); if there
+        is no prior cache the missing-price counter will flag every unpriced entry.
+        Never raises."""
+        now = time.time()
+        if self._price_cache is not None and (now - self._price_cache_ts) < self.ttl_s:
+            return self._price_cache
+        try:
+            self._price_cache = self._price_source()
+            self._price_cache_ts = now
+        except Exception as exc:  # noqa: BLE001 — stale-but-usable
+            log.error(
+                "models.dev price fetch failed (%s: %s) — keeping last-good "
+                "prices (stale-but-usable)", type(exc).__name__, exc)
+            if self._price_cache is None:
+                self._price_cache = {}
+                self._price_cache_ts = now
+        return self._price_cache
+
     def refresh_now(self) -> None:
         """Poll every configured provider's ``/models`` and update the cache.
 
         A provider whose poll raises is logged as a red and SKIPPED — its
-        last-good entries stay in the cache (stale-but-usable). Never raises."""
+        last-good entries stay in the cache (stale-but-usable).  Before the poll
+        loop, models.dev prices are fetched (cached on TTL) and merged into every
+        entry that has no pricing from its provider's own ``/models``.  Never
+        raises."""
+        prices = self._get_prices()
+        missing = 0
         for name, cfg in self._providers_cfg.items():
             overrides = cfg if isinstance(cfg, dict) else None
             self.poll_count += 1
@@ -186,9 +287,26 @@ class CatalogRefresher:
                 member_id = f"{name}/{raw}"
                 price = {k: m[k] for k in _PRICE_KEYS if k in m}
                 meta = {k: m[k] for k in _META_KEYS if k in m}
+                # Supplement from models.dev: only fills keys that are missing
+                # (the provider's own /models pricing wins on any collision).
+                if m.get("cost_input") is None:
+                    md = prices.get(member_id, {})
+                    if md:
+                        for pk in _PRICE_KEYS:
+                            if pk not in price and pk in md:
+                                price[pk] = md[pk]
+                if not price:
+                    missing += 1
+                    log.warning("catalog refresh: no price for %s", member_id)
                 entries[member_id] = ProviderEntry(name, raw, price, meta)
             with self._lock:
                 self.cache.put(name, entries)
+        self.missing_price_count = missing
+        if missing:
+            log.warning(
+                "catalog refresh: %d entries missing pricing — "
+                "neutral 1000 rank applied, cost-first ordering is degraded",
+                missing)
 
     # ── the WIRE: cache → live router ───────────────────────────────────────
     def bind(self, server: GatewayProxyServer) -> None:

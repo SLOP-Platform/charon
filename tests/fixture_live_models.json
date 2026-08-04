@@ -1,0 +1,2482 @@
+[
+  {
+    "provider": "zai",
+    "model": "glm-4.5"
+  },
+  {
+    "provider": "zai",
+    "model": "glm-4.5-air"
+  },
+  {
+    "provider": "zai",
+    "model": "glm-4.6"
+  },
+  {
+    "provider": "zai",
+    "model": "glm-4.7"
+  },
+  {
+    "provider": "zai",
+    "model": "glm-5"
+  },
+  {
+    "provider": "zai",
+    "model": "glm-5-turbo"
+  },
+  {
+    "provider": "zai",
+    "model": "glm-5.1"
+  },
+  {
+    "provider": "zai",
+    "model": "glm-5.2"
+  },
+  {
+    "provider": "nvidia",
+    "model": "nemotron-3-ultra-550b-a55b"
+  },
+  {
+    "provider": "nvidia",
+    "model": "nemotron-3-ultra-550b-a55b:thinking"
+  },
+  {
+    "provider": "TEE",
+    "model": "qwen3.6-27b"
+  },
+  {
+    "provider": "meta",
+    "model": "muse-spark-1.1"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "longcat-2.0"
+  },
+  {
+    "provider": "stepfun",
+    "model": "step-3.7-flash:thinking"
+  },
+  {
+    "provider": "perceptron",
+    "model": "perceptron-mk1"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "mirothinker-1-7-deepresearch"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "mirothinker-1-7-deepresearch-mini"
+  },
+  {
+    "provider": "sakana",
+    "model": "fugu-ultra"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "auto-model"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "auto-model-basic"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "auto-model-standard"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "auto-model-premium"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "coding-router"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "coding-router:low"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "coding-router:medium"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "coding-router:high"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "coding-router:max"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "claw-high"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "claw-medium"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "claw-low"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "hermes-high"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "hermes-medium"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "hermes-low"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "exa-answer"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "exa-research"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "exa-research-pro"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "linkup-research-low"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "linkup-research-medium"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "linkup-research-high"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "linkup-research-xhigh"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "sofya-research"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "brave"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "brave-pro"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "brave-research"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "fastgpt"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "universal-summarizer"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-oss-120b"
+  },
+  {
+    "provider": "liquid",
+    "model": "lfm-2-24b-a2b"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-oss-safeguard-20b"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-oss-20b"
+  },
+  {
+    "provider": "anthropic",
+    "model": "claude-sonnet-5"
+  },
+  {
+    "provider": "anthropic",
+    "model": "claude-sonnet-5:thinking"
+  },
+  {
+    "provider": "anthropic",
+    "model": "claude-sonnet-latest"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "claude-sonnet-4-5-20250929"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "claude-sonnet-4-5-20250929-thinking"
+  },
+  {
+    "provider": "soob3123",
+    "model": "amoral-gemma3-27B-v2"
+  },
+  {
+    "provider": "mistralai",
+    "model": "Devstral-Small-2505"
+  },
+  {
+    "provider": "soob3123",
+    "model": "Veiled-Calla-12B"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-5.6-sol"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-5.6-terra"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-5.6-terra-pro"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-5.6-luna"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-5.6-luna-pro"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-5.6-sol-pro"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-5.5"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-5.4"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-5.4-mini"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-5.4-nano"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-latest"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-chat-latest"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-5.2"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-5.2-codex"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-5.3-codex"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-5"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-5.1"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-5.1-codex"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-5.1-codex-max"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-5.1-codex-mini"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-5-pro"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-5-mini"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-5-nano"
+  },
+  {
+    "provider": "z-ai",
+    "model": "glm-4.5v"
+  },
+  {
+    "provider": "z-ai",
+    "model": "glm-4.5v:thinking"
+  },
+  {
+    "provider": "z-ai",
+    "model": "glm-5-turbo"
+  },
+  {
+    "provider": "z-ai",
+    "model": "glm-5v-turbo"
+  },
+  {
+    "provider": "z-ai",
+    "model": "glm-5v-turbo:thinking"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "gemini-2.0-pro-exp-02-05"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "gemini-2.5-flash-preview-05-20"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "gemini-2.5-flash-preview-05-20:thinking"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "gemini-exp-1206"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "sonar-deep-research"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "ernie-5.0-thinking-preview"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "qvq-max"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "deepclaude"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "qwq-32b"
+  },
+  {
+    "provider": "moonshotai",
+    "model": "kimi-k2-thinking-original"
+  },
+  {
+    "provider": "moonshotai",
+    "model": "kimi-k2-thinking-turbo-original"
+  },
+  {
+    "provider": "stepfun-ai",
+    "model": "step-3.5-flash-2603"
+  },
+  {
+    "provider": "stepfun-ai",
+    "model": "step-3.5-flash"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "gemini-2.5-flash-preview-04-17"
+  },
+  {
+    "provider": "google",
+    "model": "gemini-3.1-pro-preview"
+  },
+  {
+    "provider": "google",
+    "model": "gemini-3.1-pro-preview-customtools"
+  },
+  {
+    "provider": "google",
+    "model": "gemini-3.1-pro-preview-high"
+  },
+  {
+    "provider": "google",
+    "model": "gemini-3.1-pro-preview-low"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "gemini-2.5-flash-preview-04-17:thinking"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "gemini-2.5-pro-exp-03-25"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "gemini-2.5-pro-preview-03-25"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "gemini-2.5-pro-preview-05-06"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "gemini-2.5-pro-preview-06-05"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "gemini-2.5-pro"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "gemini-2.5-flash"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "gemini-2.5-flash-lite"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "gemini-2.5-flash-lite-preview-06-17"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "gemini-2.5-flash-nothinking"
+  },
+  {
+    "provider": "google",
+    "model": "gemini-flash-latest"
+  },
+  {
+    "provider": "google",
+    "model": "gemini-pro-latest"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "gemini-3-pro-image-preview"
+  },
+  {
+    "provider": "google",
+    "model": "gemini-3-flash-preview"
+  },
+  {
+    "provider": "google",
+    "model": "gemini-3-flash-preview-thinking"
+  },
+  {
+    "provider": "google",
+    "model": "gemini-3.5-flash"
+  },
+  {
+    "provider": "google",
+    "model": "gemini-3.5-flash-thinking"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "gemini-2.5-flash-preview-09-2025"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "gemini-2.5-flash-preview-09-2025-thinking"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "gemini-2.5-flash-lite-preview-09-2025"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "gemini-2.5-flash-lite-preview-09-2025-thinking"
+  },
+  {
+    "provider": "google",
+    "model": "gemini-3.1-flash-lite"
+  },
+  {
+    "provider": "nex-agi",
+    "model": "nex-n2-mini"
+  },
+  {
+    "provider": "openai",
+    "model": "o1-pro"
+  },
+  {
+    "provider": "qwen",
+    "model": "qwen3-coder"
+  },
+  {
+    "provider": "google",
+    "model": "gemini-flash-lite-latest"
+  },
+  {
+    "provider": "qwen",
+    "model": "qwen3-coder-plus"
+  },
+  {
+    "provider": "qwen",
+    "model": "qwen3-coder-flash"
+  },
+  {
+    "provider": "meta-llama",
+    "model": "llama-4-maverick"
+  },
+  {
+    "provider": "x-ai",
+    "model": "grok-4.3"
+  },
+  {
+    "provider": "x-ai",
+    "model": "grok-4.5"
+  },
+  {
+    "provider": "x-ai",
+    "model": "grok-build-0.1"
+  },
+  {
+    "provider": "x-ai",
+    "model": "grok-latest"
+  },
+  {
+    "provider": "x-ai",
+    "model": "grok-4.20"
+  },
+  {
+    "provider": "x-ai",
+    "model": "grok-4.20-multi-agent"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-4.1-nano"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-4.1-mini"
+  },
+  {
+    "provider": "mistralai",
+    "model": "mistral-medium-3"
+  },
+  {
+    "provider": "mistralai",
+    "model": "mistral-medium-3.1"
+  },
+  {
+    "provider": "mistralai",
+    "model": "codestral-2508"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-4.1"
+  },
+  {
+    "provider": "openai",
+    "model": "o3"
+  },
+  {
+    "provider": "openai",
+    "model": "o4-mini"
+  },
+  {
+    "provider": "openai",
+    "model": "o4-mini-high"
+  },
+  {
+    "provider": "meta-llama",
+    "model": "llama-4-scout"
+  },
+  {
+    "provider": "deepseek-ai",
+    "model": "DeepSeek-R1-0528"
+  },
+  {
+    "provider": "moonshotai",
+    "model": "Kimi-K2-Instruct-0905"
+  },
+  {
+    "provider": "moonshotai",
+    "model": "kimi-k2-thinking"
+  },
+  {
+    "provider": "moonshotai",
+    "model": "kimi-k2.5"
+  },
+  {
+    "provider": "moonshotai",
+    "model": "kimi-k2.5:thinking"
+  },
+  {
+    "provider": "moonshotai",
+    "model": "kimi-k2.6"
+  },
+  {
+    "provider": "moonshotai",
+    "model": "kimi-latest"
+  },
+  {
+    "provider": "moonshotai",
+    "model": "kimi-k2.7-code"
+  },
+  {
+    "provider": "moonshotai",
+    "model": "kimi-k2.7-code-highspeed"
+  },
+  {
+    "provider": "moonshotai",
+    "model": "kimi-k2.6:thinking"
+  },
+  {
+    "provider": "moonshotai",
+    "model": "kimi-k2-instruct"
+  },
+  {
+    "provider": "moonshotai",
+    "model": "kimi-k2-instruct-0711"
+  },
+  {
+    "provider": "mistralai",
+    "model": "ministral-14b-instruct-2512"
+  },
+  {
+    "provider": "mistralai",
+    "model": "mistral-small-4-119b-2603"
+  },
+  {
+    "provider": "mistralai",
+    "model": "mistral-small-4-119b-2603:thinking"
+  },
+  {
+    "provider": "mistralai",
+    "model": "mistral-large-3-675b-instruct-2512"
+  },
+  {
+    "provider": "mistralai",
+    "model": "devstral-2-123b-instruct-2512"
+  },
+  {
+    "provider": "mistralai",
+    "model": "mixtral-8x22b-instruct-v0.1"
+  },
+  {
+    "provider": "NousResearch",
+    "model": "Hermes-4-70B:thinking"
+  },
+  {
+    "provider": "nousresearch",
+    "model": "hermes-4-405b:thinking"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "doubao-seed-2-0-code-preview-260215"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "doubao-seed-2-0-lite-260215"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "doubao-seed-2-0-mini-260215"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "doubao-seed-2-0-pro-260215"
+  },
+  {
+    "provider": "bytedance",
+    "model": "doubao-seed-2.1-pro"
+  },
+  {
+    "provider": "bytedance",
+    "model": "doubao-seed-2.1-turbo"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "doubao-1.5-pro-256k"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "claude-sonnet-4-20250514"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "claude-opus-4-20250514"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "claude-sonnet-4-thinking"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "claude-opus-4-thinking"
+  },
+  {
+    "provider": "pamanseau",
+    "model": "OpenReasoning-Nemotron-32B"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "deepseek-r1"
+  },
+  {
+    "provider": "aion-labs",
+    "model": "aion-2.0"
+  },
+  {
+    "provider": "aion-labs",
+    "model": "aion-2.5"
+  },
+  {
+    "provider": "aion-labs",
+    "model": "aion-3.0"
+  },
+  {
+    "provider": "aion-labs",
+    "model": "aion-3.0-mini"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "deepseek-chat"
+  },
+  {
+    "provider": "minimax",
+    "model": "minimax-01"
+  },
+  {
+    "provider": "minimax",
+    "model": "minimax-m2.5"
+  },
+  {
+    "provider": "bytedance-seed",
+    "model": "seed-2.0-lite"
+  },
+  {
+    "provider": "ibm-granite",
+    "model": "granite-4.1-8b"
+  },
+  {
+    "provider": "upstage",
+    "model": "solar-pro-3"
+  },
+  {
+    "provider": "qwen",
+    "model": "qwen3-235b-a22b"
+  },
+  {
+    "provider": "qwen",
+    "model": "qwen3.5-9b"
+  },
+  {
+    "provider": "qwen",
+    "model": "qwen3-32b"
+  },
+  {
+    "provider": "qwen",
+    "model": "qwen3-14b"
+  },
+  {
+    "provider": "qwen",
+    "model": "qwen3-30b-a3b"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "qwen3-vl-235b-a22b-thinking"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "qwen3-vl-235b-a22b-instruct-original"
+  },
+  {
+    "provider": "qwen",
+    "model": "qwen3-max"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "qwen3-coder-30b-a3b-instruct"
+  },
+  {
+    "provider": "arcee-ai",
+    "model": "trinity-large-thinking"
+  },
+  {
+    "provider": "kwaipilot",
+    "model": "kat-coder-pro-v2"
+  },
+  {
+    "provider": "kwaipilot",
+    "model": "kat-coder-air-v2.5"
+  },
+  {
+    "provider": "kwaipilot",
+    "model": "kat-coder-pro-v2.5"
+  },
+  {
+    "provider": "Qwen",
+    "model": "Qwen3-235B-A22B-Instruct-2507"
+  },
+  {
+    "provider": "Qwen",
+    "model": "Qwen3-235B-A22B-Instruct-2507-TEE"
+  },
+  {
+    "provider": "Qwen",
+    "model": "Qwen3-235B-A22B-Thinking-2507"
+  },
+  {
+    "provider": "Qwen",
+    "model": "Qwen3-Next-80B-A3B-Instruct"
+  },
+  {
+    "provider": "qwen",
+    "model": "qwen3-next-80b-a3b-thinking"
+  },
+  {
+    "provider": "Alibaba-NLP",
+    "model": "Tongyi-DeepResearch-30B-A3B"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "MiniMax-M1"
+  },
+  {
+    "provider": "MiniMaxAI",
+    "model": "MiniMax-M1-80k"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "MiniMax-M2"
+  },
+  {
+    "provider": "minimax",
+    "model": "minimax-m2-her"
+  },
+  {
+    "provider": "minimax",
+    "model": "minimax-m3"
+  },
+  {
+    "provider": "minimax",
+    "model": "minimax-m3:thinking"
+  },
+  {
+    "provider": "minimax",
+    "model": "minimax-m2.7"
+  },
+  {
+    "provider": "minimax",
+    "model": "minimax-latest"
+  },
+  {
+    "provider": "minimax",
+    "model": "minimax-m2.7-turbo"
+  },
+  {
+    "provider": "xiaomi",
+    "model": "mimo-v2.5"
+  },
+  {
+    "provider": "xiaomi",
+    "model": "mimo-v2.5:thinking"
+  },
+  {
+    "provider": "xiaomi",
+    "model": "mimo-v2.5-pro"
+  },
+  {
+    "provider": "xiaomi",
+    "model": "mimo-v2.5-pro:thinking"
+  },
+  {
+    "provider": "minimax",
+    "model": "minimax-m2.1"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "glm-zero-preview"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "hunyuan-turbos-20250226"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "step-2-16k-exp"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "glm-4-plus-0111"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "glm-4-air-0111"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "glm-z1-air"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "glm-z1-airx"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "glm-4.1v-thinking-flash"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "glm-4.1v-thinking-flashx"
+  },
+  {
+    "provider": "z-ai",
+    "model": "glm-4.6"
+  },
+  {
+    "provider": "z-ai",
+    "model": "glm-4.6:thinking"
+  },
+  {
+    "provider": "zai-org",
+    "model": "glm-4.6v-flash-original"
+  },
+  {
+    "provider": "zai-org",
+    "model": "glm-4.6v-original"
+  },
+  {
+    "provider": "zai-org",
+    "model": "glm-4.7-original"
+  },
+  {
+    "provider": "zai-org",
+    "model": "glm-4.7-original:thinking"
+  },
+  {
+    "provider": "zai-org",
+    "model": "glm-5"
+  },
+  {
+    "provider": "zai-org",
+    "model": "glm-5:thinking"
+  },
+  {
+    "provider": "zai-org",
+    "model": "glm-5.1"
+  },
+  {
+    "provider": "zai-org",
+    "model": "glm-latest"
+  },
+  {
+    "provider": "zai-org",
+    "model": "glm-5.1:thinking"
+  },
+  {
+    "provider": "zai-org",
+    "model": "glm-5.2"
+  },
+  {
+    "provider": "zai-org",
+    "model": "glm-5.2:thinking"
+  },
+  {
+    "provider": "zai-org",
+    "model": "glm-5-original"
+  },
+  {
+    "provider": "zai-org",
+    "model": "glm-5-original:thinking"
+  },
+  {
+    "provider": "zai-org",
+    "model": "glm-4.7-flash-original"
+  },
+  {
+    "provider": "zai-org",
+    "model": "glm-4.7-flash-original:thinking"
+  },
+  {
+    "provider": "zai-org",
+    "model": "glm-4.7-flash"
+  },
+  {
+    "provider": "zai-org",
+    "model": "glm-4.7-flash:thinking"
+  },
+  {
+    "provider": "zai-org",
+    "model": "glm-4.7"
+  },
+  {
+    "provider": "zai-org",
+    "model": "glm-4.7:thinking"
+  },
+  {
+    "provider": "zai-org",
+    "model": "glm-4.6-original"
+  },
+  {
+    "provider": "zai-org",
+    "model": "glm-4.6v"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "qwen3-30b-a3b-instruct-2507"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "step-2-mini"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "step-3"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "doubao-1.5-pro-32k"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "doubao-1.5-vision-pro-32k"
+  },
+  {
+    "provider": "qwen",
+    "model": "qwq-32b-preview"
+  },
+  {
+    "provider": "meta-llama",
+    "model": "llama-3.3-70b-instruct"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "doubao-seed-1-8-251215"
+  },
+  {
+    "provider": "nvidia",
+    "model": "Llama-3.1-Nemotron-70B-Instruct-HF"
+  },
+  {
+    "provider": "Sao10K",
+    "model": "L3-8B-Stheno-v3.2"
+  },
+  {
+    "provider": "soob3123",
+    "model": "GrayLine-Qwen3-8B"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "claude-haiku-4-5-20251001"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "claude-haiku-4-5-20251001-thinking"
+  },
+  {
+    "provider": "anthropic",
+    "model": "claude-haiku-latest"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "yi-lightning"
+  },
+  {
+    "provider": "amazon",
+    "model": "nova-pro-v1"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "glm-4-plus"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "learnlm-1.5-pro-experimental"
+  },
+  {
+    "provider": "nousresearch",
+    "model": "hermes-4-405b"
+  },
+  {
+    "provider": "nousresearch",
+    "model": "hermes-4-70b"
+  },
+  {
+    "provider": "nousresearch",
+    "model": "hermes-3-llama-3.1-70b"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "qwen-turbo"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "qwen-max"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "qwen3-max-2026-01-23"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "qwen3.7-max"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "qwen3.7-max:thinking"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "qwen3.7-plus"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "qwen3.7-plus:thinking"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "qwen3.6-max-preview"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "qwen3.5-omni-flash"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "qwen3.5-omni-plus"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "qwen3.5-122b-a10b"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "qwen3.5-122b-a10b:thinking"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "qwen3.5-27b"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "qwen3.5-27b:thinking"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "qwen3.5-35b-a3b"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "qwen3.5-35b-a3b:thinking"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "qwen3.5-flash"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "qwen3.5-flash:thinking"
+  },
+  {
+    "provider": "Qwen",
+    "model": "Qwen3.6-35B-A3B"
+  },
+  {
+    "provider": "Qwen",
+    "model": "Qwen3.6-35B-A3B:thinking"
+  },
+  {
+    "provider": "alibaba",
+    "model": "qwen3.6-flash"
+  },
+  {
+    "provider": "alibaba",
+    "model": "qwen3.6-27b"
+  },
+  {
+    "provider": "alibaba",
+    "model": "qwen3.6-27b:thinking"
+  },
+  {
+    "provider": "deepseek-ai",
+    "model": "deepseek-v3.2-exp"
+  },
+  {
+    "provider": "deepseek-ai",
+    "model": "deepseek-v3.2-exp-thinking"
+  },
+  {
+    "provider": "deepseek",
+    "model": "deepseek-v3.2"
+  },
+  {
+    "provider": "deepseek",
+    "model": "deepseek-v3.2:thinking"
+  },
+  {
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash"
+  },
+  {
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash:thinking"
+  },
+  {
+    "provider": "deepseek",
+    "model": "deepseek-v4-pro"
+  },
+  {
+    "provider": "deepseek",
+    "model": "deepseek-latest"
+  },
+  {
+    "provider": "deepseek",
+    "model": "deepseek-v4-pro:thinking"
+  },
+  {
+    "provider": "deepseek",
+    "model": "deepseek-v4-pro-cheaper"
+  },
+  {
+    "provider": "deepseek",
+    "model": "deepseek-v4-pro-cheaper:thinking"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "qwen-plus"
+  },
+  {
+    "provider": "qwen",
+    "model": "qwen3.5-397b-a17b"
+  },
+  {
+    "provider": "qwen",
+    "model": "qwen3.5-397b-a17b-thinking"
+  },
+  {
+    "provider": "qwen",
+    "model": "qwen3.5-plus"
+  },
+  {
+    "provider": "qwen",
+    "model": "qwen3.5-plus-thinking"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "qwen-3.6-plus"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "qwen-long"
+  },
+  {
+    "provider": "Qwen",
+    "model": "Qwen2.5-Coder-32B-Instruct"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "phi-4-multimodal-instruct"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "phi-4-mini-instruct"
+  },
+  {
+    "provider": "amazon",
+    "model": "nova-lite-v1"
+  },
+  {
+    "provider": "amazon",
+    "model": "nova-micro-v1"
+  },
+  {
+    "provider": "amazon",
+    "model": "nova-2-lite-v1"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "yi-large"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "yi-medium-200k"
+  },
+  {
+    "provider": "TheDrummer",
+    "model": "Cydonia-24B-v2"
+  },
+  {
+    "provider": "TheDrummer",
+    "model": "Cydonia-24B-v4"
+  },
+  {
+    "provider": "TheDrummer",
+    "model": "Cydonia-24B-v4.1"
+  },
+  {
+    "provider": "TheDrummer",
+    "model": "Cydonia-24B-v4.3"
+  },
+  {
+    "provider": "TheDrummer",
+    "model": "Magidonia-24B-v4.3"
+  },
+  {
+    "provider": "Doctor-Shotgun",
+    "model": "MS3.2-24B-Magnum-Diamond"
+  },
+  {
+    "provider": "ReadyArt",
+    "model": "MS3.2-The-Omega-Directive-24B-Unslop-v2.0"
+  },
+  {
+    "provider": "EVA-UNIT-01",
+    "model": "EVA-LLaMA-3.33-70B-v0.0"
+  },
+  {
+    "provider": "Steelskull",
+    "model": "L3.3-MS-Nevoria-70b"
+  },
+  {
+    "provider": "Steelskull",
+    "model": "L3.3-Nevoria-R1-70b"
+  },
+  {
+    "provider": "Steelskull",
+    "model": "L3.3-Electra-R1-70b"
+  },
+  {
+    "provider": "abacusai",
+    "model": "Dracarys-72B-Instruct"
+  },
+  {
+    "provider": "mistralai",
+    "model": "mistral-large"
+  },
+  {
+    "provider": "NeverSleep",
+    "model": "Lumimaid-v0.2-70B"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "deepseek-chat-cheaper"
+  },
+  {
+    "provider": "inflection",
+    "model": "inflection-3-pi"
+  },
+  {
+    "provider": "inflection",
+    "model": "inflection-3-productivity"
+  },
+  {
+    "provider": "microsoft",
+    "model": "wizardlm-2-8x22b"
+  },
+  {
+    "provider": "huihui-ai",
+    "model": "Llama-3.3-70B-Instruct-abliterated"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "sonar-pro"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "sonar-reasoning-pro"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "perplexity-academic-researcher"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "sonar"
+  },
+  {
+    "provider": "Gryphe",
+    "model": "MythoMax-L2-13b"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "glm-4"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "glm-4-long"
+  },
+  {
+    "provider": "qwen",
+    "model": "qwen-2.5-72b-instruct"
+  },
+  {
+    "provider": "anthracite-org",
+    "model": "magnum-v4-72b"
+  },
+  {
+    "provider": "EVA-UNIT-01",
+    "model": "EVA-Qwen2.5-32B-v0.2"
+  },
+  {
+    "provider": "mistralai",
+    "model": "ministral-3b-2512"
+  },
+  {
+    "provider": "mistralai",
+    "model": "ministral-8b-2512"
+  },
+  {
+    "provider": "mistralai",
+    "model": "ministral-14b-2512"
+  },
+  {
+    "provider": "thedrummer",
+    "model": "skyfall-36b-v2"
+  },
+  {
+    "provider": "Qwen",
+    "model": "Qwen3-8B"
+  },
+  {
+    "provider": "LLM360",
+    "model": "K2-Think"
+  },
+  {
+    "provider": "deepseek-ai",
+    "model": "DeepSeek-V3.1"
+  },
+  {
+    "provider": "deepseek-ai",
+    "model": "DeepSeek-V3.1:thinking"
+  },
+  {
+    "provider": "deepseek-ai",
+    "model": "DeepSeek-V3.1-Terminus"
+  },
+  {
+    "provider": "deepseek-ai",
+    "model": "DeepSeek-V3.1-Terminus:thinking"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "deepseek-v3-0324"
+  },
+  {
+    "provider": "baseten",
+    "model": "Kimi-K2-Instruct-FP4"
+  },
+  {
+    "provider": "zai-org",
+    "model": "GLM-4.5:thinking"
+  },
+  {
+    "provider": "zai-org",
+    "model": "glm-4.5"
+  },
+  {
+    "provider": "zai-org",
+    "model": "GLM-4.5-Air"
+  },
+  {
+    "provider": "zai-org",
+    "model": "GLM-4.6-turbo"
+  },
+  {
+    "provider": "zai-org",
+    "model": "GLM-4.6-turbo:thinking"
+  },
+  {
+    "provider": "zai-org",
+    "model": "GLM-4.5-Air:thinking"
+  },
+  {
+    "provider": "TEE",
+    "model": "gpt-oss-120b"
+  },
+  {
+    "provider": "TEE",
+    "model": "gpt-oss-20b"
+  },
+  {
+    "provider": "TEE",
+    "model": "qwen2.5-vl-72b-instruct"
+  },
+  {
+    "provider": "TEE",
+    "model": "deepseek-v3.1"
+  },
+  {
+    "provider": "TEE",
+    "model": "deepseek-v4-flash"
+  },
+  {
+    "provider": "TEE",
+    "model": "deepseek-v3.2"
+  },
+  {
+    "provider": "TEE",
+    "model": "qwen3-30b-a3b-instruct-2507"
+  },
+  {
+    "provider": "TEE",
+    "model": "qwen3.6-35b-a3b"
+  },
+  {
+    "provider": "TEE",
+    "model": "qwen3.6-35b-a3b-uncensored"
+  },
+  {
+    "provider": "TEE",
+    "model": "qwen3.5-27b"
+  },
+  {
+    "provider": "TEE",
+    "model": "qwen3.5-397b-a17b"
+  },
+  {
+    "provider": "TEE",
+    "model": "qwen3.5-122b-a10b"
+  },
+  {
+    "provider": "TEE",
+    "model": "gemma-4-31b-it"
+  },
+  {
+    "provider": "TEE",
+    "model": "gemma-4-26b-a4b-uncensored"
+  },
+  {
+    "provider": "TEE",
+    "model": "gemma-3-27b-it"
+  },
+  {
+    "provider": "dmind",
+    "model": "dmind-1"
+  },
+  {
+    "provider": "dmind",
+    "model": "dmind-1-mini"
+  },
+  {
+    "provider": "TEE",
+    "model": "gemma4-31b"
+  },
+  {
+    "provider": "TEE",
+    "model": "gemma4-31b:thinking"
+  },
+  {
+    "provider": "TEE",
+    "model": "llama3-3-70b"
+  },
+  {
+    "provider": "GalrionSoftworks",
+    "model": "MN-LooseCannon-12B-v1"
+  },
+  {
+    "provider": "EVA-UNIT-01",
+    "model": "EVA-Qwen2.5-72B-v0.2"
+  },
+  {
+    "provider": "EVA-UNIT-01",
+    "model": "EVA-LLaMA-3.33-70B-v0.1"
+  },
+  {
+    "provider": "meta-llama",
+    "model": "llama-3.1-8b-instruct"
+  },
+  {
+    "provider": "undi95",
+    "model": "remm-slerp-l2-13b"
+  },
+  {
+    "provider": "mistralai",
+    "model": "mistral-saba"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "mercury-2"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "mercury-coder-small"
+  },
+  {
+    "provider": "cohere",
+    "model": "command-r-plus-08-2024"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "command-a-plus-05-2026"
+  },
+  {
+    "provider": "cohere",
+    "model": "north-mini-code"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "command-a-reasoning-08-2025"
+  },
+  {
+    "provider": "mlabonne",
+    "model": "NeuralDaredevil-8B-abliterated"
+  },
+  {
+    "provider": "failspy",
+    "model": "Meta-Llama-3-70B-Instruct-abliterated-v3.5"
+  },
+  {
+    "provider": "anthracite-org",
+    "model": "magnum-v2-72b"
+  },
+  {
+    "provider": "mistralai",
+    "model": "Mistral-Nemo-Instruct-2407"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "deepseek-reasoner"
+  },
+  {
+    "provider": "Envoid",
+    "model": "Llama-3.05-NT-Storybreaker-Ministral-70B"
+  },
+  {
+    "provider": "Envoid",
+    "model": "Llama-3.05-Nemotron-Tenyxchat-Storybreaker-70B"
+  },
+  {
+    "provider": "inflatebot",
+    "model": "MN-12B-Mag-Mell-R1"
+  },
+  {
+    "provider": "Steelskull",
+    "model": "L3.3-MS-Evayale-70B"
+  },
+  {
+    "provider": "featherless-ai",
+    "model": "Qwerky-72B"
+  },
+  {
+    "provider": "TheDrummer",
+    "model": "Anubis-70B-v1"
+  },
+  {
+    "provider": "TheDrummer",
+    "model": "Anubis-70B-v1.1"
+  },
+  {
+    "provider": "meta-llama",
+    "model": "llama-3.2-3b-instruct"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Meta-Llama-3-1-8B-Instruct-FP8"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "glm-4-airx"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "glm-4-air"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "glm-4-flash"
+  },
+  {
+    "provider": "Sao10K",
+    "model": "L3.1-70B-Hanami-x1"
+  },
+  {
+    "provider": "TheDrummer",
+    "model": "Rocinante-12B-v1.1"
+  },
+  {
+    "provider": "Sao10K",
+    "model": "L3.3-70B-Euryale-v2.3"
+  },
+  {
+    "provider": "Sao10K",
+    "model": "L3.1-70B-Euryale-v2.2"
+  },
+  {
+    "provider": "Steelskull",
+    "model": "L3.3-Cu-Mai-R1-70b"
+  },
+  {
+    "provider": "TheDrummer",
+    "model": "UnslopNemo-12B-v4.1"
+  },
+  {
+    "provider": "MarinaraSpaghetti",
+    "model": "NemoMix-Unleashed-12B"
+  },
+  {
+    "provider": "VongolaChouko",
+    "model": "Starcannon-Unleashed-12B-v1.0"
+  },
+  {
+    "provider": "nothingiisreal",
+    "model": "L3.1-70B-Celeste-V0.1-BF16"
+  },
+  {
+    "provider": "anthropic",
+    "model": "claude-opus-4.8"
+  },
+  {
+    "provider": "anthropic",
+    "model": "claude-opus-4.8:thinking"
+  },
+  {
+    "provider": "anthropic",
+    "model": "claude-fable-5"
+  },
+  {
+    "provider": "anthropic",
+    "model": "claude-fable-latest"
+  },
+  {
+    "provider": "huihui-ai",
+    "model": "DeepSeek-R1-Distill-Qwen-32B-abliterated"
+  },
+  {
+    "provider": "huihui-ai",
+    "model": "DeepSeek-R1-Distill-Llama-70B-abliterated"
+  },
+  {
+    "provider": "huihui-ai",
+    "model": "Qwen2.5-32B-Instruct-abliterated"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "deepseek-reasoner-cheaper"
+  },
+  {
+    "provider": "aion-labs",
+    "model": "aion-rp-llama-3.1-8b"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "azure-o1"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "azure-o3-mini"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "azure-gpt-4o"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "azure-gpt-4o-mini"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "azure-gpt-4-turbo"
+  },
+  {
+    "provider": "poolside",
+    "model": "laguna-m.1"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "jamba-large"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "jamba-mini"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "jamba-large-1.7"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "jamba-mini-1.7"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "jamba-large-1.6"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "jamba-mini-1.6"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "deepseek-r1-sambanova"
+  },
+  {
+    "provider": "LatitudeGames",
+    "model": "Wayfarer-Large-70B-Llama-3.3"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "claude-sonnet-4-thinking:1024"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "claude-sonnet-4-thinking:8192"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "claude-sonnet-4-thinking:32768"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "claude-sonnet-4-thinking:64000"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "claude-opus-4-thinking:1024"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "claude-opus-4-thinking:8192"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "claude-opus-4-thinking:32768"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "claude-opus-4-thinking:32000"
+  },
+  {
+    "provider": "anthropic",
+    "model": "claude-opus-4.6"
+  },
+  {
+    "provider": "anthropic",
+    "model": "claude-opus-4.6:thinking"
+  },
+  {
+    "provider": "anthropic",
+    "model": "claude-opus-latest"
+  },
+  {
+    "provider": "anthropic",
+    "model": "claude-opus-4.6:thinking:max"
+  },
+  {
+    "provider": "anthropic",
+    "model": "claude-opus-4.6:thinking:medium"
+  },
+  {
+    "provider": "anthropic",
+    "model": "claude-opus-4.6:thinking:low"
+  },
+  {
+    "provider": "anthropic",
+    "model": "claude-opus-4.7"
+  },
+  {
+    "provider": "anthropic",
+    "model": "claude-opus-4.7:thinking"
+  },
+  {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4.6"
+  },
+  {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4.6:thinking"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "claude-opus-4-5-20251101"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "claude-opus-4-5-20251101:thinking"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "claude-opus-4-1-20250805"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "claude-opus-4-1-thinking"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "claude-opus-4-1-thinking:1024"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "claude-opus-4-1-thinking:8192"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "claude-opus-4-1-thinking:32768"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "claude-opus-4-1-thinking:32000"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "doubao-seed-1-6-250615"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "doubao-seed-1-6-flash-250615"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "doubao-seed-1-6-thinking-250615"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "ernie-x1.1-preview"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "ernie-5.1"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "ernie-5.1:thinking"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "gemini-2.0-pro-reasoner"
+  },
+  {
+    "provider": "unsloth",
+    "model": "gemma-3-27b-it"
+  },
+  {
+    "provider": "unsloth",
+    "model": "gemma-3-12b-it"
+  },
+  {
+    "provider": "unsloth",
+    "model": "gemma-3-4b-it"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "qwen25-vl-72b-instruct"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "holo3-35b-a3b"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "holo3-35b-a3b:thinking"
+  },
+  {
+    "provider": "arcee-ai",
+    "model": "trinity-mini"
+  },
+  {
+    "provider": "deepcogito",
+    "model": "cogito-v1-preview-qwen-32B"
+  },
+  {
+    "provider": "Salesforce",
+    "model": "Llama-xLAM-2-70b-fc-r"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "mistral-small-31-24b-instruct"
+  },
+  {
+    "provider": "chutesai",
+    "model": "Mistral-Small-3.2-24B-Instruct-2506"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Magistral-Small-2506"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "asi1-mini"
+  },
+  {
+    "provider": "nvidia",
+    "model": "Llama-3.3-Nemotron-Super-49B-v1"
+  },
+  {
+    "provider": "nvidia",
+    "model": "Llama-3_3-Nemotron-Super-49B-v1_5"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "step-r1-v-mini"
+  },
+  {
+    "provider": "Qwen",
+    "model": "Qwen3-VL-235B-A22B-Instruct"
+  },
+  {
+    "provider": "shisa-ai",
+    "model": "shisa-v2-llama3.3-70b"
+  },
+  {
+    "provider": "shisa-ai",
+    "model": "shisa-v2.1-llama3.3-70b"
+  },
+  {
+    "provider": "THUDM",
+    "model": "GLM-Z1-9B-0414"
+  },
+  {
+    "provider": "THUDM",
+    "model": "GLM-4-9B-0414"
+  },
+  {
+    "provider": "THUDM",
+    "model": "GLM-4-32B-0414"
+  },
+  {
+    "provider": "Tongyi-Zhiwen",
+    "model": "QwenLong-L1-32B"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "v0-1.5-md"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "v0-1.5-lg"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "v0-1.0-md"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Baichuan-M2"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Baichuan4-Air"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Baichuan4-Turbo"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-Vivid-Durian"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-Musica-v1"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-Derestricted"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-BlueStar-Derestricted"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-BlueStar-Derestricted-Lite"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-BlueStar-v2-Derestricted"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-BlueStar-v2-Derestricted-Lite"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-BlueStar-v3-Derestricted"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-BlueStar-v3-Derestricted-Lite"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-Omega-Evolution-v2.0-Derestricted"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-Omega-Evolution-v2.0-Derestricted-Lite"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-Omega-Evolution-v2.2-Derestricted"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-Omega-Evolution-v2.2-Derestricted-Lite"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-Anko"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-Infracelestial"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-Marvin-DPO-V2-Derestricted"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-Marvin-DPO-V2-Derestricted-Lite"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-Marvin-V2-Derestricted"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-Marvin-V2-Derestricted-Lite"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-NaNovel-Derestricted"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-NaNovel-Derestricted-Lite"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-Queen-Derestricted"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-Queen-Derestricted-Lite"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-RpRMax-v1"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-earica-Derestricted"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-earica-Derestricted-Lite"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-Writer-Derestricted"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-Writer-Derestricted-Lite"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-Writer-V2-Derestricted"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Qwen3.5-27B-Writer-V2-Derestricted-Lite"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Gemma-4-31B-Claude-4.6-Opus-Reasoning-Distilled"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Gemma-4-31B-Cognitive-Unshackled"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Gemma-4-31B-DarkIdol"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Gemma-4-31B-Fabled"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Gemma-4-31B-Garnet"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Gemma-4-31B-GarnetV2"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Gemma-4-31B-Gemopus"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Gemma-4-31B-it"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Gemma-4-31B-K1-v5"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Gemma-4-31B-Larkspur-v0.5"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Gemma-4-31B-MeroMero"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Gemma-4-31B-Musica-v1"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "Gemma-4-31B-Queen"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "GLM-4.6-Derestricted-v5"
+  },
+  {
+    "provider": "TEE",
+    "model": "minimax-m2.5"
+  },
+  {
+    "provider": "TEE",
+    "model": "kimi-k2.5"
+  },
+  {
+    "provider": "TEE",
+    "model": "kimi-k2.5-thinking"
+  },
+  {
+    "provider": "TEE",
+    "model": "kimi-k2.6"
+  },
+  {
+    "provider": "TEE",
+    "model": "glm-4.7"
+  },
+  {
+    "provider": "TEE",
+    "model": "glm-5"
+  },
+  {
+    "provider": "TEE",
+    "model": "glm-5.1"
+  },
+  {
+    "provider": "TEE",
+    "model": "glm-5.1-thinking"
+  },
+  {
+    "provider": "TEE",
+    "model": "glm-5.2"
+  },
+  {
+    "provider": "TEE",
+    "model": "glm-5.2:thinking"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "venice-uncensored"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "kimi-k2-instruct-fast"
+  },
+  {
+    "provider": "google",
+    "model": "gemma-4-26b-a4b-it"
+  },
+  {
+    "provider": "google",
+    "model": "gemma-4-26b-a4b-it:thinking"
+  },
+  {
+    "provider": "tencent",
+    "model": "hy3"
+  },
+  {
+    "provider": "baidu",
+    "model": "ernie-4.5-vl-28b-a3b"
+  },
+  {
+    "provider": "deepseek",
+    "model": "deepseek-prover-v2-671b"
+  },
+  {
+    "provider": "qwen",
+    "model": "qwen3-coder-next"
+  },
+  {
+    "provider": "inclusionai",
+    "model": "ling-2.6-flash"
+  },
+  {
+    "provider": "inclusionai",
+    "model": "ling-2.6-1t"
+  },
+  {
+    "provider": "inclusionai",
+    "model": "ring-2.6-1t"
+  },
+  {
+    "provider": "google",
+    "model": "gemma-4-31b-it"
+  },
+  {
+    "provider": "google",
+    "model": "gemma-4-31b-it:thinking"
+  },
+  {
+    "provider": "nvidia",
+    "model": "nemotron-3-nano-30b-a3b"
+  },
+  {
+    "provider": "nvidia",
+    "model": "nemotron-3-nano-omni-30b-a3b-reasoning"
+  },
+  {
+    "provider": "nvidia",
+    "model": "nemotron-3-super-120b-a12b"
+  },
+  {
+    "provider": "nvidia",
+    "model": "nemotron-3-super-120b-a12b:thinking"
+  },
+  {
+    "provider": "nex-agi",
+    "model": "nex-n2-pro"
+  },
+  {
+    "provider": "tencent",
+    "model": "Hunyuan-MT-7B"
+  },
+  {
+    "provider": "meganova-ai",
+    "model": "manta-mini-1.0"
+  },
+  {
+    "provider": "meganova-ai",
+    "model": "manta-flash-1.0"
+  },
+  {
+    "provider": "meganova-ai",
+    "model": "manta-pro-1.0"
+  },
+  {
+    "provider": "crofai",
+    "model": "greg-2-super"
+  },
+  {
+    "provider": "crofai",
+    "model": "greg-2-ultra"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-4o"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-4o-mini"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-4o-2024-08-06"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-4o-2024-11-20"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-4-turbo-preview"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-4-turbo"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-3.5-turbo"
+  },
+  {
+    "provider": "openai",
+    "model": "o1-preview"
+  },
+  {
+    "provider": "openai",
+    "model": "o1"
+  },
+  {
+    "provider": "openai",
+    "model": "o3-mini"
+  },
+  {
+    "provider": "openai",
+    "model": "o3-mini-high"
+  },
+  {
+    "provider": "openai",
+    "model": "o3-mini-low"
+  },
+  {
+    "provider": "openai",
+    "model": "o4-mini-deep-research"
+  },
+  {
+    "provider": "openai",
+    "model": "o3-deep-research"
+  },
+  {
+    "provider": "openai",
+    "model": "o3-pro-2025-06-10"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-5-codex"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-5.1-2025-11-13"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-4o-mini-search-preview"
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-4o-search-preview"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "mistral-code-agent-latest"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "mistral-code-latest"
+  },
+  {
+    "provider": "mistral",
+    "model": "mistral-medium-3.5"
+  },
+  {
+    "provider": "mistral",
+    "model": "mistral-medium-3.5:thinking"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "sarvam-30b"
+  },
+  {
+    "provider": "nanogpt",
+    "model": "sarvam-105b"
+  }
+]
