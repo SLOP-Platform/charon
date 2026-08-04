@@ -19,9 +19,52 @@ bash fleet/pending.sh list                        # triage, do not just print
 
 ---
 
+# 0b — ANSWERS TO THE OPERATOR'S CLOSING QUESTIONS (2026-08-04) — all now ticketed
+
+| operator question | answer | where it lives |
+|---|---|---|
+| "what is the fix for the D-007 pattern (and any other pattern that keeps happening)?" | **They are ONE pattern.** D-003 already diagnosed it: *"nothing in the system BLOCKS on an unfinished commitment."* The fix is lifecycle enforcement, DECIDED and NEVER BUILT. | ticket **`LIFECYCLE-ENFORCEMENT`** (p0) |
+| "should we automate/mechanize the deploy? this is constantly lagging" | **Yes.** Root cause: no signal connects "merged" to "running"; the host has no git checkout so ordinary staleness checks are blind; the status board has no deployed-version tile. | ticket **`DEPLOY-MECHANIZE`** (p0) |
+| "is the next session going to investigate the River postgres container?" | **Yes** — and it unblocks THREE things (Lane C AXIS 2's top trial, D-008a's Go supervisor, TAB-RELIABILITY). | ticket **`RIVER-QUEUE-TRIAGE`** |
+| "did the product re-eval (including candidates) happen?" | **NO. It did not happen this session.** The operator set A→B→C ordering; Lane A consumed the session, Lane B never started, so Lane C AXIS 2 was never reached. Still ~50 tools + ~10 re-test rows, all `UNVERIFIED`. **Do not report it as done.** | §6c + `LANE-C-REEVAL-2026-08-04.md` §AXIS 2 |
+| "surface the need for me to create a new identity loudly and often" | Filed as **`Q-010` in `DECISIONS.md`** — the ledger is cat'd at SessionStart and `ASKED` rows are defined to BLOCK dependent work. | **`Q-010`** |
+
+## ⛔ THE RECURRING-PATTERN ANSWER, IN ONE PLACE — read this before proposing any process fix ⛔
+Every recurring failure in this estate is the SAME shape: *a thing was started and nothing refused
+to proceed without it finished.*
+- D-007 research→no code · deploy drift · landed-but-never-worked · 291 stranded branches ·
+  questions unanswered for 3 weeks — all one root cause.
+- There are already ~393 review artifacts, 76 registry rows and 9 installed memory products, and the
+  operator still cannot get a feature built end to end.
+- **⇒ More documentation, better handoffs and better memory CANNOT fix this. Only a blocking GATE
+  can.** DECISIONS.md says it outright: *"A mechanism that exists and does not prevent the failure is
+  not a solution — it is a wish."*
+- If a session's answer to a recurring failure is a document telling future sessions to be careful,
+  that session has reproduced the failure.
+
+---
+
 # 1 — ⛔ THE SINGLE MOST IMPORTANT FACT ON THIS PAGE ⛔
 
-## THE D-012 MONEY FIX IS ON MASTER BUT **NOT DEPLOYED**. THE LEAK IS STILL LIVE.
+## THE D-012 MONEY FIX — RELEASE CUT 2026-08-04; **CONFIRM IT IS ACTUALLY RUNNING**
+
+**Status at close:** `v0.6.2` was cut and tagged on `6bb8805` (PR #236, all four required checks
+green). The release workflow was still BUILDING when the session ended. **The first thing to verify
+next session is whether the gateway is actually running v0.6.2** — if the build failed or the pull
+never happened, the leak below is still live.
+```
+gh run list --repo SLOP-Platform/charon --workflow=release.yml --limit 1
+ssh -i ~/.ssh/4lom stack@<gateway-host> 'docker ps --filter name=charon --format "{{.Image}}"'
+```
+
+### ⛔ BEFORE YOU DEPLOY: THE COMPOSE FILE WILL ROLL PRODUCTION BACK ⛔
+`/home/stack/charon/docker-compose.yml` on the deploy host pins **`charon:v0.3.3`** while the running
+container was **v0.6.1**. Someone deployed by hand and never updated compose. **A plain
+`docker compose up` DOWNGRADES the live gateway by three minor versions**, silently reverting every
+money-path fix since v0.3.3 — including D-012. **Update the compose image pin to v0.6.2 FIRST, then
+pull, then up.** Recorded in `DEPLOY-MECHANIZE`.
+
+### The original problem, for context
 
 The gateway runs as a **container**, not from a checkout:
 `ghcr.io/slop-platform/charon:v0.6.1`, up 3 days at session close. Verified: there is **no charon
