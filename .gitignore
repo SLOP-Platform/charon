@@ -154,3 +154,7 @@ graphify-out/
 # hitting: "a decision that lives only in a session's memory is not a decision"). A plan that is
 # held across sessions for an operator decision must survive a fresh clone.
 !fleet/state/PLAN-*.md
+# ...and THE OPERATOR DECISION LEDGER — the single most important durable file in the repo. Six
+# other mechanisms failed to make decisions stick (see the file's own table); a decision ledger
+# that does not survive a fresh clone would be the seventh.
+!fleet/state/DECISIONS.md

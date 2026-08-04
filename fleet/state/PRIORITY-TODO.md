@@ -1,3 +1,15 @@
+# ⛔⛔⛔ READ `fleet/state/DECISIONS.md` BEFORE THIS FILE ⛔⛔⛔
+#
+#   fleet/state/DECISIONS.md  — THE OPERATOR DECISION LEDGER
+#
+# It is the ONLY place operator decisions live, and it OVERRIDES this file wherever they disagree.
+# Operator decision D-001 (2026-08-03): **THE FACTORY IS THE PRODUCT, NOT THE GATEWAY.** That
+# re-scopes most of this file. D-002: tool SELECTION was tainted, not just the verdicts. D-004:
+# turn on what we already own (~20% enabled) BEFORE adopting anything new.
+#
+# This file is 891+ lines and decisions got LOST INSIDE IT. That is why the ledger exists and why
+# it is kept small. Do not copy decisions into here — point at the ledger.
+
 # ⛔⛔⛔ STOP — READ THE 2026-08-02 HANDOFF FIRST ⛔⛔⛔
 #
 #   fleet/state/HANDOFF-2026-08-02-sifo-dyas.md

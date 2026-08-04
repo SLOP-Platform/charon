@@ -1,5 +1,22 @@
 # MANAGER OPERATING RULES
 
+> # ⛔ READ `fleet/state/DECISIONS.md` FIRST — BEFORE THIS FILE ⛔
+>
+> It is the **operator decision ledger**: the ONLY place operator decisions live, and it **overrides
+> every other file** wherever they disagree — including this one.
+>
+> - **D-001 (2026-08-03): THE FACTORY IS THE PRODUCT, NOT THE GATEWAY.**
+> - **D-002:** tool *selection* was tainted, not just the verdicts — re-scores must re-open the
+>   candidate set. Six corrected lenses are listed there.
+> - **D-003:** the failure is **enforcement, not recall** — adopt no memory product for it.
+> - **D-004:** turn on what we already own (**~20% enabled**) before adopting anything new.
+> - **D-005:** how the operator gets quality they can trust *without reading code*.
+> - **D-006:** `test_gateway_outcome.py` is owed — asked for, never delivered.
+>
+> **This file is 42KB and decisions got lost inside it.** That is precisely why the ledger exists and
+> is kept small. **Never copy a decision into here — point at the ledger.** Adding volume is the
+> mechanism by which the real items get missed.
+
 Durable, committed home for manager/coordinator BEHAVIOR & DOCTRINE. This file
 is the source of truth loaded at every session start (SessionStart hook `cat`s
 it) so the rules survive regardless of manager memory. Each line is one
