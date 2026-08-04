@@ -1,7 +1,7 @@
 name: ci
 
 # Fast gate: lint + typecheck + unit tests on every push/PR.
-# Runs on the shared self-hosted 4-LOM runner pool (zero GitHub minutes); if the
+# Runs on GitHub-hosted ubuntu-latest (free and unlimited on a public repo); if the
 # org runners aren't online yet the run just QUEUES until they are. Heavy/slow
 # suites (wheel-isolation smoke, image build-smoke, supply-chain audit) live in
 # heavy.yml on a schedule/dispatch; the GHCR publish lives in release.yml.
@@ -21,10 +21,13 @@ concurrency:
 
 jobs:
   gate:
-    # Runner is chosen by the CI_RUNNER repo variable (Settings → Variables).
-    # Maintainer sets CI_RUNNER=["self-hosted","4-lom"]; forks don't inherit it and
-    # fall back to GitHub-hosted ubuntu-latest, so forked PRs get working CI.
-    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
+    # HARD-PINNED ubuntu-latest — DO NOT reintroduce a self-hosted runner selection here.
+    # This repository is PUBLIC. A self-hosted runner on a public repository lets a fork's
+    # pull request execute arbitrary code on the machine hosting that runner, and our
+    # runner hosts also run production services. Public repositories get GitHub-hosted CI
+    # free and unlimited, so there is nothing to gain and a real compromise to lose.
+    # Self-hosted runners are for the private repository only.
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
@@ -45,7 +48,7 @@ jobs:
       - name: tests
         # Root pytest's tmp dirs under the job-scoped runner temp (cleaned per-job
         # by Actions) instead of the host-wide /tmp/pytest-of-<user>. On the
-        # persistent shared self-hosted 4-LOM runner, /tmp is NOT job-isolated —
+        # persistent shared self-hosted runner, /tmp is NOT job-isolated —
         # a concurrent workflow run (e.g. this ci.yml gate racing release.yml's
         # gate on a tag push) shares the same pytest-of-stack numbering/cleanup
         # and can rm_rf a sibling run's still-live basetemp mid-suite, which
@@ -65,10 +68,13 @@ jobs:
   wheel-smoke:
     # Fast wheel/import smoke: catches packaging breakage before it merges.
     # Parallel to gate so it doesn't slow the critical path.
-    # Runner is chosen by the CI_RUNNER repo variable (Settings → Variables).
-    # Maintainer sets CI_RUNNER=["self-hosted","4-lom"]; forks don't inherit it and
-    # fall back to GitHub-hosted ubuntu-latest, so forked PRs get working CI.
-    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
+    # HARD-PINNED ubuntu-latest — DO NOT reintroduce a self-hosted runner selection here.
+    # This repository is PUBLIC. A self-hosted runner on a public repository lets a fork's
+    # pull request execute arbitrary code on the machine hosting that runner, and our
+    # runner hosts also run production services. Public repositories get GitHub-hosted CI
+    # free and unlimited, so there is nothing to gain and a real compromise to lose.
+    # Self-hosted runners are for the private repository only.
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
