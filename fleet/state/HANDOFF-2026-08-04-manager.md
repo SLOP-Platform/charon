@@ -24,32 +24,26 @@ bash fleet/pending.sh list                        # triage, do not just print
 
 # 1 — START HERE. FIRST FOUR ACTIONS, IN THIS ORDER.
 
-### ① Merge PR #232 if its CI is green (product repo `SLOP-Platform/charon`)
-Branch `feat/tool-enable-ratchet-v2`, head `d979629`. This is the D-004 tool enablement:
-ruff `preview`+`S/BLE/ARG/C90`, mypy 3 flags, pytest-timeout, bandit — **all ratcheted**.
-Its last CI run was pending at session close.
-```
-gh api repos/SLOP-Platform/charon/commits/d979629ee65ad97ab7e2eb34aec450ee8f0adad0/check-runs \
-  --jq '.check_runs[]|"\(.name) \(.conclusion)"'
-gh api -X PUT repos/SLOP-Platform/charon/pulls/232/merge -f merge_method=squash \
-  -f sha=d979629ee65ad97ab7e2eb34aec450ee8f0adad0
-```
-**Then CLOSE PR #231** — it is the pre-rebase version of the same work and must not be merged.
+> **✅ DONE AT CLOSE — do not redo:** PR **#232** (D-004 tool enablement, ratcheted) was merged as
+> **`a8f86e9`** after CI went green, and PR **#231** (its pre-rebase duplicate) was closed.
 
-### ② Transfer `charon-private` into the `SLOP-Platform` org (Q6 = APPROVED, option a)
-**Deliberately NOT done at session close** — it rewrites remotes for ~190 worktrees and needs
-verification time. It is a start-of-session job, not an end-of-session one.
-```
-gh api -X POST repos/Nnyan/charon-private/transfer -f new_owner=SLOP-Platform
-```
-- ✅ Verified SAFE: the repo has **zero Actions secrets and zero variables**, so nothing is lost.
-- ⚠ **18 files hardcode `Nnyan/charon-private`** — including `fleet/_lib.sh`. Git redirects keep
-  clones working, but fix these refs as part of the move.
-- ⚠ **It only fixes ONE of three problems.** `SLOP-Platform` is on the **free** plan, so a
-  **private** repo there still gets **no branch protection** and **still metered minutes**. What it
-  DOES unlock is the 5 org-level self-hosted runners. See D-014 and §5-Q8.
+> ### ⏸ THE ORG TRANSFER IS DEFERRED — DO NOT DO IT FIRST
+> Operator decision 2026-08-04, after it was briefly action ①: **push the transfer back behind
+> Lane A and behind Q8.** Reasoning, so nobody re-promotes it:
+> - **6 of 8 Lane A items do not need it.** Shellcheck, status board, scanner relocation, quality
+>   layers, merge queue and alerting are all rig-local or *product*-repo work.
+> - The only item that needs it is **runner failover**, which per D-016 is **rig-only** — i.e. it
+>   speeds up CI on the one repo whose checks **cannot block anything**. Lowest value in the lane.
+> - It carries migration cost: remotes across ~190 worktrees, 18 files hardcoding
+>   `Nnyan/charon-private` (incl. `fleet/_lib.sh`).
+> - **Decisive:** transferring before Q8 means migrating TWICE. If Q8 lands on "make it public",
+>   you want transfer + publish in ONE move. **Decide Q8 first, migrate once.**
+>
+> Command, when it is time (verified safe — the repo has zero Actions secrets and zero variables):
+> `gh api -X POST repos/Nnyan/charon-private/transfer -f new_owner=SLOP-Platform`
+> D-015 stands as the approved destination; only the SEQUENCING changed.
 
-### ③ Land `feat/shellcheck-ratchet` (rig) — it fixes two LIVE bugs
+### ① Land `feat/shellcheck-ratchet` (rig) — it fixes two LIVE bugs
 Commit `61c5316`, **not pushed, verified only by its agent — the manager did NOT verify it.**
 Two real runtime bugs, not lint noise:
 - `fleet/retire-done.sh:70` — `local` outside a function no-ops, then `set -u` kills **the entire
@@ -61,10 +55,21 @@ refused; it used `WORK_LEASE_BYPASS`), and it edits `fleet/checks/rig-ci-scope.s
 `owns:`-claimed by live ticket `HANDOFF-GATE-NONBYPASSABLE` (edit is additive-only).
 **Mint the ticket first, then land. Verify its claims yourself — see §4.**
 
-### ④ Implement D-012: fully-parked pool must return 503, not a silent 200
+### ② Land `feat/status-board-v1` (rig) — the operator-facing visibility page
+Commit `73c57cc`, on origin, **manager did NOT verify it**. 18 tiles, 48 hermetic assertions,
+can-it-fail proven by six reverts. **Zero PASSING tiles — that is the correct output, not a bug.**
+⚠ **Serialize with ①** — both edit `fleet/checks/rig-ci-scope.sh`, which is `owns:`-claimed by
+`HANDOFF-GATE-NONBYPASSABLE`. Land one, re-run the other's test, then land it.
+
+### ③ Implement D-012: fully-parked pool must return 503, not a silent 200
 `src/charon/forwarder.py:481-487`. Operator decided this explicitly. **The outcome test must be
 inverted in the same change** — `test_all_legs_parked_still_serves_a_real_200_and_never_strands`
 currently asserts the behaviour being removed. Full requirements are in D-012.
+
+### ④ Relocate the three non-enforcing scanners (D-013 — pre-authorised, do not ask)
+`semgrep`/`gitleaks`/`bandit` have 371–384 green runs on the rig repo and **block nothing** (that
+repo returns `403` for branch protection). Make them required on `SLOP-Platform/charon`, which is
+public, has protection, and requires only `["gate"]` today. Zero new tools, zero new LOC.
 
 ---
 
