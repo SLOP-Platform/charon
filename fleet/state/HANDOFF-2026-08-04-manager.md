@@ -143,6 +143,13 @@ Every item cost this session real time. They are all reproducible.
 **Processes**
 9. **`pgrep -f '<name>.sh'` matches OTHER processes' argument lists.** It reported 6 droids when
    there were 5 — because a `shellcheck` run had `fleet-droid.sh` in its arguments. **Use PIDs.**
+9b. **…and it matches ITSELF, which produces an infinite loop.** Caught at session close: a subagent
+   left `until ! pgrep -f 'status-board/generate'; do sleep 5; done` spinning for 14 minutes and it
+   blocked the operator's `/exit`. The pattern appears inside the loop's own `bash -c` argv, so
+   `pgrep` always "finds a match" — itself — and the loop can never terminate. **Never wait on
+   `pgrep -f <pattern>` where the pattern is written in the waiting command.** Wait on a PID
+   (`kill -0 $pid`), on `wait`, or on a sentinel file. Any agent told to "wait until X finishes"
+   will reach for this and hang.
 10. **`kill -0` returns non-zero under EPERM**, so a process owned by another user reads as **dead
     when it is alive**. **Confirm with `ps -p`.**
 11. **The droids ignored SIGTERM.** They needed `kill -9`.
