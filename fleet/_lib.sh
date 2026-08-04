@@ -1,3 +1,6 @@
+# shellcheck shell=bash
+# No shebang: this file is always `source`d, never executed directly, so shellcheck
+# (SC2148) cannot infer the target shell without this directive.
 # Shared fleet helpers. `source` this AFTER setting FLEET.
 # Single home for id canonicalization + dependency checks so the gating scripts
 # (claim/board/status) can't diverge again (audit 2026-06-27, THEMEs 1 & 5).

@@ -26,6 +26,8 @@
 # Usage:
 #   rig-ci-scope.sh changed            list PR-changed files (informational)
 #   rig-ci-scope.sh syntax             `bash -n` every CHANGED *.sh  -> rc!=0 on any syntax break
+#   rig-ci-scope.sh shellcheck         whole-tree shellcheck BASELINE RATCHET (see cmd_shellcheck
+#                                       below) -> rc!=0 on any NEW (file, SC-code) finding
 #   rig-ci-scope.sh board              marker-independent validation of CHANGED fleet/board/*.md
 #   rig-ci-scope.sh suites             print the CI test ALLOWLIST, one per line
 #   rig-ci-scope.sh tests              run the allowlisted suites -> rc!=0 on any failure
@@ -135,6 +137,15 @@ sync-checkouts.test.sh    # hermetic: mktemp git fixtures + a fixture fleet dir.
                             # (inert gate, false wiring claim, un-allowlisted proof suite). Its
                             # own gate is reentrancy-guarded and executes no suite, so putting
                             # this suite in CI cannot recurse.
+  shellcheck-ratchet.test.sh # hermetic: throwaway mktemp -d *.sh fixtures, real shellcheck
+                            # invocations (no network, no git writes, no fleet/state/ dependency).
+                            # <1s. Red-proofs fleet/checks/shellcheck-ratchet.sh: a baselined
+                            # finding count doesn't RED, a NEW instance (or a finding in a
+                            # brand-new file) does, a missing baseline fails CLOSED (rc 2, not a
+                            # silent pass), fixing a finding never re-REDs, and — the revert proof
+                            # — the SAME clean fixture REDs under bare `shellcheck -o all` with no
+                            # ratchet, which is exactly what unconditional enablement would have
+                            # done to every PR (~36,700 pre-existing findings, automatic reject).
 )
 
 VALID_WORK_CLASSES="bugfix ci-infra design-review docs frontend generalist greenfield-feature money-path refactor rig-meta routing tests"
@@ -230,6 +241,22 @@ cmd_syntax(){
     fi
   done < <(_scoped_sh_files)
   echo "shell-syntax: $n changed *.sh checked"
+  return $RED
+}
+
+# The SHELLCHECK RATCHET (ticket SHELLCHECK-RATCHET, 2026-08-03). Whole-tree, not diff-scoped — unlike
+# syntax/board this is not about fresh-checkout marker-independence, it is a debt ratchet: the
+# committed fleet/checks/shellcheck-baseline.tsv is the accepted FLOOR (current findings at FULL
+# coverage, `-o all` = default severities + all 11 optional checks, all off anywhere in this rig
+# before this ticket — TOOL-UTILIZATION-AUDIT.md, 2026-08-01). Only a (file, SC-code) pair whose
+# count EXCEEDS its baselined count REDs, so this can run over the whole tree every PR (~27s
+# measured) without the ~36,700-finding bare-enablement automatic-reject. Mechanism lives in
+# fleet/checks/shellcheck-ratchet.sh (hermetically tested by
+# fleet/tests/shellcheck-ratchet.test.sh, allowlisted in CI_SUITES below) — this is a thin call-through
+# so the rule cannot drift between this CI entry point and its test.
+cmd_shellcheck(){
+  bash "$HERE/shellcheck-ratchet.sh" check
+  [ $? -eq 0 ] || RED=1
   return $RED
 }
 
@@ -462,11 +489,12 @@ cmd_tests(){
 }
 
 case "${1:-}" in
-  changed) cmd_changed ;;
-  syntax)  cmd_syntax ;;
-  board)   cmd_board ;;
-  suites)  cmd_suites ;;
-  tests)   cmd_tests ;;
-  *) echo "usage: rig-ci-scope.sh {changed|syntax|board|suites|tests}" >&2; exit 2 ;;
+  changed)    cmd_changed ;;
+  syntax)     cmd_syntax ;;
+  shellcheck) cmd_shellcheck ;;
+  board)      cmd_board ;;
+  suites)     cmd_suites ;;
+  tests)      cmd_tests ;;
+  *) echo "usage: rig-ci-scope.sh {changed|syntax|shellcheck|board|suites|tests}" >&2; exit 2 ;;
 esac
 exit $RED

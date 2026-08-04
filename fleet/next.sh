@@ -58,13 +58,17 @@ for w in data.get('waves', []):
 fi
 
 # ── collect completed ticket IDs from check-ins ─────────────────────
-declare -A DONE
+# Named DONE_TICKETS, not DONE: shellcheck (SC1081/SC1069) misparses an array named
+# exactly "DONE" immediately followed by "[" as an attempted (case-insensitive) `done`
+# loop-terminator keyword next to a test bracket. Genuine parser ambiguity, not a real
+# bug — renamed rather than disabled so the ambiguity is gone for readers too.
+declare -A DONE_TICKETS
 shopt -s nullglob
 for f in "$NOTES_DIR"/*-"${SESSION}".md; do
     while IFS= read -r line; do
         case "$line" in
             \[*\]) ticket=$(echo "$line" | sed 's/^\[.*\] *//; s/  .*//')
-                     DONE["$ticket"]=1
+                     DONE_TICKETS["$ticket"]=1
                      ;;
         esac
     done < "$f"
@@ -81,7 +85,7 @@ for t in wave.get('tickets', []):
         print(json.dumps(t))
         sys.exit(0)
 print('')
-" "$WAVE_JSON" "${!DONE[*]// /,}" 2>/dev/null)
+" "$WAVE_JSON" "${!DONE_TICKETS[*]// /,}" 2>/dev/null)
 
 if [ -z "$NEXT" ]; then
     echo "wave complete — all tickets in $WAVE are check-in'd"

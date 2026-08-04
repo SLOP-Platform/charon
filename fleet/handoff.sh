@@ -170,7 +170,7 @@ DONEHDR
   echo "--- last 5 product master commits ---"
   git -C "$CHARON_REPO" log --oneline -5 2>/dev/null || echo "(git log failed)"
   echo '```'
-} || echo "```\n(git unavailable — done/committed section blank)\n```"
+} || { echo '```'; echo "(git unavailable — done/committed section blank)"; echo '```'; }
 
 cat <<'PREAMBLE2'
 
@@ -257,7 +257,7 @@ PY
     echo "(no ~/.charon/session-bridge.db — bridge has not run yet)"
   fi
   echo '```'
-} || echo "```\n(session-bridge probe failed)\n```"
+} || { echo '```'; echo "(session-bridge probe failed)"; echo '```'; }
 
 cat <<'PREAMBLE5'
 > Coordination: review the board above for collisions/blockers before claiming work. If blocked, surface in `blockers=` on `register()`. If inheriting a timed-out session, pick a NEW Jedi name.
@@ -274,7 +274,7 @@ echo "### Active worktrees (\`git worktree list\`)"
   echo
   cd "$PRIV_REPO" && git worktree list 2>/dev/null || echo "(rig repo not found)"
   echo '```'
-} || echo "```\n(git worktree list failed)\n```"
+} || { echo '```'; echo "(git worktree list failed)"; echo '```'; }
 
 # (2) In-flight charon-run jobs + their CHARON_RUN_RESULT — from the live result log dir.
 echo "### In-flight charon-run jobs (CHARON_RUN_RESULT)"
@@ -298,7 +298,7 @@ echo "### In-flight charon-run jobs (CHARON_RUN_RESULT)"
     echo "(no dogfood-eval/results dir at $JOBS_DIR)"
   fi
   echo '```'
-} || echo "```\n(charon-run jobs probe failed)\n```"
+} || { echo '```'; echo "(charon-run jobs probe failed)"; echo '```'; }
 
 # (3) provider-exhaustion-ledger.tsv tail — last 10 lines of the live ledger (after the header).
 echo "### Provider-exhaustion-ledger tail (\`provider-exhaustion-ledger.tsv\`)"
@@ -312,7 +312,7 @@ echo "### Provider-exhaustion-ledger tail (\`provider-exhaustion-ledger.tsv\`)"
     echo "(ledger not found at $LEDGER — no provider-exhaustion telemetry yet)"
   fi
   echo '```'
-} || echo "```\n(ledger probe failed)\n```"
+} || { echo '```'; echo "(ledger probe failed)"; echo '```'; }
 
 # --- git state ---------------------------------------------------------------
 echo "### Git"
