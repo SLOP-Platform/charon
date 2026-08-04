@@ -48,8 +48,9 @@ RULES THAT COST THE LAST SESSION HOURS — do not relearn them:
   - ASSUME NOTHING IS PARKED. Park is a proven no-op until queue #2 lands.
   - No blind Claude subsessions. Work goes to visible SG tabs.
 
-Top of queue: INERT-CODE-DISPOSITION-BACKLOG (pre-existing product-gate RED blocking EVERY
-product push), then land fix/soleleg-guard-blocks-autopark with e2e proof.
+FIRST THING (operator-directed): fix GATE-PARITY-TIMEOUT-FLAKE — a PASSING check reporting RED
+at random, already blocking legitimate lands. Then INERT-CODE-DISPOSITION-BACKLOG (product-gate
+RED blocking EVERY product push), then land fix/soleleg-guard-blocks-autopark with e2e proof.
 ```
 
 ## 0 — RUN FIRST (~2 min)
@@ -67,22 +68,22 @@ bash fleet/pending.sh list                 # SURFACE to the operator; triage, do
 
 | # | item | state | deciding lens |
 |---|---|---|---|
-| **1** | `INERT-CODE-DISPOSITION-BACKLOG` | tab `inert` :4140 running | **L1 unblocks execution.** 18 dead symbols missing `{reason,disposition}`; `charon.cli gate` RED ⇒ **blocks EVERY product push.** Operator: *"WE ALWAYS FIX PRE-EXISTING."* |
-| **2** | `fix/soleleg-guard-blocks-autopark` (`8fb725a`) | tab `soleleg` :4141 running | **L9 money + L2 prevention.** Auto-park was **dead code for all 17 providers**. Blocked by #1. Needs red/green/**dogfood** before landing (operator condition). |
-| **3** | **REVERT the manual provider parks** | HELD | **L9.** Must happen the moment #2 is proven — see §U. |
-| **4** | `BACKLOG-DRAIN-PLAN` | tab `drain` :4122 | **L5 compounding.** 32 open PRs. Census + prioritised drain order + drain tool. |
-| **5** | `GATEWAY-PARK-DRAINED-PROVIDER` | tab `park` :4132 | **L6 surfacing.** Rig still cannot park a provider or SEE parked state — `/charon/status` exposes no `parked` field (see §LEAST-CONFIDENT). |
-| **6** | `PARK-REARM-FUNDED-PROVIDER` | tab `parkrearm` :4133 | **L3.** Branch DIVERGED: local `47e5d0a` vs remote `a4d8cbe`+`b09a5bc`. **Both sides are real work — merge, never drop a side.** Local also safe at `origin/rescue/fix/park-rearm-funded-provider`. |
-| **7** | `BOARD-LOCK-STAGED-COMMIT-FIX` | landed, debt open | **L2.** Fix landed. **Remaining:** give `work-lease.sh` the board-hygiene exemption for worktrees that it already has for the main checkout, then DELETE the one `WORK_LEASE_BYPASS` inside `worktree-commit-and-land.sh`. |
-| **8** | `AUTH-302-SILENT-FAILURE` | ticketed, a droid is on it | **L6.** Rejected credential answered with a 302 + zero-byte body ⇒ no-token / stale-token / success are byte-identical. |
-| **9** | `PRIORITY-DROPOUT-AUDIT` | done `bfc0ff3`, PR #432 RED | **L6.** Verdict: extend `validate_board.sh` (CHECK-DROP / CHECK-CLAIM / CHECK-INVERSE), **no new script**. PR red is NOT the gitlink cause — diagnose it. |
-| **10** | `BROKER-BARE-TIER-LEGS` (PR #442) | RED | **L1.** 3-line TSV strip of provider suffixes. Its ABSENCE caused today's outage. |
-| **11** | `WORKTREE-ROOT-COLLISION` | **minted at close** (was unticketed all session) | **L2 prevention.** `repo: charon-private` tickets given worktrees under the PRODUCT root. TWO measured failures: 13 worktree-create FATALs that permanently spin a claim (a root cause of `ZERO-COMMIT-SPIN`), and rig files staged into the product repo (caught only by the product's boundary gate). I said I'd ticket this ~6 times and only did so at close — the dropped-commitment pattern is recorded in the ticket's `source:`. |
-| **12** | `WORKTREE-LEAK-TUI-PATH` (2nd half) | guard landed `c9aa586` | **L2.** `worktree-leak-guard.test.sh` still absent from `CI_SUITES`; new guard has no test. |
-| **13** | `sg-worker-liveness` finished-vs-hung | folded into `CRON-REGISTRY-VISIBLE` | **L6.** See §LEAST-CONFIDENT — the per-port design is **invalid**. |
-| **14** | M-synthesis tickets | not minted | `HYPOTHESIS-ADOPT-NARROW` (+xdist gap), `OUTCOME-TEST-REWRITE`, `KSF-FIXES-1-3`. |
-| **15** | E+F: ROADMAP.tsv rows + `report.sh` | not done | Operator-approved: 🆕 marker; `SHARED-NAMESPACE-CONTENTION` → Phase 0. |
-| **16** | `GATE-PARITY-TIMEOUT-FLAKE` | ticketed at close | **L6 surfacing.** `gate-parity.sh scan` takes **31s** against `validate_board`'s **30s** budget — a PASSING check (`parity holds`) is reported as a board RED at random, and it may never have COMPLETED inside a validate_board run. Operator caught that I had seen this RED and moved past it without ticketing. |
+| **1** | `GATE-PARITY-TIMEOUT-FLAKE` | ticketed; **OPERATOR: FIX FIRST THING** | **L1 unblocks execution.** `gate-parity.sh scan` takes **31s** against `validate_board`'s **30s** budget, so a check that PRINTS `parity holds` surfaces as a board RED at random — it blocked a legitimate land at session close and forced the logged `--force` escape. It will keep blocking real work until fixed, and it may never have COMPLETED inside a validate_board run (so the parity it guards is not actually enforced). **Fix per the derive-don't-guess timeout doctrine: MEASURE -> OPTIMISE -> only then bound.** |
+| **2** | `INERT-CODE-DISPOSITION-BACKLOG` | tab `inert` :4140 running | **L1 unblocks execution.** 18 dead symbols missing `{reason,disposition}`; `charon.cli gate` RED ⇒ **blocks EVERY product push.** Operator: *"WE ALWAYS FIX PRE-EXISTING."* |
+| **3** | `fix/soleleg-guard-blocks-autopark` (`8fb725a`) | tab `soleleg` :4141 running | **L9 money + L2 prevention.** Auto-park was **dead code for all 17 providers**. Blocked by #1. Needs red/green/**dogfood** before landing (operator condition). |
+| **4** | **REVERT the manual provider parks** | HELD | **L9.** Must happen the moment #2 is proven — see §U. |
+| **5** | `BACKLOG-DRAIN-PLAN` | tab `drain` :4122 | **L5 compounding.** 32 open PRs. Census + prioritised drain order + drain tool. |
+| **6** | `GATEWAY-PARK-DRAINED-PROVIDER` | tab `park` :4132 | **L6 surfacing.** Rig still cannot park a provider or SEE parked state — `/charon/status` exposes no `parked` field (see §LEAST-CONFIDENT). |
+| **7** | `PARK-REARM-FUNDED-PROVIDER` | tab `parkrearm` :4133 | **L3.** Branch DIVERGED: local `47e5d0a` vs remote `a4d8cbe`+`b09a5bc`. **Both sides are real work — merge, never drop a side.** Local also safe at `origin/rescue/fix/park-rearm-funded-provider`. |
+| **8** | `BOARD-LOCK-STAGED-COMMIT-FIX` | landed, debt open | **L2.** Fix landed. **Remaining:** give `work-lease.sh` the board-hygiene exemption for worktrees that it already has for the main checkout, then DELETE the one `WORK_LEASE_BYPASS` inside `worktree-commit-and-land.sh`. |
+| **9** | `AUTH-302-SILENT-FAILURE` | ticketed, a droid is on it | **L6.** Rejected credential answered with a 302 + zero-byte body ⇒ no-token / stale-token / success are byte-identical. |
+| **10** | `PRIORITY-DROPOUT-AUDIT` | done `bfc0ff3`, PR #432 RED | **L6.** Verdict: extend `validate_board.sh` (CHECK-DROP / CHECK-CLAIM / CHECK-INVERSE), **no new script**. PR red is NOT the gitlink cause — diagnose it. |
+| **11** | `BROKER-BARE-TIER-LEGS` (PR #442) | RED | **L1.** 3-line TSV strip of provider suffixes. Its ABSENCE caused today's outage. |
+| **12** | `WORKTREE-ROOT-COLLISION` | **minted at close** (was unticketed all session) | **L2 prevention.** `repo: charon-private` tickets given worktrees under the PRODUCT root. TWO measured failures: 13 worktree-create FATALs that permanently spin a claim (a root cause of `ZERO-COMMIT-SPIN`), and rig files staged into the product repo (caught only by the product's boundary gate). I said I'd ticket this ~6 times and only did so at close — the dropped-commitment pattern is recorded in the ticket's `source:`. |
+| **13** | `WORKTREE-LEAK-TUI-PATH` (2nd half) | guard landed `c9aa586` | **L2.** `worktree-leak-guard.test.sh` still absent from `CI_SUITES`; new guard has no test. |
+| **14** | `sg-worker-liveness` finished-vs-hung | folded into `CRON-REGISTRY-VISIBLE` | **L6.** See §LEAST-CONFIDENT — the per-port design is **invalid**. |
+| **15** | M-synthesis tickets | not minted | `HYPOTHESIS-ADOPT-NARROW` (+xdist gap), `OUTCOME-TEST-REWRITE`, `KSF-FIXES-1-3`. |
+| **16** | E+F: ROADMAP.tsv rows + `report.sh` | not done | Operator-approved: 🆕 marker; `SHARED-NAMESPACE-CONTENTION` → Phase 0. |
 
 ---
 

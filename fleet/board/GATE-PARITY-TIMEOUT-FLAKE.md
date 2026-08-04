@@ -1,6 +1,6 @@
 repo: charon-private
-tier: economy
-priority: 1
+tier: strong
+priority: 0
 difficulty: 2
 work_class: ci-infra
 branch: fix/gate-parity-timeout-flake
@@ -14,6 +14,10 @@ substrate-novel: |
   checks. The novel slice is making "could not check" stop presenting as "check failed", which is
   a semantics decision about our own gate output.
 source: |
+  OPERATOR-DIRECTED 2026-08-02 at session close: "fix the gate-parity flake first thing next
+  session." Raised to P0 and queue position #1 — it BLOCKED A LEGITIMATE LAND minutes after being
+  ticketed, forcing the logged --force escape. A passing check that randomly reports RED does not
+  merely annoy: it trains operators to --force past a gate, which is how a real RED gets ignored.
   Operator asked at session close 2026-08-02 whether this was ticketed. It was NOT — the manager
   had seen it as the only board RED and moved past it as "just a timeout", which is precisely the
   dismissal this ticket exists to prevent.
