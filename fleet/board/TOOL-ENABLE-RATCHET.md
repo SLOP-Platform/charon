@@ -3,7 +3,7 @@ tier: economy
 priority: 2
 difficulty: 3
 work_class: ci-infra
-branch: feat/tool-enable-ratchet
+branch: feat/tool-enable-ratchet-v2
 owns: pyproject.toml, Makefile, .bandit-baseline.json
 depends_on:
 dep-kind:

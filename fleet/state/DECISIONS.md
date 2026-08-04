@@ -378,6 +378,43 @@ wall-clock on hardware that is also running the gateway and the fleet. **Therefo
 queue WITH A CONCURRENCY CAP, not wide open**, and confirm which jobs are `runs-on: self-hosted`
 before turning it on. Do not assume a job is GitHub-hosted.
 
+### D-015 · RIG REPO MOVES INTO THE ORG, STAYING PRIVATE (answers Q6) · 2026-08-04
+Operator approved option (a): transfer `Nnyan/charon-private` → `SLOP-Platform`, remaining private,
+**plus** (d) relocate the enforcing checks to the public product repo (already authorised by D-013).
+
+**Honest scope — the manager's earlier "fixes three problems" claim was WRONG and is corrected here.**
+`SLOP-Platform` is on the **free** plan, so a *private* repo there still gets **no branch protection**
+and **still metered Actions minutes**. The move buys exactly one thing: **access to the 5 org-level
+self-hosted runners.** Worth doing; not a cure.
+- Verified safe: the rig repo has **zero** Actions secrets and **zero** variables — nothing is lost.
+- 18 files hardcode `Nnyan/charon-private` (incl. `fleet/_lib.sh`); git redirects keep clones working,
+  but fix them as part of the move.
+- **Deliberately NOT executed at session close** — it rewrites remotes across ~190 worktrees and
+  needs verification time. It is the FIRST action of the next session, with the exact command in the
+  handoff.
+- Still open as **Q8**: public (needs scrubbing **129 `fleet/*.sh` files** containing `10.0.1.60` or
+  `/home/stack`) vs paid Team (~$4/mo) — decide deliberately, not under time pressure.
+
+### D-016 · SELF-HOSTED RUNNERS: RIG ONLY (answers Q7) · 2026-08-04
+Operator took the manager recommendation, option (a).
+
+- **Rig → self-hosted.** It is private, so there is no fork-PR attack surface. This is what the
+  org move (D-015) unlocks, and it puts the 5 idle runners to work.
+- **Product → stays GitHub-hosted.** It is public, so hosted CI is already **free and unlimited**;
+  there is nothing to gain and a real risk to take on.
+- ⛔ **THE REASON, do not lose it:** self-hosted runners on a **public** repo let a fork's pull
+  request execute arbitrary code **on your hardware** — and these runners live on 4-LOM and BB-8,
+  which also run the gateway and the fleet. If product CI is ever pointed at them, a same-repo guard
+  (`github.event.pull_request.head.repo.full_name == github.repository`) or org-level
+  require-approval-for-outside-collaborators is **mandatory, not advisory**.
+- **There is no native self-hosted→GitHub failover.** `runs-on` matches labels; if none match the job
+  **queues forever**. Build it with a small GitHub-hosted preflight job that queries the runners API
+  for an online+idle `charon-ci` runner and emits the label, consumed as
+  `runs-on: ${{ needs.pick.outputs.label }}`. ~15 lines. The cheap alternative is setting the
+  existing `CI_RUNNER` repo variable (all 8 jobs already read
+  `${{ vars.CI_RUNNER || 'ubuntu-latest' }}`, and it is currently **unset**) — but that has NO
+  fallback.
+
 ### Q-001 · [CLOSED — see D-010] Re-score pass: which lane runs first? · asked 2026-08-03
 **Blocks:** the whole adopt/delete programme (D-001..D-004).
 Lane A = turn on what we own (config, days, cheapest). Lane B = delete the 73k-line bash rig onto
