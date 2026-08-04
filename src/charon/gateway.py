@@ -285,23 +285,53 @@ def _build_balance_tracker(
     providers_cfg: dict, state_dir: str | Path | None = None,
 ) -> Any:
     """Construct a BalanceTracker from provider configs when any provider carries
-    balance fields (funding_class, mode, starting_balance).
+    balance fields (funding_class, mode, starting_balance) — OR when a parked
+    provider set is already persisted on disk.
 
-    Returns None when no provider has balance config — backward-compatible.
+    Returns None only when there is provably nothing to enforce.
     ``state_dir`` resolves exactly like ``_module_inst``: the caller's explicit
     dir, else ``secrets.config_dir()`` (CHARON_HOME) — so the parked-provider
-    set is persisted and reloaded across a gateway restart."""
-    if not providers_cfg:
-        return None
-    has_balance = any(
-        v.get("funding_class") is not None or v.get("mode") is not None
-        for v in providers_cfg.values())
-    if not has_balance:
-        return None
+    set is persisted and reloaded across a gateway restart.
+
+    FAIL CLOSED (D-012). This used to return None whenever no provider carried
+    ``funding_class``/``mode``, and a None tracker means ``balance_park.json`` is
+    never loaded, EVERY parked leg is served, and forwarder.py's fully-parked
+    503 guard silently does not exist — the exact money leak D-012 closes,
+    reachable by one config edit. Refusing to start would be the wrong kind of
+    "closed": a gateway with no balance config at all is a supported,
+    backward-compatible mode and has nothing to enforce. So the fix is at the
+    source of the asymmetry — persisted PARK STATE is itself sufficient reason
+    to build the tracker. After this, ``balance_tracker is None`` provably means
+    "no balance config AND no parked provider on disk", i.e. nothing is parked,
+    which makes the forwarder guard vacuous rather than absent."""
     from . import secrets
     from .balance import BalanceTracker
     resolved_dir = Path(state_dir) if state_dir is not None else secrets.config_dir()
-    return BalanceTracker(config=providers_cfg, state_dir=resolved_dir)
+    has_balance = any(
+        v.get("funding_class") is not None or v.get("mode") is not None
+        for v in (providers_cfg or {}).values())
+    if not has_balance and not _has_persisted_parks(resolved_dir):
+        return None
+    return BalanceTracker(config=providers_cfg or {}, state_dir=resolved_dir)
+
+
+def _has_persisted_parks(state_dir: Path) -> bool:
+    """True when ``<state_dir>/balance_park.json`` names at least one parked
+    provider. Reads the SAME file and key as ``BalanceTracker._load_parked``, so
+    the two can never disagree about whether a park exists. Any read/parse fault
+    → True (fail CLOSED: an unreadable park file must not be read as "nothing is
+    parked", which is precisely how the leak re-opens)."""
+    from .balance import _PARK_STATE_FILE
+    p = Path(state_dir) / _PARK_STATE_FILE
+    if not p.exists():
+        return False
+    try:
+        data = json.loads(p.read_text())
+    except (OSError, json.JSONDecodeError):
+        return True
+    if not isinstance(data, dict):
+        return True
+    return bool(data.get("parked"))
 
 
 def _module_inst(name: str, state_dir: str | Path | None = None) -> Any:

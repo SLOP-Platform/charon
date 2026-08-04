@@ -194,8 +194,15 @@ def routes_by_model(server: Any) -> dict[str, list[UpstreamRoute]]:
 
 def _preorder_chain(chain: list[UpstreamRoute], bt: Any) -> list[UpstreamRoute]:
     """Funding-class pre-order + parked-provider exclusion (control 6), matching the
-    forwarder's drain-then-park routing. Never strands: if every leg is parked, the
-    original chain is returned unchanged (the forwarder's never-strand fallback)."""
+    forwarder's drain-then-park routing.
+
+    D-012: when EVERY leg is parked the chain is EMPTY, not restored. This used to
+    ``return live or list(chain)`` — mirroring the forwarder's never-strand
+    fallback — which handed litellm the full parked chain and billed it, the exact
+    behaviour OPERATOR DECISION D-012 outlaws ("Change it to 503 don't allow it to
+    leak"). An empty chain builds no deployment, so the plane can only refuse; it
+    can never silently serve a parked leg. A pool with at least one unparked leg is
+    unaffected — ``live`` is non-empty and is returned exactly as before."""
     from charon.routing_policy import order_chain_by_funding_class
 
     def _fc(prov: str) -> int | None:
@@ -209,7 +216,7 @@ def _preorder_chain(chain: list[UpstreamRoute], bt: Any) -> list[UpstreamRoute]:
         list(chain), funding_class_fn=_fc, remaining_fn=_rem)
     live = [r for r in ordered
             if not bt.is_parked(getattr(r, "provider", None) or getattr(r, "label", ""))]
-    return live or list(chain)
+    return live  # D-012: fully parked → EMPTY, never the restored parked chain
 
 
 def no_redirect_client(*, timeout: float = 180.0):  # noqa: ANN201 - httpx type is lazy

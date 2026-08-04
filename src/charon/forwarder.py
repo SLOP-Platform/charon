@@ -525,6 +525,85 @@ def forward_with_failover(handler, srv) -> None:
             srv.note_request(requested, "cache-hit", 200, 0.0, [])
             return
 
+    # ── D-012: a FULLY-PARKED pool is a terminal 503, never a silent 200 ──
+    # Parking exists to STOP spend.  The DRAIN-AND-PARK never-strand fallback
+    # above restores the FULL chain — parked legs INCLUDED — when nothing
+    # survives the drain pre-flight, which, when the reason is that EVERY leg is
+    # parked, silently undoes the park and bills upstream anyway (measured
+    # 2026-08-03: kimi-k2.6 5/5 parked and minimax-m2.5 2/2 parked both served a
+    # normal 200 via openrouter).  OPERATOR DECISION D-012: "I don't want a
+    # situation where EVERYONE is parked ... Change it to 503 don't allow it to
+    # leak."
+    #
+    # PLACEMENT is load-bearing, in both directions:
+    #   * AFTER the cache check — a cache HIT costs ZERO dollars, so refusing it
+    #     would be a plain regression: D-012 stops SPEND, not traffic.
+    #   * BEFORE ``is_stream`` / the R2 ordering / the dispatch loop — no
+    #     upstream call can be reached from here, streaming or not.
+    #
+    # SCOPE — fires ONLY when EVERY leg of the chain is parked.  Structurally it
+    # cannot over-block: the drain pre-flight already dropped every parked leg,
+    # so a chain that still holds an unparked leg makes ``all(...)`` False.  That
+    # also means the ``all`` (vs ``any``) predicate is NOT independently
+    # falsifiable at this position — see the review-log; ``all`` is kept because
+    # it is the defensively correct predicate, not because a test pins it.
+    # It is deliberately NOT nested under the drain block's ``len(chain) > 1``
+    # guard: a single-leg pool never consulted park state at all and leaked the
+    # same money.
+    #
+    # ``bt is None`` does NOT open a back door: ``gateway._build_balance_tracker``
+    # fails CLOSED — it constructs a tracker whenever a persisted park set is on
+    # disk, even with no provider carrying balance config — so ``bt is None``
+    # now provably means NOTHING is parked, and this guard is vacuous rather
+    # than absent.
+    #
+    # The envelope REUSES the existing ``all_providers_exhausted`` shape (no
+    # second error shape) and is distinguished from real upstream exhaustion by
+    # ``no_provider_reason == "all_legs_parked"`` — an operator/config state, not
+    # an upstream failure.
+    if bt is not None and chain and all(
+            bt.is_parked(r.provider or r.label) for r in chain):
+        parked_legs = []
+        for r in chain:
+            prov = r.provider or r.label
+            cls_label, rearm_label = _classify_provider(prov, bt)
+            parked_legs.append({
+                "provider": prov,
+                "status": "parked",
+                "reason": "provider is parked — spend is intentionally stopped",
+                "class": cls_label,
+                "rearm": rearm_label,
+            })
+        import logging
+        logging.getLogger("charon.forwarder").warning(
+            "ALL LEGS PARKED (model=%s legs=%s) → terminal 503, no upstream "
+            "call made (D-012).", requested,
+            ",".join(p["provider"] for p in parked_legs))
+        # HONEST HEADERS. ``failovers=[]`` → ``X-Charon-Failovers: 0``: ZERO
+        # upstream calls were made.  ``provider=None`` → NO ``X-Charon-Provider``
+        # is emitted, because no provider served this request; naming a leg that
+        # was never called would be the same lie in a different field.  No
+        # ``Retry-After``: a parked leg re-arms on an operator top-up/unpark, not
+        # on a timer, so a retry hint would be a fabricated promise.
+        handler._send_resp_headers(503, "application/json", None, [], False)
+        handler._write(json.dumps({"error": {
+            "message": "every leg is parked",
+            "type": "all_providers_exhausted",
+            "requested_model": requested,
+            "no_provider_reason": "all_legs_parked",
+            "retry_after_s": None,
+            "providers_tried": parked_legs,
+            "failover_reasons": [
+                f"{p['provider']}=parked" for p in parked_legs],
+        }}).encode())
+        # NO ``note_request``. ``provider_stats`` records what PROVIDERS did; a
+        # sentinel row here would be a fabricated provider whose ``errors``
+        # column blames a config state on an upstream that was never called.
+        # This follows the established convention for a gateway-side REFUSAL:
+        # the spend-cap 402 and the guardrail 400 above also return without
+        # touching provider_stats. The WARNING above is the operator signal.
+        return
+
     is_stream = orig_bj.get("stream") is True
 
     # ── R2: dynamic cheapest-first using live metered cost ──────────
