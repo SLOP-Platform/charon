@@ -54,6 +54,7 @@ AGENT HANDOVER MANIFEST
 """
 from __future__ import annotations
 
+import hashlib
 import http.client
 import json
 import threading
@@ -64,6 +65,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 from charon.balance import BalanceTracker
+from charon.cache import SemanticCache
+from charon.gateway import _build_balance_tracker
 from charon.proxy_server import GatewayProxyServer, UpstreamRoute
 
 # Bound on every request: a hang is a failure class here, not a stall to wait out.
@@ -181,8 +184,8 @@ def _get_json_or_infra_fail(url: str) -> dict:
         raise AssertionError(f"INFRA: {url} is not usable ({exc!r})") from exc
 
 
-def _gateway(pools: dict, balance_tracker=None) -> GatewayProxyServer:
-    gw = GatewayProxyServer(pools=pools, balance_tracker=balance_tracker)
+def _gateway(pools: dict, balance_tracker=None, **kw) -> GatewayProxyServer:
+    gw = GatewayProxyServer(pools=pools, balance_tracker=balance_tracker, **kw)
     gw.serve_in_thread()
     assert gw.url.startswith("http://"), f"INFRA: gateway did not bind ({gw.url!r})"
     return gw
@@ -226,43 +229,228 @@ def test_infra_harness_and_gateway_come_up() -> None:
         up.shutdown()
 
 
-def test_all_legs_parked_still_serves_a_real_200_and_never_strands() -> None:
-    """Every leg of the pool parked → the client still gets a REAL 200.
+def test_all_legs_parked_is_a_terminal_503_that_names_every_parked_leg() -> None:
+    """Every leg of the pool parked → a terminal 503, and ZERO upstream calls.
 
-    Covers the never-strand fallback at forwarder.py:481-487, which today has no
-    client-observable coverage anywhere in tests/ (the drain/park suites assert
-    ``bt.is_parked`` internal state, not what the caller received). This is the
-    live-relevant case: 7 providers are parked on the running gateway, so a pool
-    whose every leg is parked is reachable in production.
+    OPERATOR DECISION D-012 (2026-08-04): *"I don't want a situation where
+    EVERYONE is parked but I understand it may be needed for some reason. Change
+    it to 503 don't allow it to leak."*
+
+    This test previously asserted the 200 that the never-strand fallback
+    produced — it restored the FULL chain, parked legs included, and billed
+    upstream anyway (measured 2026-08-03: kimi-k2.6 5/5 parked and minimax-m2.5
+    2/2 parked both served a normal 200 via openrouter). Parking exists to STOP
+    spend; a good test locking that leak in is why D-012 names this file
+    explicitly. The assertions are therefore INVERTED.
     """
     up_a, base_a = _boot(status=200, return_model="ma", cost=0.01)
     up_b, base_b = _boot(status=200, return_model="mb", cost=0.02)
     bt = BalanceTracker()
     bt.park("pa")
     bt.park("pb")
+    # model_ids → gateway mode, so /charon/status (the provider_stats surface
+    # asserted below) is served.
     gw = _gateway({"v": [UpstreamRoute(base_a, "ka", provider="pa", upstream_model="ma"),
                          UpstreamRoute(base_b, "kb", provider="pb", upstream_model="mb")]},
+                  balance_tracker=bt, model_ids=["v"])
+    try:
+        status, body, hdrs = _post(gw.url + "/v1/chat/completions",
+                                   {"model": "v", "messages": []})
+        # (1) terminal 503, never a success-shaped body.
+        assert status == 503, (
+            f"BEHAVIOUR: every leg parked → the gateway answered {status}; a "
+            f"fully-parked pool must be a terminal 503, not a billed 200: {body!r}")
+        assert "choices" not in body, (
+            f"BEHAVIOUR: a fully-parked pool answered with a success-shaped "
+            f"body — the park leaked: {body!r}")
+        # (1b) the money proof: NO upstream socket saw a request at all.
+        assert up_a.received == [] and up_b.received == [], (
+            "BEHAVIOUR: a PARKED leg was really dispatched — upstreams received "
+            f"a={up_a.received!r} b={up_b.received!r}. Parked traffic is spend "
+            "that parking exists to stop.")
+        # (2) reuse the all_providers_exhausted shape; NAME every leg with a
+        #     real per-leg status and a non-empty reason.
+        err = body.get("error", {})
+        assert err.get("type") == "all_providers_exhausted", (
+            f"BEHAVIOUR: the parked terminal is not self-describing, or invented "
+            f"a second error shape: {body!r}")
+        assert err.get("requested_model") == "v", f"BEHAVIOUR: model not echoed: {body!r}"
+        tried = err.get("providers_tried") or []
+        assert [t.get("provider") for t in tried] == ["pa", "pb"], (
+            f"BEHAVIOUR: the envelope does not name EVERY parked leg: {tried!r}")
+        assert [t.get("status") for t in tried] == ["parked", "parked"], (
+            f"BEHAVIOUR: per-leg status is not the real one: {tried!r}")
+        assert all(t.get("reason") for t in tried), (
+            f"BEHAVIOUR: a leg was named with no reason: {tried!r}")
+        # (3) DISTINGUISHABLE from "all legs were tried and failed": this is an
+        #     operator/config state, not an upstream failure.
+        assert err.get("no_provider_reason") == "all_legs_parked", (
+            "BEHAVIOUR: a fully-parked pool is indistinguishable from real "
+            f"upstream exhaustion — an operator cannot tell them apart: {body!r}")
+        # (4) X-Charon-* must report the truth: 0 upstream calls were made, and
+        #     NO provider is named, because none served this request.
+        assert hdrs.get("X-Charon-Failovers") == "0", (
+            "BEHAVIOUR: headers claim upstream attempts that never happened; "
+            f"reported {hdrs.get('X-Charon-Failovers')!r}")
+        assert hdrs.get("X-Charon-Provider") is None, (
+            "BEHAVIOUR: the refusal names a serving provider "
+            f"({hdrs.get('X-Charon-Provider')!r}) — nothing served it")
+        # (4b) provider_stats must not grow a fabricated row: no provider was
+        #      called, so none may be blamed. A gateway-side refusal is not a
+        #      provider error (same convention as the spend-cap 402).
+        snap = _get_json_or_infra_fail(gw.url + "/charon/status")
+        assert set(snap.get("providers", {})) <= {"pa", "pb"}, (
+            "BEHAVIOUR: the refusal invented a provider row in provider_stats: "
+            f"{snap.get('providers')!r}")
+        assert all(v.get("errors", 0) == 0 for v in snap.get("providers", {}).values()), (
+            "BEHAVIOUR: a config state was recorded as a PROVIDER error against "
+            f"an upstream that was never called: {snap.get('providers')!r}")
+        # Parking is not consumed by the refusal — the legs stay parked.
+        assert bt.is_parked("pa") and bt.is_parked("pb"), (
+            "BEHAVIOUR: serving the 503 silently UN-PARKED providers")
+    finally:
+        gw.shutdown()
+        up_a.shutdown()
+        up_b.shutdown()
+
+
+def test_fully_parked_pool_still_serves_a_free_cache_hit() -> None:
+    """D-012 stops SPEND, not traffic: a cache HIT costs zero dollars.
+
+    The parked-pool guard must sit BELOW the semantic-cache lookup. Placed above
+    it, a fully-parked pool refuses a response that was already paid for and
+    requires no upstream call at all — a straight regression with no money
+    argument behind it.
+    """
+    up, base = _boot(status=200, return_model="ma", cost=0.01)
+    bt = BalanceTracker()
+    bt.park("pa")
+    cache = SemanticCache()
+    payload = {"model": "v", "messages": []}
+    # Warm the cache under the key the forwarder computes: sha256 of the exact
+    # request body it will receive.
+    raw = json.dumps(payload).encode()
+    cached_body = json.dumps({
+        "model": "ma",
+        "choices": [{"message": {"role": "assistant", "content": "from-cache"}}],
+        "usage": {"prompt_tokens": 2, "completion_tokens": 3, "cost": 0.0},
+    }).encode()
+    cache.set(hashlib.sha256(raw).hexdigest(), cached_body,
+              {"Content-Type": "application/json"}, 3600.0)
+    gw = _gateway({"v": [UpstreamRoute(base, "ka", provider="pa", upstream_model="ma")]},
+                  balance_tracker=bt, semantic_cache=cache)
+    try:
+        status, body, hdrs = _post(gw.url + "/v1/chat/completions", payload)
+        assert status == 200, (
+            f"BEHAVIOUR: a fully-parked pool refused a FREE cache hit with "
+            f"{status} — D-012 stops spend, not zero-cost traffic: {body!r}")
+        assert hdrs.get("X-Cache-Status") == "HIT", (
+            "BEHAVIOUR: the response did not come from the cache "
+            f"({hdrs.get('X-Cache-Status')!r}) — the assertion above proves nothing")
+        assert body["choices"][0]["message"]["content"] == "from-cache", (
+            f"BEHAVIOUR: cached payload not served verbatim: {body!r}")
+        assert up.received == [], (
+            f"BEHAVIOUR: a cache hit still called the parked upstream: {up.received!r}")
+    finally:
+        gw.shutdown()
+        up.shutdown()
+
+
+def test_one_unparked_leg_still_serves_a_real_200_and_never_strands() -> None:
+    """D-012 ANTI-OVER-BLOCK: a pool with a live leg keeps serving.
+
+    ⚠ HONEST LIMITATION — this test does NOT independently prove that ``all(...)``
+    (rather than ``any(...)``) is what scopes the 503. The DRAIN-AND-PARK
+    pre-flight already removes every parked leg before the guard runs, so the
+    chain the guard sees can never be MIXED: ``any`` and ``all`` agree on it, and
+    mutating one to the other leaves the whole suite green. The scoping is
+    structurally guaranteed upstream, not pinned here. What this test DOES pin is
+    the end-to-end property the operator cares about — one parked leg must not
+    take a servable pool down — which goes red if the guard is ever moved above
+    the drain pre-flight. See docs/review-log/PARKED-POOL-503.md.
+    """
+    up_parked, base_parked = _boot(status=200, return_model="ma", cost=0.01)
+    up_live, base_live = _boot(status=200, return_model="mb", cost=0.02)
+    bt = BalanceTracker()
+    bt.park("pa")  # pb deliberately NOT parked
+    gw = _gateway({"v": [UpstreamRoute(base_parked, "ka", provider="pa", upstream_model="ma"),
+                         UpstreamRoute(base_live, "kb", provider="pb", upstream_model="mb")]},
                   balance_tracker=bt)
     try:
         status, body, hdrs = _post(gw.url + "/v1/chat/completions",
                                    {"model": "v", "messages": []})
         assert status == 200, (
-            f"BEHAVIOUR: every leg parked → the request was stranded with "
-            f"{status}, instead of falling back to the full chain: {body!r}")
-        _assert_real_completion(body, hdrs, served_by="pa")
-        assert up_a.received == ["ma"], (
-            "BEHAVIOUR: no HTTP request reached the first leg — the fallback did "
-            f"not restore the chain (upstream saw {up_a.received!r})")
-        assert hdrs.get("X-Charon-Failovers") == "0", (
-            "BEHAVIOUR: the restored chain should serve on its first leg; "
-            f"headers report {hdrs.get('X-Charon-Failovers')!r} failovers")
-        assert bt.is_parked("pa") and bt.is_parked("pb"), (
-            "BEHAVIOUR: the never-strand fallback silently UN-PARKED providers; "
-            "it must bypass the park exclusion for this request only")
+            f"BEHAVIOUR: one leg parked, one live → the gateway answered "
+            f"{status}. The parked-pool 503 over-blocked a servable pool: {body!r}")
+        _assert_real_completion(body, hdrs, served_by="pb")
+        assert up_parked.received == [], (
+            f"BEHAVIOUR: the parked leg was dispatched: {up_parked.received!r}")
+        assert up_live.received == ["mb"], (
+            f"BEHAVIOUR: the live leg was not really called: {up_live.received!r}")
     finally:
         gw.shutdown()
-        up_a.shutdown()
-        up_b.shutdown()
+        up_parked.shutdown()
+        up_live.shutdown()
+
+
+def test_single_leg_pool_fully_parked_is_also_a_503() -> None:
+    """A 1-of-1 parked pool leaks exactly the same money as a 5-of-5 one.
+
+    The drain/park pre-flight block is guarded by ``len(chain) > 1``, so a
+    single-leg pool never consulted the park state at all and served a normal
+    200 from its parked leg. D-012 says "don't allow it to leak" — with no
+    cardinality exemption.
+    """
+    up, base = _boot(status=200, return_model="ma", cost=0.01)
+    bt = BalanceTracker()
+    bt.park("solo")
+    gw = _gateway({"v": [UpstreamRoute(base, "k", provider="solo", upstream_model="ma")]},
+                  balance_tracker=bt)
+    try:
+        status, body, hdrs = _post(gw.url + "/v1/chat/completions",
+                                   {"model": "v", "messages": []})
+        assert status == 503, (
+            f"BEHAVIOUR: a sole parked leg still served {status} — the park "
+            f"leaked through the len(chain) > 1 guard: {body!r}")
+        assert up.received == [], (
+            f"BEHAVIOUR: the sole parked leg was really billed: {up.received!r}")
+        err = body.get("error", {})
+        assert err.get("no_provider_reason") == "all_legs_parked", (
+            f"BEHAVIOUR: parked terminal not distinguishable: {body!r}")
+        assert [t.get("provider") for t in err.get("providers_tried") or []] == ["solo"], (
+            f"BEHAVIOUR: the sole parked leg is not named: {body!r}")
+        assert hdrs.get("X-Charon-Failovers") == "0", (
+            f"BEHAVIOUR: headers claim attempts: {hdrs.get('X-Charon-Failovers')!r}")
+    finally:
+        gw.shutdown()
+        up.shutdown()
+
+
+def test_park_state_on_disk_builds_a_tracker_with_no_balance_config(
+        tmp_path) -> None:
+    """D-012 back door: ``balance_tracker is None`` must not mean "unenforced".
+
+    ``_build_balance_tracker`` returned None unless some provider carried
+    ``funding_class``/``mode``. A None tracker never loads ``balance_park.json``,
+    so EVERY parked leg is served and the fully-parked guard silently does not
+    exist — one config edit re-opens the exact leak D-012 closes. Persisted park
+    state must be sufficient on its own to build the tracker.
+    """
+    (tmp_path / "balance_park.json").write_text(json.dumps({"parked": ["pa"]}))
+    # Providers with NO funding_class and NO mode — the state that used to
+    # return None.
+    bt = _build_balance_tracker({"pa": {"base_url": "http://x"}}, state_dir=tmp_path)
+    assert bt is not None, (
+        "BEHAVIOUR: a persisted park set was ignored because no provider "
+        "carried balance config — the fully-parked 503 guard cannot exist")
+    assert bt.is_parked("pa"), (
+        "BEHAVIOUR: the tracker was built but the persisted park was not loaded")
+    # And the negative half: nothing on disk, no balance config → still None
+    # (a gateway with nothing to enforce must stay backward-compatible).
+    assert _build_balance_tracker({"pa": {"base_url": "http://x"}},
+                                  state_dir=tmp_path / "empty") is None, (
+        "BEHAVIOUR: a tracker is built when there is provably nothing parked "
+        "and nothing configured — that is not fail-closed, it is noise")
 
 
 def test_parked_leg_is_never_dispatched_while_a_live_leg_exists() -> None:

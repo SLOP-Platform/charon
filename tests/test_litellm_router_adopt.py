@@ -218,3 +218,50 @@ def test_make_router_builds_from_live_server(monkeypatch, tmp_path):
     # exactly one deployment (the anthropic leg dropped), speaking the openai-compat wire
     assert names == ["openai/ma"]
     assert router.cooldown_time == 45.0
+
+
+# ── control 7: D-012 — a fully-parked pool is never restored ──────────────────
+
+
+def _parked_bt(*parked: str):
+    """A BalanceTracker with *parked* providers parked, no balance config, no disk."""
+    from charon.balance import BalanceTracker
+    bt = BalanceTracker()
+    for p in parked:
+        bt.park(p)
+    return bt
+
+
+def test_fully_parked_chain_is_empty_not_restored():
+    """D-012: every leg parked → the chain is EMPTY, so no deployment can be built.
+
+    FAIL-ON-REVERT: ``_preorder_chain`` used to ``return live or list(chain)``,
+    handing litellm the FULL parked chain and billing it — the exact behaviour
+    OPERATOR DECISION D-012 outlaws ("Change it to 503 don't allow it to leak").
+    Restoring that fallback re-admits every parked leg into the selectable set.
+    """
+    r1 = UpstreamRoute(upstream_base=GOOD_BASE, api_key="k", provider="a", upstream_model="ma")
+    r2 = UpstreamRoute(upstream_base=OTHER_PRESET_BASE, api_key="k", provider="b",
+                       upstream_model="mb")
+    out = lr._preorder_chain([r1, r2], _parked_bt("a", "b"))
+    assert out == [], (
+        f"a fully-parked pool was restored into the selectable set: "
+        f"{[r.provider for r in out]!r}")
+    # and the money proof at the layer that spends: no deployment is built.
+    assert lr.build_model_list({"m1": out}) == [], (
+        "a deployment was built for a fully-parked pool — litellm would bill it")
+
+
+def test_one_unparked_leg_survives_the_parked_exclusion():
+    """ANTI-OVER-BLOCK: D-012's change is scoped to the fully-parked case.
+
+    A pool with a live leg must still yield exactly that leg — unchanged from
+    before D-012.
+    """
+    r1 = UpstreamRoute(upstream_base=GOOD_BASE, api_key="k", provider="a", upstream_model="ma")
+    r2 = UpstreamRoute(upstream_base=OTHER_PRESET_BASE, api_key="k", provider="b",
+                       upstream_model="mb")
+    out = lr._preorder_chain([r1, r2], _parked_bt("a"))
+    assert [r.provider for r in out] == ["b"], (
+        f"the live leg did not survive the parked exclusion: "
+        f"{[r.provider for r in out]!r}")
