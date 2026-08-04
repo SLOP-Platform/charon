@@ -7,6 +7,11 @@ branch: feat/status-board-v1
 owns: fleet/status-board/generate.sh, fleet/status-board/board.html, fleet/tests/status-board.test.sh
 depends_on:
 dep-kind:
+serial_justified: |
+  PRE-EXISTING gate-parity RED, fixed 2026-08-04 rather than stepped over. The
+  owned surfaces are a generator, the artifact it emits, and its red-proof — one unit. The HTML is
+  OUTPUT of the generator, not an independent surface, so there is nothing to parallelise; a split
+  would hand one agent a page it cannot regenerate and another a generator with nothing to verify.
 work_class_note: ci-infra — the operator-facing visibility surface (need #4). It makes gate/ticket/PR
   state legible to a non-coder, which is a D-005 trust mechanism, not a feature.
 note: |
