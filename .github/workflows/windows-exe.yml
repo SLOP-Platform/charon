@@ -1,11 +1,12 @@
 name: Windows EXE
 
 # ADR-0005 D7 / P5 — builds charon.exe via PyInstaller on the free windows-latest
-# runner.  Intentionally separate from ci.yml/heavy.yml which run on the
-# self-hosted Linux [4-lom] runner; this workflow MUST NOT run on that runner.
+# runner. Deliberately pinned to a GitHub-hosted runner and never to a self-hosted
+# one: this repository is PUBLIC, and a self-hosted runner would let a fork's pull
+# request execute arbitrary code on the machine hosting it.
 #
 # Triggers: manual dispatch OR a version tag push (v*).
-# NOT triggered on every push — keeps the self-hosted runner untouched.
+# NOT triggered on every push.
 
 on:
   workflow_dispatch:

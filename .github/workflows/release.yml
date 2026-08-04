@@ -7,7 +7,7 @@ name: release
 # (attest-build-provenance) — no key management, no cosign. The base is
 # digest-PINNED (resolved fresh, recorded in provenance); only the immutable
 # :vX.Y.Z is pushed, never :latest. No publish token surface exists off the
-# release path. Runs on the shared self-hosted 4-LOM runner (zero GitHub minutes).
+# release path. Runs on GitHub-hosted ubuntu-latest (free and unlimited on a public repo).
 #
 # SR-10: publish on TAG PUSH as well as on a published Release, so the GHCR image
 # can never lag a pushed version tag (the deploy box pulls immutable :vX.Y.Z tags).
@@ -23,7 +23,7 @@ on:
     types: [published]
 
 # A tag push and its published Release both fire this workflow for the same ref
-# (refs/tags/vX.Y.Z). On the shared self-hosted 4-LOM runner those two runs would
+# (refs/tags/vX.Y.Z). On a shared persistent runner those two runs would
 # otherwise execute at the same time and stomp each other (shared Docker state,
 # duplicate publish push). Serialize per-ref so they run one after another;
 # cancel-in-progress is false so the first run completes and publishes.
@@ -33,10 +33,13 @@ concurrency:
 
 jobs:
   gate:
-    # Runner is chosen by the CI_RUNNER repo variable (Settings → Variables).
-    # Maintainer sets CI_RUNNER=["self-hosted","4-lom"]; forks don't inherit it and
-    # fall back to GitHub-hosted ubuntu-latest, so forked PRs get working CI.
-    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
+    # HARD-PINNED ubuntu-latest — DO NOT reintroduce a self-hosted runner selection here.
+    # This repository is PUBLIC. A self-hosted runner on a public repository lets a fork's
+    # pull request execute arbitrary code on the machine hosting that runner, and our
+    # runner hosts also run production services. Public repositories get GitHub-hosted CI
+    # free and unlimited, so there is nothing to gain and a real compromise to lose.
+    # Self-hosted runners are for the private repository only.
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
@@ -54,7 +57,7 @@ jobs:
       - name: type
         run: mypy src/charon
       - name: tests
-        # Job-scoped tmp root (see ci.yml) — the shared 4-LOM runner has no
+        # Job-scoped tmp root (see ci.yml) — a shared persistent runner has no
         # per-job /tmp isolation, so a concurrent ci.yml gate run can otherwise
         # rm_rf this run's live pytest basetemp mid-suite.
         env:
@@ -62,10 +65,13 @@ jobs:
         run: pytest -q -n auto
 
   image-smoke:
-    # Runner is chosen by the CI_RUNNER repo variable (Settings → Variables).
-    # Maintainer sets CI_RUNNER=["self-hosted","4-lom"]; forks don't inherit it and
-    # fall back to GitHub-hosted ubuntu-latest, so forked PRs get working CI.
-    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
+    # HARD-PINNED ubuntu-latest — DO NOT reintroduce a self-hosted runner selection here.
+    # This repository is PUBLIC. A self-hosted runner on a public repository lets a fork's
+    # pull request execute arbitrary code on the machine hosting that runner, and our
+    # runner hosts also run production services. Public repositories get GitHub-hosted CI
+    # free and unlimited, so there is nothing to gain and a real compromise to lose.
+    # Self-hosted runners are for the private repository only.
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
@@ -80,7 +86,7 @@ jobs:
         # the gate job and does not need a separate container here.
         run: |
           # Host port 0 = a free, kernel-assigned host port; never a fixed one.
-          # The production gateway on the shared self-hosted 4-LOM runner already
+          # The production gateway on the deployment host already
           # binds host 8080, and multiple release runs can land on that runner, so
           # any fixed host port (8080, 18080, ...) collides ("port is already
           # allocated", exit 125). The container name is run-scoped for the same
@@ -107,10 +113,13 @@ jobs:
 
   publish:
     needs: [gate, image-smoke]
-    # Runner is chosen by the CI_RUNNER repo variable (Settings → Variables).
-    # Maintainer sets CI_RUNNER=["self-hosted","4-lom"]; forks don't inherit it and
-    # fall back to GitHub-hosted ubuntu-latest, so forked PRs get working CI.
-    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
+    # HARD-PINNED ubuntu-latest — DO NOT reintroduce a self-hosted runner selection here.
+    # This repository is PUBLIC. A self-hosted runner on a public repository lets a fork's
+    # pull request execute arbitrary code on the machine hosting that runner, and our
+    # runner hosts also run production services. Public repositories get GitHub-hosted CI
+    # free and unlimited, so there is nothing to gain and a real compromise to lose.
+    # Self-hosted runners are for the private repository only.
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read

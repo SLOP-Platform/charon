@@ -5,7 +5,7 @@ name: heavy
 # still proving, regularly, that (a) the standalone wheel never bit-rots behind
 # the host-project embed, (b) the Mode-B image still builds and the fenced service
 # answers, and (c) no unvetted/advisory-flagged deps crept in. Runs on the shared
-# self-hosted 4-LOM runner (Docker + buildx present); zero GitHub minutes.
+# GitHub-hosted ubuntu-latest runner (Docker + buildx present).
 on:
   schedule:
     - cron: "0 6 * * 1"   # Mondays 06:00 UTC
@@ -16,10 +16,13 @@ jobs:
     # INV-B6: build the wheel, install it in a clean venv with NO repo on the
     # path, and prove the CLI works standalone (the standalone app never bit-rots
     # behind the host-project embed).
-    # Runner is chosen by the CI_RUNNER repo variable (Settings → Variables).
-    # Maintainer sets CI_RUNNER=["self-hosted","4-lom"]; forks don't inherit it and
-    # fall back to GitHub-hosted ubuntu-latest, so forked PRs get working CI.
-    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
+    # HARD-PINNED ubuntu-latest — DO NOT reintroduce a self-hosted runner selection here.
+    # This repository is PUBLIC. A self-hosted runner on a public repository lets a fork's
+    # pull request execute arbitrary code on the machine hosting that runner, and our
+    # runner hosts also run production services. Public repositories get GitHub-hosted CI
+    # free and unlimited, so there is nothing to gain and a real compromise to lose.
+    # Self-hosted runners are for the private repository only.
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
@@ -49,10 +52,13 @@ jobs:
     # ADR-0002 §5 Tier 2 (build axis): prove the Mode-B image still BUILDS and
     # the fenced service answers — without publishing (no token surface; GHCR
     # publish-on-tag is release.yml).
-    # Runner is chosen by the CI_RUNNER repo variable (Settings → Variables).
-    # Maintainer sets CI_RUNNER=["self-hosted","4-lom"]; forks don't inherit it and
-    # fall back to GitHub-hosted ubuntu-latest, so forked PRs get working CI.
-    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
+    # HARD-PINNED ubuntu-latest — DO NOT reintroduce a self-hosted runner selection here.
+    # This repository is PUBLIC. A self-hosted runner on a public repository lets a fork's
+    # pull request execute arbitrary code on the machine hosting that runner, and our
+    # runner hosts also run production services. Public repositories get GitHub-hosted CI
+    # free and unlimited, so there is nothing to gain and a real compromise to lose.
+    # Self-hosted runners are for the private repository only.
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
@@ -77,10 +83,13 @@ jobs:
   supply-chain-audit:
     # Advisory: the privileged loop carries no unvetted deps. Non-blocking by
     # design (pip-audit DB flaps); surfaced here rather than gating every push.
-    # Runner is chosen by the CI_RUNNER repo variable (Settings → Variables).
-    # Maintainer sets CI_RUNNER=["self-hosted","4-lom"]; forks don't inherit it and
-    # fall back to GitHub-hosted ubuntu-latest, so forked PRs get working CI.
-    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
+    # HARD-PINNED ubuntu-latest — DO NOT reintroduce a self-hosted runner selection here.
+    # This repository is PUBLIC. A self-hosted runner on a public repository lets a fork's
+    # pull request execute arbitrary code on the machine hosting that runner, and our
+    # runner hosts also run production services. Public repositories get GitHub-hosted CI
+    # free and unlimited, so there is nothing to gain and a real compromise to lose.
+    # Self-hosted runners are for the private repository only.
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
