@@ -53,6 +53,15 @@ CHECKS: list[tuple[list[str], str]] = [
     (["python3", "tools/check_fail_loud.py"], "fail-loud"),
     (["python3", "tools/check_dogfood.py"], "dogfood"),
     (["python3", "-m", "pytest", "-q"], "pytest"),
+    # DIFF-SCOPED quality gates. Both run AFTER pytest: coverage measured against
+    # a red suite proves nothing, and mutation-testing a broken tree only reports
+    # noise. Both cost ~0s until the change actually touches a src/**.py, at which
+    # point diff-cover re-runs the suite under coverage (~40s) and mutmut mutates
+    # only the changed files. Neither gates the pre-existing uncovered surface --
+    # a whole-tree floor on an 87%-covered tree would red every PR and be switched
+    # off within a week.
+    (["python3", "tools/diff_cover_gate.py"], "diff-cover"),
+    (["python3", "tools/mutmut_diff_gate.py"], "mutmut"),
     # docs/REVIEW-LOG.md is gitignored (generated artifact from the per-ticket
     # fragments in docs/review-log/). Running in generate mode is idempotent
     # (deterministic render of the SoT fragments) and is what .github/workflows/ci.yml
