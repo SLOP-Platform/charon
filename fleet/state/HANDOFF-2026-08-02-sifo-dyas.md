@@ -256,3 +256,40 @@ The standing HARD rule is **SG never routes via Claude/Anthropic**, and it is on
 REPEATEDLY REGRESSING. No tier chain names these today, so we are clean **by accident, not by
 construction**. `NEVER-ANTHROPIC-ASSERTION` is ticketed and UNBUILT. Build the assertion — an
 exclusion list rots on the next catalog refresh, an assertion does not.
+
+---
+
+# 8 — TAB / PROCESS CENSUS AT CLOSE (operator caught that I had NOT accounted for these)
+
+## 8a. FIVE ORPHAN `fleet-droid` LOOPS — running **1d19h**, reparented to init, tabs long gone
+`pgrep -f 'bash .*fleet-droid\.sh'` -> pids **2780986 2780990 2788762 2788767 2788768**, all
+`ppid=277` (init). They are INVISIBLE to the operator (no tab) but ALIVE and CLAIMING WORK. I
+killed one (2780982) mid-session and never swept the rest — the operator had to ask.
+**They are PRODUCTIVE, not stuck:** one of them (2788762) picked up `GATE-PARITY-TIMEOUT-FLAKE`
+minutes after it was minted and COMMITTED the fix (`4a1c36f fix(gate-parity): timeout produces
+UNKNOWN`) — the queue-#1 item is already done.
+**DECISION FOR THE NEXT SESSION:** do NOT blind-kill them. Each holds live claims. Either adopt
+them (they work) or drain them one ticket at a time, checking worktrees first. What is NOT
+acceptable is leaving invisible workers unaccounted for, which is what I did all session.
+
+## 8b. SIX PIECES OF UNLANDED ORPHAN WORK — found and PUSHED at close
+Would have been left behind entirely:
+| branch | ahead |
+|---|---|
+| `fix/gate-parity-timeout-flake` (the queue-#1 FIX) | 1 |
+| `feat/bash-inert-coverage` | 1 |
+| `feat/free-tier-prompt-size-fit` | 1 |
+| `fix/limit-classifier-tpm-widen` | 1 |
+| `chore/rescue-triage-product` | 2 |
+| `feat/cost-per-task-replay` | 1 |
+All pushed. **None had a PR** — they are `pushed-no-pr` until someone opens one.
+
+## 8c. THE FLAKE BLOCKED THE PUSH OF ITS OWN FIX
+All six pushes were refused by `validate_board`'s `gate-parity` timeout — including the branch
+that FIXES that timeout. Landed via the logged `--force` (verification gap, not a real red).
+**This is the strongest argument for queue #1:** the flake is now costing real landings, and it
+trains the operator to `--force`, which is how a genuine RED eventually gets ignored.
+
+## 8d. SIX SG TABS STILL RUNNING at close
+Ports 4112 (`drop`) 4122 (`drain`) 4132 (`park`) 4133 (`parkrearm`) 4140 (`inert`) 4141
+(`soleleg`). All worktrees clean or committed. 3 opencode work processes active. 0 reviewer pools.
