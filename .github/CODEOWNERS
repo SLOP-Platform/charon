@@ -1,0 +1,17 @@
+# CODEOWNERS — who must review a change before it can merge.
+#
+# WHY: `pull_request` workflows run the YAML and scripts from the PR's own merge ref, so without a
+# human in the loop a PR can weaken or disable the very checks that are supposed to block it. The
+# scanner workflows additionally restore .github/scripts/ from the merge base at run time, but the
+# workflow YAML itself is always read from the PR — only review can catch that.
+#
+# ⛔ THIS FILE IS INERT UNTIL BRANCH PROTECTION IS TOLD TO USE IT. Add it as an operator action:
+#     gh api -X PATCH repos/SLOP-Platform/charon/branches/master/protection \
+#       -F required_pull_request_reviews.require_code_owner_reviews=true ...
+#   Until then, listing an owner here changes nothing about what can merge.
+
+# CI definition and the merge-blocking scanners: workflows, wrappers, rulesets, fixtures.
+/.github/  @Nnyan
+
+# The product's own gate implementations.
+/tools/    @Nnyan

@@ -39,7 +39,31 @@ rules:
     patterns:
       - pattern-regex: '["''](?:https?://)?(?:10\.[0-9]|192\.168\.|172\.(?:1[6-9]|2[0-9]|3[01])\.)[0-9.]+(?::[0-9]{2,5})?[^"'']*["'']'
 
-  # RULE 2 — no developer-machine absolute path in source.
+  # RULE 2 — no NEW Anthropic route on the gateway plane.
+  # This replaces the rule deliberately not ported (see above) WITHOUT repeating its mistake. The
+  # standing invariant is about ROUTING — the gateway must never send traffic to Anthropic — which
+  # a lexical model-name match can never express, and which was left enforced by nothing at the
+  # merge boundary once that rule was dropped. So match the two things that actually constitute a
+  # route: the upstream host and the credential env var.
+  # EXCLUDED by design: provider_presets/ (the product is provider-agnostic and legitimately SHIPS
+  # an Anthropic preset for users who want one) and tests/ (which must be able to name what they
+  # assert about). Measured 2026-08-04: 2 hits outside those directories, both docstring/
+  # passthrough text, and both pre-existing — so this rule blocks nothing that exists today.
+  - id: charon-no-anthropic-route
+    languages: [python]
+    severity: ERROR
+    paths:
+      exclude:
+        - "**/provider_presets/**"
+        - "**/tests/**"
+    message: >-
+      New Anthropic upstream route or credential on the gateway plane. The gateway must not route
+      to Anthropic; select upstreams from tier/pool config. If this is a user-selectable provider
+      preset, it belongs in provider_presets/, which this rule deliberately excludes.
+    patterns:
+      - pattern-regex: 'api\.anthropic\.com|ANTHROPIC_API_KEY'
+
+  # RULE 3 — no developer-machine absolute path in source.
   # A hardcoded home-directory literal crosses a deploy boundary (it breaks on every other host,
   # in a container, and on a fresh install) AND leaks a personal path into a public repo. Use an
   # env-relative or repo-relative path.

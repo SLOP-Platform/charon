@@ -92,6 +92,32 @@ rc=0; out="$(CHARON_CI_BASE=__no_such_ref__ CHARON_CI_HEAD=HEAD bash "$WRAP" --d
               || bad "5 unresolvable merge-base went green — shallow-checkout silent green not prevented"
 
 rm -rf "$tmp" "$empty"
+# ── (6) --DIFF MODE: the path CI actually runs ────────────────────────────────────────────────
+#     Everything above this line runs in PATHS mode. These cases drive the REAL pipeline —
+#     resolve base -> list changed files -> scan -> LINE-FILTER -> verdict — against a throwaway
+#     repo shaped exactly like a GitHub merge ref. See _difflab.sh for why that gap mattered.
+# shellcheck source=.github/scripts/tests/_difflab.sh
+. "$SCRIPTS/tests/_difflab.sh"
+LAB="$tmp/lab"
+VIOL='GATEWAY = "http://192.168.42.7:8080/v1"'  # public-clean: allow — the canary must contain the literal it proves is detected
+WRAP_BASENAME='semgrep.sh'
+diffcase(){ local mode="$1" want="$2" label="$3" rc
+  difflab "$LAB" "$mode" "$VIOL" >/dev/null 2>&1
+  rc="$(difflab_run "$LAB" "$WRAP_BASENAME")"
+  if [ "$rc" = "$want" ]; then ok "$label (rc=$rc)"
+  else bad "$label — expected rc=$want, got rc=$rc :: $(tail -2 "$LAB/out.txt" 2>/dev/null | tr '\n' ' ')"; fi
+}
+diffcase plain     1 "6 --diff: a violation the PR ADDS blocks merge"
+diffcase payload   1 "6a --diff: a '++ ' line in an earlier hunk does NOT hide the violation (diff-parser regression)"
+diffcase otherlane 0 "6b --diff: a violation landed on MASTER is not blamed on this PR (base = merge ref's first parent)"
+diffcase nonascii  1 "6c --diff: a violation in a NON-ASCII filename still blocks (quotePath/NUL-safe listing)"
+diffcase reformat  0 "6d --diff: a pre-existing violation merely moved/reindented does not block"
+if [ "$(id -u)" -eq 0 ]; then
+  ok "6e --diff: unreadable-target case SKIPPED (running as root, chmod 000 does not deny root)"
+else
+  diffcase unreadable 2 "6e --diff: an unreadable target fails closed instead of scanning nothing"
+fi
+
 echo
 echo "--- $PASS passed, $FAIL failed ---"
 [ "$FAIL" -eq 0 ] || exit 1

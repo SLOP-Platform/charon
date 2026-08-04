@@ -10,8 +10,9 @@
 # SCOPE:
 #   default        — scan the whole tracked tree (semgrep honors .gitignore/.semgrepignore).
 #   --diff         — scan the files changed between base and head, then keep only findings on
-#                    lines the diff ADDED (see diff_filter.py). Base/head come from
-#                    CHARON_CI_BASE/CHARON_CI_HEAD (set by CI) or default to origin/master..HEAD.
+#                    lines the diff ADDED (see diff_filter.py). Head is CHARON_CI_HEAD or HEAD;
+#                    base is CHARON_CI_BASE, else resolve_base() in _common.sh (the merge ref's
+#                    FIRST PARENT — read that function's comment before changing it).
 #                    If the merge-base cannot resolve, we FAIL CLOSED (exit 2) rather than scan
 #                    nothing and report green — a scan-nothing green is the false receipt this
 #                    gate exists to prevent.
@@ -26,10 +27,12 @@ set -uo pipefail
 
 SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPTS/../.." && pwd)"
+# shellcheck source=.github/scripts/_common.sh
+. "$SCRIPTS/_common.sh"
 RULES="${SEMGREP_RULES_DIR:-$SCRIPTS/semgrep-rules}"
 # Intentionally-bad canary fixtures. Excluded from diff scans; the canary still scans them by
 # EXPLICIT path, so detection is unaffected.
-FIXTURES_RE='^\.github/scripts/fixtures/'
+FIXTURES='.github/scripts/fixtures/'
 
 command -v semgrep >/dev/null 2>&1 || {
   echo "semgrep.sh: FAIL — semgrep is not installed (adopt the engine: 'pip install semgrep==<pin>')." >&2
@@ -62,24 +65,30 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+py_changed=0
 if [ "$mode" = "diff" ]; then
-  base="${CHARON_CI_BASE:-origin/master}"
+  base="$(resolve_base "$ROOT")"
   head="${CHARON_CI_HEAD:-HEAD}"
   mb="$(git -C "$ROOT" merge-base "$base" "$head" 2>/dev/null)" || mb=""
   if [ -z "$mb" ]; then
     echo "semgrep.sh: FAIL — cannot resolve merge-base($base,$head); refusing to scan nothing (fail closed)." >&2
     exit 2
   fi
-  # Only existing (Added/Copied/Modified/Renamed) files — deleted paths would error the scan.
-  # The fixtures dir is excluded: those files are INTENTIONALLY-bad canary fixtures (e.g.
-  # semgrep-known-bad.py), so scanning them in --diff mode would make a PR that adds a fixture
-  # block itself. The canary still scans them by EXPLICIT path, so detection is unaffected.
-  mapfile -t paths < <(git -C "$ROOT" diff --name-only --diff-filter=ACMR "$mb" "$head" -- 2>/dev/null \
-    | grep -vE "$FIXTURES_RE" | sed "s#^#$ROOT/#")
+  # NUL-safe listing (see _common.sh): git C-quotes non-ASCII paths by default, and the
+  # reconstructed path then does not exist — which turned a real finding into a green elsewhere.
+  # The fixtures dir is excluded: those files are INTENTIONALLY-bad canary fixtures, so scanning
+  # them would make a PR that adds a fixture block itself. The canary scans them by EXPLICIT path.
+  while IFS= read -r -d '' p; do
+    case "$p" in "$FIXTURES"*) continue ;; esac
+    case "$p" in *.py) py_changed=$((py_changed+1)) ;; esac
+    paths+=("$ROOT/$p")
+  done < <(changed_files "$ROOT" "$mb" "$head")
   if [ "${#paths[@]}" -eq 0 ]; then
     echo "semgrep.sh: OK — no changed files in $base..$head to scan."
     exit 0
   fi
+  # FAIL CLOSED before scanning: an unreadable or vanished target is a scan that reads nothing.
+  require_readable "semgrep.sh" "${paths[@]}"
 fi
 
 declare -a targets
@@ -125,8 +134,23 @@ if [ "$nerr" -ne 0 ]; then
   exit 2
 fi
 
+# FILES-ANALYSED GUARD. Every rule in the ruleset is currently `languages: [python]`, so if this
+# diff changed Python files and semgrep still analysed ZERO of them, the scan did no work and its
+# exit-0 is a false receipt. (A PR with no Python legitimately analyses nothing — that is not a
+# vacuous green, so it is not gated here.)
+nscanned="$(printf '%s' "$report" | python3 -c 'import sys,json;print(len(json.load(sys.stdin).get("paths",{}).get("scanned",[])))' 2>/dev/null)" || nscanned=""
+if [ -z "$nscanned" ]; then
+  echo "semgrep.sh: FAIL — semgrep report carries no paths.scanned; failing closed." >&2
+  exit 2
+fi
+if [ "$py_changed" -gt 0 ] && [ "$nscanned" -eq 0 ]; then
+  echo "semgrep.sh: FAIL — $py_changed changed Python file(s) but semgrep analysed ZERO files;" >&2
+  echo "  refusing to report green on a scan that did no work (fail closed)." >&2
+  exit 2
+fi
+
 kept="$(printf '%s' "$report" | python3 "$SCRIPTS/diff_filter.py" \
-  --kind semgrep --base "$base" --head "$head" --root "$ROOT")"
+  --kind semgrep --base "$base" --head "$head" --root "$ROOT" --exclude-prefix "$FIXTURES")"
 frc=$?
 if [ "$frc" -ne 0 ]; then
   echo "semgrep.sh: FAIL — diff_filter failed (exit $frc); failing closed." >&2

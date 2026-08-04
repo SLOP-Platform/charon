@@ -9,11 +9,12 @@
 # but is NOT product code: it is not on the import path, not linted as src/, and not typechecked.
 #
 # SCOPE:
-#   default        — scan the product's own Python (src/**/*.py, tools/**/*.py), enumerated via
-#                    git ls-files (excludes .github/scripts/fixtures/ — see the diff-mode note).
+#   default        — scan EVERY tracked *.py, enumerated via git ls-files (excludes
+#                    .github/scripts/fixtures/ — see the diff-mode note).
 #   --diff         — scan the .py files changed between base and head, then keep only findings on
-#                    lines the diff ADDED (see diff_filter.py). Base/head come from
-#                    CHARON_CI_BASE/CHARON_CI_HEAD (set by CI) or default to origin/master..HEAD.
+#                    lines the diff ADDED (see diff_filter.py). Head is CHARON_CI_HEAD or HEAD;
+#                    base is CHARON_CI_BASE, else resolve_base() in _common.sh (the merge ref's
+#                    FIRST PARENT — read that function's comment before changing it).
 #                    If the merge-base cannot resolve, we FAIL CLOSED (exit 2) rather than scan
 #                    nothing and report green — a scan-nothing green is the false receipt this
 #                    gate exists to prevent. DIFF-SCOPED on purpose: only NEW insecure code
@@ -39,10 +40,12 @@ set -uo pipefail
 
 SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPTS/../.." && pwd)"
+# shellcheck source=.github/scripts/_common.sh
+. "$SCRIPTS/_common.sh"
 SEVERITY="${BANDIT_SEVERITY:-medium}"
 # Intentionally-insecure canary fixtures. Excluded from tree/diff scans; the canary still scans
 # them by EXPLICIT path, so detection is unaffected.
-FIXTURES_RE='^\.github/scripts/fixtures/'
+FIXTURES='.github/scripts/fixtures/'
 
 command -v bandit >/dev/null 2>&1 || {
   echo "bandit.sh: FAIL — bandit is not installed (adopt the SAST: 'pip install --user bandit==<pin>'" >&2
@@ -71,34 +74,50 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+select_py() {  # stdin: NUL-separated repo-relative paths -> stdout: absolute .py paths, one per line
+  local p
+  while IFS= read -r -d '' p; do
+    case "$p" in
+      *.py) : ;;
+      *) continue ;;
+    esac
+    case "$p" in
+      "$FIXTURES"*) continue ;;
+    esac
+    printf '%s\n' "$ROOT/$p"
+  done
+}
+
 if [ "$mode" = "tree" ]; then
-  # The product's own Python: src/ and tools/. Enumerate via git ls-files so only tracked files
-  # are scanned.
-  mapfile -t paths < <(git -C "$ROOT" ls-files -- 'src/**/*.py' 'src/*.py' 'tools/**/*.py' 'tools/*.py' 2>/dev/null \
-    | grep -vE "$FIXTURES_RE" | sed "s#^#$ROOT/#")
+  # EVERY tracked *.py, not just src/ and tools/. The earlier src+tools pathspec left 162 of 309
+  # tracked Python files ungated (tests/, .ksf/gates/, packaging/, the repo root, and these very
+  # scripts): three brand-new shell=True files outside that pathspec produced "OK — no changed
+  # Python files … to scan", exit 0, on a diff that changed three Python files.
+  mapfile -t paths < <(git -c core.quotePath=false -C "$ROOT" ls-files -z -- '*.py' 2>/dev/null | select_py)
   if [ "${#paths[@]}" -eq 0 ]; then
-    echo "bandit.sh: FAIL — tree mode found ZERO tracked Python files under src/ or tools/;" >&2
+    echo "bandit.sh: FAIL — tree mode found ZERO tracked Python files;" >&2
     echo "  refusing to report green on a zero-file scan (fail closed)." >&2
     exit 2
   fi
 elif [ "$mode" = "diff" ]; then
-  base="${CHARON_CI_BASE:-origin/master}"
+  base="$(resolve_base "$ROOT")"
   head="${CHARON_CI_HEAD:-HEAD}"
   mb="$(git -C "$ROOT" merge-base "$base" "$head" 2>/dev/null)" || mb=""
   if [ -z "$mb" ]; then
     echo "bandit.sh: FAIL — cannot resolve merge-base($base,$head); refusing to scan nothing (fail closed)." >&2
     exit 2
   fi
-  # Only existing (Added/Copied/Modified/Renamed) .py files under src/ or tools/. Deleted paths
-  # would error the scan; the fixtures dir is excluded (see tree-mode note).
-  mapfile -t paths < <(git -C "$ROOT" diff --name-only --diff-filter=ACMR "$mb" "$head" -- 'src/**/*.py' 'src/*.py' 'tools/**/*.py' 'tools/*.py' 2>/dev/null \
-    | grep -vE "$FIXTURES_RE" | sed "s#^#$ROOT/#")
+  mapfile -t changed < <(changed_files "$ROOT" "$mb" "$head" | tr '\0' '\n')
+  mapfile -t paths < <(changed_files "$ROOT" "$mb" "$head" | select_py)
   if [ "${#paths[@]}" -eq 0 ]; then
-    # A genuinely empty diff (no changed Python) is a LEGIT green — unlike a scanned-nothing scope
-    # error, there is simply nothing new to gate. Mirror semgrep.sh / gitleaks.sh.
-    echo "bandit.sh: OK — no changed Python files in $base..$head to scan."
+    # A genuinely empty Python diff is a LEGIT green — there is simply nothing new to gate. Say
+    # exactly that; the old message claimed "no changed Python files" even when there were some
+    # (they were merely outside the pathspec), which is a false statement in a gate log.
+    echo "bandit.sh: OK — ${#changed[@]} changed file(s), none of them in-scope Python, in $base..$head."
     exit 0
   fi
+  # FAIL CLOSED before scanning: an unreadable or vanished target is a scan that reads nothing.
+  require_readable "bandit.sh" "${paths[@]}"
 fi
 
 # Run bandit ONCE, capture its JSON report, and derive BOTH the finding count and the files-scanned
@@ -157,7 +176,7 @@ if [ "$mode" = "diff" ] && [ "${findings:-0}" -ge 1 ]; then
   # the diff or parse the report.
   echo "bandit.sh: $findings finding(s) in the changed files; keeping only those on ADDED lines." >&2
   kept="$(printf '%s' "$report" | python3 "$SCRIPTS/diff_filter.py" \
-    --kind bandit --base "$base" --head "$head" --root "$ROOT")"
+    --kind bandit --base "$base" --head "$head" --root "$ROOT" --exclude-prefix "$FIXTURES")"
   frc=$?
   if [ "$frc" -ne 0 ]; then
     echo "bandit.sh: FAIL — diff_filter failed (exit $frc); failing closed." >&2

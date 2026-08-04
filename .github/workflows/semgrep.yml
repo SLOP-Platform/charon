@@ -64,6 +64,29 @@ jobs:
           python3 -m pip install --quiet --disable-pip-version-check 'semgrep==1.161.0'
           semgrep --version
 
+      # SELF-NEUTERING GUARD. `pull_request` workflows execute the code from the PR's merge ref,
+      # so a PR that replaces this gate's own wrapper with `exit 0` would still report the
+      # required context GREEN. Before running anything, restore .github/scripts/ from the merge
+      # base, so the gate that judges a PR is the gate master already trusts. (The workflow YAML
+      # itself still comes from the PR — GitHub reads it from the merge ref and that cannot be
+      # changed here; .github/CODEOWNERS is the companion control, and it only bites once
+      # "require review from Code Owners" is enabled in branch protection.)
+      - name: Guard — run the gate's OWN code from the merge base, not from the PR
+        run: |
+          set -euo pipefail
+          base="$(git rev-parse HEAD^1 2>/dev/null || true)"
+          if [ -z "$base" ]; then echo "not a merge ref; nothing to restore"; exit 0; fi
+          if ! git cat-file -e "$base:.github/scripts/bandit.sh" 2>/dev/null; then
+            echo "gate scripts do not exist at the merge base — this PR introduces them; running the PR's copy"
+            exit 0
+          fi
+          if git diff --quiet "$base" HEAD -- .github/scripts; then
+            echo "gate scripts untouched by this PR"
+          else
+            echo "::warning title=Gate self-modification::this PR changes .github/scripts/; restoring that directory from $base for this run"
+            git checkout "$base" -- .github/scripts
+          fi
+
       # Prove the gate itself EXECUTES before trusting its verdict: the fail-on-revert canary must
       # pass. If the canary reds, the gate is untrustworthy and CI reds.
       - name: Canary — prove the gate fires and fails-on-revert
@@ -73,7 +96,4 @@ jobs:
       # A full-tree scan would red on pre-existing findings, and a gate that reds on an untouched
       # tree gets disabled — the exact failure this gate exists to prevent.
       - name: Semgrep policy scan (new findings only — exit 1 blocks merge)
-        env:
-          CHARON_CI_BASE: ${{ github.event.pull_request.base.sha || 'origin/master' }}
-          CHARON_CI_HEAD: ${{ github.sha }}
         run: bash .github/scripts/semgrep.sh --diff
