@@ -46,6 +46,7 @@ bash fleet/pending.sh list                 # SURFACE to the operator; triage, do
 | **13** | `sg-worker-liveness` finished-vs-hung | folded into `CRON-REGISTRY-VISIBLE` | **L6.** See §LEAST-CONFIDENT — the per-port design is **invalid**. |
 | **14** | M-synthesis tickets | not minted | `HYPOTHESIS-ADOPT-NARROW` (+xdist gap), `OUTCOME-TEST-REWRITE`, `KSF-FIXES-1-3`. |
 | **15** | E+F: ROADMAP.tsv rows + `report.sh` | not done | Operator-approved: 🆕 marker; `SHARED-NAMESPACE-CONTENTION` → Phase 0. |
+| **16** | `GATE-PARITY-TIMEOUT-FLAKE` | ticketed at close | **L6 surfacing.** `gate-parity.sh scan` takes **31s** against `validate_board`'s **30s** budget — a PASSING check (`parity holds`) is reported as a board RED at random, and it may never have COMPLETED inside a validate_board run. Operator caught that I had seen this RED and moved past it without ticketing. |
 
 ---
 
@@ -86,6 +87,11 @@ the decisive test.
    map): `_has_live_sibling()` made auto-park unreachable for 17/17 providers.
 
 **RULES, earned the hard way:**
+- **A RED you cannot immediately explain is a FINDING, not noise.** At close the only board
+  RED was a `gate-parity.sh` timeout. I read it as flake and moved on WITHOUT TICKETING IT; the
+  operator had to ask. It turned out to be a passing check one second over budget, reported as a
+  failure — i.e. the exact could-not-check-vs-failed confusion this session kept hitting.
+  **Ticket it before you dismiss it.**
 - **Run the discriminating test before naming a cause.** "Which layer fails?" is answered by
   calling each layer directly, not by reading code and inferring.
 - **Do not report a second theory before testing the first.** Say "I don't know yet."
