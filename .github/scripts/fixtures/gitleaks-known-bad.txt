@@ -1,0 +1,13 @@
+gitleaks-known-bad.txt — FIXTURE. NOT a real credential. Deliberately plants a SYNTHETIC,
+obviously-fake AWS-style access key so the gitleaks canary can prove the gate actually fires.
+
+This key is NOT valid and never was — it is a made-up string that merely MATCHES the shape of
+an AWS access key id (AKIA + 16 chars) so gitleaks' maintained default ruleset flags it. It is
+NOT AWS's documented example key (AKIAIOSFODNN7EXAMPLE), which gitleaks allowlists and would NOT
+flag — using that would make the canary silently pass on a no-op, the exact false-green this
+fixture exists to prevent.
+
+This directory is excluded from the wrappers' tree/diff scans (a PR that ADDS a fixture must not
+red on its own fixture); the canary scans it by EXPLICIT path instead.
+
+aws_access_key_id = AKIAZ3FAKEXAMPLE1234

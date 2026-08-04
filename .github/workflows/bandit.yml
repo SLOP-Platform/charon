@@ -1,0 +1,99 @@
+# bandit.yml — MERGE-BLOCKING Python SAST check using the ADOPTED bandit scanner.
+#
+# WHAT THIS IS: the server-side, un-bypassable check for INSECURE PYTHON PATTERNS. It runs the
+# maintained bandit scanner + its built-in danger-pattern tests (eval/exec, subprocess shell=True,
+# pickle, yaml.load, weak crypto, ...) over the PR diff and BLOCKS MERGE on any finding at/above
+# the configured severity that lands on a line the PR ADDED.
+#
+# WHAT THIS IS NOT: this is a Python SAST, NOT the secret-scanner (gitleaks) and NOT the
+# policy/convention backstop (semgrep). It is ADDITIVE to those and to tools/check_security.py.
+#
+# ---------------------------------------------------------------------------------------------
+# RUNNER — HARD-PINNED to ubuntu-latest, deliberately. This repository is PUBLIC, and a
+# self-hosted runner on a public repo lets a FORK'S pull request execute arbitrary code on that
+# hardware. GitHub-hosted runners are free and unlimited for public repositories, so there is
+# nothing to gain and a real risk to take on. Do NOT swap this literal for a runner-label
+# variable lookup, and do NOT set a CI_RUNNER repository variable here.
+#
+# MAKING IT BLOCK: this workflow running green is NOT enforcement. Enforcement is being a REQUIRED
+# status check in branch protection for `master`. Add the "bandit" context ONLY AFTER a real run
+# has been observed completing on a real PR — a required context that has never reported blocks
+# every PR forever.
+# ---------------------------------------------------------------------------------------------
+name: bandit
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bandit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bandit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          # fetch-depth 0 is LOAD-BEARING: --diff scoping needs base..head history to resolve the
+          # merge-base. A shallow checkout cannot, and the wrapper then FAILS CLOSED (exit 2)
+          # rather than scan nothing and report green. Do not lower this.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: "3.12"
+
+      # Adopt the maintained scanner, PINNED TO AN EXACT VERSION. Why exact, not a range/`latest`:
+      #   A merge-blocking gate must be DETERMINISTIC. A floating version lets a fresh CI pip
+      #   resolve to whatever is newest at run time, and a gate whose verdict/test-set depends on
+      #   which bandit pip happened to fetch is a version-fragility we refuse. 1.9.4 is the
+      #   version the canary (.github/scripts/tests/bandit-canary.test.sh) is validated against.
+      #   To bump: change BANDIT_VERSION, re-run the canary locally on the new version, land
+      #   them together.
+      - name: Install bandit (the adopted SAST — pinned exact for a deterministic gate)
+        env:
+          BANDIT_VERSION: 1.9.4
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet --disable-pip-version-check "bandit==${BANDIT_VERSION}"
+          bandit --version
+
+      # SELF-NEUTERING GUARD. `pull_request` workflows execute the code from the PR's merge ref,
+      # so a PR that replaces this gate's own wrapper with `exit 0` would still report the
+      # required context GREEN. Before running anything, restore .github/scripts/ from the merge
+      # base, so the gate that judges a PR is the gate master already trusts. (The workflow YAML
+      # itself still comes from the PR — GitHub reads it from the merge ref and that cannot be
+      # changed here; .github/CODEOWNERS is the companion control, and it only bites once
+      # "require review from Code Owners" is enabled in branch protection.)
+      - name: Guard — run the gate's OWN code from the merge base, not from the PR
+        run: |
+          set -euo pipefail
+          base="$(git rev-parse HEAD^1 2>/dev/null || true)"
+          if [ -z "$base" ]; then echo "not a merge ref; nothing to restore"; exit 0; fi
+          if ! git cat-file -e "$base:.github/scripts/bandit.sh" 2>/dev/null; then
+            echo "gate scripts do not exist at the merge base — this PR introduces them; running the PR's copy"
+            exit 0
+          fi
+          if git diff --quiet "$base" HEAD -- .github/scripts; then
+            echo "gate scripts untouched by this PR"
+          else
+            echo "::warning title=Gate self-modification::this PR changes .github/scripts/; restoring that directory from $base for this run"
+            git checkout "$base" -- .github/scripts
+          fi
+
+      # Prove the gate itself EXECUTES before trusting its verdict: the fail-on-revert canary must
+      # pass. If the canary reds, the gate is untrustworthy and CI reds.
+      - name: Canary — prove the gate fires and fails-on-revert
+        run: bash .github/scripts/tests/bandit-canary.test.sh
+
+      # DIFF-SCOPED on purpose, and LINE-exact: only findings on lines THIS PR added block merge.
+      # A full-tree scan would red on pre-existing findings owned by separate work, and a gate
+      # that reds on untouched code gets disabled — the exact failure this gate exists to prevent.
+      - name: bandit Python SAST scan (new findings only — exit 1 blocks merge)
+        run: bash .github/scripts/bandit.sh --diff
