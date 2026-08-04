@@ -191,6 +191,24 @@ So a droid asking for BARE `deepseek-v4-flash` — exactly what the no-pinning r
 is the only path. Verify with `bash fleet/park-watch.sh --watch 60` — trust the `served` delta,
 never the API's `ok:true`.
 
+## 7b — OPENROUTER: a park believed in force that was NEVER in force
+Operator at close: *"I thought we had left openrouter parked until the fix was in (this was
+decided last session)."*
+FINDINGS:
+- **No durable record of that decision exists.** The only trace is operator action **#16**
+  (openrouter ranked ahead of deepseek-direct; fixes named `FORWARDER-COST-ORDER-FALLBACK` +
+  `PARK-REARM-FUNDED-PROVIDER`). Nothing in `PRIORITY-TODO.md`, the rules, or the action list says
+  "keep openrouter parked". **A decision that lives only in a session's memory is not a decision**
+  — this is the dropped-decision class, same as the ~6 dropped commitments this session.
+- **Even if it was issued, it did not hold.** Park is a proven NO-OP (opencode-go served **+129
+  while "parked"**), and openrouter shows `served=21, errors=291, last_status=402` — it HAS been
+  routed to and HAS been failing.
+⇒ **Assume NOTHING is parked.** Until queue #2 lands there is no working mechanism to remove a
+provider from rotation, no matter what any prior session recorded or believed.
+⇒ Any future "leave X parked" decision must be written to `fleet/pending.sh` or a ticket AND
+verified with `bash fleet/park-watch.sh --watch 60` **while the fleet is working** — never trusted
+from the API's `ok:true`.
+
 ## ⚠ SECOND FINDING — A HARD RULE IS ONE CHAIN EDIT FROM BREACH
 The live pool map contains ANTHROPIC-SERVED POOLS:
 ```

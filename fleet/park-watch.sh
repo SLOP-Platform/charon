@@ -71,6 +71,18 @@ for k in sorted(set(a) | set(b)):
             bad.append((k, d))
     print("  %-14s %9s %9s %+8d  %s" % (k, a.get(k, 0), b.get(k, 0), d, v))
 
+# A window with NO TRAFFIC AT ALL proves NOTHING about parking — it cannot distinguish
+# "the park works" from "nothing was asking". Reporting it as a pass is the same
+# could-not-check-vs-pass confusion this tool exists to expose. Caught 2026-08-02 when a 45s
+# window returned +0 for EVERY provider (fleet idle) and the tool said "no parked provider
+# served traffic", which reads as success.
+total = sum(b.get(k, 0) - a.get(k, 0) for k in set(a) | set(b))
+if total == 0:
+    print("\npark-watch: UNKNOWN — ZERO traffic system-wide in this window. This proves nothing "
+          "about whether the parks hold. Re-run while the fleet is actually working.",
+          file=sys.stderr)
+    sys.exit(8)
+
 if bad:
     print("\npark-watch: %d provider(s) SERVED TRAFFIC WHILE BELIEVED PARKED:" % len(bad),
           file=sys.stderr)
