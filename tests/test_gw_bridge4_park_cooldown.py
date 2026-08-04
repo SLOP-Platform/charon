@@ -3,8 +3,11 @@
 Three invariants (operator, non-negotiable):
   1. PARKED EXCLUDED — a parked provider is absent from the Router's resolved
      selectable set; park == not-selected.
-  2. SOLE-LEG GUARD — with one viable leg left, park/cooldown does NOT remove
-     it; request still routes.
+  2. PARK-AWARE SOLE-LEG GUARD (D-018) — the never-strand guard applies ONLY
+     to a chain excluded purely by transient cooldown. A chain with any
+     parked leg is NOT restored: park is the stronger signal, so a
+     fully-parked chain yields empty and the caller answers with the D-012
+     503, never a money-leak 200.
   3. RE-ARM — a provider re-armed on top-up returns to the selectable set.
 
 Reverting the corresponding guard in ``park_cooldown.py`` turns the test red.
@@ -118,19 +121,22 @@ def test_non_parked_providers_survive():
     assert "gamma" in ids
 
 
-# ── INVARIANT 2: SOLE-LEG GUARD ──────────────────────────────────────────────
+# ── INVARIANT 2: PARK-AWARE SOLE-LEG GUARD (D-018) ───────────────────────────
 
 
-def test_sole_leg_guard_keeps_last_leg():
-    """When every leg would be excluded, the original chain is returned.
+def test_parked_sole_leg_is_not_restored():
+    """A chain whose ONLY leg is parked is NOT restored — it yields empty.
 
-    FAIL-ON-REVERT: removing the sole_leg_guard check (or returning
-    empty) would strand a model with no routable provider."""
+    FAIL-ON-REVERT: the pre-D-018 guard returned the ORIGINAL chain (parked
+    leg re-admitted) whenever ``live`` was empty — the exact money leak
+    D-012 outlawed in forwarder.py. D-018 inverts it: park is the stronger
+    signal, so the fully-parked chain returns empty and the caller answers
+    with the D-012 503 (``no_provider_reason == "all_legs_parked"``).
+    """
     bt = _bt(providers={"acme": 5.0}, parked={"acme"})
     chain = [_R("acme")]
     result = park_cooldown_filter_chain(chain, bt=bt)
-    assert len(result) == 1
-    assert _provider_id(result[0]) == "acme"
+    assert result == []
 
 
 def test_sole_leg_guard_with_two_legs_one_parked():
@@ -147,34 +153,106 @@ def test_sole_leg_guard_with_two_legs_one_parked():
     assert len(result) == 1
 
 
-def test_sole_leg_guard_multi_model():
-    """Sole-leg guard works per-chain — each model is independent."""
+def test_parked_sole_legs_not_restored_per_chain():
+    """Parked sole legs return empty per-chain — each model is independent.
+
+    FAIL-ON-REVERT: the pre-D-018 guard kept a parked sole leg per-chain
+    (m1 and m3 below were restored). D-018 inverts it: a chain whose only
+    remaining legs are parked yields empty, while a chain with another live
+    option still drops the parked leg and keeps the live one."""
     bt = _bt(
         providers={"acme": 5.0, "beta": 3.0, "gamma": 1.0},
         parked={"acme", "gamma"},
     )
     chains = {
-        "m1": [_R("acme")],        # sole leg → guard keeps it
+        "m1": [_R("acme")],        # sole leg parked → NOT restored (empty)
         "m2": [_R("acme"), _R("beta")],  # have another option → acme excluded
-        "m3": [_R("gamma")],        # sole leg → guard keeps it
+        "m3": [_R("gamma")],        # sole leg parked → NOT restored (empty)
     }
-    for model_id, chain in chains.items():
-        result = park_cooldown_filter_chain(chain, bt=bt)
-        assert len(result) >= 1, f"{model_id} stranded"
-    # m1 keeps acme, m2 drops acme, m3 keeps gamma
-    assert _provider_id(chains["m1"][0]) == "acme"
+    assert park_cooldown_filter_chain(chains["m1"], bt=bt) == []
     m2_result = park_cooldown_filter_chain(chains["m2"], bt=bt)
-    assert all(_provider_id(r) != "acme" for r in m2_result)
-    assert _provider_id(chains["m3"][0]) == "gamma"
+    ids2 = [_provider_id(r) for r in m2_result]
+    assert "acme" not in ids2
+    assert "beta" in ids2
+    assert park_cooldown_filter_chain(chains["m3"], bt=bt) == []
 
 
 def test_sole_leg_guard_function_unit():
-    """sole_leg_guard returns live when non-empty, original when empty."""
+    """sole_leg_guard returns live when non-empty, original when empty.
+
+    The guard function itself is the COOLDOWN-ONLY half (D-018): it still
+    never-strands when called, but park_cooldown_filter_chain only calls it
+    after establishing no leg is parked."""
     live = [_R("acme")]
     original = [_R("acme"), _R("beta")]
     assert sole_leg_guard(live, original) is live
     assert sole_leg_guard([], original) is not original
     assert [r for r in sole_leg_guard([], original)] == original
+
+
+def test_cooled_only_sole_leg_is_restored():
+    """A chain whose only leg is COOLED (not parked) IS restored.
+
+    FAIL-ON-REVERT: dropping the cooldown side of the split (or treating a
+    cooled sole leg like a parked one) strands a request on a transient
+    upstream blip. D-018 KEEPS the never-strand guard for cooldown-only
+    chains — the original chain is returned so the request can still route."""
+    litellm = pytest.importorskip("litellm")
+    ml = [
+        {
+            "model_name": "m1",
+            "litellm_params": {"model": "openai/gpt", "api_base": "https://api.acme.test/v1"},
+            "model_info": {"id": "dep_acme", "provider": "acme"},
+        },
+    ]
+    router = litellm.Router(model_list=ml)
+    router.cooldown_cache.add_deployment_to_cooldown(
+        model_id="dep_acme",
+        original_exception=Exception("test cooldown"),
+        exception_status=429,
+        cooldown_time=60.0,
+    )
+
+    bt = _bt(providers={"acme": 5.0})
+    chain = [_R("acme")]
+    result = park_cooldown_filter_chain(chain, bt=bt, router=router)
+    assert len(result) == 1
+    assert _provider_id(result[0]) == "acme"
+
+
+def test_mixed_parked_and_cooled_none_live_is_not_restored():
+    """Mixed park+cooldown with no live leg: park wins, result is empty.
+
+    FAIL-ON-REVERT: a merged guard would restore BOTH legs (re-admitting the
+    parked one) to satisfy the cooldown-shaped never-strand rule. D-018
+    states park is the stronger signal — parked legs are never restored, so
+    the mixed chain yields empty and the caller answers the D-012 503."""
+    litellm = pytest.importorskip("litellm")
+    ml = [
+        {
+            "model_name": "m1",
+            "litellm_params": {"model": "openai/gpt", "api_base": "https://api.acme.test/v1"},
+            "model_info": {"id": "dep_acme", "provider": "acme"},
+        },
+        {
+            "model_name": "m1",
+            "litellm_params": {"model": "openai/gpt", "api_base": "https://api.beta.test/v1"},
+            "model_info": {"id": "dep_beta", "provider": "beta"},
+        },
+    ]
+    router = litellm.Router(model_list=ml)
+    router.cooldown_cache.add_deployment_to_cooldown(
+        model_id="dep_beta",
+        original_exception=Exception("test cooldown"),
+        exception_status=429,
+        cooldown_time=60.0,
+    )
+
+    # acme parked (operator), beta cooled (transient), none live
+    bt = _bt(providers={"acme": 5.0, "beta": 3.0}, parked={"acme"})
+    chain = [_R("acme"), _R("beta")]
+    result = park_cooldown_filter_chain(chain, bt=bt, router=router)
+    assert result == []
 
 
 # ── INVARIANT 3: RE-ARM (top-up → unpark → returns to set) ───────────────────
@@ -231,11 +309,76 @@ def test_count_viable_some_parked():
 
 
 def test_count_viable_all_parked():
-    """count_viable_legs returns 0 even with sole-leg guard — this is raw
-    count, not a filter decision."""
+    """count_viable_legs returns 0 for a fully-parked chain — agrees with the
+    filter, which yields empty (D-012 503, never a money-leak restore)."""
     bt = _bt(providers={"acme": 5.0}, parked={"acme"})
     chain = [_R("acme")]
     assert count_viable_legs(chain, bt=bt) == 0
+
+
+def test_count_viable_agrees_with_filter_cooled_only():
+    """count_viable_legs AGREES with the filter for a cooldown-only chain.
+
+    FAIL-ON-REVERT: a raw "not excluded" count would return 0 for a
+    fully-cooled chain while the filter RESTORES it — a caller would 503 a
+    pool the dispatcher can still serve. count_viable_legs delegates to the
+    filter so the two can never disagree (D-018 req. 4)."""
+    litellm = pytest.importorskip("litellm")
+    ml = [
+        {
+            "model_name": "m1",
+            "litellm_params": {"model": "openai/gpt", "api_base": "https://api.acme.test/v1"},
+            "model_info": {"id": "dep_acme", "provider": "acme"},
+        },
+        {
+            "model_name": "m1",
+            "litellm_params": {"model": "openai/gpt", "api_base": "https://api.beta.test/v1"},
+            "model_info": {"id": "dep_beta", "provider": "beta"},
+        },
+    ]
+    router = litellm.Router(model_list=ml)
+    for dep_id in ("dep_acme", "dep_beta"):
+        router.cooldown_cache.add_deployment_to_cooldown(
+            model_id=dep_id,
+            original_exception=Exception("test cooldown"),
+            exception_status=429,
+            cooldown_time=60.0,
+        )
+
+    bt = _bt(providers={"acme": 5.0, "beta": 3.0})
+    chain = [_R("acme"), _R("beta")]
+    assert count_viable_legs(chain, bt=bt, router=router) == 2
+    assert len(park_cooldown_filter_chain(chain, bt=bt, router=router)) == 2
+
+
+def test_count_viable_agrees_with_filter_mixed():
+    """count_viable_legs AGREES with the filter for a mixed park+cooldown
+    chain — parked legs are never counted as viable (D-018 req. 4)."""
+    litellm = pytest.importorskip("litellm")
+    ml = [
+        {
+            "model_name": "m1",
+            "litellm_params": {"model": "openai/gpt", "api_base": "https://api.acme.test/v1"},
+            "model_info": {"id": "dep_acme", "provider": "acme"},
+        },
+        {
+            "model_name": "m1",
+            "litellm_params": {"model": "openai/gpt", "api_base": "https://api.beta.test/v1"},
+            "model_info": {"id": "dep_beta", "provider": "beta"},
+        },
+    ]
+    router = litellm.Router(model_list=ml)
+    router.cooldown_cache.add_deployment_to_cooldown(
+        model_id="dep_beta",
+        original_exception=Exception("test cooldown"),
+        exception_status=429,
+        cooldown_time=60.0,
+    )
+
+    bt = _bt(providers={"acme": 5.0, "beta": 3.0}, parked={"acme"})
+    chain = [_R("acme"), _R("beta")]
+    assert count_viable_legs(chain, bt=bt, router=router) == 0
+    assert park_cooldown_filter_chain(chain, bt=bt, router=router) == []
 
 
 def test_count_viable_none_bt():

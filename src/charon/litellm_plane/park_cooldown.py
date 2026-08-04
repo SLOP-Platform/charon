@@ -4,6 +4,13 @@ Charon's park (funding drain / free-tier window) and litellm.Router's native
 model-cooldown (transient allowed_fails breach) compose into ONE coherent
 exclusion set. This module provides the bridge.
 
+The two kinds of exclusion answer the never-strand question DIFFERENTLY
+(D-018): a chain excluded ONLY by transient cooldown is restored so a blip
+never strands a request, while a chain with any parked leg is NOT restored —
+park is an operator decision that stops spend, so a fully-parked chain
+returns EMPTY and the caller answers with the D-012 503 (same shape, same
+``no_provider_reason == "all_legs_parked"`` discriminator as ``forwarder.py``).
+
 Usage — the bridge's primary function replaces ``_preorder_chain`` in the
 Router assembly pipeline (``litellm_router.routes_by_model``), unifying
 the two exclusion mechanisms so no leg is "cooled" yet still offered, and
@@ -13,8 +20,9 @@ no parked leg leaks back in on cooldown expiry::
     chains = {m: park_cooldown_filter_chain(chain, bt=bt)
               for m, chain in chains.items()}
 
-The sole-leg guard is built in: the last remaining viable leg is never
-parked/cooled into a no-workers-left state.
+The sole-leg guard is built in and park-aware: a cooldown-only chain is never
+parked/cooled into a no-workers-left state, but a chain with a parked leg is
+NOT restored into a servable state.
 """
 from __future__ import annotations
 
@@ -48,6 +56,24 @@ def parked_providers(bt: Any) -> set[str]:
     return set()
 
 
+def _parked_and_cooled(
+    bt: Any,
+    router: Any = None,
+) -> tuple[set[str], set[str]]:
+    """Return ``(parked, cooled)`` provider-id sets SEPARATELY.
+
+    The split is the point (D-018): park and cooldown are different kinds
+    of exclusion and must be answerable independently — park is an operator
+    decision that stops spend (stronger signal), cooldown is a transient
+    upstream failure (never-strand applies).
+    """
+    parked = parked_providers(bt)
+    cooled: set[str] = set()
+    if router is not None:
+        _maybe_add_cooled(router, cooled)
+    return parked, cooled
+
+
 def excluded_provider_ids(
     *,
     bt: Any,
@@ -63,13 +89,14 @@ def excluded_provider_ids(
     not be locked or in the middle of a completion when this is called.
 
     The returned set is a read-only snapshot — call again to re-read.
+
+    Union only: the two kinds of exclusion are deliberately merged for
+    "is this provider excluded at all" questions. Callers that need to
+    tell them apart use ``park_cooldown_filter_chain``, which treats park
+    as the stronger signal (D-018).
     """
-    excluded: set[str] = set(parked_providers(bt))
-
-    if router is not None:
-        _maybe_add_cooled(router, excluded)
-
-    return excluded
+    parked, cooled = _parked_and_cooled(bt, router)
+    return parked | cooled
 
 
 def _maybe_add_cooled(router: Any, excluded: set[str]) -> None:
@@ -149,9 +176,14 @@ def sole_leg_guard(
 ) -> list[Any]:
     """Return *live* if non-empty, otherwise *original* (never strand).
 
-    This is the sole-leg guard: with one viable leg left, exclusion does
-    NOT remove it — the last leg is always kept so a request can still
-    route.
+    This is the COOLDOWN-ONLY sole-leg guard (D-018): when every leg is
+    excluded purely by transient Router cooldown and none is parked, the
+    last leg is kept so a request can still route — a transient upstream
+    blip never strands a request.
+
+    It is deliberately NOT applied when a leg is parked: restoring a parked
+    leg is a money leak (D-012). ``park_cooldown_filter_chain`` decides that
+    split before calling this.
 
     Works per-chain (per-model). A chain represents all routes for one
     agent-facing model id.
@@ -165,15 +197,25 @@ def park_cooldown_filter_chain(
     bt: Any,
     router: Any = None,
 ) -> list[Any]:
-    """Filter *chain* to exclude parked/cooled providers with sole-leg guard.
+    """Filter *chain* to exclude parked/cooled providers (D-018 split).
 
-    This is the bridge function that makes Charon park state and
-    litellm.Router cooldown ONE exclusion set:
+    Charon park state (``bt.is_parked``) and litellm.Router cooldown are
+    TWO different kinds of exclusion and get TWO different never-strand
+    answers (D-018):
 
-    * Parked providers (``bt.is_parked``) are removed.
-    * Cooled deployments (Router internal cooldown state) are removed.
-    * Sole-leg guard: if every leg would be excluded, the original chain
-      is returned unchanged (never strand).
+    * **Cooldown-only, no leg parked** — the never-strand guard is KEPT:
+      if every leg is excluded purely by transient Router cooldown, the
+      ORIGINAL chain is returned unchanged, so a transient upstream blip
+      never strands a request.
+    * **Any parked leg** — park is the STRONGER signal. A parked leg is an
+      operator/config decision that stops SPEND; restoring it to satisfy a
+      cooldown-shaped guard is a money leak (D-012). When no leg survives
+      and at least one is parked, the result is EMPTY and the caller
+      answers with the D-012 503 (``no_provider_reason == "all_legs_parked"``),
+      exactly like ``forwarder.py``.
+    * **Mixed park + cooldown, none live** — the park rule wins: parked legs
+      are NOT restored, so the result is EMPTY. The precedence is stated here
+      so it cannot silently drift back to the merged guard.
 
     When *bt* is ``None``, no park-based exclusion is applied. When
     *router* is ``None``, no cooldown-based exclusion is applied —
@@ -183,12 +225,19 @@ def park_cooldown_filter_chain(
     ``.label`` attributes (``UpstreamRoute``, duck-typed fakes in
     tests).
     """
-    excluded = excluded_provider_ids(bt=bt, router=router)
+    parked, cooled = _parked_and_cooled(bt, router)
+    excluded = parked | cooled
 
     if not excluded:
         return list(chain)
 
     live = [r for r in chain if _provider_id(r) not in excluded]
+    if live:
+        return live
+
+    if any(_provider_id(r) in parked for r in chain):
+        return []
+
     return sole_leg_guard(live, chain)
 
 
@@ -198,8 +247,12 @@ def count_viable_legs(
     bt: Any,
     router: Any = None,
 ) -> int:
-    """Number of legs in *chain* that are NOT excluded."""
-    excluded = excluded_provider_ids(bt=bt, router=router)
-    if not excluded:
-        return len(chain)
-    return sum(1 for r in chain if _provider_id(r) not in excluded)
+    """Number of legs the filter leaves dispatchable after the D-018 rule.
+
+    Delegates to ``park_cooldown_filter_chain`` so callers can never
+    disagree with the dispatcher about whether a pool is servable: a
+    cooldown-only chain the filter restores counts as viable (the
+    dispatcher WILL try it), a chain with a parked leg that yields empty
+    counts as 0.
+    """
+    return len(park_cooldown_filter_chain(chain, bt=bt, router=router))
