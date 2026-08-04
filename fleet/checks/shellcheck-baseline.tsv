@@ -626,6 +626,13 @@
 1	fleet/stale-check.sh	SC2249
 29	fleet/stale-check.sh	SC2250
 9	fleet/stale-check.sh	SC2292
+2	fleet/status-board/generate.sh	SC1090
+9	fleet/status-board/generate.sh	SC2016
+1	fleet/status-board/generate.sh	SC2126
+2	fleet/status-board/generate.sh	SC2249
+358	fleet/status-board/generate.sh	SC2250
+66	fleet/status-board/generate.sh	SC2292
+25	fleet/status-board/generate.sh	SC2312
 1	fleet/status.sh	SC1091
 1	fleet/status.sh	SC2009
 62	fleet/status.sh	SC2250
@@ -1179,6 +1186,11 @@
 14	fleet/tests/spill-up.test.sh	SC2312
 33	fleet/tests/stale-check.test.sh	SC2250
 3	fleet/tests/stale-check.test.sh	SC2292
+34	fleet/tests/status-board.test.sh	SC2015
+1	fleet/tests/status-board.test.sh	SC2016
+125	fleet/tests/status-board.test.sh	SC2250
+11	fleet/tests/status-board.test.sh	SC2292
+4	fleet/tests/status-board.test.sh	SC2312
 35	fleet/tests/stranded-work.test.sh	SC2015
 1	fleet/tests/stranded-work.test.sh	SC2016
 385	fleet/tests/stranded-work.test.sh	SC2250

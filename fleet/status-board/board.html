@@ -1,0 +1,164 @@
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Charon status snapshot — 2026-08-04 07:24:26 UTC</title>
+<style>
+
+:root{color-scheme:light dark;
+ --bg:#f4f4f2;--surface:#fcfcfb;--line:#dcdbd5;--ink:#0b0b0b;--ink2:#52514e;--ink3:#6f6e68;
+ --good:#0ca30c;--crit:#d03b3b;--warn:#fab219;--unk:#6b6a66;--cnt:#7a7972;
+ --tint-good:rgba(12,163,12,.09);--tint-crit:rgba(208,59,59,.10);--tint-unk:rgba(107,106,102,.10);--tint-cnt:rgba(122,121,114,.06);
+ --code:#eceae4;}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+ --bg:#111110;--surface:#1a1a19;--line:#33322e;--ink:#ffffff;--ink2:#c3c2b7;--ink3:#9b9a90;
+ --unk:#9a978d;--cnt:#8f8d85;
+ --tint-good:rgba(12,163,12,.16);--tint-crit:rgba(208,59,59,.18);--tint-unk:rgba(154,151,141,.14);--tint-cnt:rgba(143,141,133,.09);
+ --code:#26251f;}}
+:root[data-theme="dark"]{
+ --bg:#111110;--surface:#1a1a19;--line:#33322e;--ink:#ffffff;--ink2:#c3c2b7;--ink3:#9b9a90;
+ --unk:#9a978d;--cnt:#8f8d85;
+ --tint-good:rgba(12,163,12,.16);--tint-crit:rgba(208,59,59,.18);--tint-unk:rgba(154,151,141,.14);--tint-cnt:rgba(143,141,133,.09);
+ --code:#26251f;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+ font:16px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+ -webkit-text-size-adjust:100%}
+.wrap{max-width:1180px;margin:0 auto;padding:28px 20px 72px}
+code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;font-size:.86em}
+h1{font-size:clamp(24px,3.4vw,34px);line-height:1.15;margin:0 0 6px;letter-spacing:-.01em}
+h2{font-size:clamp(17px,2vw,21px);margin:40px 0 4px;letter-spacing:-.01em}
+h2+.sub{margin:0 0 16px;color:var(--ink2);font-size:14px}
+h3{font-size:16px;margin:0}
+.snap{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 14px}
+.badge{display:inline-block;padding:5px 11px;border:2px solid var(--crit);border-radius:999px;
+ font-size:12px;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:var(--ink)}
+.stamp{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin:0 0 22px}
+.stamp p{margin:0 0 6px;color:var(--ink2);font-size:14px}
+.stamp p:last-child{margin:0}
+.stamp b{color:var(--ink)}
+.roll{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 6px;padding:0;list-style:none}
+.roll li{background:var(--surface);border:1px solid var(--line);border-left:5px solid var(--line);
+ border-radius:10px;padding:9px 14px;font-size:14px}
+.roll li b{font-size:20px;margin-right:6px}
+.roll .r{border-left-color:var(--crit)}.roll .g{border-left-color:var(--good)}.roll .u{border-left-color:var(--unk)}
+.legend{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:0 0 8px}
+.legend dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:8px 14px;align-items:baseline}
+.legend dt{margin:0}.legend dd{margin:0;color:var(--ink2);font-size:14.5px}
+.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(288px,1fr))}
+.tile{background:var(--surface);border:1px solid var(--line);border-left:5px solid var(--line);
+ border-radius:12px;padding:15px 16px 13px;display:flex;flex-direction:column}
+.s-crit{border-left-color:var(--crit);background:linear-gradient(var(--tint-crit),var(--tint-crit)),var(--surface)}
+.s-good{border-left-color:var(--good);background:linear-gradient(var(--tint-good),var(--tint-good)),var(--surface)}
+.s-unk{border-left-color:var(--unk);background:linear-gradient(var(--tint-unk),var(--tint-unk)),var(--surface)}
+.s-cnt{border-left-color:var(--cnt);background:linear-gradient(var(--tint-cnt),var(--tint-cnt)),var(--surface)}
+.chip{margin:0 0 8px;font-size:11.5px;font-weight:800;letter-spacing:.11em;text-transform:uppercase;color:var(--ink2)}
+.dot{display:inline-grid;place-items:center;width:17px;height:17px;border-radius:50%;
+ margin-right:7px;vertical-align:-4px;font-size:11px;font-weight:700;color:#fff;background:var(--unk)}
+.s-crit .dot{background:var(--crit)}.s-good .dot{background:var(--good)}.s-unk .dot{background:var(--unk)}.s-cnt .dot{background:var(--cnt)}
+.big{margin:0;font-size:clamp(34px,5.2vw,46px);line-height:1.02;font-weight:800;letter-spacing:-.025em;font-variant-numeric:tabular-nums}
+.lbl{margin:7px 0 0;font-size:16.5px;font-weight:650;line-height:1.3}
+.big.word{font-size:clamp(24px,3vw,29px);letter-spacing:-.01em;color:var(--ink2)}
+.expect{margin:5px 0 0;font-size:13px;color:var(--ink3)}
+.detail{margin:9px 0 0;font-size:14.5px;color:var(--ink2)}
+.why{margin:10px 0 0;font-size:14px;color:var(--ink2);border-left:3px solid var(--unk);padding-left:10px}
+.why strong{color:var(--ink)}
+.prov{margin:11px 0 0;font-size:13px;border-top:1px solid var(--line);padding-top:8px}
+.prov summary{cursor:pointer;color:var(--ink3);font-size:12.5px;letter-spacing:.02em}
+.prov p{margin:7px 0 0;color:var(--ink2)}
+.prov code{background:var(--code);border-radius:5px;padding:2px 5px;overflow-wrap:anywhere}
+.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table{border-collapse:collapse;width:100%;min-width:420px;background:var(--surface);
+ border:1px solid var(--line);border-radius:10px;font-size:14.5px}
+caption{text-align:left;font-size:14px;color:var(--ink2);padding:0 0 7px}
+th,td{text-align:left;padding:9px 13px;border-bottom:1px solid var(--line)}
+th{font-size:12px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink3);font-weight:700}
+tr:last-child td{border-bottom:0}
+td.n{font-variant-numeric:tabular-nums;font-weight:700;width:1%;white-space:nowrap}
+.cannot{background:var(--surface);border:1px solid var(--line);border-left:5px solid var(--unk);
+ border-radius:12px;padding:18px 20px}
+.cannot ol{margin:12px 0 0;padding-left:22px}
+.cannot li{margin:0 0 13px;color:var(--ink2);font-size:14.5px}
+.cannot li b{color:var(--ink);font-weight:650}
+footer{margin-top:44px;padding-top:16px;border-top:1px solid var(--line);color:var(--ink3);font-size:13px}
+footer p{margin:0 0 7px}
+
+</style>
+<div class="wrap">
+<h1>Charon &mdash; build &amp; product status</h1>
+<p class="snap"><span class="badge">Snapshot</span><span class="mono" style="color:var(--ink2);font-size:13px">not live &middot; does not refresh itself</span></p>
+<div class="stamp">
+<p>Everything below was measured <b>once</b>, at <b>2026-08-04 07:24:26 UTC</b>. It is a still photograph. Nothing on this page updates on its own &mdash; if the page is open tomorrow, it is still showing today's numbers.</p>
+<p>Build-rig repo at <b class="mono">491e8e3af134</b> (branch <span class="mono">feat/status-board-v1</span>) &mdash; <span class="mono">/home/stack/charon-private-wt/STATUS-BOARD-V1</span></p>
+<p>Product repo at <b class="mono">54e0dc8c2afa</b> (branch <span class="mono">master</span>) &mdash; <span class="mono">/home/stack/code/charon</span></p>
+</div>
+<h2>The short version</h2>
+<p class="sub">Across the 14 things this page is willing to judge:</p>
+<ul class="roll">
+<li class="r"><b>12</b>checked and failing</li>
+<li class="u"><b>2</b>cannot be claimed either way</li>
+<li class="g"><b>0</b>checked and passing</li>
+</ul>
+<h2>How to read this page</h2>
+<p class="sub">There are three verdicts, never two. The third one is the important one.</p>
+<div class="legend"><dl>
+<dt><span class="chip" style="margin:0"><span class="dot" style="background:var(--good)">&#10003;</span>PASSING</span></dt><dd>We ran the check, it passed, <em>and</em> someone has demonstrated that this check is capable of failing. Only then is &ldquo;it passed&rdquo; worth anything.</dd>
+<dt><span class="chip" style="margin:0"><span class="dot" style="background:var(--crit)">&#10007;</span>FAILING</span></dt><dd>We ran the check and it failed. A failure is always trustworthy, because we watched it happen.</dd>
+<dt><span class="chip" style="margin:0"><span class="dot" style="background:var(--unk)">?</span>UNPROVEN</span></dt><dd><b>We cannot tell you.</b> Either the check would not run, or nothing has ever shown that the check is able to notice a problem &mdash; so &ldquo;it passed&rdquo; would mean nothing. This is deliberately <em>not</em> shown as good news. A page that turns everything green is a page that lies.</dd>
+<dt><span class="chip" style="margin:0"><span class="dot" style="background:var(--cnt)">&#8226;</span>COUNTED</span></dt><dd>Not a verdict at all &mdash; just a headcount, in its own section at the bottom. There is no right or wrong number for these, so no health claim is made. <b>Counted is not the same as passing.</b></dd>
+</dl></div>
+<h2>Can we ship what we have?</h2>
+<div class="grid">
+<article class="tile s-crit"><p class="chip"><span class="dot" aria-hidden="true">&#10007;</span>FAILING</p><p class="big">1 of 12</p><h3 class="lbl">Quality checks failing on the product</h3><p class="expect">Healthy would be: 0 of 12</p><p class="detail">Failing right now: inert-code. The product&#x27;s own gate runs 12 separate checks (code style, types, security scan, dead code and more) before anything ships.</p><details class="prov"><summary>How this was measured</summary><p class="src"><code>python3 -m charon.cli gate (in /home/stack/code/charon)</code></p><p class="pf">the product gate&#x27;s red-proofs (tests/test_gate_runner_fail_closed.py, tests/test_gate_registry_execution.py) live in the product repo; this page does not verify that the product CI executed them, so a pass could not be claimed</p></details></article>
+<article class="tile s-crit"><p class="chip"><span class="dot" aria-hidden="true">&#10007;</span>FAILING</p><p class="big">4</p><h3 class="lbl">Problems in the plan of work</h3><p class="expect">Healthy would be: 0</p><p class="detail">The board is the list of everything being worked on. These are contradictions inside it — two jobs claiming the same file, a job that would be refused the moment someone tried to start it, and similar.</p><details class="prov"><summary>How this was measured</summary><p class="src"><code>fleet/validate_board.sh fleet</code></p><p class="pf">red-proof board-correctness.test.sh IS in the CI_SUITES allowlist — it runs on every PR</p></details></article>
+</div>
+<h2>Are the safety nets real?</h2>
+<div class="grid">
+<article class="tile s-crit"><p class="chip"><span class="dot" aria-hidden="true">&#10007;</span>FAILING</p><p class="big">114</p><h3 class="lbl">Safety tests that have never actually run</h3><p class="expect">Healthy would be: 0</p><p class="detail">Each of these is a test written specifically to catch a known way things break — and not one of them is on the list of tests the robot actually runs before merging. They read as protection and provide none. This is the exact lie this page exists to stop.</p><details class="prov"><summary>How this was measured</summary><p class="src"><code>fleet/checks/gate-integrity.sh scan (G5)</code></p><p class="pf">red-proof gate-integrity.test.sh IS in the CI_SUITES allowlist — it runs on every PR</p></details></article>
+<article class="tile s-crit"><p class="chip"><span class="dot" aria-hidden="true">&#10007;</span>FAILING</p><p class="big">34</p><h3 class="lbl">Guards with no working proof they catch anything</h3><p class="expect">Healthy would be: 0</p><p class="detail">A guard here either has no test at all, or has one that never runs. Nobody has ever demonstrated it is capable of noticing the thing it is supposed to notice.</p><details class="prov"><summary>How this was measured</summary><p class="src"><code>fleet/checks/gate-integrity.sh scan (G3)</code></p><p class="pf">red-proof gate-integrity.test.sh IS in the CI_SUITES allowlist — it runs on every PR</p></details></article>
+<article class="tile s-crit"><p class="chip"><span class="dot" aria-hidden="true">&#10007;</span>FAILING</p><p class="big">52</p><h3 class="lbl">Total defects found in our own safety machinery</h3><p class="expect">Healthy would be: 0</p><p class="detail">Everything the gate-on-the-gates found: guards nothing calls, guards whose own comments claim wiring they do not have, and acknowledged gaps with nothing behind them.</p><details class="prov"><summary>How this was measured</summary><p class="src"><code>fleet/checks/gate-integrity.sh scan</code></p><p class="pf">red-proof gate-integrity.test.sh IS in the CI_SUITES allowlist — it runs on every PR</p></details></article>
+<article class="tile s-crit"><p class="chip"><span class="dot" aria-hidden="true">&#10007;</span>FAILING</p><p class="big">20 of 139</p><h3 class="lbl">Tests the robot actually runs before merging</h3><p class="expect">Healthy would be: 139 of 139</p><p class="detail">The list of tests run before merging is an ALLOWLIST typed out by hand. Any test file not named in it is skipped by default and silently never runs, no matter what it claims to defend.</p><details class="prov"><summary>How this was measured</summary><p class="src"><code>fleet/checks/rig-ci-scope.sh suites vs fleet/tests/*.test.sh</code></p><p class="pf">DIRECT read of a primary field — there is no gate logic here that could be inert</p></details></article>
+<article class="tile s-unk"><p class="chip"><span class="dot" aria-hidden="true">?</span>UNPROVEN</p><p class="big word">unknown</p><h3 class="lbl">Code maps that have fallen out of date</h3><p class="expect">Healthy would be: 0</p><p class="detail">The code map is what lets us answer &#x27;if we change this, what else breaks&#x27;. A stale map answers that question wrongly and confidently.</p><p class="why"><strong>Why this says UNPROVEN:</strong> the freshness check reports every code map as up to date, but red-proof graphify-freshness.test.sh exists but is NOT in the CI_SUITES allowlist, so it has never executed in CI — so &quot;up to date&quot; is a claim this page will not make (the check itself reported “0 of 2”, but this page will not report that as a result)</p><details class="prov"><summary>How this was measured</summary><p class="src"><code>fleet/checks/graphify-freshness.sh summary</code></p><p class="pf">red-proof graphify-freshness.test.sh exists but is NOT in the CI_SUITES allowlist, so it has never executed in CI</p></details></article>
+<article class="tile s-unk"><p class="chip"><span class="dot" aria-hidden="true">?</span>UNPROVEN</p><p class="big word">unknown</p><h3 class="lbl">If we change something, what else breaks?</h3><p class="detail">This page does not answer this question. The tool that could (graphify affected) needs to be pointed at one specific thing, and a whole-system snapshot has no honest way to pick which one.</p><p class="why"><strong>Why this says UNPROVEN:</strong> graphify affected requires a named starting point that a whole-repo snapshot cannot choose, and it has 0 call sites in this rig so its output has never been calibrated here</p><details class="prov"><summary>How this was measured</summary><p class="src"><code>graphify affected &quot;&lt;node&gt;&quot; --depth N</code></p><p class="pf">no red-proof suite, and zero call sites anywhere in the rig</p></details></article>
+</div>
+<h2>Is finished work getting lost?</h2>
+<div class="grid">
+<article class="tile s-crit"><p class="chip"><span class="dot" aria-hidden="true">&#10007;</span>FAILING</p><p class="big">350</p><h3 class="lbl">Pieces of unfinished work that could be lost</h3><p class="expect">Healthy would be: 0</p><p class="detail">Work that was done and then left somewhere it can quietly disappear: committed but never sent anywhere, sent but with nobody asked to merge it, or attached to a request that was closed without landing.</p><details class="prov"><summary>How this was measured</summary><p class="src"><code>fleet/checks/stranded-work.sh</code></p><p class="pf">red-proof stranded-work.test.sh IS in the CI_SUITES allowlist — it runs on every PR</p></details></article>
+<article class="tile s-crit"><p class="chip"><span class="dot" aria-hidden="true">&#10007;</span>FAILING</p><p class="big">44 of 61</p><h3 class="lbl">Change-requests marked &#x27;not ready&#x27;, so nothing can merge them</h3><p class="expect">Healthy would be: fewer than half</p><p class="detail">A draft change-request is finished-looking work that no reviewer will pick up and no robot will merge. It sits there until someone remembers it.</p><details class="prov"><summary>How this was measured</summary><p class="src"><code>gh api repos/{owner}/{repo}/pulls?state=open (REST, --jq)</code></p><p class="pf">DIRECT read of a primary field — there is no gate logic here that could be inert</p></details></article>
+<article class="tile s-crit"><p class="chip"><span class="dot" aria-hidden="true">&#10007;</span>FAILING</p><p class="big">35 of 61</p><h3 class="lbl">Change-requests whose automatic checks are failing</h3><p class="expect">Healthy would be: 0</p><p class="detail">24 of 61 are fully green. 2 have no automatic checks at all — those look mergeable with nothing whatsoever verified.</p><details class="prov"><summary>How this was measured</summary><p class="src"><code>gh api repos/{owner}/{repo}/commits/{sha}/check-runs (REST, --jq)</code></p><p class="pf">DIRECT read of a primary field — there is no gate logic here that could be inert</p></details></article>
+</div>
+<h2 style="font-size:17px;margin-top:26px">How that unfinished work is stranded</h2>
+<div class="scroll"><table><caption>Every row is work that exists and is not merged. Straight from the detector's own tally.</caption><tr><th>Count</th><th>Shape</th><th>In plain English</th></tr>
+<tr><td class='n'>290</td><td class='mono'>pushed-no-pr</td><td>sent to the server, but nobody was ever asked to merge it</td></tr>
+<tr><td class='n'>48</td><td class='mono'>closed-pr-unlanded</td><td>the request to merge it was closed, and the work never landed</td></tr>
+<tr><td class='n'>6</td><td class='mono'>unpushed-branch</td><td>committed on this machine only &mdash; one disk failure from gone</td></tr>
+<tr><td class='n'>4</td><td class='mono'>dirty-worktree</td><td>edited files never even committed, in an abandoned working copy</td></tr>
+<tr><td class='n'>1</td><td class='mono'>pr-no-checks</td><td>open for merge with zero automatic checks &mdash; looks safe, verified nothing</td></tr>
+<tr><td class='n'>1</td><td class='mono'>stash</td><td>set aside in a scratch area that belongs to no branch</td></tr>
+</table></div>
+<h2>Is the machine actually running?</h2>
+<div class="grid">
+<article class="tile s-crit"><p class="chip"><span class="dot" aria-hidden="true">&#10007;</span>FAILING</p><p class="big">1 of 4</p><h3 class="lbl">Background services that are dead</h3><p class="expect">Healthy would be: 0</p><p class="detail">These are the always-on helpers (the message bridge, the tunnel to the coordinator, the gateway host, the canary). A dead one fails silently — that is how it stays dead.</p><details class="prov"><summary>How this was measured</summary><p class="src"><code>fleet/watchdog/discover-services.sh</code></p><p class="pf">red-proof service-watchdog.test.sh exists but is NOT in the CI_SUITES allowlist, so it has never executed in CI</p></details></article>
+<article class="tile s-crit"><p class="chip"><span class="dot" aria-hidden="true">&#10007;</span>FAILING</p><p class="big">7 of 17</p><h3 class="lbl">AI suppliers switched off (out of money or over their limit)</h3><p class="expect">Healthy would be: 0</p><p class="detail">A parked supplier is one the router is no longer allowed to use, so all its capacity is gone. Currently parked: cline-pass, huggingface, nanogpt, neuralwatt, opencode-go, opencode-zen, openrouter.</p><details class="prov"><summary>How this was measured</summary><p class="src"><code>GET $GATEWAY_URL/charon/status -&gt; balance[].parked</code></p><p class="pf">DIRECT read of a primary field — there is no gate logic here that could be inert</p></details></article>
+<article class="tile s-crit"><p class="chip"><span class="dot" aria-hidden="true">&#10007;</span>FAILING</p><p class="big">830 of 861</p><h3 class="lbl">Models we cannot put a price on</h3><p class="expect">Healthy would be: 0</p><p class="detail">Every request to one of these is billed at a price the system does not know. Cheapest-first routing and every spend limit are guessing for these models.</p><details class="prov"><summary>How this was measured</summary><p class="src"><code>GET $GATEWAY_URL/charon/config -&gt; unknown_pricing</code></p><p class="pf">DIRECT read of a primary field — there is no gate logic here that could be inert</p></details></article>
+</div>
+<h2>Counted, not judged</h2>
+<p class="sub">Inventory. These carry no verdict, because there is no pass/fail line to hold them to.</p>
+<div class="grid">
+<article class="tile s-cnt"><p class="chip"><span class="dot" aria-hidden="true">&#8226;</span>COUNTED</p><p class="big">166</p><h3 class="lbl">Jobs on the board right now</h3><p class="detail">P0: 81. P1: 43. P2: 41. P3: 1. Plus 45 staged but deliberately not started. There is no right number of open jobs, so this page makes no health claim about it.</p><details class="prov"><summary>How this was measured</summary><p class="src"><code>fleet/board/*.md frontmatter (+ *.md.parked)</code></p><p class="pf">counted directly from the files; no verdict is offered</p></details></article>
+<article class="tile s-cnt"><p class="chip"><span class="dot" aria-hidden="true">&#8226;</span>COUNTED</p><p class="big">7880</p><h3 class="lbl">Distinct parts in the product&#x27;s code map</h3><p class="detail">Connected by 15004 relationships, grouped into 448 clusters. Biggest: cluster 1 (115 parts), cluster 33 (102 parts), cluster 29 (102 parts). Built at commit 70bcd2fe6e04.</p><details class="prov"><summary>How this was measured</summary><p class="src"><code>graphify graph.json</code></p><p class="pf">counted directly from the map file; no verdict is offered</p></details></article>
+<article class="tile s-cnt"><p class="chip"><span class="dot" aria-hidden="true">&#8226;</span>COUNTED</p><p class="big">4</p><h3 class="lbl">Services we have promised to keep alive</h3><p class="detail">Declared in the registry the watchdog is generated from: session-bridge,roci-tunnel gateway-4lom,canary-service. This is the promise; the dead-services tile above is the reality.</p><details class="prov"><summary>How this was measured</summary><p class="src"><code>fleet/state/service-registry.tsv</code></p><p class="pf">counted directly from the registry file; no verdict is offered</p></details></article>
+<article class="tile s-cnt"><p class="chip"><span class="dot" aria-hidden="true">&#8226;</span>COUNTED</p><p class="big">861</p><h3 class="lbl">Models the gateway can reach</h3><p class="detail">Across 17 suppliers and 52 routing pools. Gateway build 9659998d3dea.</p><details class="prov"><summary>How this was measured</summary><p class="src"><code>GET $GATEWAY_URL/charon/config</code></p><p class="pf">counted directly from the gateway&#x27;s own reply; no verdict is offered</p></details></article>
+</div>
+<h2>What this page cannot tell you</h2>
+<p class="sub">This section is the point of the page, not an apology for it. Everything here is a question we are <em>not</em> answering, and the reason why.</p>
+<div class="cannot">
+<p><b>2 of the 14 judged items are UNPROVEN.</b> For each one, the honest answer is &ldquo;we do not know&rdquo; &mdash; not &ldquo;it is fine&rdquo;.</p>
+<ol>
+<li><b>Code maps that have fallen out of date</b> &mdash; the freshness check reports every code map as up to date, but red-proof graphify-freshness.test.sh exists but is NOT in the CI_SUITES allowlist, so it has never executed in CI — so &quot;up to date&quot; is a claim this page will not make (the check itself reported “0 of 2”, but this page will not report that as a result)</li>
+<li><b>If we change something, what else breaks?</b> &mdash; graphify affected requires a named starting point that a whole-repo snapshot cannot choose, and it has 0 call sites in this rig so its output has never been calibrated here</li>
+</ol>
+<p>Three limits apply to <em>every</em> tile above, including the green ones. First, this is a snapshot: it says nothing about what happened five minutes after it was taken. Second, a passing check only ever covers what someone thought to check &mdash; there is no tile for &ldquo;the problem nobody has imagined yet&rdquo;. Third, this page reports what the detectors say; it does not re-derive their numbers, so a detector with a blind spot is a blind spot here too.</p>
+</div>
+<footer>
+<p>Regenerate with <code>bash fleet/status-board/generate.sh</code>. The page is a single self-contained file with no scripts and no network calls &mdash; it opens from disk.</p>
+<p>Every number above came from one of these, and from nothing else: <code>charon.cli gate</code>, <code>fleet/validate_board.sh</code>, <code>fleet/checks/gate-integrity.sh</code>, <code>fleet/checks/rig-ci-scope.sh</code>, <code>fleet/checks/stranded-work.sh</code>, <code>fleet/checks/graphify-freshness.sh</code>, <code>fleet/watchdog/discover-services.sh</code>, <code>fleet/board/*.md</code>, <code>fleet/state/service-registry.tsv</code>, <code>graphify graph.json</code>, <code>gh api</code> (REST), and the gateway's own <code>/charon/status</code> and <code>/charon/config</code>. Nothing here is estimated, rounded to a nicer number, or filled in from memory; where a source failed, the tile says UNPROVEN and names the failure.</p>
+</footer>
+</div>

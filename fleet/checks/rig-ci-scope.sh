@@ -131,6 +131,20 @@ sync-checkouts.test.sh    # hermetic: mktemp git fixtures + a fixture fleet dir.
                             # confirmed instances on 2026-07-19. Its deep (mutation) mode is
                             # reentrancy-guarded and is NOT exercised against any rig suite here;
                             # the suite mutates only its own throwaway fixtures.
+  status-board.test.sh      # hermetic: every source of fleet/status-board/generate.sh is env-
+                            # overridden to a printf stub or a mktemp -d fixture, and the two
+                            # NETWORK sources use their documented offline hooks (SB_PR_FIXTURE,
+                            # SB_GATEWAY_{STATUS,CONFIG}_JSON) — no gh, no curl, no gateway, no git
+                            # remote. ~5s. Red-proofs the operator-facing status page's ONE
+                            # contract: three states, never two. Five reverts were each VERIFIED to
+                            # drive it RED — _verdict going unconditionally green (the tile-sized
+                            # version of the 114-unenforced-proof lie), _proof failing OPEN on an
+                            # unreadable allowlist, and _run's not-found / timed-out / printed-
+                            # nothing refusals. It also carries the POSITIVE control (a working,
+                            # CI-enforced source really does render PASSING), so the page cannot
+                            # satisfy the suite by greying everything out either. A page that
+                            # renders an unknown as green is worse than no page, which is exactly
+                            # why this suite is in CI and not merely written.
   gate-integrity.test.sh    # hermetic: synthetic gate trees under mktemp -d only; no network, no
                             # gh, no git writes, no fleet/state/ dependency. ~2s. Guards THE GATE
                             # ON THE GATES — the "reads as protection, provides none" class
