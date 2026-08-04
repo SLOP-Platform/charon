@@ -9,6 +9,56 @@
 
 ---
 
+# 0a — ▶ THE ONE-LINER — PASTE THIS INTO THE NEXT SESSION ◀
+
+```
+Read /home/stack/charon-private/fleet/state/DECISIONS.md then fleet/state/HANDOFF-2026-08-04-manager-PM.md and do its section 0c actions in order.
+```
+
+*(Sessions have repeatedly ended without giving the operator a bootstrap line. Every future handoff
+MUST carry one, at the top, in a copy-pasteable block. If you are writing the next handoff and this
+section is missing from it, that is a regression.)*
+
+---
+
+# 0c — FIRST ACTIONS FOR THE NEXT SESSION, IN ORDER
+
+**Do not re-plan these. Do not start Lane work before them — 1 and 2 are cheap and 2 may change the
+order of everything else.**
+
+### ① `FINDING-CAPTURE-MECHANIZE` (p0) — run the tool evaluation FIRST
+The operator's words: *"there has to be a tool for this."* Two SEPARATE capabilities —
+**(A) finding → ticket without a human remembering**, and **(B) DONE requires an enforcing mechanism
+attached**. Executed trials only (D-002); reputation/stars explicitly disallowed. **Re-open
+Forgetful** — highest-scoring target in the estate, rejected under a lens D-002 voids.
+⇒ Run this BEFORE `LIFECYCLE-ENFORCEMENT` (which is the BUILD of capability B), so the build either
+adopts something or is justified as a genuine gap.
+
+### ② `LANE-ORDER-AUDIT` (p0) — audit A/B/C by blast radius, WITH an adversarial review
+Operator-requested. Lane A is largely done, Lane C stalled at 2/3 and never resumed, and the
+durable-queue question now gates three separate things. **The proposed order MUST be adversarially
+reviewed before adoption, and only the operator can supersede D-010** — propose, do not reorder.
+
+### ③ `RIVER-QUEUE-TRIAGE` — cheap, unblocks three things
+An undocumented `river-pg` container has run on the gateway host since 2026-08-01. Likely an
+abandoned durable-queue trial. Answering it unblocks Lane C AXIS 2's top item, D-008a's Go
+supervisor, and TAB-RELIABILITY.
+
+### ④ `TAB-RELIABILITY` (p0, OPERATOR-SET HIGH PRIORITY) — but read §6b first
+*"this is a KEY feature of SG that needs to be fixed."* ⚠️ **VERIFY THE LANDED REAPER ACTUALLY RUNS
+BEFORE WRITING ANYTHING** — `DROID-LIFECYCLE-REAP` is marked DONE while orphans lived 2 days. And
+mind the D-008a sequencing: if a durable-execution engine is adopted, THE ENGINE IS THE SUPERVISOR.
+
+### ⑤ `DEPLOY-MECHANIZE` (p0) — detect first, auto-deploy last
+D-012 leaked for a full day after it merged. Also: the deploy host's compose file was pinned THREE
+minor versions behind production, so a plain `docker compose up` would have rolled the gateway back.
+
+### 🔴 EVERY SESSION, UNTIL ANSWERED: surface **Q-010** — the operator must create a second GitHub
+identity. Operator asked for it LOUDLY AND OFTEN. It blocks the only control that can stop a PR from
+neutering its own required check. See `DECISIONS.md` Q-010.
+
+---
+
 # 0 — RUN FIRST (~3 min)
 ```
 cat  fleet/state/DECISIONS.md                     # every operator decision. Non-optional.
