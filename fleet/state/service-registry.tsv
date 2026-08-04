@@ -17,7 +17,11 @@
 # HARD PRE-ENABLE GATE on this column: no quotes, no ~/$HOME, no `systemctl --user`, no sudo,
 # every command word an ABSOLUTE path, ssh legs with -i/BatchMode/UserKnownHostsFile/user@host.
 # Edit THIS file, then re-run generate-monit-config.sh — never hand-edit monit.d/*.conf.
-grader-daemon	process	pgrep:grader-daemon\.py	file:/home/stack/charon-private/fleet/model-scorecard.tsv	5400	/usr/bin/pkill -u bench-grader -f grader-daemon.py; /usr/bin/setsid /usr/sbin/runuser -u bench-grader -- /usr/bin/python3 /home/stack/charon-private/fleet/benchmark/grader-daemon.py >>/tmp/grader-daemon.log 2>&1 </dev/null &	bench-grader
+# RETIRED 2026-08-03 (operator): grader-daemon deregistered and killed. It ran 10 days
+# and last wrote model-scorecard.tsv on 08-02 11:32 (~36h idle) while the eval system is
+# under repair and its grades are explicitly untrusted. Left registered it would be
+# restarted by the watchdog on the 5400s scorecard-freshness window. See DECISIONS.md.
+#grader-daemon	process	pgrep:grader-daemon\.py	file:/home/stack/charon-private/fleet/model-scorecard.tsv	5400	/usr/bin/pkill -u bench-grader -f grader-daemon.py; /usr/bin/setsid /usr/sbin/runuser -u bench-grader -- /usr/bin/python3 /home/stack/charon-private/fleet/benchmark/grader-daemon.py >>/tmp/grader-daemon.log 2>&1 </dev/null &	bench-grader
 session-bridge	process	pgrep:session-bridge/proxy\.py	none	0	/usr/bin/pkill -u stack -f session-bridge/proxy.py; /usr/bin/setsid /usr/sbin/runuser -u stack -- /usr/bin/python3 /home/stack/.config/opencode/session-bridge/proxy.py >>/tmp/session-bridge.log 2>&1 </dev/null &	fleet
 roci-tunnel	socket	unixsock:/home/stack/.charon/coordinator-charon.sock	none	0	/usr/sbin/runuser -u stack -- /home/stack/.charon/ensure-coordinator-tunnel.sh	fleet
 gateway-4lom	host	tcp:10.0.1.60:8080	none	0	/usr/bin/ssh -i /home/stack/.ssh/4lom -o BatchMode=yes -o ConnectTimeout=10 -o UserKnownHostsFile=/home/stack/.ssh/known_hosts -o StrictHostKeyChecking=yes stack@10.0.1.60 docker restart charon-gateway-1	fleet
