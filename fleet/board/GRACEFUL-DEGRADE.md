@@ -1,6 +1,7 @@
 repo: charon
 tier: frontier
 difficulty: 4
+priority: 2
 work_class: money-path
 branch: feat/graceful-degrade
 depends_on: ROUTER-CORE
