@@ -104,7 +104,15 @@ rc=0; out="$(CHARON_CI_BASE=__no_such_ref__ CHARON_CI_HEAD=HEAD bash "$WRAP" --d
 # shellcheck source=.github/scripts/tests/_difflab.sh
 . "$SCRIPTS/tests/_difflab.sh"
 LAB="$tmp/lab"
-VIOL='aws_access_key_id = "AKIAZ3FAKEXAMPLE1234"'
+# PAYLOAD ASSEMBLED AT RUNTIME, deliberately. A key-shaped LITERAL in this tracked file is a
+# real finding to gitleaks — it scans every file type, not just Python — so the PR that
+# introduces this gate was blocked BY this gate on its own test data (measured: PR #234,
+# gitleaks FAILURE at this line). Splitting the prefix from the body means no line here
+# matches aws-access-token, while the string handed to the lab still does. The exclusion list
+# stays tight: .github/scripts/tests/ holds real code and is NOT excluded from scanning.
+_akia_prefix='AKIA'
+_akia_body='Z3FAKEXAMPLE1234'
+VIOL="aws_access_key_id = \"${_akia_prefix}${_akia_body}\""
 WRAP_BASENAME='gitleaks.sh'
 diffcase(){ local mode="$1" want="$2" label="$3" rc
   difflab "$LAB" "$mode" "$VIOL" >/dev/null 2>&1

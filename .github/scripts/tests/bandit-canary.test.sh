@@ -110,6 +110,10 @@ rc=0; out="$(CHARON_CI_BASE=__no_such_ref__ CHARON_CI_HEAD=HEAD bash "$WRAP" --d
 LAB="$tmp/lab"
 # A NAME, not a string literal: bandit downgrades shell=True on a literal command to LOW
 # ("seems safe, but may be changed in the future"), which is below the gate's medium floor.
+# NOT assembled at runtime, and that is deliberate: bandit is a Python-AST scanner and its
+# scope is tracked *.py. A shell script is not merely out of scope, it is unparseable input
+# bandit never looks at — so this literal can never become a self-inflicted finding the way
+# the gitleaks payload did. Keeping it readable is worth more than symmetry here.
 VIOL='import subprocess; subprocess.call(sample, shell=True)'
 WRAP_BASENAME='bandit.sh'
 diffcase(){ local mode="$1" want="$2" label="$3" rc

@@ -99,7 +99,13 @@ rm -rf "$tmp" "$empty"
 # shellcheck source=.github/scripts/tests/_difflab.sh
 . "$SCRIPTS/tests/_difflab.sh"
 LAB="$tmp/lab"
-VIOL='GATEWAY = "http://192.168.42.7:8080/v1"'  # public-clean: allow — the canary must contain the literal it proves is detected
+# Assembled at runtime for the same reason as the gitleaks canary. Today every rule in the
+# ruleset is `languages: [python]`, so a LAN-IP literal sitting in this shell script is not
+# analysable and would not fire — but that is scoping luck, not a property worth relying on:
+# the day a generic/non-Python rule lands, this literal becomes a self-inflicted red. Building
+# it from fragments also drops the public-clean waiver this line used to need.
+_lan_prefix='192.168'
+VIOL="GATEWAY = \"http://${_lan_prefix}.42.7:8080/v1\""
 WRAP_BASENAME='semgrep.sh'
 diffcase(){ local mode="$1" want="$2" label="$3" rc
   difflab "$LAB" "$mode" "$VIOL" >/dev/null 2>&1
