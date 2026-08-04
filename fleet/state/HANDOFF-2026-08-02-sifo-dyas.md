@@ -168,3 +168,36 @@ the decisive test.
   **FALSE**, it landed via PR #130. Done-marker misattributed, ROADMAP row stale.
 - 6 tabs alive at close: `drop`(4112) `drain`(4122) `park`(4132) `parkrearm`(4133)
   `inert`(4140) `soleleg`(4141). All worktree work committed; `rescue-push` parked all at-risk.
+
+---
+
+# 7 — WHY OPENCODE STILL GETS TRAFFIC (operator asked at close; answered from the live pool map)
+
+**`opencode-go` is a MEMBER of 112 live pools**, including ones we use constantly:
+```
+deepseek-v4-flash -> [nvidia, opencode-go, deepseek, huggingface, openrouter, nanogpt, cline-pass]
+                              ^^^^^^^^^^^ second leg
+```
+So a droid asking for BARE `deepseek-v4-flash` — exactly what the no-pinning rule requires — gets
+`nvidia`, then `opencode-go`. That is why the `drain` tab hit the China-opt-in error.
+
+**THREE INDEPENDENT FAILURES, STACKED. None is fixed:**
+1. **Pool membership** — it is in 112 pools by config. Nothing has removed it.
+2. **Auto-park is DEAD CODE** — `_has_live_sibling()` vetoed all 17 providers. Fix built
+   (`8fb725a`), NOT landed (queue #2).
+3. **Manual park is a NO-OP** — measured: `opencode-go` served **+129 requests while "parked"**.
+
+⇒ **There is currently NO mechanism that can take a provider out of rotation.** Landing queue #2
+is the only path. Verify with `bash fleet/park-watch.sh --watch 60` — trust the `served` delta,
+never the API's `ok:true`.
+
+## ⚠ SECOND FINDING — A HARD RULE IS ONE CHAIN EDIT FROM BREACH
+The live pool map contains ANTHROPIC-SERVED POOLS:
+```
+claude-sonnet-5 -> [openrouter, deepinfra, nanogpt, opencode-zen]
+claude-opus-5   -> [deepinfra, nanogpt, opencode-zen, openrouter]
+```
+The standing HARD rule is **SG never routes via Claude/Anthropic**, and it is on record as
+REPEATEDLY REGRESSING. No tier chain names these today, so we are clean **by accident, not by
+construction**. `NEVER-ANTHROPIC-ASSERTION` is ticketed and UNBUILT. Build the assertion — an
+exclusion list rots on the next catalog refresh, an assertion does not.
