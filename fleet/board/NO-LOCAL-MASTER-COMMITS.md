@@ -89,3 +89,34 @@ note: |
     reset is DENY-LISTED to the manager, so it costs an operator interrupt every time.
   - Related: LAND-SH-SAFE-SYNC (archived, DONE) — its guard must survive intact.
     SHARED-NAMESPACE-CONTENTION (#288) — same "shared mutable state, no isolation" family.
+
+  ## ROOT CAUSE OF THE ARCHIVE RESIDUE — LOCATED AND REPRODUCED 2026-08-04 (manager)
+  This ticket already scopes "the auto-archive residue that currently blocks the sync". Here is the
+  exact line, so whoever takes it does not have to re-find it.
+
+  `fleet/retire-done.sh` stages archived tickets with:
+      [ -f "$dst" ] && ! git ls-files --error-unmatch "$dst" >/dev/null 2>&1 && { mv; git add; } \
+        || { mv; echo "(already tracked)"; }
+
+  `$dst` is the DESTINATION under board/archive/ and it is tested BEFORE the `mv`. On a first
+  retirement that file does not exist, so `[ -f "$dst" ]` is FALSE and control always falls to the
+  else branch — a bare `mv` with NO `git add`. The staging fix the block's own comment promises
+  ("stage the new archived files immediately so the tree returns to clean") therefore NEVER RUNS,
+  and every retirement leaves the tree dirty. That dirty tree is what blocks sync-checkouts.sh from
+  fast-forwarding, which is this ticket's entire subject.
+
+  MEASURED 2026-08-04: one sweep retired OUTCOME-TEST-OWED, TOOL-ENABLE-RATCHET and
+  SHELLCHECK-RATCHET; all three printed "(already tracked)" on a FIRST move and all three were left
+  UNSTAGED, forcing the manager to hand-land each retirement through worktree-commit-and-land.sh.
+
+  SECOND BUG, same line: the `A && B || C` idiom runs C whenever the LAST command of the B block
+  fails, so a failing `git add` silently re-runs `mv` on an already-moved file. Use if/else; the mv
+  must happen exactly once.
+
+  FIX: mv FIRST, then test whether `$dst` is tracked, then stage. Keep the "already tracked" message
+  honest — it must print only when the file really was already tracked.
+  ACCEPTANCE ADDITION: prove it by EXECUTING a real first-time retirement in a fixture and asserting
+  the tree is clean afterwards; a first move must report "(staged)", never "(already tracked)".
+
+  NOTE ON SEQUENCING: this ticket depends_on SYNC-SCHEDULE, which has been PR-OPEN ~194h. Until
+  that lands, local master keeps going stale even after this fix.

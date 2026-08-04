@@ -104,3 +104,30 @@ scope: |
   `fleet/board-lock.sh`.
 - Cheap and high-leverage: every board commit in the rig goes through this path, and the bypass
   habit it creates undermines a gate the whole fleet depends on.
+
+  ## SECOND DEFECT IN THE SAME PATH — worktree-commit-and-land.sh EXITS 2 IN TOTAL SILENCE
+  Found and reproduced 2026-08-04 (manager). This ticket already owns
+  `fleet/worktree-commit-and-land.sh`, so it belongs here rather than in a competing ticket.
+
+  The script reads `_TOK` from `grep -m1 '^token:' fleet/state/board-lock`. When the board lock is
+  NOT held that file does not exist, `_TOK` is empty, and the script exits 2 having printed NOTHING
+  to stdout OR stderr — after it has already created and removed a scratch worktree, so it even
+  looks like it did work. Through a pipe the caller observes rc=0 and an empty log, which reads as
+  a successful no-op.
+
+  MEASURED: three invocations burned exactly this way in one session before the cause was traced
+  with `bash -x`. Two of them were believed to have LANDED until origin was checked.
+
+  This is the same family as the defect already described above: a safety mechanism that refuses
+  without saying so. The existing note argues "a safety tool that forces its own bypass trains the
+  operator to bypass it" — a safety tool that refuses SILENTLY is worse, because it trains the
+  operator to distrust the result rather than the tool.
+
+  FIX: name the reason and the remedy before exiting, e.g.
+    "worktree-commit-and-land: the board lock is NOT held — run:
+       bash fleet/board-lock.sh acquire <session>"
+  Also document in the script header that it REQUIRES the lock. The friction list records that it
+  never RELEASES the lock but not that it demands one, which is precisely why the failure was
+  mystifying.
+  ACCEPTANCE ADDITION: invoking it without the board lock must print a named reason plus the
+  acquire command and exit non-zero, with a red-proof — revert the fix and the assertion goes RED.
