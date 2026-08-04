@@ -46,16 +46,13 @@ to proceed without it finished.*
 
 # 1 — ⛔ THE SINGLE MOST IMPORTANT FACT ON THIS PAGE ⛔
 
-## THE D-012 MONEY FIX — RELEASE CUT 2026-08-04; **CONFIRM IT IS ACTUALLY RUNNING**
+## ✅ THE D-012 MONEY FIX IS DEPLOYED AND SERVING — closed 2026-08-04
 
-**Status at close:** `v0.6.2` was cut and tagged on `6bb8805` (PR #236, all four required checks
-green). The release workflow was still BUILDING when the session ended. **The first thing to verify
-next session is whether the gateway is actually running v0.6.2** — if the build failed or the pull
-never happened, the leak below is still live.
-```
-gh run list --repo SLOP-Platform/charon --workflow=release.yml --limit 1
-ssh -i ~/.ssh/4lom stack@<gateway-host> 'docker ps --filter name=charon --format "{{.Image}}"'
-```
+`v0.6.2` cut and tagged on `6bb8805` (PR #236, all four required checks green), release workflow
+**success**, image published, deployed and VERIFIED:
+`charon-gateway-1  ghcr.io/slop-platform/charon:v0.6.2  Up (healthy)` and a live completion
+returned **200 in 1.95s**. The fully-parked-pool money leak is closed IN PRODUCTION, not just on
+master. The gap it closed was 14 commits / one full day of leaking after the fix had merged.
 
 ### ⛔ BEFORE YOU DEPLOY: THE COMPOSE FILE WILL ROLL PRODUCTION BACK ⛔
 `/home/stack/charon/docker-compose.yml` on the deploy host pins **`charon:v0.3.3`** while the running
