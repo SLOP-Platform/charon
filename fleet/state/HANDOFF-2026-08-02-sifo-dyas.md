@@ -9,11 +9,47 @@
 # ⛔ BOOTSTRAP — PASTE INTO THE NEXT SESSION
 
 ```
-Read /home/stack/charon-private/fleet/state/HANDOFF-2026-08-02-sifo-dyas.md FIRST, in full,
-before any other file. Run the section-0 commands. Then work THE QUEUE in order — do not
-re-derive it, do not re-investigate settled items, do not start anything not on it without
-saying so first. Top of queue is INERT-CODE-DISPOSITION-BACKLOG (a pre-existing product-gate
-RED that blocks every product push).
+Read /home/stack/charon-private/fleet/state/HANDOFF-2026-08-02-sifo-dyas.md IN FULL before
+anything else. Run its section-0 commands.
+
+YOUR PRIMARY JOB THIS SESSION IS THROUGHPUT VIA TABS. Not analysis. Not design. Not
+investigation unless a tab is blocked on it.
+
+THE OPERATING LOOP — repeat until the operator stops you:
+  1. Are there IDLE tabs or fewer than 3-4 running? If yes, LAUNCH MORE. Tabs should ALWAYS
+     be working. An idle tab is wasted wall-clock.
+  2. Pick the next item off the handoff QUEUE (section 1), in order. Do not re-rank it.
+  3. Launch it in a REAL SG TAB (command below). Verify it STARTED.
+  4. While tabs run, YOU land things: merge green PRs, refresh stale bases, close superseded
+     ones. Churn the collecting backlogs (32 open PRs, 229 pushed-no-pr, 46 closed-pr-unlanded).
+  5. When a tab reports a SHA, land it and immediately launch the next queue item in that tab.
+  6. Every ~5 landed items, report: item | state | evidence (sha/PR/command output).
+
+LAUNCH A TAB (the ONLY correct form — prompt is the 7th positional arg, which drives the
+VISIBLE TUI; session-ctl launch does NOT and leaves the tab on a splash screen):
+  bash fleet/spawn-worker.sh <NAME> <MODEL> <PORT> '<#hex>' 1 <WORKTREE> "<brief>"
+  - Expect `spawn-worker: STARTED — new session id=...`. No STARTED line = it did not start.
+  - MODEL must be BARE (never -go/-ds/-groq) AND known to opencode. Verified serving:
+    kimi-k2.6, deepseek-v4-flash, minimax-m2.5, deepseek-v4-pro.
+  - WORKTREE must NOT be a repo root; spawn-worker refuses (exit 5) if it is.
+  - Ports 4150+ are free.
+
+YOU ARE THE MANAGER: gate, merge, push, sequence, talk to the operator. Do NOT build. Work
+inline ONLY if delegating would cost more than the fix, and commit it the same turn.
+
+RULES THAT COST THE LAST SESSION HOURS — do not relearn them:
+  - Run the discriminating test BEFORE naming a root cause. Say "I don't know yet".
+  - A green/healthy signal is not evidence of work. Assert %{http_code}, never curl exit 0.
+  - A RED you cannot explain is a FINDING. Ticket it before dismissing it.
+  - CHECK IF IT IS ALREADY BUILT before building or investigating. Most "missing" things last
+    session were finished work nobody landed.
+  - Board writes go through fleet/worktree-commit-and-land.sh (keeps local master a pure
+    FF-only mirror). Never commit board files on local master.
+  - ASSUME NOTHING IS PARKED. Park is a proven no-op until queue #2 lands.
+  - No blind Claude subsessions. Work goes to visible SG tabs.
+
+Top of queue: INERT-CODE-DISPOSITION-BACKLOG (pre-existing product-gate RED blocking EVERY
+product push), then land fix/soleleg-guard-blocks-autopark with e2e proof.
 ```
 
 ## 0 — RUN FIRST (~2 min)
