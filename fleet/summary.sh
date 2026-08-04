@@ -36,12 +36,17 @@ Partners  ${PARTNERS}
 HEADER
 
 if [ -n "${MISSION}" ]; then
-    cat <<MISSION
+    # Heredoc delimiter renamed off "MISSION" (SC1122): the body line below prints the
+    # literal word "MISSION" followed by the value, which shellcheck's parser reads as
+    # an ambiguous attempt at the terminator. Real bash was never fooled (this body line
+    # has trailing content so it never matched as the closer) but the rename removes the
+    # ambiguity for tooling and readers alike; the ${MISSION} variable is unchanged.
+    cat <<MISSION_BLOCK
 ######################################################################
   MISSION  ${MISSION}
 ######################################################################
 
-MISSION
+MISSION_BLOCK
 fi
 
 if [ -n "${WAVE_NAME}" ]; then

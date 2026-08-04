@@ -1,4 +1,6 @@
-# shellcheck disable=SC2034
+# shellcheck shell=bash disable=SC2034
+# No shebang: this file is always `source`d, never executed directly, so shellcheck
+# (SC2148) cannot infer the target shell without this directive.
 # fleet/capture/job-meta.sh — brief .meta.json convention + loader (Chunk B).
 #
 # Convention: a brief file <brief>.meta.json carries the structured job metadata

@@ -60,7 +60,11 @@ mkfleet(){
   cp "$REPO/$RED_SET_REL" "$d/state/"
   # RED-SET member, SECURITY surface -> derives `frontier`; declared tier MATCHES, so an
   # undisturbed fixture board carries no drift at all (that is what (c1) asserts).
-  cat > "$d/board/FIX-PROVIDER-KEY-EXFIL.md" <<'FIXTURE'
+  # Heredoc delimiters below are FIXTURE_SEC / FIXTURE_CTRL, not the generic "FIXTURE" —
+  # the ticket bodies contain "FIXTURE " as literal text (note:/scope: prose). Static
+  # analysis (SC1122) reads that as an ambiguous attempted terminator when the delimiter
+  # word itself is "FIXTURE". Renamed to remove the collision.
+  cat > "$d/board/FIX-PROVIDER-KEY-EXFIL.md" <<'FIXTURE_SEC'
 repo: charon
 tier: frontier
 priority: 2
@@ -79,11 +83,11 @@ scope: |
 ds: |
   ## Dependencies & sequence
   depends_on: NONE. Fixture only.
-FIXTURE
+FIXTURE_SEC
   # NON-red-set, NON-security money-path ticket -> derives `strong`; declared tier matches.
   # Present so the fixture board is never a single-ticket board (a 1-ticket scan is too close
   # to the vacuous-scan case (f) to be a meaningful control).
-  cat > "$d/board/TIER-DRIFT-FIXTURE-CONTROL.md" <<'FIXTURE'
+  cat > "$d/board/TIER-DRIFT-FIXTURE-CONTROL.md" <<'FIXTURE_CTRL'
 repo: charon
 tier: strong
 priority: 1
@@ -102,7 +106,7 @@ scope: |
 ds: |
   ## Dependencies & sequence
   depends_on: NONE. Fixture only.
-FIXTURE
+FIXTURE_CTRL
   # validate_board check #6 (uncommitted-work) and the owns-path existence WARN both reach into
   # the PRODUCT working tree via CHARON_REPO. Left unset they read whatever the operator's
   # checkout happens to look like, so (c1) was green or red depending on unrelated dirty files.

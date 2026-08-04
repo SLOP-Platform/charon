@@ -67,8 +67,13 @@ for m in "${DONE_MARKERS[@]}"; do
     # FIX: stage the new archived files immediately so the tree returns to clean.
     # Only stage a file that is genuinely NEW in archive/ — re-retiring an already-archived
     # ticket must not stage an already-tracked file.
-    local src="$BOARD/$id.md" dst="$ARCHIVE/$id.md"
-    local rel_dst; rel_dst="fleet/board/archive/$id.md"
+    # NOT `local` — this loop body runs at TOP LEVEL of the script (not inside a
+    # function), so `local` here is a no-op-that-errors (SC2168): bash prints
+    # "local: can only be used in a function", the assignment never happens, and
+    # under `set -u` the very next `[ -f "$dst" ]` aborts the whole script with
+    # "dst: unbound variable" — every retirement, every session. Plain globals.
+    src="$BOARD/$id.md"; dst="$ARCHIVE/$id.md"
+    rel_dst="fleet/board/archive/$id.md"
     [ -f "$dst" ] && ! git ls-files --error-unmatch "$dst" >/dev/null 2>&1 && {
       mv "$src" "$dst"
       git add "$dst"

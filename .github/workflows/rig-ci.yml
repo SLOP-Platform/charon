@@ -83,6 +83,16 @@ jobs:
           RIG_CI_HEAD: ${{ github.sha }}
         run: bash fleet/checks/rig-ci-scope.sh syntax
 
+      # SHELLCHECK-RATCHET (2026-08-03). Whole-tree, not diff-scoped (see rig-ci-scope.sh header):
+      # a debt ratchet against the committed fleet/checks/shellcheck-baseline.tsv floor, at FULL
+      # shellcheck coverage (-o all — default severities + all 11 optional checks, all off
+      # anywhere in this rig before this ticket). ~30s over ~325 scripts on a hosted runner, well
+      # inside the 10-minute budget. No RIG_CI_BASE/HEAD: this does not diff-scope, so it must not
+      # see them (same leak class documented below on the tests step). ubuntu-latest ships
+      # shellcheck preinstalled; no separate install step.
+      - name: Shellcheck baseline ratchet (whole-tree, -o all, floor = committed baseline)
+        run: bash fleet/checks/rig-ci-scope.sh shellcheck
+
       - name: Board validation (marker-independent, PR-diff-scoped — see header)
         env:
           RIG_CI_BASE: ${{ github.event.pull_request.base.sha || 'origin/master' }}
