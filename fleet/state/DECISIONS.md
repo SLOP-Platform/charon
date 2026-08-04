@@ -263,6 +263,30 @@ to another machine. Python when it thinks, analyses, or runs once.*
 
 ## ASKED — open, and what each one BLOCKS
 
+### D-009 · THE RE-REVIEW HAS THREE AXES, NOT ONE · 2026-08-03
+**Operator:** *"when we re-review the tools and the other contenders we should also run an audit for
+gaps that we did not get a tool for."* Accepted — this is a third axis and the one most likely to
+explain how 73,019 lines of bash came to exist.
+
+| axis | question | finds |
+|---|---|---|
+| **1 · re-score** | was the VERDICT right, under the corrected lenses (D-002)? | wrong rejections — e.g. LiteLLM full-gateway (now void), Forgetful (rejected for "avoids a new dependency") |
+| **2 · re-open** | which candidates were never SHORTLISTED because of the tainted filter? | whole categories excluded by "no heavy dependencies" / "the gateway core is ours" |
+| **3 · GAP AUDIT** | which capabilities have **NO tool at all** — nobody ever asked "is there a tool for this?" | **the hand-rolled column.** This is where the bash came from. |
+
+**Method for axis 3 — mechanical, not a brainstorm:** enumerate every capability the factory needs,
+then map each to exactly one of `adopted tool` / `hand-rolled` / `nothing`. Every `hand-rolled` row
+is a gap where the tool question was never asked, and every `nothing` row is an unmet need. Starting
+capability list (extend it, do not treat it as complete): decompose work into non-colliding slices ·
+execute agents · isolate agents from each other · durable work queue (no orphans/retries/no loss) ·
+single work ledger · prove quality without reading code · land automatically when green · deploy ·
+route to cheap models · visualise the system · **decision durability** · secret handling ·
+observability/alerting · cost accounting.
+
+**Report per gap:** capability · what we do today (file:line or "nothing") · our LOC · does a tool
+exist · what adopting it would DELETE (lens L2). A gap with no candidate is a legitimate build —
+that is how the ~2,100-line novel slice earned its place.
+
 ### Q-001 · Re-score pass: which lane runs first? · asked 2026-08-03
 **Blocks:** the whole adopt/delete programme (D-001..D-004).
 Lane A = turn on what we own (config, days, cheapest). Lane B = delete the 73k-line bash rig onto
