@@ -35,6 +35,11 @@ ALL_DOMAINS: frozenset[str] = frozenset({
     "boundary", "security", "arch", "test", "test-patterns",
     "lint", "type", "version", "registry", "gate", "fleet", "docs", "decisions",
     "public-clean", "inert", "ci-infra", "no-rig-import", "reachability",
+    # Diff-scoped quality gates (DIFF-COVER-MUTMUT): "did the change EXECUTE the
+    # lines it added" and "can any test go red on them". Registered here rather
+    # than left to print as unknown domains -- a permanently-noisy registry is
+    # one nobody reads.
+    "diff-coverage", "mutation",
     # "catalog" was reported as an unknown domain for as long as the
     # catalog-case-quant gate has existed — registered here rather than left as
     # standing noise, because a permanently-noisy registry is one nobody reads.

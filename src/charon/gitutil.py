@@ -86,3 +86,12 @@ def remove_worktree(repo: Path, dest: Path) -> None:
             _run(args, repo)
         except (subprocess.CalledProcessError, FileNotFoundError):
             pass
+
+
+def clamp_retries(requested: int, ceiling: int) -> int:
+    """Clamp *requested* retries into ``[0, ceiling]``."""
+    if requested < 0:
+        return 0
+    if requested > ceiling:
+        return ceiling
+    return requested
