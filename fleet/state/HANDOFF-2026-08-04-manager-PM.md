@@ -279,6 +279,27 @@ gh api -X PATCH repos/SLOP-Platform/charon/branches/master/protection/required_p
   --input <(echo '{"require_code_owner_reviews":true,"required_approving_review_count":1}')
 ```
 
+**B2. 🔴 CLOSE THE ORG RUNNER GROUP TO PUBLIC REPOS — new finding, 2026-08-04.**
+```
+gh api orgs/SLOP-Platform/actions/runner-groups --jq '.runner_groups[]|{name,visibility,allows_public_repositories}'
+→ {"name":"Default","visibility":"all","allows_public_repositories":true}
+```
+There are **5 ONLINE self-hosted runners** in that group (`4-lom`, `4-lom-2`, `4-lom-3`, `bb-8`,
+`bb-8-2` — all labelled `self-hosted,charon-ci`), and the org contains the **PUBLIC** repo
+`SLOP-Platform/charon`. So the public repo IS PERMITTED to run jobs on hardware that also runs the
+gateway and the fleet. Today nothing exercises it — I hard-pinned every product workflow to
+`ubuntu-latest` in #235 and verified no `runs-on` requests a self-hosted label — but that is a
+CONVENTION in workflow files a PR can change, not a control.
+**VERIFIED SAFE TO CLOSE:** the org's other repos are `SLOP` (public) and `mediastack` (private),
+and the RIG repo is `Nnyan/charon-private` — NOT in this org — so it cannot be using these runners
+either. Nothing measurable depends on public-repo access.
+Defence in depth, one setting, closes it regardless of what any workflow says:
+```
+gh api -X PATCH orgs/SLOP-Platform/actions/runner-groups/<id> \
+  --input <(echo '{"allows_public_repositories":false}')
+```
+(get `<id>` from the runner-groups listing above). This is the org-level enforcement of D-016.
+
 **C. Do NOT set `CI_RUNNER` on the public product repo.** Verified unset at repo AND org level; the
 misleading comments instructing it are removed in PR #235. Self-hosted runners are RIG ONLY (D-016).
 
@@ -312,5 +333,39 @@ launched at close):
   Lane A diff-cover + mutmut gates. See §9 for its exact state at close.
   ⚠️ The ORIGINAL `feat/diff-cover-mutmut-adopt` (3 commits on origin) has **NO PR and ZERO CI runs
   ever** — treat every claim on it as unproven. The ticket is already repointed at `-v2`.
-- Scratch worktree `/home/stack/charon-wt/DCM-FIXTURE` (`tmp/dcm-fixture`) — a throwaway test
-  fixture created by that work. Safe to delete once the ticket lands.
+## 8a — `feat/diff-cover-mutmut-v2` FINAL STATE (committed `bddc1a5`, PUSHED, no PR)
+Pushed deliberately so it cannot be lost; **no PR on purpose** — it is INCOMPLETE and must not merge.
+Gate ran GREEN at push. Scratch worktrees DCM-FIXTURE / DCM-STRANDED were deleted (throwaway).
+
+| | state |
+|---|---|
+| **diff-cover** | gate logic **DONE**, wiring **INCOMPLETE**. Red→green EXECUTED on a real diff: RED rc=1 in **35.2s** (`1 of 2 added line(s) in src/ are never executed`), GREEN rc=0 in **38.6s** after adding only the covering test. |
+| **mutmut** | **INCOMPLETE — recommend NOT a PR gate.** Its fail-closed path is executed (rc=1, 17.6s). Blocker: inside mutmut's own `mutants/` sandbox the suite is RED (5 failures — sandbox has no `.git` and re-enters gate scripts), and the baseline alone is **78s before a single mutant runs**. **Recommendation: move mutmut to a NIGHTLY cadence and land diff-cover alone as the check.** Latency is a failure class here. |
+
+**Measured, useful regardless:** whole-tree coverage today is **87.0% of `src`** (11603/13339 stmts) —
+the gate prints it and never gates on it. `pytest -n auto --cov=src` = **36s** vs `coverage run -m
+pytest` = **99s**, so `pytest-cov` is a required dependency.
+
+**Facts about mutmut 3.6.0 proven by execution — they CONTRADICT the ticket text, trust these:**
+no `--paths-to-mutate` flag exists (scoping is `[tool.mutmut] only_mutate` read from CWD's
+pyproject); **`mutmut run` exits 0 even when mutants survive**; mutant keys are
+`pkg.mod.x_func__mutmut_N`, and `mutmut run <glob>` filters on them — which is how this gate scopes
+to changed FUNCTIONS rather than changed files.
+
+**Discarded from the stranded branch, with reasons:** it rewrote the repo's real `pyproject.toml` at
+runtime (corrupts an owns-claimed file and leaves it corrupt if killed); no function-level scoping;
+`changed==0 → return 0` was a plain FAIL-OPEN; it used the 99s coverage path.
+
+⚠️ **NOT DONE / UNVERIFIED — do not assume any of this works:**
+`tests/test_diff_cover_mutmut_gate.py` **does not exist**, so there is NO red-proof for either gate,
+and `gates.json` currently FORWARD-REFERENCES that missing file. `ci.yml` untouched (will need
+`fetch-depth: 0`). The fail-closed paths for unresolvable base / unparseable XML / missing tool /
+untracked `src/**.py` are implemented but **NOT executed**. A REENTRY-GUARD (both gates exit 0 with
+`WORK-UNITS: 0` under `PYTEST_CURRENT_TEST`) exists because `test_gate_contract.py` runs every
+registered gate script and without it the suite **fork-bombs itself** — not yet red-proofed.
+**`pyproject.toml` was NOT touched** (13 live tickets own it). Still owed: a `quality = [...]`
+optional-dependency group.
+
+**NEXT ACTION for whoever picks this up:** write `tests/test_diff_cover_mutmut_gate.py` (red→green +
+the four unexecuted fail-closed paths + the reentry guard), add the `quality` extra, wire `ci.yml`
+with `fetch-depth: 0`, and decide mutmut in-or-out against the 78s number.
