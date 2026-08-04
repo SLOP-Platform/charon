@@ -20,6 +20,24 @@
 #   8  could not reach ANY worker port / unparseable response — status UNKNOWN, not healthy
 set -uo pipefail
 
+# ⛔ THIS CHECK'S PREMISE IS INVALID — IT REFUSES TO REPORT UNTIL REDESIGNED.
+# MEASURED 2026-08-02: every opencode server SHARES ONE SESSION STORE. Query any port and you get
+# the IDENTICAL session list. So "the session on port N" does not exist, and every per-port
+# liveness number this script produced was an ARTIFACT — including reports to the operator that
+# lanes had "finished" when some had been killed by a drained provider.
+# It also cannot distinguish FINISHED from HUNG from KILLED, which is the question it was written
+# to answer.
+# Rather than leave a plausible-looking wrong number in circulation, it exits 8 (UNKNOWN). A note
+# in a doc is prose; this is enforcement. Redesign is tracked on CRON-REGISTRY-VISIBLE.
+# Override ONLY to develop the replacement: SG_LIVENESS_ACK_BROKEN=1
+if [ "${SG_LIVENESS_ACK_BROKEN:-0}" != "1" ]; then
+  echo "sg-worker-liveness: UNKNOWN — REFUSING to report." >&2
+  echo "  All opencode servers share ONE session store, so per-port liveness is an artifact." >&2
+  echo "  This check cannot tell FINISHED from HUNG from KILLED. Do not trust its numbers." >&2
+  echo "  Redesign tracked on CRON-REGISTRY-VISIBLE. Override: SG_LIVENESS_ACK_BROKEN=1" >&2
+  exit 8
+fi
+
 PORTS="${SG_PORTS:-4101 4102 4103 4104 4105}"
 STALL_SEC="${SG_STALL_SEC:-900}"
 

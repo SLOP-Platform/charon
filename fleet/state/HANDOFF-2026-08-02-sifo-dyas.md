@@ -111,7 +111,15 @@ the decisive test.
 
 # 4 — LEAST CONFIDENT ABOUT (verify, do not trust)
 
-1. **Whether the manual parks actually took effect.** The API returned `{"ok":true,"parked":true}`
+1. **~~Whether the manual parks took effect~~ — ANSWERED AT CLOSE: THEY DID NOT.**
+   `opencode-go` served **5833** before the park and **5962** after — **+129 requests served while
+   "parked"**, despite every park call returning `{"ok":true,"parked":true}`. `BalanceTracker.park()`
+   is a **NO-OP** for these providers. Consequences: (a) operator decision U is MOOT — nothing is
+   actually held, so there is nothing to revert; (b) the auto-park fix (queue #2) is the ONLY thing
+   that will stop unfunded routing; (c) **never trust the park API's success response** — verify with
+   `bash fleet/park-watch.sh --watch 60`, which compares per-provider `served` deltas (the only
+   ground truth, since `/charon/status` has no `parked` field).
+   ORIGINAL DOUBT, kept for provenance: The API returned `{"ok":true,"parked":true}`
    but `/charon/status` exposes **no `parked` field**, and `opencode-go`/`opencode-zen` are absent
    from its `balance` map entirely — so `BalanceTracker.park()` may be a **no-op for providers it
    never tracked**. I could not prove exclusion. **This is the single weakest claim I am handing over.**
