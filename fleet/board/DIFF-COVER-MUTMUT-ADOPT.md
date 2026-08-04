@@ -3,7 +3,7 @@ tier: strong
 difficulty: 3
 priority: 0
 work_class: ci-infra
-branch: feat/diff-cover-mutmut-adopt
+branch: feat/diff-cover-mutmut-v2
 owns: /home/stack/code/charon/.github/workflows/ci.yml,
   /home/stack/code/charon/tools/diff_cover_gate.sh,
   /home/stack/code/charon/tools/mutmut_diff_gate.sh,
