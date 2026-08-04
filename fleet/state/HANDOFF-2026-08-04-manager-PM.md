@@ -53,6 +53,18 @@ mind the D-008a sequencing: if a durable-execution engine is adopted, THE ENGINE
 D-012 leaked for a full day after it merged. Also: the deploy host's compose file was pinned THREE
 minor versions behind production, so a plain `docker compose up` would have rolled the gateway back.
 
+### 🔴 REMIND THE OPERATOR AT SESSION **START** AND SESSION **END**, UNTIL DONE 🔴
+**(a) Buy GitHub Pro/Team (~$4/mo)** so the rig repo gets branch protection while staying private —
+Q8 answered as option (c), see **D-017**. Operator said 2026-08-04: *"i will do that later today."*
+Check whether it happened, at the START of the session and again at the END:
+```
+gh api repos/Nnyan/charon-private/branches/master/protection    # 403 = still not purchased
+```
+⛔ **Do NOT make the rig public** — the scrub is **833 tracked files**, and it is a permanent tax on
+a codebase Lane B intends to delete.
+**(b) Q-010 — the operator must create a second GitHub identity.** Operator asked for this LOUDLY
+AND OFTEN. See below.
+
 ### 🔴 EVERY SESSION, UNTIL ANSWERED: surface **Q-010** — the operator must create a second GitHub
 identity. Operator asked for it LOUDLY AND OFTEN. It blocks the only control that can stop a PR from
 neutering its own required check. See `DECISIONS.md` Q-010.

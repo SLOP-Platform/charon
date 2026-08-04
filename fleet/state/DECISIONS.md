@@ -259,6 +259,51 @@ and anything that mostly calls an LLM API and parses JSON (no benefit).
 **Operator-facing rule of thumb:** *Go when it must stay alive, supervise, or be a binary you copy
 to another machine. Python when it thinks, analyses, or runs once.*
 
+### D-017 · Q8 ANSWERED — PAY FOR PROTECTION, DO NOT MAKE THE RIG PUBLIC · 2026-08-04
+**Operator: option (c) approved; "i will do that later today."**
+
+Buy GitHub **Pro/Team (~$4/mo)** so the rig repo gets branch protection while staying PRIVATE.
+**The public scrub is explicitly REJECTED — do not start it.**
+
+Measured 2026-08-04, and it CORRECTS the figure in the 08-04 AM handoff:
+- the scrub is **833 tracked files** carrying `10.0.1.60` or `/home/stack`, not 129. 99 in `fleet/*.sh`.
+- `Nnyan/charon-private` is a personal **free** repo ⇒ `403` on branch protection, and `CI_RUNNER`
+  is **unset** so all **56 runs in 24h** burn GitHub-hosted metered minutes.
+- it is NOT in `SLOP-Platform`, so it cannot reach the 5 org self-hosted runners today.
+
+**The decisive reason, beyond cost:** going public is not a one-off scrub, it is a PERMANENT TAX —
+every future line of a 73,019-line bash estate that constantly references internal paths would have
+to stay clean forever, with a real leak risk each time. And **D-001 says the rig is not the product
+and Lane B deletes most of it**: spending session-days hardening a codebase we intend to delete is
+spending against the strategy. $4/mo buys the same enforcement with ZERO session time.
+
+⛔ **REMIND THE OPERATOR AT SESSION START *AND* SESSION END until it is done** (operator-requested).
+Once purchased, protection on the rig becomes possible — that is a separate follow-up, and note it is
+LOW value while Lane B is pending, so do not over-invest in it.
+**The D-015 org transfer is still deferred and is now independent of Q8** — it buys runner access
+only, not protection.
+
+### D-018 · SPLIT PARK FROM COOLDOWN IN THE SOLE-LEG GUARD · 2026-08-04
+**Operator approved the manager recommendation.** This narrows a previously "non-negotiable"
+invariant, deliberately and on the record.
+
+`src/charon/litellm_plane/park_cooldown.py:146-192` merges Charon park state and litellm Router
+cooldown into ONE exclusion set, then `sole_leg_guard(live, chain)` returns the ORIGINAL chain when
+everything is excluded — restoring PARKED legs. That is exactly the behaviour D-012 outlaws in
+`forwarder.py`. **Zero `src/` callers today, so there is no live leak — this is pre-emptive.**
+
+They are not the same kind of exclusion:
+| | park | cooldown |
+|---|---|---|
+| cause | operator/config decision | transient upstream failure |
+| cost of retrying anyway | **real money** | free |
+| correct never-strand behaviour | **fail with 503** | retry the cooled leg |
+
+**DECIDED:** cooldown KEEPS the never-strand guard; park does NOT. A fully-parked chain returns
+empty and the caller returns the D-012 503, consistent with `forwarder.py`. Requires a red-proof for
+both halves: a cooled-only chain must still be restored, and a parked-only chain must NOT be.
+Ticket: `PARK-COOLDOWN-SPLIT`.
+
 ---
 
 ## ASKED — open, and what each one BLOCKS
