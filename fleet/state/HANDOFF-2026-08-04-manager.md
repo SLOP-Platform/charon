@@ -301,3 +301,23 @@ on the board — it means the test suite is largely decorative, and it reframes 
 12. Triage the 3 HIGH-severity bandit findings — recorded in the baseline, currently not enforced.
 13. Cheapest unmet need in the whole estate: **out-of-band alerting** (ntfy or Healthchecks.io — one
     container or one `curl`). D-003 mandates it; the capability is currently **nothing**.
+
+14. ⚠️ **LANE C IS ONLY TWO-THIRDS DONE — the biggest remaining research item.** What finished:
+    **AXIS 1** (re-scored ~34 existing registry rows under the corrected lenses) and **AXIS 3**
+    (the gap audit). What did NOT happen: **AXIS 2 — the candidates were NAMED, never EXECUTED.**
+    - **~12 categories / ~50 tools are listed as UNVERIFIED** in `LANE-C-REEVAL-2026-08-04.md` §AXIS 2.
+      Every one needs an executed trial before any verdict — reputation and star counts are
+      explicitly disallowed (the registry's own Mem0 case: 62K stars, and its headline
+      auto-extraction claim does not exist in the code).
+    - **~10 AXIS-1 rows came back `RE-TEST` or `RE-OPEN`** and also need executed trials:
+      LiteLLM tool-call translation · Linear/Plane · Zed ACP · Featherless · Claude Code hooks ·
+      OPA/Rego · vulture replace-scope · task-orchestrator · **Temporal-class durable-execution
+      engines (never scored for the queue role at all)** · qodo-merge/aider/CodeRabbit (never
+      evaluated; `review-pool.sh` is 399 hand-rolled LOC).
+    - **Highest priority within it: the durable-queue role** (AXIS 2 category #1). It is the
+      ~6,000-LOC deletion target AND **D-008a explicitly blocks the Go supervisor until it is
+      answered.** Score Restate / DBOS / Hatchet / River / Temporal / procrastinate against
+      `work-lease.sh` + `board-lock.sh` + `faktory/` + `reconcile-stale-claims.sh` + `branch-reaper.sh`.
+    - Method is fixed by D-002/D-009: executed trial, both sides at full strength (L6), report what
+      adopting **DELETES** (L2). File results as new EVAL-REGISTRY rows — the registry is append-only
+      and is the consult-first gate for all future tool questions.
