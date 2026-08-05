@@ -45,7 +45,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 _GC_ROOT = Path(__file__).resolve().parent.parent
@@ -76,12 +75,42 @@ def _fail(message: str) -> int:
 
 def _missing_tools() -> list[str]:
     missing = []
-    for module in ("coverage", "pytest_cov", "xdist"):
+    for module in ("coverage", "pytest_cov", "xdist", "defusedxml"):
         if importlib.util.find_spec(module) is None:
             missing.append(module)
     if shutil.which("diff-cover") is None:
         missing.append("diff-cover")
     return missing
+
+
+def _parse_coverage_xml(coverage_xml: Path):  # -> xml.etree.ElementTree.Element
+    """Return the root element of a coverage report, parsed with ``defusedxml``.
+
+    defusedxml, NOT the stdlib ``xml.etree.ElementTree`` (bandit B314 / ruff
+    S314). The stdlib parser expands entities and honours DTDs, so a report it
+    is pointed at can bomb the process (billion-laughs) or read local files via
+    an external entity. Today's input is coverage.py XML this gate generated
+    itself into its own temp dir, so the live exposure is low — but "the input
+    happens to be ours right now" is exactly the assumption that rots (a future
+    caller passing a CI-artifact path is one edit away), and the hardened parser
+    is a drop-in with identical behaviour on well-formed input. Cheap fix, no
+    suppression: this gate does not get to weaken a security check.
+
+    Raises ValueError on any unusable report, so "I could not read the coverage
+    data" can never be mistaken for "the coverage data was clean". defusedxml's
+    own rejections (``EntitiesForbidden``/``DTDForbidden``/...) already subclass
+    ValueError, so a hostile report lands on the same fail-closed path.
+
+    Imported HERE rather than at module scope on purpose: an absent defusedxml
+    is then reported by ``_missing_tools()`` with its install line, and merely
+    IMPORTING this module (the tests do) never requires the [quality] extra.
+    """
+    from defusedxml.ElementTree import ParseError, parse
+
+    try:
+        return parse(coverage_xml).getroot()
+    except ParseError as exc:
+        raise ValueError(f"coverage XML {coverage_xml} is unparseable: {exc}") from exc
 
 
 def measured_lines(coverage_xml: Path) -> dict[str, set[int]]:
@@ -92,10 +121,7 @@ def measured_lines(coverage_xml: Path) -> dict[str, set[int]]:
     """
     if not coverage_xml.exists() or coverage_xml.stat().st_size == 0:
         raise ValueError(f"coverage XML {coverage_xml} is missing or empty")
-    try:
-        root = ET.parse(coverage_xml).getroot()
-    except ET.ParseError as exc:
-        raise ValueError(f"coverage XML {coverage_xml} is unparseable: {exc}") from exc
+    root = _parse_coverage_xml(coverage_xml)
 
     repo = repo_root()
     prefixes: list[str] = []
@@ -133,7 +159,7 @@ def measured_lines(coverage_xml: Path) -> dict[str, set[int]]:
 
 def whole_tree_percent(coverage_xml: Path) -> float:
     """The standing whole-tree number — REPORTED for grounding, never gated."""
-    root = ET.parse(coverage_xml).getroot()
+    root = _parse_coverage_xml(coverage_xml)
     valid = int(root.get("lines-valid", "0"))
     covered = int(root.get("lines-covered", "0"))
     return 100.0 * covered / valid if valid else 0.0
