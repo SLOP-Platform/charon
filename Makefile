@@ -1,4 +1,13 @@
-.PHONY: install dev test lint type boundary version audit demo all clean
+.PHONY: install dev test lint type boundary version audit demo all clean status
+
+status:  ## interim: computed session state (git + forge). Upgraded post-§3.
+	@echo "== CG status (INTERIM — reads git+forge, not the event store) =="
+	@echo "branch:    $$(git rev-parse --abbrev-ref HEAD)"
+	@echo "dirty:     $$(test -n \"$$(git status --porcelain)\" && echo YES || echo no)"
+	@echo "worktrees:"; git worktree list
+	@echo "next issue:"; gh issue list --label next --limit 5 2>/dev/null || echo "  (gh unavailable)"
+	@echo "open PRs:   $$(gh pr list --state open --limit 100 2>/dev/null | wc -l)"
+	@echo "main CI:    $$(gh run list --branch master --limit 1 2>/dev/null || echo n/a)"
 
 install:
 	pipx install . || pip install .
