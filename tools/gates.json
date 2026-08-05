@@ -56,6 +56,33 @@
     "work_units": "test cases collected by pytest"
   },
   {
+      "id": "diff-cover",
+      "name": "Diff-coverage gate",
+      "domain": "diff-coverage",
+      "enforcer": "python3 tools/diff_cover_gate.py",
+      "covers": "every line this change adds to src/ must be executed by the test suite",
+      "ci_step": true,
+      "invariant": "No added src/ line is unexercised",
+      "red_proof": "tests/test_diff_cover_mutmut_gate.py",
+      "min_work_units": 0,
+      "work_units": "added executable src/ lines analysed by diff-cover",
+      "work_units_note": "DIFF-SCOPED by design: 0 is the correct and PROVEN count on a trunk build or a change that touches no src/**.py. The gate prints the merge-base SHA and the changed-file list as evidence before it reports 0, and fails closed on every other route to an empty measurement (unresolvable base, untracked source, unmeasured file, diff-cover analysing fewer lines than the diff contains)."
+    },
+    {
+      "id": "mutmut",
+      "name": "Mutation gate (diff-scoped)",
+      "domain": "mutation",
+      "enforcer": "python3 tools/mutmut_diff_gate.py",
+      "covers": "every changed src/ file must have a test that kills its mutants",
+      "ci_step": false,
+      "invariant": "No mutant of a changed src/ file survives",
+      "red_proof": "tests/test_diff_cover_mutmut_gate.py",
+      "min_work_units": 0,
+      "work_units": "mutants generated and tested for the changed src/ files",
+      "work_units_note": "DIFF-SCOPED by design: 0 is the correct and PROVEN count on a trunk build or a change that touches no src/**.py. Once a src/**.py does change, a 0-mutant run is treated as a MISCONFIGURATION and fails closed -- mutmut exits 0 even when mutants survive, so the count is the only honest signal.",
+      "cadence_note": "NOT a PR gate (ci_step:false), on cost and on a live blocker, both MEASURED 2026-08-04. COST: mutmut re-runs the whole suite single-process to collect its baseline stats before a single mutant runs -- 78s -- and one 8-line changed function (charon.gitutil.commit_all) generates 29 mutants, each of which re-runs the tests covering it. A typical multi-function PR is minutes, against a 20-minute CI job budget and a repo directive that treats latency as a failure class. BLOCKER: mutmut runs the suite inside its own mutants/ sandbox, which has no .git and re-enters the gate scripts, so the suite is RED there and the gate can currently only ever fail closed (measured: 1 failed, 426 passed, 16.7s). The gate LOGIC is proven correct end-to-end on a fixture -- RED on a surviving mutant, GREEN on a real assertion (tests/test_diff_cover_mutmut_gate.py). Wiring it to a nightly cadence needs the sandbox suite green FIRST; a scheduled job that is guaranteed red is a gate nobody reads."
+    },
+  {
     "id": "validate-board",
     "optional": true,
     "name": "Fleet board validation",

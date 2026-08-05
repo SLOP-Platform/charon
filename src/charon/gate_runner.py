@@ -53,6 +53,21 @@ CHECKS: list[tuple[list[str], str]] = [
     (["python3", "tools/check_fail_loud.py"], "fail-loud"),
     (["python3", "tools/check_dogfood.py"], "dogfood"),
     (["python3", "-m", "pytest", "-q"], "pytest"),
+    # DIFF-SCOPED coverage gate. Runs AFTER pytest: coverage measured against a
+    # red suite proves nothing. Costs ~0s until the change actually touches a
+    # src/**.py, at which point it re-runs the suite under coverage (35.4s
+    # measured 2026-08-04). It does NOT gate the pre-existing uncovered surface —
+    # a whole-tree floor on an 87%-covered tree would red every PR and be
+    # switched off within a week.
+    #
+    # tools/mutmut_diff_gate.py is deliberately NOT here. It is red-proofed
+    # (tests/test_diff_cover_mutmut_gate.py) and correct, but its cost on THIS
+    # tree is a PR-gate failure in its own right: mutmut re-runs the suite
+    # single-process for its baseline (78s measured) before a single mutant, and
+    # one 8-line changed function generates 29 mutants. It is registered in
+    # tools/gates.json with ci_step:false pending a nightly cadence — see that
+    # entry's cadence_note.
+    (["python3", "tools/diff_cover_gate.py"], "diff-cover"),
     # docs/REVIEW-LOG.md is gitignored (generated artifact from the per-ticket
     # fragments in docs/review-log/). Running in generate mode is idempotent
     # (deterministic render of the SoT fragments) and is what .github/workflows/ci.yml
