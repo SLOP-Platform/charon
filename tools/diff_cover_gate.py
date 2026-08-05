@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -139,6 +140,15 @@ def whole_tree_percent(coverage_xml: Path) -> float:
 
 
 def _run_coverage(coverage_xml: Path) -> subprocess.CompletedProcess[str]:
+    """Run the suite under coverage, leaving NOTHING behind in the checkout.
+
+    ``COVERAGE_FILE`` points coverage's data files at the temp dir. Without it
+    they are written relative to the CWD — the repo root — so every gate run
+    drops a ``.coverage`` plus one ``.coverage.<host>.<pid>.<rand>`` per xdist
+    worker into the working tree. None of them is gitignored, so the gate would
+    dirty the tree it is measuring: cruft this pair of gates exists to keep out.
+    """
+    env = {**os.environ, "COVERAGE_FILE": str(coverage_xml.parent / ".coverage")}
     return subprocess.run(
         [
             sys.executable, "-m", "pytest", "-q", "-n", "auto",
@@ -148,6 +158,7 @@ def _run_coverage(coverage_xml: Path) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         check=False,
+        env=env,
     )
 
 
