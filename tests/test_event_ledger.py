@@ -330,6 +330,44 @@ class TestDurableStore:
         with pytest.raises(EventSchemaError, match="schema_version"):
             Event.from_dict(row)
 
+    def test_checkpoint_position_survives_the_round_trip(
+        self, tmp_path: Path
+    ) -> None:
+        """An event must stay traceable to the Checkpoint it extends, or the
+        per-task ledger and the cross-task table cannot be reconciled."""
+        cp = Checkpoint(
+            seq=7,
+            provider="provider-a",
+            commit="abc",
+            verified=[],
+            remaining=[],
+            usage=Usage(cost_usd=0.02),
+            reviewer_passed=True,
+        )
+        led = EventLedger(tmp_path / "events")
+        ev = led.append(
+            Event.from_checkpoint(cp, unit_id="U1", actor_model="gpt-x", attempt_seq=2)
+        )
+        got = EventLedger(tmp_path / "events").get(ev.event_id)
+        assert got.checkpoint_seq == 7
+        assert got.attempt_seq == 2
+
+    def test_a_row_missing_a_required_field_raises(self) -> None:
+        """A truncated or hand-edited row is refused, not half-read."""
+        row = _ev().to_dict()
+        del row["actor_model"]
+        with pytest.raises(EventSchemaError, match="malformed"):
+            Event.from_dict(row)
+
+    def test_blank_lines_are_skipped(self, tmp_path: Path) -> None:
+        """Whitespace between rows is not data and is not corruption."""
+        led = EventLedger(tmp_path / "events")
+        led.record(**_fields())
+        with open(led.path, "a", encoding="utf-8") as fh:
+            fh.write("\n\n")
+        led.record(**_fields(unit_id="U2"))
+        assert [ev.unit_id for ev in led.events()] == ["U1", "U2"]
+
     def test_row_is_plain_json(self, tmp_path: Path) -> None:
         """The table stays greppable and tool-readable, not a pickle."""
         led = EventLedger(tmp_path / "events")
@@ -382,11 +420,12 @@ class TestGradeInputs:
     ) -> None:
         """$0.40 for one pass loses to $0.30 for one pass — the §1 metric."""
         stats = self._two_models(tmp_path).pair_stats()
-        cheap = stats[("provider-a", "cheap-model", "coding")]
-        dear = stats[("provider-b", "dear-model", "coding")]
-        assert cheap.cost_per_accepted_task == pytest.approx(0.40)
-        assert dear.cost_per_accepted_task == pytest.approx(0.30)
-        assert cheap.cost_per_accepted_task > dear.cost_per_accepted_task
+        cheap = stats[("provider-a", "cheap-model", "coding")].cost_per_accepted_task
+        dear = stats[("provider-b", "dear-model", "coding")].cost_per_accepted_task
+        assert cheap is not None and dear is not None
+        assert cheap == pytest.approx(0.40)
+        assert dear == pytest.approx(0.30)
+        assert cheap > dear
 
     def test_never_accepted_has_no_cost_per_accepted_task(
         self, tmp_path: Path
@@ -419,6 +458,36 @@ class TestGradeInputs:
         stats = self._two_models(tmp_path).pair_stats()
         assert grade_for(stats[("provider-b", "dear-model", "coding")]) == "A"
         assert grade_for(stats[("provider-a", "cheap-model", "coding")]) == "D"
+
+    def test_an_actor_that_almost_never_passes_grades_f(
+        self, tmp_path: Path
+    ) -> None:
+        """Below the lowest band there is a floor, and it is F — a rate of
+        1-in-5 must not fall through to 'unknown' and read as no evidence."""
+        led = EventLedger(tmp_path / "events")
+        for i in range(4):
+            led.record(
+                **_fields(
+                    unit_id=f"U{i}",
+                    outcome_class="quality_fail",
+                    defect_class="implementation",
+                )
+            )
+        led.record(**_fields(unit_id="U4"))
+        stats = led.pair_stats()[("provider-a", "cheap-model", "general")]
+        assert stats.acceptance_rate == pytest.approx(0.2)
+        assert grade_for(stats) == "F"
+
+    def test_operational_events_are_absent_from_availability(
+        self, tmp_path: Path
+    ) -> None:
+        """A funding stall is not an outage: it must not count against the
+        provider's availability denominator either (§2)."""
+        led = EventLedger(tmp_path / "events")
+        led.record(**_fields(outcome_class="funding"))
+        led.record(**_fields(unit_id="U2", outcome_class="unavailable"))
+        led.record(**_fields(unit_id="U3"))
+        assert led.provider_availability()["provider-a"] == (1, 2)
 
     def test_grade_is_unknown_below_min_samples(self, tmp_path: Path) -> None:
         """Too little history is 'unknown' — the value the matrix means by it."""
