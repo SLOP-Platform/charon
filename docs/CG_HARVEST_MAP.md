@@ -1,14 +1,14 @@
 ---
 doc: CG_HARVEST_MAP
-version: 1
-date: 2026-08-06
-supersedes: none — initial version
+version: 2
+date: 2026-08-07
+supersedes: 1
 aligns_with:
   - CG_PLAN_v2.md §6 (this file is its companion; §6.1 is the harvest map it points to)
   - CG_MISSION.md (adopt before build, compose before extend, delete after adopt)
 changelog:
-  - v1 (2026-08-06) — initial version. Body unchanged from the authoritative
-    2026-08-05 branch-and-code audit; this revision adds version frontmatter only.
+  - "v2 (2026-08-07): correct the consolidation-warning rationale — closing #216 is about product_grades.py duplicating the third grade store, NOT about litellm.Router (D-019 ADOPTS the Router as substrate, it does not delete it); the v1 rationale was itself an instance of MANAGER_PLAYBOOK §8 failure-shape #1"
+  - "v1 (2026-08-06): initial harvest map — companion to CG_PLAN_v2 §6 (published in PR #246 with the §8-misread rationale, corrected here)"
 ---
 # CG Harvest Map
 
@@ -34,5 +34,9 @@ mission (`CG_MISSION.md`).
 
 **Consolidation warning — three grade stores exist or are proposed:** `grades.py`, the merged
 `event_ledger.py`, and `product_grades.py` proposed by #216. The plan names **one**. Consolidate
-on `event_ledger`; close #216 (it builds a third *and* attaches to `litellm.Router`, which D-019
-deletes).
+on `event_ledger` and close #216 — not because it touches `litellm.Router` (D-019 deletes the
+bespoke `litellm_plane`, but adopts the Router as its substrate, so attaching to the Router is the
+adoption path, not a delete target — this is §8 failure-shape #1), but because its
+`product_grades.py` (+485) builds a third store duplicating the product-side grading
+`event_ledger` already ships. Its `grade_order.py` (+692) is adoption glue and is kept. This is
+the disposition executed as `GRADE-ORDER-LEDGER-REPOINT`.
