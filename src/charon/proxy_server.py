@@ -24,7 +24,7 @@ import socketserver
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
 from . import console_router, forwarder
@@ -583,6 +583,13 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         # (status, dict). None (default) keeps the console READ-ONLY. The gateway wires
         # this only for the user-config-dir flow; it writes config + reloads routes.
         self.setup_handler = None
+        # GW-CUTOVER-REOPEN: the litellm.Router attached by gateway.build_server when the
+        # ``litellm_plane`` operator toggle is on (None → the hand-rolled forwarder serves),
+        # and the hot-reload rebuild hook called by apply_routes so the Router mirrors the
+        # LIVE config. Both are set ONLY by gateway.build_server; direct-server construction
+        # never creates them (getattr guards in forwarder.py keep them optional).
+        self.litellm_router: Any = None
+        self._litellm_plane_hook: Callable[[], None] | None = None
 
     def session_key(self) -> str:
         """The HMAC key that signs ``/charon`` session cookies (SR-13). Resolved
@@ -616,6 +623,15 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
             self.model_meta = model_meta or {}
             self.model_pricing = model_pricing or {}
             self.observer.set_pricing(self.model_pricing)
+            # GW-CUTOVER-REOPEN: keep the attached litellm.Router (when the litellm_plane
+            # toggle is on) mirroring the LIVE config — a build-time Router would serve the
+            # OLD deployment set after a reload/catalog-refresh, billing a provider the
+            # operator just removed. Rebuild under the same lock so an in-flight request can
+            # never read new pools against a stale Router; a failed rebuild degrades to None
+            # → forwarder falls back to the hand-rolled loop (never strands).
+            _hook = getattr(self, "_litellm_plane_hook", None)
+            if _hook is not None:
+                _hook()
 
     def chain_for(self, model: str) -> list[UpstreamRoute]:
         """The ordered failover chain for ``model``: a configured pool (multiple

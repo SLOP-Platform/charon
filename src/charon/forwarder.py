@@ -351,12 +351,17 @@ def _serve_via_router(handler, srv, router, requested, orig_bj, raw_body,
     )
 
     # D-012: the Router's deployments were built at startup and cannot see a RUNTIME park;
-    # a parked leg must never be served → fall back to the hand-rolled loop, which excludes
-    # it pre-flight. (The fully-parked case already 503'd above in forward_with_failover.)
+    # a parked (or drained) leg must never be served → fall back to the hand-rolled loop,
+    # which excludes it pre-flight. (The fully-parked case already 503'd above in
+    # forward_with_failover.) ``is_drained`` closes the race where a balance poll drains an
+    # fc3 leg between the drain pre-flight above and this dispatch — conservative, never
+    # over-blocks (a no-balance provider is never ``is_drained``).
     bt = getattr(srv, "balance_tracker", None)
     if bt is not None:
         live = srv.chain_for(requested)
-        if live and any(bt.is_parked(r.provider or r.label) for r in live):
+        if live and any(
+                bt.is_parked(r.provider or r.label)
+                or bt.is_drained(r.provider or r.label) for r in live):
             return False
 
     start = time.monotonic()
@@ -364,6 +369,14 @@ def _serve_via_router(handler, srv, router, requested, orig_bj, raw_body,
         guarded = complete_via_router_guarded(
             router, orig_bj, observer=srv.observer, timeout=srv.fwd_timeout)
     except Exception:  # noqa: BLE001 - no deployment / upstream failure → fall back
+        return False
+
+    if guarded.downgrade and getattr(srv, "failover_on_downgrade", False):
+        # SR-2 operator toggle (default False): fail over to TRY the asked model instead of
+        # serving a downgrade. The Router path must NOT silently override that explicit
+        # operator choice — defer to the hand-rolled loop, which records the discarded
+        # attempt VISIBLY (count_usage=True, never the silent double-bill) and fails over
+        # exactly as the operator configured.
         return False
 
     obs = guarded.observation

@@ -604,8 +604,18 @@ def build_server(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> 
     # makes it a production importer on the serving path (the accept criterion's grep).
     # The Router is read by forwarder.py at request time; a failure to construct it
     # degrades to the hand-rolled forwarder (never strands, never fails the bind).
+    #
+    # HOT-RELOAD REBUILD: ``apply_routes`` (web-setup reload + catalog-refresh TTL poll)
+    # swaps the LIVE pools at runtime; a Router built at startup would keep serving the OLD
+    # deployment set (billing a provider the operator just removed/disabled). ``apply_routes``
+    # calls ``_litellm_plane_hook`` when present so the Router always mirrors the live config;
+    # a failed rebuild degrades to the hand-rolled forwarder (never strands).
     if cfg.litellm_plane:
+        def _rebuild_litellm_router() -> None:
+            server.litellm_router = _build_litellm_router(server)
+
         server.litellm_router = _build_litellm_router(server)
+        server._litellm_plane_hook = _rebuild_litellm_router
     if setup_dir is not None:
         server.setup_handler = make_setup_handler(server, setup_dir)
     return server
