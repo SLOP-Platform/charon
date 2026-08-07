@@ -44,6 +44,11 @@ ALL_DOMAINS: frozenset[str] = frozenset({
     # catalog-case-quant gate has existed — registered here rather than left as
     # standing noise, because a permanently-noisy registry is one nobody reads.
     "catalog",
+    # catalog-persist is deliberately its own domain, not part of "catalog":
+    # catalog-case-quant checks the SHAPE of ids in the catalog, while
+    # catalog-persist guards the WRITE PATH from destroying the file. They fail
+    # for unrelated reasons and must not share a slot.
+    "catalog-persist",
 })
 
 
