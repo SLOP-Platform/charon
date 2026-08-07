@@ -1,7 +1,7 @@
 ---
 doc: CG_MISSION
 version: 3
-date: 2026-08-07
+date: 2026-08-06
 supersedes: 2
 aligns_with:
   - CG_PLAN_v2.md (this charter is proposed as its §1)

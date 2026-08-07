@@ -1,7 +1,7 @@
 ---
 doc: CG_PLAN_v2
 version: 1
-date: 2026-08-07
+date: 2026-08-06
 supersedes: none
 aligns_with:
   - CG_MISSION.md (its §1 charter; adopt before build, compose before extend, delete after adopt)
