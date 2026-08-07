@@ -49,7 +49,57 @@ __all__ = [
     "build_fallback_chain",
     "order_pool_by_live_cost",
     "order_chain_by_funding_class",
+    "RoutingPolicyViolation",
 ]
+
+
+class RoutingPolicyViolation(ValueError):
+    """Raised when a model violates a routing policy admission constraint.
+
+    Raised loudly: a silent drop makes a broken routing policy indistinguishable
+    from a broken provider.
+    """
+
+
+# zen/go routing policy — operator decision 2026-08-02:
+#   opencode-zen  -> FREE models ONLY  (funding_class 1)
+#   opencode-go   -> FREE models ONLY  (funding_class 2; "very cheap" proxied as free here)
+_OPENCODE_ZEN = "opencode-zen"
+_OPENCODE_GO = "opencode-go"
+
+
+def _get_funding_class(provider: str, providers_cfg: dict) -> int | None:
+    cfg = providers_cfg.get(provider) if providers_cfg else None
+    if isinstance(cfg, dict):
+        fc = cfg.get("funding_class")
+        if isinstance(fc, int):
+            return fc
+    if provider in _providers_mod.PRESETS:
+        preset = _providers_mod.PRESETS[provider]
+        fc = getattr(preset, "funding_class", None)
+        if isinstance(fc, int):
+            return fc
+    return None
+
+
+def _check_routing_policy(mid: str, spec: dict, providers_cfg: dict) -> None:
+    prov = spec.get("provider")
+    if prov not in (_OPENCODE_ZEN, _OPENCODE_GO):
+        return
+    fc = _get_funding_class(prov, providers_cfg)
+    is_free = bool(spec.get("free", False))
+    if fc == 1:  # funding_class 1 = free-recurring → free models only
+        if not is_free:
+            raise RoutingPolicyViolation(
+                f"model {mid!r} on provider {prov!r} is not free "
+                f"(free={is_free}) — violates opencode-zen FREE-ONLY policy"
+            )
+    elif fc == 2:  # funding_class 2 = flat-sub; "very cheap" enforced as free-only
+        if not is_free:
+            raise RoutingPolicyViolation(
+                f"model {mid!r} on provider {prov!r} is not free "
+                f"(free={is_free}) — violates opencode-go VERY-CHEAP policy"
+            )
 
 
 def _int_or_none(v: object) -> int | None:
@@ -170,6 +220,7 @@ def build_routes_and_pools(
     routes: dict[str, _UpstreamRoute] = {}
     for mid, spec in registry.items():
         if isinstance(spec, dict):
+            _check_routing_policy(mid, spec, providers_cfg)
             r = route_from_spec(spec, providers_cfg, model_id=mid,
                                 enforce_preset_allowlist=enforce_preset_allowlist)
             if r is not None:

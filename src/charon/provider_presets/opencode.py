@@ -9,11 +9,15 @@ CATEGORY_PRESETS_DATA: dict[str, dict] = {
     "opencode-zen": {
         "base_url": "https://opencode.ai/zen/v1",
         "key_env": "OPENCODE_ZEN_KEY",
-        "note": "OpenCode Zen — full catalog (Claude/GPT/Gemini/Qwen + open models).",
+        "funding_class": 1,
+        "note": "OpenCode Zen — full catalog (Claude/GPT/Gemini/Qwen + open models). "
+                "FREE models only — non-free models are rejected at pool-build time.",
     },
     "opencode-go": {
         "base_url": "https://opencode.ai/zen/go/v1",
         "key_env": "OPENCODE_ZEN_KEY",
-        "note": "OpenCode Zen 'go' — coding-focused subset; same OPENCODE_ZEN_KEY.",
+        "funding_class": 2,
+        "note": "OpenCode Zen 'go' — coding-focused subset; same OPENCODE_ZEN_KEY. "
+                "VERY CHEAP models only — enforced at pool-build time.",
     },
 }
