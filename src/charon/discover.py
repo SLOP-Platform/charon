@@ -3,11 +3,20 @@
 Implements PROPOSAL-1 Phase A: discover all models available across configured
 providers by querying their /v1/models endpoints in parallel, then cross-reference
 model IDs to build a cost map for routing decisions.
+
+CATALOG-COMPLETENESS (P0): price (input/output per Mtok), context window, and the
+free-tier flag are REQUIRED catalog fields. An entry missing any of them is
+REJECTED loudly (:class:`CatalogIncompleteError`) — never silently routed as if
+it had data. The cost map is PERSISTED (``cost_map.json``) and a restart READS it
+rather than recomputing; litellm's ``model_cost`` feed (already a dependency) is
+consulted FIRST as a price source, then provider /models; disagreement between
+sources is recorded rather than silently picking a winner.
 """
 from __future__ import annotations
 
 import concurrent.futures
 import json
+import logging
 from pathlib import Path
 
 from . import (
@@ -17,7 +26,144 @@ from . import (
     secrets,
 )
 
+log = logging.getLogger("charon.discover")
+
 _COST_MAP_FILE = "cost_map.json"
+
+# Required catalog fields — a cost-map entry missing any of these is REJECTED
+# loudly (CATALOG-COMPLETENESS contract a). ``cost_input``/``cost_output`` are
+# per-token USD (the canonical unit the rest of the routing layer expects).
+_REQUIRED_FIELDS: tuple[str, ...] = ("cost_input", "cost_output", "context_window", "free")
+
+
+class CatalogIncompleteError(ValueError):
+    """A catalog entry is missing a required field (price / context / free flag).
+
+    Raised LOUDLY — never silently dropped — so the operator sees that a served
+    model carries no price/context data and the cost directive cannot rank it
+    (CATALOG-COMPLETENESS contract a: revert the check → RED)."""
+
+
+def validate_catalog_entry(model_id: str, entry: dict) -> None:
+    """Raise :class:`CatalogIncompleteError` if *entry* is missing a required
+    catalog field (price input/output, context window, free flag).
+
+    ANTI-OVER-BLOCK (contract d): an entry with EVERY required field present
+    passes untouched. The check is the SINGLE home for "is this entry complete
+    enough to route on" so the cost directive never ranks on absent data."""
+    missing = [f for f in _REQUIRED_FIELDS if f not in entry]
+    if missing:
+        raise CatalogIncompleteError(
+            f"catalog entry {model_id!r} is missing required field(s): "
+            f"{', '.join(missing)} (need cost_input, cost_output, context_window, "
+            f"free). A served model without price/context cannot be cost-ranked — "
+            f"populate it (litellm feed, provider /models, or hand-set) before "
+            f"serving it."
+        )
+
+
+# ── litellm price feed (ADOPT — already a dependency) ──────────────────────────
+# litellm ships ``model_prices_and_context_window.json`` carrying price + context
+# for thousands of models. Per the substrate directive we consult it FIRST as a
+# price source, then provider /models; disagreement between sources is RECORDED
+# (a ``price_sources`` list per provider entry) rather than silently picking a
+# winner — multiple corroborating sources over one SSOT for observed facts.
+#
+# The feed is read from the in-memory ``litellm.model_cost`` dict (the parsed form
+# of the same JSON). Unit: ``input_cost_per_token`` / ``output_cost_per_token`` are
+# per-token USD — the SAME canonical unit Charon stores as ``cost_input`` /
+# ``cost_output`` (see providers._extract_pricing), so values are carried through
+# verbatim with NO scaling.
+
+
+def _litellm_feed() -> dict[str, dict]:
+    """Return ``{casefolded_model_id: {cost_input, cost_output, context_window,
+    free, source: "litellm"}}`` from litellm's ``model_cost``.
+
+    Lazy import: litellm is an OPTIONAL runtime dep for the discovery path (the
+    gateway commodity plane adopts it, but discovery must not hard-fail when it
+    is absent). Returns ``{}`` when litellm is not installed. Filters the
+    ``sample_spec`` placeholder and non-finite/negative prices."""
+    try:
+        import litellm  # lazy: discovery must not require litellm to import
+    except ImportError:  # pragma: no cover — litellm is a declared extra
+        return {}
+    feed: dict[str, dict] = {}
+    mc = getattr(litellm, "model_cost", None)
+    if not isinstance(mc, dict):
+        return {}
+    import math
+    for mid, spec in mc.items():
+        if not isinstance(mid, str) or not isinstance(spec, dict):
+            continue
+        if mid == "sample_spec":
+            continue
+        ci = spec.get("input_cost_per_token")
+        co = spec.get("output_cost_per_token")
+        try:
+            ci_f = float(ci) if ci is not None else None
+            co_f = float(co) if co is not None else None
+        except (TypeError, ValueError):
+            continue
+        if ci_f is not None and not (math.isfinite(ci_f) and ci_f >= 0):
+            ci_f = None
+        if co_f is not None and not (math.isfinite(co_f) and co_f >= 0):
+            co_f = None
+        if ci_f is None and co_f is None:
+            continue
+        # context: prefer max_input_tokens, fall back to max_tokens
+        ctx = spec.get("max_input_tokens")
+        if not isinstance(ctx, int) or ctx <= 0:
+            ctx = spec.get("max_tokens")
+        if not isinstance(ctx, int) or ctx <= 0:
+            ctx = None
+        free = bool(ci_f == 0.0 and co_f == 0.0)
+        feed[mid.casefold()] = {
+            "cost_input": float(ci_f) if ci_f is not None else 0.0,
+            "cost_output": float(co_f) if co_f is not None else 0.0,
+            "context_window": ctx,
+            "free": free,
+            "source": "litellm",
+        }
+    return feed
+
+
+def _merge_litellm(entry: dict, mid: str, feed: dict[str, dict],
+                   provider_name: str | None = None) -> None:
+    """Corroborate *entry* (a per-provider cost-map entry) with the litellm feed.
+
+    Fills ``cost_input``/``cost_output``/``context_window`` when the provider
+    /models payload omitted them, and RECORDS disagreement: when both sources
+    quote a price and they differ, the provider's quote WINS (it is the
+    provider's own price) but the litellm figure is preserved in
+    ``price_sources`` so the discrepancy is visible, not erased."""
+    candidates = [mid.casefold()]
+    if provider_name:
+        candidates.insert(0, f"{provider_name}/{mid}".casefold())
+    spec = next((feed[key] for key in candidates if key in feed), None)
+    if spec is None:
+        return
+    if "cost_input" not in entry:
+        entry["cost_input"] = spec["cost_input"]
+    if "cost_output" not in entry:
+        entry["cost_output"] = spec["cost_output"]
+    if "context_window" not in entry:
+        cw = spec["context_window"]
+        if cw is not None:
+            entry["context_window"] = cw
+    if not entry.get("free") and spec.get("free"):
+        entry["free"] = True
+    sources: list[dict] = []
+    if (entry.get("cost_input") != spec["cost_input"] or
+            entry.get("cost_output") != spec["cost_output"]):
+        sources.append({"source": "litellm",
+                        "cost_input": spec["cost_input"],
+                        "cost_output": spec["cost_output"]})
+    if sources:
+        entry.setdefault("price_sources", [])
+        if isinstance(entry["price_sources"], list):
+            entry["price_sources"].extend(sources)
+    entry.setdefault("sources", []).append("litellm")
 
 
 def discover_provider(base_url: str, api_key: str | None,
@@ -63,16 +209,38 @@ def discover_provider(base_url: str, api_key: str | None,
     return result
 
 
+def _provider_blended_cost(entry: dict) -> float:
+    """Cost-first sort key for a per-provider entry: the 3:1 in:out blend the
+    routing layer uses (mirrors routing_policy.derived_cost_rank). Missing
+    prices sort last (``inf``) so an unpriced offer never floats above a priced
+    one (CATALOG-COMPLETENESS contract c — cheapest capable provider wins)."""
+    ci = entry.get("cost_input")
+    co = entry.get("cost_output")
+    if ci is None and co is None:
+        return float("inf")
+    ci = float(ci) if ci is not None else 0.0
+    co = float(co) if co is not None else 0.0
+    return (3.0 * ci + co) / 4.0
+
+
 def build_cost_map(discoveries: dict[str, list[dict] | None]) -> dict:
     """Cross-reference model IDs across providers into a cost map.
 
     *discoveries* is ``{provider_name: [model_dict, ...] | None}`` where each
     model dict is a raw /models entry (at minimum ``{"id": str}``).
 
-    Returns ``{model_id: {"providers": [{"provider", "pricing", "free"}]}}``
-    grouped case-insensitively by model ID.  A provider whose discovery
-    returned ``None`` (failure) is simply skipped.
+    Returns ``{model_id: {"providers": [...]}}`` grouped case-insensitively by
+    model ID. Each provider entry carries ``provider``, ``free``, and (when
+    available) ``cost_input``/``cost_output``/``context_window``. The litellm
+    ``model_cost`` feed is consulted FIRST to fill price/context a provider's
+    /models omitted (CATALOG-COMPLETENESS scope 3), with disagreement recorded.
+
+    Providers serving the SAME model are sorted CHEAPEST-FIRST by the 3:1
+    in:out blend (contract c) — so the cheapest capable provider for a model is
+    always first. A provider whose discovery returned ``None`` (failure) is
+    simply skipped.
     """
+    feed = _litellm_feed()
     _by_key: dict[str, tuple[str, list[dict]]] = {}
 
     for provider_name, model_list in discoveries.items():
@@ -90,6 +258,14 @@ def build_cost_map(discoveries: dict[str, list[dict] | None]) -> dict:
             if isinstance(pricing, dict):
                 entry["pricing"] = dict(pricing)
 
+            # extract per-token cost from provider pricing (the canonical seam)
+            price_entry: dict[str, object] = {}
+            providers._extract_pricing(m, price_entry)
+            for fld in ("cost_input", "cost_output"):
+                v = price_entry.get(fld)
+                if isinstance(v, (int, float)):
+                    entry[fld] = float(v)
+
             free_val = False
             if mid.endswith(":free"):
                 free_val = True
@@ -101,11 +277,30 @@ def build_cost_map(discoveries: dict[str, list[dict] | None]) -> dict:
                     pass
             entry["free"] = free_val
 
+            # upstream context, when the provider advertises it
+            for src_key in ("context_window", "context_length"):
+                ctx = m.get(src_key)
+                if isinstance(ctx, (int, float)) and int(ctx) > 0:
+                    entry["context_window"] = int(ctx)
+                    break
+
+            # corroborate with the litellm feed FIRST (fills gaps, records
+            # disagreement) so an unpriced provider entry still gets a price
+            # when litellm knows the model.
+            _merge_litellm(entry, mid, feed, provider_name)
+            entry.setdefault("sources", [])
+
             if key not in _by_key:
                 _by_key[key] = (mid, [])
             _by_key[key][1].append(entry)
 
-    return {orig_id: {"providers": prov_list} for orig_id, prov_list in _by_key.values()}
+    # cheapest-first within each model (contract c): stable sort keeps the
+    # provider discovery order for ties.
+    out: dict[str, dict] = {}
+    for orig_id, prov_list in _by_key.values():
+        prov_list.sort(key=_provider_blended_cost)
+        out[orig_id] = {"providers": prov_list}
+    return out
 
 
 def save_cost_map(cost_map: dict, config_dir: str | Path | None = None):
@@ -129,6 +324,19 @@ def load_cost_map(config_dir: str | Path | None = None) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def get_cost_map(config_dir: str | Path | None = None, *,
+                 refresh: bool = False, timeout: int = 10) -> dict:
+    """Return the cost map, reading the PERSISTED ``cost_map.json`` when present
+    and *refresh* is False (a restart READS rather than recomputes —
+    CATALOG-COMPLETENESS contract b). When absent or *refresh* is True, runs a
+    fresh discovery (which persists the result) and returns it."""
+    if not refresh:
+        cached = load_cost_map(config_dir=config_dir)
+        if cached:
+            return cached
+    return discover_models(refresh=refresh, timeout=timeout, config_dir=config_dir)
+
+
 def discover_models(refresh: bool = False, timeout: int = 10,
                     config_dir: str | Path | None = None) -> dict:
     """Query all configured providers' /v1/models endpoints.
@@ -138,7 +346,10 @@ def discover_models(refresh: bool = False, timeout: int = 10,
     ThreadPoolExecutor (max 5 workers).  Saves the resulting cost map to disk and
     returns it.
 
-    *refresh* is reserved for future use (force re-query even if cached).
+    *refresh* is reserved for future use (force re-query even if cached). A
+    restart that wants to READ the persisted map rather than re-poll should call
+    :func:`get_cost_map` (CATALOG-COMPLETENESS contract b) — this function always
+    performs a fresh poll and persists the result.
     """
     prov_cfg = config.load_providers(config_dir=config_dir)
     secs = secrets.load_secrets(cd=config_dir)
