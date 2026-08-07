@@ -76,3 +76,303 @@ rules:
     patterns:
       # public-clean: allow — a path-detection rule must spell the path prefix it detects.
       - pattern-regex: '["'']/home/[A-Za-z0-9_.-]+/[^"'']*["'']'
+
+# -------------------------------------------------------------------------------------
+# MONEY-PATH RULES (RULES 4-10) — the CG money-correctness invariants.
+#
+# WHAT THESE ARE: the merge-boundary backstop for CG's OWN money layer (billing, metering,
+# spend/debit, balance, budget gates). They are re-grounded in the real money path
+# (proxy.py, forwarder.py, balance.py, providers.py) and were measured on the 2026-08-07
+# review: 0 false positives across 316 files / ~77.5k LOC, each rule proven live by a
+# positive specimen, and the set already caught one real latent bug (prepaid under-drain).
+#
+# HOW TO READ ONE: every rule below is a "positive" invariant — it REDS on a shape that
+# must never exist in the money path. A rule that fires on legitimate product code gets
+# tightened or demoted to the advisory file; it is NEVER disabled (T5 blast radius). If
+# a rule fires on the clean baseline, that is pattern-matching, not an invariant — the
+# fixtures/ sibling files (semgrep-money-known-bad.py / semgrep-money-known-good.py) are
+# the red-proof for that: each rule fires on the bad fixture and is silent on the good one.
+#
+# HOW TO ADD ONE: add a rule here, then add a specimen to fixtures/semgrep-money-known-bad.py
+# that it catches and a corrected counterpart to fixtures/semgrep-money-known-good.py that it
+# does NOT catch, and extend the canary (tests/semgrep-canary.test.sh) to assert both. A rule
+# with no red-proof is not a rule.
+#
+# Every rule is `languages: [python]`, matching the money path's implementation language.
+# -------------------------------------------------------------------------------------
+
+  # RULE 4 — bill on a failed leg. A billing/metering write must never happen inside an
+  # exception handler: that leg served no response, so charging it is billing a failure.
+  # Missing usage is UNKNOWN cost, not a free or a billable leg.
+  - id: cg-bill-on-failed-leg
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Bill-exactly-once: a billing/metering write happens on a leg that did not
+      serve a response (inside an exception handler).
+    patterns:
+      - pattern-either:
+          - pattern: |
+              try:
+                  ...
+              except $E:
+                  ...
+                  $M.record(..., count_usage=True, ...)
+                  ...
+          - pattern: |
+              try:
+                  ...
+              except $E as $X:
+                  ...
+                  $M.record(..., count_usage=True, ...)
+                  ...
+          - patterns:
+              - pattern-either:
+                  - pattern: |
+                      try:
+                          ...
+                      except $E:
+                          ...
+                          $L.record(...)
+                          ...
+                  - pattern: |
+                      try:
+                          ...
+                      except $E as $X:
+                          ...
+                          $L.record(...)
+                          ...
+                  - pattern: |
+                      try:
+                          ...
+                      except $E:
+                          ...
+                          $L.record_spend(...)
+                          ...
+                  - pattern: |
+                      try:
+                          ...
+                      except $E as $X:
+                          ...
+                          $L.record_spend(...)
+                          ...
+                  - pattern: |
+                      try:
+                          ...
+                      except $E:
+                          ...
+                          $L.charge(...)
+                          ...
+                  - pattern: |
+                      try:
+                          ...
+                      except $E:
+                          ...
+                          $L.debit(...)
+                          ...
+              - metavariable-regex:
+                  metavariable: $L
+                  regex: (?i).*(ledger|billing|bill|spend|charge|debit|invoice|meter|cost|usage|budget|balance).*
+
+  # RULE 5 — silent-zero metering. A cost variable set to a hard zero on the branch where
+  # usage/token data is absent bills an unknown as free. Missing usage must raise or fall
+  # back to a priced floor, never bill zero (R2: never record missing cost as $0).
+  - id: cg-silent-zero-metering
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Meter inertness: a cost variable is set to a hard zero on the branch where
+      usage/token data is absent. Missing usage is UNKNOWN cost, not free cost -
+      it must raise or fall back to a priced floor, never bill zero.
+    patterns:
+      - pattern-either:
+          - pattern: |
+              if $T is None:
+                  $COST = 0.0
+          - pattern: |
+              if $T is None:
+                  $COST = 0
+          - pattern: |
+              if not $T:
+                  $COST = 0.0
+          - pattern: |
+              if not $T:
+                  $COST = 0
+          - pattern: |
+              if $T is None:
+                  $S.$COST = 0.0
+          - pattern: |
+              if $U.$F is None:
+                  $COST = 0.0
+      - metavariable-regex:
+          metavariable: $COST
+          regex: (?i).*(cost|price|usd|spend|charge|amount|bill|fee).*
+
+  # RULE 6 — conditional-debit overdraft. A balance debit guarded by an affordability
+  # check with NO else-branch serves an unaffordable request without debiting it (and the
+  # read-modify-write is non-atomic). An unaffordable request must be refused, not served.
+  - id: cg-conditional-debit-overdraft
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Overdraft: the balance debit is guarded by an affordability check with no
+      else-branch, so an unaffordable request is served but never debited (and
+      the read-modify-write is non-atomic).
+    pattern-either:
+      - pattern: |
+          if $REMAINING >= $COST:
+              $BAL[$K] = $REMAINING - $COST
+      - pattern: |
+          if $REMAINING > $COST:
+              $BAL[$K] = $REMAINING - $COST
+      - pattern: |
+          if $BAL[$K] >= $COST:
+              $BAL[$K] = $BAL[$K] - $COST
+      - pattern: |
+          if $BAL[$K] >= $COST:
+              $BAL[$K] -= $COST
+      - pattern: |
+          if $REMAINING >= $COST:
+              $BAL.$F($K, $REMAINING - $COST)
+
+  # RULE 7 — swallowed spend write. A spend/debit write wrapped in a bare swallow drops a
+  # failed debit silently and serves the response unbilled. A failed debit must surface.
+  - id: cg-swallowed-spend-write
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A spend/debit write is wrapped in a bare swallow, so a failed debit is
+      silently dropped and the response is served unbilled.
+    patterns:
+      - pattern-either:
+          - pattern: |
+              try:
+                  ...
+                  $L.record_spend(...)
+                  ...
+              except ...:
+                  pass
+          - pattern: |
+              try:
+                  ...
+                  $L.record(...)
+                  ...
+              except ...:
+                  pass
+          - pattern: |
+              try:
+                  ...
+                  $L.debit(...)
+                  ...
+              except ...:
+                  pass
+      - metavariable-regex:
+          metavariable: $L
+          regex: (?i).*(ledger|billing|bill|spend|charge|debit|meter|cost|balance|budget).*
+
+  # RULE 8 — cost-zero-on-exception. A cost/pricing function returning zero from an
+  # exception handler makes a pricing failure indistinguishable from a genuinely free
+  # call. Pricing failure must raise (or fall back to a priced floor), not read as free.
+  - id: cg-cost-zero-on-exception
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A cost/pricing function returns zero from an exception handler, so a
+      pricing failure is indistinguishable from a genuinely free call.
+    patterns:
+      - pattern-either:
+          - pattern: |
+              def $F(...) -> ...:
+                  ...
+                  try:
+                      ...
+                  except $E:
+                      ...
+                      return 0.0
+          - pattern: |
+              def $F(...) -> ...:
+                  ...
+                  try:
+                      ...
+                  except $E:
+                      ...
+                      return 0
+          - pattern: |
+              def $F(...):
+                  ...
+                  try:
+                      ...
+                  except $E:
+                      ...
+                      return 0.0
+          - pattern: |
+              def $F(...):
+                  ...
+                  try:
+                      ...
+                  except $E as $X:
+                      ...
+                      return 0.0
+      - metavariable-regex:
+          metavariable: $F
+          regex: (?i).*(cost|price|pricing|spend|usd|bill|charge|debit|meter).*
+
+  # RULE 9 — unlocked money accumulator. A non-atomic read-modify-write of a shared money
+  # accumulator (dict/member/counter) outside any lock loses a charge when two served
+  # responses race. Shared money state must fold under a lock (or an atomic op).
+  - id: cg-unlocked-money-accumulator
+    languages: [python]
+    severity: WARNING
+    message: >-
+      Non-atomic read-modify-write of a shared money accumulator outside any
+      lock - two concurrent served responses can lose a charge.
+    patterns:
+      - pattern-either:
+          - pattern: |
+              self.$D[$K] = self.$D.get($K, ...) + $V
+          - pattern: |
+              self.$D[$K] = self.$D[$K] + $V
+          - pattern: |
+              self.$D[$K] += $V
+          - pattern: |
+              self.$D = self.$D + $V
+          - pattern: |
+              self.$D += $V
+      - metavariable-regex:
+          metavariable: $D
+          regex: (?i).*(spend|cost|usd|balance|billing|charge|budget).*
+      - pattern-not-inside: |
+          with $LOCK:
+              ...
+      - pattern-not-inside: |
+          with $LOCK as $A:
+              ...
+
+  # RULE 10 — spend-gate result discarded. A spend/budget admission gate called as a bare
+  # statement drops its allow/deny verdict and the request proceeds either way. The verdict
+  # must be captured and acted on (assign it, branch on it, return it, or assert it).
+  - id: cg-spend-gate-result-discarded
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A spend/budget admission gate is called as a bare statement, so its
+      allow/deny verdict is discarded and the request proceeds either way.
+    patterns:
+      - pattern-either:
+          - pattern: $G.check(...)
+          - pattern: $G.can_spend(...)
+          - pattern: $G.authorize(...)
+          - pattern: $G.reserve(...)
+      - metavariable-regex:
+          metavariable: $G
+          regex: (?i).*(spend|budget|balance|limit|quota|cap|billing)[a-z_]*$
+      - pattern-not-inside: |
+          $X = ...
+      - pattern-not-inside: |
+          if ...:
+              ...
+          ...
+      - pattern-not-inside: |
+          return ...
+      - pattern-not-inside: |
+          assert ...

@@ -124,6 +124,33 @@ else
   diffcase unreadable 2 "6e --diff: an unreadable target fails closed instead of scanning nothing"
 fi
 
+# ── (7) MONEY-PATH RULES red-proof: every one of the 7 cg-* rules must fire on its
+#     known-bad specimen and stay silent on its known-good counterpart. These are the
+#     T5 invariants (cg-bill-on-failed-leg, cg-silent-zero-metering,
+#     cg-conditional-debit-overdraft, cg-swallowed-spend-write, cg-cost-zero-on-exception,
+#     cg-unlocked-money-accumulator, cg-spend-gate-result-discarded). The paired fixtures
+#     make each rule red-proofed: a rule that stops firing drops its known-bad finding, a
+#     rule that fires on corrected code is pattern-matching, not an invariant.
+MONEY_BAD="$SCRIPTS/fixtures/semgrep-money-known-bad.py"
+MONEY_GOOD="$SCRIPTS/fixtures/semgrep-money-known-good.py"
+[ -f "$MONEY_BAD" ] || { echo "semgrep-canary: money known-bad fixture missing: $MONEY_BAD" >&2; exit 2; }
+[ -f "$MONEY_GOOD" ] || { echo "semgrep-canary: money known-good fixture missing: $MONEY_GOOD" >&2; exit 2; }
+# rule_ids — the set of rule ids that fired on a path (sorted, newline-separated). The
+# check_id semgrep emits can carry a config-path prefix (e.g.
+# ".../charon-policy.yml.cg-bill-on-failed-leg"), so we keep only the final rule-id segment.
+rule_ids(){ local rdir="$1"; shift
+  semgrep scan --config "$rdir" --json --quiet "$@" 2>/dev/null \
+    | python3 -c 'import sys,json;print("\n".join(sorted({r["check_id"].rsplit(".",1)[-1] for r in json.load(sys.stdin)["results"]})))'
+}
+money_ids="$(rule_ids "$RULES" "$MONEY_BAD")"
+missing="$(printf 'cg-bill-on-failed-leg\ncg-silent-zero-metering\ncg-conditional-debit-overdraft\ncg-swallowed-spend-write\ncg-cost-zero-on-exception\ncg-unlocked-money-accumulator\ncg-spend-gate-result-discarded\n' \
+  | grep -Fxv -e "$money_ids" | tr '\n' ' ' | sed 's/ $//')"
+[ -z "$missing" ] && ok "7 money-path rules ALL fire on fixtures/semgrep-money-known-bad.py" \
+                   || bad "7 money-path rules missing on known-bad fixture: ${missing}"
+mg="$(count "$RULES" "$MONEY_GOOD")"
+[ "${mg:-1}" -eq 0 ] && ok "7a money known-good fixture yields 0 findings (baseline-silence control)" \
+                    || bad "7a money known-good fixture should be 0 (got '${mg}') — a rule is pattern-matching, not an invariant"
+
 echo
 echo "--- $PASS passed, $FAIL failed ---"
 [ "$FAIL" -eq 0 ] || exit 1
