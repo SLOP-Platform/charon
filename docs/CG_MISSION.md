@@ -1,12 +1,12 @@
 ---
 doc: CG_MISSION
 version: 3
-date: 2026-08-06
+date: 2026-08-07
 supersedes: 2
 aligns_with:
   - CG_PLAN_v2.md (this charter is proposed as its §1)
 changelog:
-  - "v3 (2026-08-06): adopt-first charter — thin-glue mission, objectives 0–7, adoption rules (landed PR #245)"
+  - "v3 (2026-08-07): adopt-first charter — thin-glue mission, objectives 0–7, adoption rules (landed PR #245)"
   - "v1–v2: earlier mission drafts, superseded"
 ---
 

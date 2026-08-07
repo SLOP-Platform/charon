@@ -1,13 +1,13 @@
 ---
 doc: CG_PLAN_v2
 version: 1
-date: 2026-08-06
+date: 2026-08-07
 supersedes: none
 aligns_with:
   - CG_MISSION.md (its §1 charter; adopt before build, compose before extend, delete after adopt)
   - CG_HARVEST_MAP.md (companion to §6 — check before building any Block-B item)
 changelog:
-  - "v1 (2026-08-06): initial CG rebuild spec v2 + Session-1 survival kit (the '_v2' in the filename is the PLAN generation, not this doc's revision number)"
+  - "v1 (2026-08-07): initial CG rebuild spec v2 + Session-1 survival kit (the '_v2' in the filename is the PLAN generation, not this doc's revision number)"
 ---
 
 # CG Rebuild — Spec & Session-1 Survival Kit (v2)

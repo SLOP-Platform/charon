@@ -13,6 +13,11 @@
 5. Anything discovered that is not the next action becomes an issue. File it; do not fix it.
 6. Before stopping: label the next issue, confirm no stray branches/worktrees, and that
    `make status` reflects reality.
+7. Versioned docs carry YAML frontmatter (`doc` / `version` / `date` / `supersedes` /
+   `aligns_with` / `changelog`); on edit, bump `version` and prepend a `changelog` line.
+   Dates are UTC (YYYY-MM-DD), as the system emits them — never hand-convert to local time.
+   `aligns_with` points at other DOCS, never at a commit SHA — a public doc must not point
+   at a private-repo HEAD.
 
 The full plan is docs/CG_PLAN_v2.md. The capability map (what exists / what to wire / what
 to build) is §6 — consult it before deciding anything is missing; most gaps are unwired,
