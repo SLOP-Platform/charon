@@ -138,8 +138,20 @@ def _deployment(
     }
     max_context = getattr(route, "max_context", None)
     entry: dict[str, Any] = {"model_name": agent_model, "litellm_params": params}
+    info: dict[str, Any] = {}
+    prov = getattr(route, "provider", None) or getattr(route, "label", None)
+    if prov:
+        # GW-CUTOVER-REOPEN: the serving path recovers WHICH provider a Router-selected
+        # deployment is via ``_hidden_params['model_id']``, so it can attribute metered
+        # spend exactly as the hand-rolled forwarder does (``provider=route.label``).
+        # ``id`` is unique per route (a failover chain is several deployments sharing one
+        # ``model_name``), so litellm's selected-deployment id maps back unambiguously.
+        info["id"] = f"{agent_model}::{prov}::{upstream_model}::{base}"
+        info["provider"] = prov
     if max_context is not None:
-        entry["model_info"] = {"max_input_tokens": int(max_context)}
+        info["max_input_tokens"] = int(max_context)
+    if info:
+        entry["model_info"] = info
     return entry
 
 
@@ -269,6 +281,27 @@ def complete_via_router(router: Any, body: dict, *, timeout: float = 180.0) -> d
     return _to_dict(_raw_completion(router, body, timeout=timeout))
 
 
+def _selected_provider(router: Any, resp: Any) -> str | None:
+    """The Charon provider label of the deployment litellm selected for ``resp``.
+
+    GW-CUTOVER-REOPEN: the serving path needs the provider to attribute metered spend
+    (``proxy.GatewayProxy.record`` / ``BalanceTracker``) exactly as the hand-rolled
+    forwarder does with ``provider=route.label``. ``_hidden_params['model_id']`` is the
+    selected deployment's ``model_info.id`` (set in :func:`_deployment`), and that
+    deployment's ``model_info.provider`` is the Charon provider label. Returns ``None``
+    when the id cannot be matched — the caller falls back to the requested model id
+    (attribution degrades to a label, never a billing amount)."""
+    hp = getattr(resp, "_hidden_params", None) or {}
+    dep_id = hp.get("model_id")
+    if not dep_id:
+        return None
+    for entry in (getattr(router, "model_list", None) or []):
+        mi = entry.get("model_info") or {}
+        if mi.get("id") == dep_id:
+            return mi.get("provider")
+    return None
+
+
 def _selected_upstream_model(router: Any, resp: Any, fallback: str | None) -> str | None:
     """The NATIVE upstream model litellm actually SENT for this response — the ``expected``
     the SR-1 compare needs (forwarder.py uses ``route.upstream_model``; here the Router chose
@@ -297,12 +330,17 @@ class GuardedResponse:
     """A Router-served response plus the SR-1/SR-2 downgrade verdict and the header a future
     serve shell emits. ``response`` is the already-billed 200 served AS-IS (never re-fetched,
     never re-billed — D025). ``downgrade`` is the canonical :meth:`GatewayProxy.classify`
-    verdict; when True, ``headers`` carries ``X-Charon-Downgrade``."""
+    verdict; when True, ``headers`` carries ``X-Charon-Downgrade``.
+
+    ``raw`` is litellm's original ``ModelResponse`` (GW-CUTOVER-REOPEN) — the carrier of
+    ``_hidden_params`` (selected deployment id / sent model), which the serving path needs to
+    recover the provider label and re-derive the SR-1 ``expected`` model."""
 
     response: dict
     downgrade: bool
     headers: dict[str, str] = field(default_factory=dict)
     observation: ProxyObservation | None = None
+    raw: Any = None
 
 
 def complete_via_router_guarded(
@@ -345,7 +383,8 @@ def complete_via_router_guarded(
     if obs.pseudo_success:
         headers[DOWNGRADE_HEADER] = _DOWNGRADE_HEADER_VALUE
     return GuardedResponse(
-        response=served, downgrade=obs.pseudo_success, headers=headers, observation=obs)
+        response=served, downgrade=obs.pseudo_success, headers=headers,
+        observation=obs, raw=raw)
 
 
 def make_router(

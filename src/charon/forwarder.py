@@ -331,6 +331,73 @@ def _has_live_sibling(provider: str, pools: dict[str, list], bt) -> bool:
     return owned > 0
 
 
+def _serve_via_router(handler, srv, router, requested, orig_bj, raw_body,
+                      est_cost, session_id) -> bool:
+    """Serve ONE non-streaming chat completion through the adopted litellm.Router.
+
+    Returns True when fully served (the caller returns); False when the Router could not
+    serve and the hand-rolled loop must run instead (never strand).
+
+    D025-safety (GW-CUTOVER-REOPEN): ``complete_via_router_guarded`` issues exactly ONE
+    upstream completion and serves the already-billed 200 AS-IS with ``X-Charon-Downgrade``
+    — never discard-and-rebill (the 2026-07-03 double-bill). The provider label is
+    recovered from the selected deployment so the canonical per-(model, provider) metering
+    (``observer.record`` / ``balance_tracker``) stays accurate, exactly as the hand-rolled
+    loop's ``provider=route.label``.
+    """
+    from .litellm_plane.litellm_router import (  # lazy: keeps the plane off the import path
+        _selected_provider,
+        complete_via_router_guarded,
+    )
+
+    # D-012: the Router's deployments were built at startup and cannot see a RUNTIME park;
+    # a parked leg must never be served → fall back to the hand-rolled loop, which excludes
+    # it pre-flight. (The fully-parked case already 503'd above in forward_with_failover.)
+    bt = getattr(srv, "balance_tracker", None)
+    if bt is not None:
+        live = srv.chain_for(requested)
+        if live and any(bt.is_parked(r.provider or r.label) for r in live):
+            return False
+
+    start = time.monotonic()
+    try:
+        guarded = complete_via_router_guarded(
+            router, orig_bj, observer=srv.observer, timeout=srv.fwd_timeout)
+    except Exception:  # noqa: BLE001 - no deployment / upstream failure → fall back
+        return False
+
+    obs = guarded.observation
+    provider = _selected_provider(router, guarded.raw) or requested
+    cost = obs.usage.cost_usd if (obs is not None and obs.usage) else 0.0
+    latency_ms = int((time.monotonic() - start) * 1000)
+
+    body_bytes = json.dumps(guarded.response).encode()
+    # ── canonical post-200 accounting — the SAME hooks the hand-rolled 200 branch runs ──
+    srv.observer.record(obs, count_usage=True, session=session_id, provider=provider)
+    srv.latency_tracker.record(provider, latency_ms)
+    if srv.response_normalizer is not None:
+        body_bytes = _normalize_message_content(body_bytes, srv.response_normalizer)
+    if srv.semantic_cache is not None and not guarded.downgrade:
+        # NEVER cache a served downgrade — a HIT can't disclose X-Charon-Downgrade, so a
+        # cached downgrade would silently re-serve the wrong model for the whole TTL
+        # (DTC BLOCKER #1).
+        cache_key = hashlib.sha256(raw_body).hexdigest()
+        srv.semantic_cache.set(cache_key, body_bytes,
+                               {"Content-Type": "application/json"}, ttl=3600)
+    if srv.quality_scorer is not None:
+        # a served downgrade is NOT a clean success — scoring it as one would make quality
+        # routing PREFER a habitual downgrader (DTC CONCERN #4).
+        srv.quality_scorer.record(provider, 0, success=not guarded.downgrade, tokens=0)
+    if srv.spend_limiter is not None:
+        srv.spend_limiter.record(_spend_to_record(obs, est_cost))
+    if srv.balance_tracker is not None:
+        srv.balance_tracker.record_spend(provider, cost, model=requested)
+    handler._send_resp_headers(200, "application/json", provider, [], guarded.downgrade)
+    handler._write(body_bytes)
+    srv.note_request(requested, provider, 200, cost, [])
+    return True
+
+
 def forward_with_failover(handler, srv) -> None:
     """Run the data-plane failover loop for one client request (money path).
 
@@ -638,6 +705,26 @@ def forward_with_failover(handler, srv) -> None:
         if filtered:
             ordered = filtered
         # else: all below floor → use original order (no starvation)
+
+    # ── GW-CUTOVER-REOPEN: adopted-substrate dispatch (ADDITIVE, D025-safe) ──
+    # When gateway.build_server attached a litellm.Router (operator ``litellm_plane: true``
+    # + litellm installed + routes/pools), non-streaming chat completions are served THROUGH
+    # the Router — the litellm_plane substrate now carries live traffic (proven by the
+    # fail-on-revert e2e, tests/test_gw_cutover_reopen.py).
+    #   * complete_via_router_guarded issues exactly ONE upstream completion and serves an
+    #     already-billed 200 AS-IS with X-Charon-Downgrade — NEVER discard-and-rebill (the
+    #     SR-1/SR-2 guard; the 2026-07-03 double-bill).
+    #   * every pre-flight money-path control above (capability, drain/park, spend cap,
+    #     guardrails, cache, D-012) already ran on this path, and the post-200 accounting
+    #     below is the SAME canonical code the hand-rolled loop runs.
+    #   * the hand-rolled forwarder is NOT deleted — it stays the fallback for streaming,
+    #     for Router failures (no deployment / upstream error / runtime park), and for
+    #     litellm-absent installs (no Router attached). Deletion is the later, sequenced step.
+    router = getattr(srv, "litellm_router", None)
+    if router is not None and not is_stream:
+        if _serve_via_router(handler, srv, router, requested, orig_bj, raw_body,
+                             est_cost, session_id):
+            return
 
     failovers: list[dict] = []
 

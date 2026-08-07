@@ -127,6 +127,14 @@ class GatewayConfig:
     # saving). OFF → the body is forwarded byte-identical; OpenAI-wire routes are never
     # touched either way. Plumbed identically to failover_on_downgrade.
     anthropic_prompt_cache: bool = True
+    # Operator toggle (GW-CUTOVER-REOPEN, default OFF): serve live gateway traffic
+    # through the adopted litellm.Router substrate (litellm_plane). ADDITIVE + D025-SAFE:
+    # the hand-rolled forwarder stays the live path while this is OFF, and even when ON
+    # it remains the fallback for streaming / Router failures / litellm-absent installs.
+    # ON + litellm installed + routes/pools → build_server attaches a Router and
+    # forwarder.py serves non-streaming chat completions through it (see the fail-on-
+    # revert e2e, tests/test_gw_cutover_reopen.py).
+    litellm_plane: bool = False
     # ── Smart-Routing module instances, keyed by ModuleSpec.attr ─────
     # F29: replaced the ~15 optional module fields with ONE registry-driven dict.
     # Backward-compat attribute access (cfg.guardrails, etc.) → __getattr__ below.
@@ -160,6 +168,7 @@ def load_config(
     cfg_token: str | None = None
     cfg_failover_on_downgrade: bool = False
     cfg_anthropic_prompt_cache: bool = True
+    cfg_litellm_plane: bool = False
     registry: dict = {}
     pool_map: dict = {}
     providers_cfg: dict = {}
@@ -173,6 +182,7 @@ def load_config(
         cfg_failover_on_downgrade = bool(gw.get("failover_on_downgrade", False))
         cfg_anthropic_prompt_cache = bool(
             gw.get(providers.ANTHROPIC_PROMPT_CACHE_KEY, True))
+        cfg_litellm_plane = bool(gw.get("litellm_plane", False))
         registry = data.get("models") or {}
         pool_map = data.get("pools") or {}  # virtual id → ordered [model id]
         providers_cfg = data.get("providers") or {}  # preset overrides (P3)
@@ -195,6 +205,7 @@ def load_config(
                         gw_file.get("failover_on_downgrade", False))
                     cfg_anthropic_prompt_cache = bool(
                         gw_file.get(providers.ANTHROPIC_PROMPT_CACHE_KEY, True))
+                    cfg_litellm_plane = bool(gw_file.get("litellm_plane", False))
             except (OSError, json.JSONDecodeError):
                 pass
 
@@ -276,6 +287,7 @@ def load_config(
         model_pricing=model_pricing,
         failover_on_downgrade=cfg_failover_on_downgrade,
         anthropic_prompt_cache=cfg_anthropic_prompt_cache,
+        litellm_plane=cfg_litellm_plane,
         modules=modules,
         balance_tracker=balance_tracker,
     )
@@ -586,9 +598,47 @@ def build_server(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> 
     if refresher is not None:
         refresher.bind(server)
         refresher.maybe_start()
+    # GW-CUTOVER-REOPEN: when the operator opts in (``litellm_plane: true``), attach the
+    # adopted litellm.Router to the LIVE serving path. ``build_server`` is the single
+    # production seam where the gateway is assembled, so importing ``litellm_plane`` here
+    # makes it a production importer on the serving path (the accept criterion's grep).
+    # The Router is read by forwarder.py at request time; a failure to construct it
+    # degrades to the hand-rolled forwarder (never strands, never fails the bind).
+    if cfg.litellm_plane:
+        server.litellm_router = _build_litellm_router(server)
     if setup_dir is not None:
         server.setup_handler = make_setup_handler(server, setup_dir)
     return server
+
+
+def _build_litellm_router(server: GatewayProxyServer):
+    """Construct the litellm.Router for ``server``, or None when it cannot serve.
+
+    ADDITIVE + D025-SAFE (GW-CUTOVER-REOPEN): this must never take the gateway down or
+    re-introduce the silent-downgrade double-bill. ``litellm_plane.make_router`` enforces
+    the SAME build-time money-path controls the live forwarder enforces (base-bound keys,
+    SSRF refusal, preset egress allowlist, SG-never-Anthropic, drain-then-park pre-order,
+    D-012 fully-parked → empty chain), and the request path serves through the SR-1/SR-2
+    guarded entry (one completion, already-billed 200 served AS-IS). Returns None — leaving
+    the hand-rolled forwarder as the path — when:
+      * litellm is not installed (the optional ``router`` extra) — ``make_router``'s lazy
+        import raises ``ImportError``;
+      * the server has no routes/pools (nothing to map);
+      * a route cannot be mapped (``AdoptError`` SSRF refusal / ``EgressPolicyError``
+        off-allowlist base) — a mis-routable base must not fail the whole bind.
+    """
+    from . import litellm_plane  # production importer (GW-CUTOVER-REOPEN)
+
+    if not getattr(server, "routes", None) and not getattr(server, "pools", None):
+        return None
+    try:
+        return litellm_plane.make_router(server)
+    except Exception:  # noqa: BLE001 - degrade to the hand-rolled path, never strand
+        import logging
+        logging.getLogger("charon.gateway").exception(
+            "litellm_plane disabled for this gateway: could not build the Router "
+            "(falling back to the hand-rolled forwarder)")
+        return None
 
 
 def make_setup_handler(server: GatewayProxyServer, setup_dir: str | Path):
@@ -835,6 +885,8 @@ def run(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> int:
         parts.append("quality")
     if cfg.request_inspector is not None:
         parts.append("inspector")
+    if getattr(server, "litellm_router", None) is not None:
+        parts.append("litellm router")
     if parts:
         print(f"Smart Routing: {', '.join(parts)}", file=sys.stderr)
         if cfg.spend_limiter is not None and cfg.spend_limiter._limit_usd <= 0:
