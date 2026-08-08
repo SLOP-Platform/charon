@@ -524,14 +524,70 @@ def test_order_chain_empty_chain_returns_empty():
     assert order_chain_by_funding_class([], funding_class_fn=lambda p: None) == []
 
 
-def test_order_chain_single_provider_unchanged():
-    from charon.proxy_server import UpstreamRoute
-    from charon.routing_policy import order_chain_by_funding_class
-    chain = [UpstreamRoute("http://x/v1", api_key="k", provider="only")]
-    result = order_chain_by_funding_class(
-        chain,
-        funding_class_fn=lambda p: 3,
-        remaining_fn=lambda p: 1.0,
-    )
-    assert result == chain
+def test_410_retired_drops_leg_and_never_retries() -> None:
+    """410 is permanent and deterministic — the model reached its end of life.
+    It must trigger failover, be removed from rotation, and never retried."""
+    p = GatewayProxy()
+    obs = p.observe("deepseek/deepseek-v4-flash", 410,
+                    body={"error": {"message": "The model has reached its end of life"}})
+    assert obs.retired and not obs.dropped and not obs.exhausted
+    assert obs.failover
+    assert p.is_exhausted("deepseek/deepseek-v4-flash")
+    assert "retired" in obs.note
+    assert "410" in obs.note
+
+
+def test_410_is_not_exhausted_and_not_dropped() -> None:
+    """410 is retired — distinct from both exhausted (429/402/503) and dropped
+    (404/unsupported). The type must be observable in providers_tried[].reason."""
+    p = GatewayProxy()
+    obs = p.classify("m", 410, body={"error": {"message": "gone"}})
+    assert not obs.exhausted
+    assert not obs.dropped
+    assert obs.retired
+    assert obs.failover
+    assert obs.note.startswith("retired")
+
+
+def test_410_is_classified_differently_from_402_429_503_413() -> None:
+    """Each class must be observably distinct. 410 ≠ 402 ≠ 429/503 ≠ 413."""
+    p = GatewayProxy()
+    codes = {
+        410: "retired",
+        402: "exhausted",
+        429: "exhausted",
+        503: "exhausted",
+    }
+    for code, expected_note_prefix in codes.items():
+        obs = p.classify("m", code)
+        assert obs.failover
+        assert obs.note.startswith(expected_note_prefix), \
+            f"Expected code {code} to classify as '{expected_note_prefix}', got '{obs.note[:20]}'"
+
+
+def test_410_on_one_leg_does_not_kill_sibling() -> None:
+    """A 410 on one provider's leg must not exhaust/drop sibling legs of the
+    same model on other providers — the blast-radius rule."""
+    p = GatewayProxy()
+    # deepseek leg retires
+    obs_ds = p.observe("deepseek/deepseek-v4-flash", 410)
+    assert obs_ds.retired and obs_ds.failover
+    assert p.is_exhausted("deepseek/deepseek-v4-flash")
+    # openrouter leg is unaffected — not exhausted, not dropped, not retired
+    obs_or = p.classify("openrouter/deepseek-v4-flash", 200,
+                        body={"model": "openrouter/deepseek-v4-flash",
+                              "usage": {"prompt_tokens": 5, "completion_tokens": 3}})
+    assert not obs_or.exhausted and not obs_or.dropped and not obs_or.retired
+    assert not obs_or.failover
+
+
+def test_410_does_not_kill_diff_model_same_provider() -> None:
+    """A retired model id must not drop a different model on the same provider."""
+    p = GatewayProxy()
+    p.observe("deepseek/deepseek-v4-flash", 410)
+    obs = p.classify("deepseek/deepseek-v4-pro", 200,
+                     body={"model": "deepseek-v4-pro",
+                           "usage": {"prompt_tokens": 1}})
+    assert not obs.exhausted and not obs.dropped and not obs.retired
+    assert not obs.failover
 

@@ -113,12 +113,6 @@ _CATALOG: tuple[CatalogEntry, ...] = (
         note="Punches above its tier; near-frontier SWE-bench at ~1/4 Pro price",
     ),
     CatalogEntry(
-        id="deepseek-v4-flash",
-        tier_hint="low",
-        access="DeepSeek direct / open weights / OpenRouter",
-        note="284B MoE, 1M ctx; cheap open-weight workhorse",
-    ),
-    CatalogEntry(
         id="qwen3-coder-next",
         tier_hint="low",
         access="Qwen API / open weights / OpenRouter",
