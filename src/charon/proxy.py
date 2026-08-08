@@ -42,6 +42,11 @@ _EXHAUSTION_STATUSES = {429, 402, 503}
 # Statuses meaning "this model is gone" — drop it from the pool permanently for
 # this run, not retry (free rosters churn; renames/removals return 404). ADR R6.
 _DROP_STATUSES = {404}
+# 410 is permanently retired by the provider — stronger than 404 (which can be a
+# transient routing miss). A 410 is deterministic: the model reached its end of
+# life and will never serve again. It must never be retried, and the leg must be
+# removed rather than merely skipped for this request.
+_RETIRED_STATUSES = {410}
 # TOOLCALL-ROOTCAUSE (2026-07-13): a bare 503, or a 402 whose body matches one of
 # these patterns, is a MOMENTARY provider-side race that self-heals within
 # milliseconds (confirmed live: NanoGPT's "pending billing reservations" 402
@@ -100,6 +105,7 @@ class ProxyObservation:
     exhausted: bool
     pseudo_success: bool  # 200 but the gateway silently served a different model
     dropped: bool = False  # 404: model is gone — drop from the pool, not retry
+    retired: bool = False  # 410: model permanently retired by provider — never retry
     transient: bool = False  # exhausted AND self-heals in ms — retry-once-same-provider
     refused_redirect: bool = False  # 3xx: netutil declined to follow — fail over
     retry_after: int | None = None
@@ -110,7 +116,7 @@ class ProxyObservation:
     @property
     def failover(self) -> bool:
         """True iff the coordinator should route this model's role elsewhere."""
-        return self.exhausted or self.pseudo_success or self.dropped or self.refused_redirect
+        return self.exhausted or self.pseudo_success or self.dropped or self.retired or self.refused_redirect
 
 
 def _retry_after(headers: dict | None) -> int | None:
@@ -469,6 +475,7 @@ class GatewayProxy:
         exhausted = _is_billing_error(body, status)
         transient = exhausted and _is_transient_billing_error(body, status)
         auth_error = _is_auth_error(body, status)
+        retired = status in _RETIRED_STATUSES
         dropped = status in _DROP_STATUSES or _is_unsupported_model(body, status)
         # netutil.open_keyed refuses redirects (urllib does NOT strip Authorization
         # cross-host), so a provider that starts 30x-ing surfaces here as a bare
@@ -520,6 +527,9 @@ class GatewayProxy:
         elif refused_redirect:
             note = (f"refused redirect: status={status} — provider redirected and the "
                     f"Authorization header is not stripped cross-host; failing over")
+        elif retired:
+            note = (f"retired: status={status} — model permanently retired by provider; "
+                    f"removing leg ({_error_type(body)})").strip()
         elif dropped:
             reason = "model gone" if status in _DROP_STATUSES else "unsupported here"
             note = f"dropped: status={status} {_error_type(body)} ({reason})".strip()
@@ -533,6 +543,7 @@ class GatewayProxy:
             exhausted=exhausted,
             pseudo_success=pseudo,
             dropped=dropped,
+            retired=retired,
             transient=transient,
             refused_redirect=refused_redirect,
             retry_after=_retry_after(headers),
