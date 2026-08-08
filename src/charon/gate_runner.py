@@ -33,7 +33,7 @@ _WORK_UNITS_RE = re.compile(r"^\s*WORK-UNITS:\s*(-?\d+)\s*$", re.MULTILINE)
 _PYTEST_COLLECTED_RE = re.compile(r"(\d+) (?:passed|failed|error)")
 
 CHECKS: list[tuple[list[str], str]] = [
-    (["ruff", "check", "src", "tests"], "ruff"),
+    (["ruff", "check", "src", "tests", "tools"], "ruff"),
     (["mypy", "src", "tests"], "mypy"),
     (["python3", "tools/check_boundary.py", "src"], "host-boundary"),
     (["python3", "tools/check_version.py"], "version"),
