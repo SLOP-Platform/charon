@@ -33,6 +33,17 @@ human had to remember to re-apply:
    out), and bolting a `paths:` filter onto a tag ref risks the release
    silently failing to fire on a GitHub tag-diff edge case.
 
+4. RELEASE-GATE-PARITY: the gate executed by `release.yml` MUST be the same
+   as the gate executed by `ci.yml` — same command, same pip install extras,
+   same checkout depth. Divergence between these two is precisely the class
+   that silently shipped a wrong-version deploy TWICE (v0.6.0 on 2026-07-23,
+   v0.6.3 on 2026-08-08): PRs passing ci.yml's 23-checks gate while
+   release.yml ran only 4 of those checks plus a narrower mypy. The fix is
+   structural: both must invoke `python3 -m charon.cli gate` (or equivalent
+   unified gate runner) with the same install extras, so the check list and
+   scope come from one SSOT (gate_runner.CHECKS) rather than two diverging
+   ad-hoc copies.
+
 Exit non-zero if any violation is found across all workflow files, 0 if
 clean.
 """
@@ -56,10 +67,142 @@ _SHA_RE = re.compile(r"[0-9a-fA-F]{40}")
 _PACKAGING_JOB_HINTS = ("image-smoke", "modea-isolation", "package", "build")
 _PACKAGING_FILENAMES = ("release.yml", "windows-exe.yml")
 _EXEMPT_FILENAMES = ("ci.yml",)
+# The install line pattern — matches `pip install -e '.[extras]'`
+_INSTALL_RE = re.compile(
+    r"pip\s+install\s+(?:--quiet\s+)?(?:--break-system-packages\s+)?"
+    r"-e\s+'?\.(\[[^\]]*\])'?"
+)
 
 
 def _indent(line: str) -> int:
     return len(line) - len(line.lstrip(" "))
+
+
+def _make_block(yml: str) -> dict:
+    """Simplified structure key -> content of the YAML for gate-parity scanning.
+
+    Returns a dict of top-level keys to their raw text content (lines joined),
+    and sub-keys under `jobs` similarly.
+    """
+    lines = yml.splitlines()
+    n = len(lines)
+    result: dict[str, str] = {}
+    # Find top-level keys
+    i = 0
+    while i < n:
+        stripped = lines[i].strip()
+        if not stripped or stripped.startswith("#"):
+            i += 1
+            continue
+        if _indent(lines[i]) == 0 and ":" in stripped and not stripped.startswith("-"):
+            key = stripped.split(":")[0].strip()
+            j = i + 1
+            while j < n:
+                sj = lines[j].strip()
+                if sj and not sj.startswith("#") and _indent(lines[j]) <= 0:
+                    break
+                j += 1
+            result[key] = "\n".join(lines[i:j])
+            i = j
+            continue
+        i += 1
+    return result
+
+
+def _pip_extras(text: str) -> list[list[str]]:
+    """Extract all pip install extras lists from *text*, normalised.
+
+    Returns each as a sorted list so `[dev,service,router,quality]` ==
+    `[dev,quality,router,service]`.
+    """
+    results = []
+    for m in _INSTALL_RE.finditer(text):
+        extras_str = m.group(1)
+        extras = sorted(e.strip() for e in extras_str.strip("[]").split(",") if e.strip())
+        results.append(extras)
+    return results
+
+
+def _has_fetch_depth_zero(text: str) -> bool:
+    """True when a ``fetch-depth: 0`` appears in a non-comment line."""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        if re.search(r"fetch-depth:\s*0", stripped):
+            return True
+    return False
+
+
+def _has_gate_command(text: str) -> bool:
+    """True when a unified gate invocation (charon.cli gate or tools/run_gate.py)
+    appears in a non-comment, non-quoted context."""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        if re.search(r"python3\s+-m\s+charon\.cli\s+gate|python3\s+tools/run_gate\.py", stripped):
+            return True
+    return False
+
+
+def check_release_gate_parity(
+    ci_text: str | None, release_text: str | None
+) -> list[str]:
+    """Fail when ci.yml and release.yml diverge on their gate command, extras, or depth."""
+    violations: list[str] = []
+    if not ci_text or not release_text:
+        return violations
+
+    ci_block = _make_block(ci_text)
+    release_block = _make_block(release_text)
+
+    ci_jobs = ci_block.get("jobs", "")
+    release_jobs = release_block.get("jobs", "")
+
+    ci_extras = _pip_extras(ci_jobs)
+    release_extras = _pip_extras(release_jobs)
+
+    release_depth = _has_fetch_depth_zero(release_jobs)
+
+    ci_has_gate = _has_gate_command(ci_jobs)
+    release_has_gate = _has_gate_command(release_jobs)
+
+    if not release_has_gate:
+        violations.append(
+            "release.yml: .github/workflows/release.yml does not invoke a unified "
+            "gate (python3 -m charon.cli gate or python3 tools/run_gate.py). "
+            "The release path must run the same checks as CI-merge, from the same "
+            "SSOT (gate_runner.CHECKS), so they cannot drift."
+        )
+    elif not ci_has_gate:
+        violations.append(
+            "ci.yml: .github/workflows/ci.yml does not invoke a unified gate — "
+            "the SSOT gate must exist in CI for release to converge against."
+        )
+
+    if not release_depth:
+        violations.append(
+            "release.yml: .github/workflows/release.yml must use "
+            "fetch-depth: 0 in its checkout step. The diff-cover gate "
+            "resolves origin/master and fails closed without it."
+        )
+
+    ci_extras_set = frozenset(tuple(e) for e in ci_extras) if ci_extras else frozenset()
+    release_extras_set = frozenset(tuple(e) for e in release_extras) if release_extras else frozenset()
+
+    if ci_extras_set != release_extras_set and ci_extras and release_extras:
+        ci_str = " / ".join(f"[{','.join(e)}]" for e in sorted(ci_extras_set))
+        r_str = " / ".join(f"[{','.join(e)}]" for e in sorted(release_extras_set))
+        violations.append(
+            f"release.yml: pip install extras diverge from ci.yml — "
+            f"ci.yml: {ci_str} vs release.yml: {r_str}. "
+            "Different extras mean different tools available at gate time; "
+            "installing fewer extras on the release path is how the v0.6.3 "
+            "release shipped without the litellm money-path tests."
+        )
+
+    return violations
 
 
 def _block_children(
@@ -212,6 +355,13 @@ def main(root: str = ".github/workflows") -> int:
     all_violations: list[str] = []
     for f in files:
         all_violations.extend(scan_workflow_file(f))
+
+    ci_path = base / "ci.yml"
+    release_path = base / "release.yml"
+    ci_text = ci_path.read_text() if ci_path.exists() else None
+    release_text = release_path.read_text() if release_path.exists() else None
+    all_violations.extend(check_release_gate_parity(ci_text, release_text))
+
     if all_violations:
         print("CI WORKFLOW POLICY VIOLATION:", file=sys.stderr)
         for v in all_violations:
