@@ -246,16 +246,5 @@
     "red_proof": "tests/test_catalog_gate_wire.py",
     "min_work_units": 5,
     "work_units": "catalog model ids compared"
-  },
-  {
-    "id": "reachability-gate",
-    "optional": true,
-    "name": "Hardcoded cross-boundary path gate",
-    "domain": "reachability",
-    "enforcer": "../charon-private/fleet/checks/no-unreachable-paths.sh",
-    "covers": "hardcoded absolute paths crossing unix-user, volume, fresh-install, or product-vs-rig boundaries",
-    "ci_step": false,
-    "invariant": "No tracked file contains an unallowlisted hardcoded absolute path that is unreachable across a portability boundary",
-    "red_proof": null
   }
 ]

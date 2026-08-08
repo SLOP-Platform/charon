@@ -118,7 +118,6 @@
     "    (re.compile(r'charon-private'), 'rig name \"charon-private\"'),"
   ],
   "tools/gates.json": [
-    "    \"enforcer\": \"../charon-private/fleet/validate_board.sh\",",
-    "    \"enforcer\": \"../charon-private/fleet/checks/no-unreachable-paths.sh\","
+    "    \"enforcer\": \"../charon-private/fleet/validate_board.sh\","
   ]
 }
