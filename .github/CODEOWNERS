@@ -9,9 +9,17 @@
 #     gh api -X PATCH repos/SLOP-Platform/charon/branches/master/protection \
 #       -F required_pull_request_reviews.require_code_owner_reviews=true ...
 #   Until then, listing an owner here changes nothing about what can merge.
+#
+# TWO OWNERS, ON PURPOSE (Q-010, 2026-08-08). GitHub forbids a PR's author from approving their own
+# PR. Agents author every PR under @Nnyan's token, so @Nnyan alone as owner would DEADLOCK the moment
+# require_code_owner_reviews is enabled: the only eligible approver would always be the author.
+# @charongw is the operator's second (machine) identity, added as collaborator with write on
+# 2026-08-08, and exists solely to supply that approval. Any ONE listed owner satisfies the rule.
+# ⛔ Do not reduce these lines back to a single owner without also disabling
+#    require_code_owner_reviews — a sole owner who is also the sole author blocks every PR here.
 
 # CI definition and the merge-blocking scanners: workflows, wrappers, rulesets, fixtures.
-/.github/  @Nnyan
+/.github/  @Nnyan @charongw
 
 # The product's own gate implementations.
-/tools/    @Nnyan
+/tools/    @Nnyan @charongw
