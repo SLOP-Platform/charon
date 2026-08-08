@@ -58,6 +58,7 @@ import hashlib
 import http.client
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -436,7 +437,8 @@ def test_park_state_on_disk_builds_a_tracker_with_no_balance_config(
     exist — one config edit re-opens the exact leak D-012 closes. Persisted park
     state must be sufficient on its own to build the tracker.
     """
-    (tmp_path / "balance_park.json").write_text(json.dumps({"parked": ["pa"]}))
+    (tmp_path / "balance_park.json").write_text(json.dumps(
+        {"parked": ["pa"], "park_until": {"pa": time.time() + 3600}}))
     # Providers with NO funding_class and NO mode — the state that used to
     # return None.
     bt = _build_balance_tracker({"pa": {"base_url": "http://x"}}, state_dir=tmp_path)
@@ -451,6 +453,11 @@ def test_park_state_on_disk_builds_a_tracker_with_no_balance_config(
                                   state_dir=tmp_path / "empty") is None, (
         "BEHAVIOUR: a tracker is built when there is provably nothing parked "
         "and nothing configured — that is not fail-closed, it is noise")
+    # NOTE: the park file carries a FUTURE wall-clock deadline so the D-012
+    # back-door is exercised on its own (persisted park ⇒ tracker built AND
+    # the park honored). A legacy deadline-less park is covered by
+    # tests/test_park_transient.py::test_legacy_park_file_without_deadlines_rerarms_on_read —
+    # TAB-I migration deliberately re-arms those on first read.
 
 
 def test_parked_leg_is_never_dispatched_while_a_live_leg_exists() -> None:

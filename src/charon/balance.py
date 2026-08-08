@@ -57,6 +57,15 @@ _PARK_STATE_FILE = "balance_park.json"
 # ``should_drain`` uses for "has funds, route-first".
 _AUTO_REARM_MIN_USD = 0.0
 
+# PARK COOLDOWN — a park is a BOUNDED state, not a terminal one. Every park
+# sets a wall-clock deadline; once it passes the provider re-enters rotation
+# with no operator action (the router just routes around it until then).
+# ``_PARK_COOLDOWN_BASE_S`` is the first park's duration; ``_PARK_COOLDOWN_MAX_S``
+# caps the exponential backoff so a repeatedly-parking provider is eventually
+# re-checked, never parked forever.
+_PARK_COOLDOWN_BASE_S = 900.0     # 15 min
+_PARK_COOLDOWN_MAX_S = 21600.0    # 6 h
+
 # ---------------------------------------------------------------------------
 # Balance poll adapters — pure functions that take (base_url, api_key) and
 # return remaining USD (float) or None when the provider doesn't expose one.
@@ -175,10 +184,17 @@ class BalanceTracker:
         config: dict[str, dict[str, Any]] | None = None,
         now: Callable[[], float] = time.monotonic,
         state_dir: str | Path | None = None,
+        park_clock: Callable[[], float] = time.time,
     ) -> None:
         self._config: dict[str, dict[str, Any]] = dict(config or {})
         self._lock = Lock()
         self._now = now
+        # Wall-clock source for park deadlines. SEPARATE from ``self._now``:
+        # ``_now`` defaults to ``time.monotonic`` which resets on process
+        # restart, while a persisted park deadline must be comparable across
+        # restarts (the file survives; a monotonic deadline would not). Also
+        # the test injection point for deterministic cooldown tests.
+        self.park_clock = park_clock
 
         self._fixed_balances: dict[str, float] = {}
         self._counters: dict[str, int] = {}
@@ -190,6 +206,15 @@ class BalanceTracker:
         # forwarder.py). None-state_dir → in-memory only (existing unit-test
         # construction pattern; production always passes state_dir).
         self._parked: set[str] = set()
+        # Wall-clock deadline per parked provider (``park_clock()`` epoch).
+        # A provider whose deadline has passed is automatically re-armed by
+        # ``is_parked()``/``parked_providers()`` (see ``_expire_due``). A park
+        # with NO deadline (legacy file) is treated as already expired.
+        self._park_until: dict[str, float] = {}
+        # Consecutive park count per provider — drives the exponential
+        # cooldown backoff and SURVIVES expiry (only ``unpark()`` clears it),
+        # so a repeatedly-re-parking provider backs off further each round.
+        self._park_strikes: dict[str, int] = {}
         # Observer-metered spend callback: (provider) -> float
         self._spend_provider_fn: Callable[[str], float] | None = None
         self._state_dir: Path | None = Path(state_dir) if state_dir is not None else None
@@ -404,28 +429,85 @@ class BalanceTracker:
 
     # -- park lifecycle (class-3 drain-then-park) ------------------------
 
+    @staticmethod
+    def _cooldown_for(strikes: int) -> float:
+        """Exponential backoff for one park, capped at the max cooldown.
+
+        Strike n → base * 2**(n-1), clamped so a huge strike count can never
+        overflow (``2**n`` grows without bound) and can never park a provider
+        for longer than ``_PARK_COOLDOWN_MAX_S``."""
+        n = min(max(strikes, 1), 32)
+        return min(_PARK_COOLDOWN_BASE_S * 2 ** (n - 1), _PARK_COOLDOWN_MAX_S)
+
     def park(self, provider: str) -> None:
         """Mark a provider as parked (unavailable; routing skips it).
+
+        A park is a BOUNDED cooldown, not a terminal state: it records a
+        wall-clock deadline (base 15 min, doubling per re-park, capped at 6h)
+        and is automatically re-armed once the deadline passes (see
+        ``_expire_due``).
 
         Persisted to disk (when ``state_dir`` was given) so the park survives a
         gateway restart — never loses the fact that a key was drained."""
         with self._lock:
-            self._parked.add(str(provider))
+            p = str(provider)
+            strikes = self._park_strikes.get(p, 0) + 1
+            self._park_strikes[p] = strikes
+            self._park_until[p] = self.park_clock() + self._cooldown_for(strikes)
+            self._parked.add(p)
         self._save_parked()
 
     def unpark(self, provider: str) -> None:
-        """Re-arm a parked provider (available again). Persisted like ``park``."""
+        """Re-arm a parked provider (available again). Persisted like ``park``.
+
+        Clears the park, the deadline AND the strike counter — a genuine
+        recovery is a clean re-arm, so the next park starts back at the base
+        cooldown. Only persists when something actually changed: the request
+        path calls this on every positive-balance leg (forwarder.py), so an
+        unconditional save would rewrite the park file on every request the
+        moment balance config lands."""
         with self._lock:
-            self._parked.discard(str(provider))
-        self._save_parked()
+            p = str(provider)
+            changed = p in self._parked or p in self._park_until or p in self._park_strikes
+            self._parked.discard(p)
+            self._park_until.pop(p, None)
+            self._park_strikes.pop(p, None)
+        if changed:
+            self._save_parked()
+
+    def _expire_due(self) -> bool:
+        """Drop every park whose deadline has passed (or is unknowable).
+
+        A park with ``park_until is None`` is treated as EXPIRED: it has no
+        deadline, so its age cannot be established and it must not be read as
+        fresh. Strikes are KEPT so the next park backs off further.
+
+        Caller must NOT hold ``self._lock`` — this acquires it internally, and
+        the caller persists via ``_save_parked()`` (which needs the
+        ``_save_lock`` → ``_lock`` order) only when this returns True."""
+        now = self.park_clock()
+        with self._lock:
+            expired = [
+                p for p in list(self._parked)
+                if p not in self._park_until or self._park_until[p] <= now
+            ]
+            for p in expired:
+                self._parked.discard(p)
+                self._park_until.pop(p, None)
+                self._counters["park_expired"] = self._counters.get("park_expired", 0) + 1
+        return bool(expired)
 
     def is_parked(self, provider: str) -> bool:
-        """True if the provider is currently parked."""
+        """True if the provider is currently parked (inside its cooldown)."""
+        if self._expire_due():
+            self._save_parked()
         with self._lock:
             return provider in self._parked
 
     def parked_providers(self) -> set[str]:
         """Return a read-only snapshot of currently-parked providers."""
+        if self._expire_due():
+            self._save_parked()
         with self._lock:
             return set(self._parked)
 
@@ -447,7 +529,13 @@ class BalanceTracker:
 
     def _load_parked(self) -> None:
         """Load the parked-provider set from disk. Missing/corrupt file → start
-        with an empty set (never raises — a fresh install has no state yet)."""
+        with an empty set (never raises — a fresh install has no state yet).
+
+        Also loads the ``park_until`` / ``park_strikes`` maps. This is the
+        LEGACY MIGRATION: a pre-cooldown ``{"parked": [...]}`` file carries no
+        deadlines, so every provider in it expires on the first read and
+        re-enters rotation immediately. Each entry is coerced per-key with
+        try/except — a corrupt entry skips, never raises."""
         if self._state_dir is None:
             return
         p = self._state_dir / _PARK_STATE_FILE
@@ -463,6 +551,22 @@ class BalanceTracker:
         if isinstance(parked, list):
             with self._lock:
                 self._parked = {str(x) for x in parked}
+        raw_until = data.get("park_until")
+        if isinstance(raw_until, dict):
+            with self._lock:
+                for name, val in raw_until.items():
+                    try:
+                        self._park_until[str(name)] = float(val)
+                    except (ValueError, TypeError):
+                        continue  # corrupt entry skips, never raises
+        raw_strikes = data.get("park_strikes")
+        if isinstance(raw_strikes, dict):
+            with self._lock:
+                for name, val in raw_strikes.items():
+                    try:
+                        self._park_strikes[str(name)] = int(val)
+                    except (ValueError, TypeError):
+                        continue  # corrupt entry skips, never raises
 
     def _save_parked(self) -> None:
         """Write the current parked-provider set to disk atomically. No-op when
@@ -495,6 +599,8 @@ class BalanceTracker:
         with self._save_lock:
             with self._lock:
                 snapshot = sorted(self._parked)
+                park_until = dict(self._park_until)
+                park_strikes = dict(self._park_strikes)
             d = self._state_dir
             p = d / _PARK_STATE_FILE
             # Unique per-call tmp name — pid + thread id + uuid — so concurrent
@@ -504,7 +610,11 @@ class BalanceTracker:
             try:
                 d.mkdir(parents=True, exist_ok=True)
                 tmp.write_text(
-                    json.dumps({"parked": snapshot}, indent=2), encoding="utf-8")
+                    json.dumps({
+                        "parked": snapshot,
+                        "park_until": park_until,
+                        "park_strikes": park_strikes,
+                    }, indent=2), encoding="utf-8")
                 os.replace(tmp, p)
             except OSError:
                 # Best-effort: never let a persist failure reach the money path.
