@@ -17,6 +17,7 @@ import pytest
 
 import charon
 from charon import gateway
+from charon.balance import BalanceTracker
 from charon.gateway import GatewayConfig
 from charon.proxy import GatewayProxy
 from charon.proxy_server import GatewayProxyServer, UpstreamRoute
@@ -255,6 +256,112 @@ def test_models_endpoint_does_not_exclude_model_in_both_routes_and_pools():
         _, body = _req(srv.url + "/v1/models", token="t")
         ids = [m["id"] for m in body["data"]]
         assert ids == ["low"]   # not excluded — it IS a concrete model
+    finally:
+        srv.shutdown()
+
+
+# ---- /v1/models viability filter (TAB F) ---------------------------------
+
+def test_models_endpoint_excludes_fully_parked_model():
+    """A model whose only provider leg is parked is excluded from /v1/models."""
+    bt = BalanceTracker()
+    bt.park("bad-provider")
+    cfg = GatewayConfig(
+        port=0,
+        token="t",
+        routes={
+            "good": UpstreamRoute("http://127.0.0.1:1/v1", api_key="k",
+                                   provider="good-provider"),
+            "bad": UpstreamRoute("http://127.0.0.1:1/v1", api_key="k",
+                                  provider="bad-provider"),
+        },
+        model_ids=["good", "bad"],
+        balance_tracker=bt,
+    )
+    srv = gateway.build_server(cfg)
+    srv.serve_in_thread()
+    try:
+        _, body = _req(srv.url + "/v1/models", token="t")
+        ids = [m["id"] for m in body["data"]]
+        assert ids == ["good"]
+        assert "bad" not in ids
+    finally:
+        srv.shutdown()
+
+
+def test_models_endpoint_includes_model_with_one_viable_leg():
+    """A model with at least one non-parked, non-drained provider is included."""
+    bt = BalanceTracker()
+    bt.park("parked-prov")
+    cfg = GatewayConfig(
+        port=0,
+        token="t",
+        routes={"m": UpstreamRoute("http://127.0.0.1:1/v1", api_key="k",
+                                    provider="parked-prov")},
+        pools={"m": [
+            UpstreamRoute("http://127.0.0.1:1/v1", api_key="k",
+                          provider="parked-prov"),
+            UpstreamRoute("http://127.0.0.1:1/v1", api_key="k2",
+                          provider="live-prov"),
+        ]},
+        model_ids=["m"],
+        balance_tracker=bt,
+    )
+    srv = gateway.build_server(cfg)
+    srv.serve_in_thread()
+    try:
+        _, body = _req(srv.url + "/v1/models", token="t")
+        ids = [m["id"] for m in body["data"]]
+        assert ids == ["m"]
+    finally:
+        srv.shutdown()
+
+
+def test_models_endpoint_all_models_visible_without_balance_tracker():
+    """Backward compat: no balance_tracker → every model is considered viable."""
+    cfg = GatewayConfig(
+        port=0,
+        token="t",
+        routes={"m": UpstreamRoute("http://127.0.0.1:1/v1", api_key="k")},
+        model_ids=["m"],
+        balance_tracker=None,
+    )
+    srv = gateway.build_server(cfg)
+    srv.serve_in_thread()
+    try:
+        _, body = _req(srv.url + "/v1/models", token="t")
+        ids = [m["id"] for m in body["data"]]
+        assert ids == ["m"]
+    finally:
+        srv.shutdown()
+
+
+def test_models_endpoint_excludes_all_parked_pool_model():
+    """When every leg in a model's pool is parked, the model is excluded."""
+    bt = BalanceTracker()
+    bt.park("p1")
+    bt.park("p2")
+    cfg = GatewayConfig(
+        port=0,
+        token="t",
+        pools={"m": [
+            UpstreamRoute("http://127.0.0.1:1/v1", api_key="k", provider="p1"),
+            UpstreamRoute("http://127.0.0.1:1/v1", api_key="k2", provider="p2"),
+        ]},
+        routes={
+            "other": UpstreamRoute("http://127.0.0.1:1/v1", api_key="k3",
+                                    provider="live"),
+        },
+        model_ids=["m", "other"],
+        balance_tracker=bt,
+    )
+    srv = gateway.build_server(cfg)
+    srv.serve_in_thread()
+    try:
+        _, body = _req(srv.url + "/v1/models", token="t")
+        ids = [m["id"] for m in body["data"]]
+        assert ids == ["other"]
+        assert "m" not in ids
     finally:
         srv.shutdown()
 
