@@ -274,6 +274,29 @@ def test_has_viable_leg_hides_fully_parked_alias():
     assert _has_viable_leg("solo", srv_route) is True
 
 
+def test_has_viable_leg_hides_drained_not_parked_alias():
+    """_has_viable_leg: a drained (but not parked) provider is excluded from
+    /v1/models — covering the ``is_drained`` branch.
+
+    FAIL-ON-REVERT: without the ``is_drained`` check, a drained provider would
+    still be listed in /v1/models but unreachable."""
+    bt = BalanceTracker(
+        config={"d": {"mode": "fixed", "starting_usd": 0.0}},
+        park_clock=_Clock(),
+    )
+    srv = _Srv(
+        balance_tracker=bt,
+        pools={
+            "m": [
+                UpstreamRoute("http://d", "kd", provider="d", upstream_model="md"),
+            ],
+        },
+        routes={},
+    )
+    assert _has_viable_leg("m", srv) is False, (
+        "an alias whose only leg is drained must not be listed")
+
+
 def test_corrupt_park_until_loads_without_raising_and_expires():
     """Corrupt park_until entries (string, null, missing key) load without
     raising and the park expires.
@@ -288,6 +311,9 @@ def test_corrupt_park_until_loads_without_raising_and_expires():
         {"parked": ["p"], "park_until": {"p": None}, "park_strikes": {"p": 3}},
         {"parked": ["p"], "park_until": {"other": 5.0}, "park_strikes": {"p": 3}},
         {"parked": ["p"], "park_until": "junk", "park_strikes": {"p": 3}},
+        {"parked": ["p"], "park_until": {"p": 1000.0}, "park_strikes": {"p": "not-a-number"}},
+        {"parked": ["p"], "park_until": {"p": 1000.0}, "park_strikes": {"p": None}},
+        {"parked": ["p"], "park_until": {"p": 1000.0}, "park_strikes": "junk"},
     ]
     for payload in cases:
         with tempfile.TemporaryDirectory() as d:
