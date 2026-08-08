@@ -71,6 +71,46 @@ def try_handle_public_gui(handler, srv) -> bool:
     return False
 
 
+def _has_viable_leg(model_id: str, srv) -> bool:
+    """Return True if *model_id* has at least one provider leg that is not
+    parked and not drained.  When no balance tracker is configured every model
+    is considered viable (backward-compatible default)."""
+    bt = getattr(srv, "balance_tracker", None)
+    if bt is None:
+        return True
+    chain = srv.pools.get(model_id)
+    if chain is None:
+        route = srv.routes.get(model_id)
+        if route is None:
+            return False
+        chain = [route]
+    for r in chain:
+        prov = r.provider or r.label
+        if not bt.is_parked(prov) and not bt.is_drained(prov):
+            return True
+    return False
+
+
+def _has_viable_leg(model_id: str, srv) -> bool:
+    """Return True if *model_id* has at least one provider leg that is not
+    parked and not drained.  When no balance tracker is configured every model
+    is considered viable (backward-compatible default)."""
+    bt = getattr(srv, "balance_tracker", None)
+    if bt is None:
+        return True
+    chain = srv.pools.get(model_id)
+    if chain is None:
+        route = srv.routes.get(model_id)
+        if route is None:
+            return False
+        chain = [route]
+    for r in chain:
+        prov = r.provider or r.label
+        if not bt.is_parked(prov) and not bt.is_drained(prov):
+            return True
+    return False
+
+
 def try_handle_control_plane(handler, srv) -> bool:
     """Serve the control-plane routes (models/status/cost/console/setup/work).
 
@@ -87,6 +127,8 @@ def try_handle_control_plane(handler, srv) -> bool:
         # (a model named "auto" or "low" is a real model, not a pool).
         pool_only = set(srv.pools.keys()) - set(srv.routes.keys())
         exposed = [m for m in srv.model_ids if m not in pool_only]
+        exposed = [m for m in exposed if _has_viable_leg(m, srv)]
+        exposed = [m for m in exposed if _has_viable_leg(m, srv)]
         entries: list[dict] = []
         for m in exposed:
             entry: dict = {"id": m, "object": "model", "owned_by": "charon"}
