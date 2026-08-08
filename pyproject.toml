@@ -95,6 +95,7 @@ extend-select = ["S", "BLE", "ARG", "C90"]
 # baseline stable against new test files landing later -- new tests get the
 # same exemption automatically instead of needing a baseline entry.
 "tests/**" = ["ARG001", "ARG002", "ARG003", "ARG005", "S101", "S104", "S105", "S106", "S107", "S108", "S310", "S404", "S603", "S607"]
+"tools/**" = ["E501", "S404", "S603", "S607", "C901"]
 
 # Below: genuine one-off per-file debt (style nits in tests/tools, real
 # findings in src/) -- mechanically generated from the actual `ruff check .`
