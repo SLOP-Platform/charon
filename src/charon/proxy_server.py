@@ -645,7 +645,8 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         absent → self.router stays None (hand-rolled path runs); a misconfigured route
         logs a warning and leaves the hand-rolled path serving."""
         try:
-            from .litellm_plane import litellm_router as _lr
+            from importlib import import_module
+            _lr = import_module("charon.litellm_plane.litellm_router")
             self.router_chains = _lr.routes_by_model(self)
             self.router = _lr.make_router(self)
         except ImportError:
