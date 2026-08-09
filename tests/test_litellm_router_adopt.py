@@ -187,7 +187,9 @@ def test_chain_order_preserved():
                        upstream_model="mb")
     ml = lr.build_model_list({"m1": [r1, r2]})
     assert [e["litellm_params"]["api_base"] for e in ml] == [GOOD_BASE, OTHER_PRESET_BASE]
-    assert all(e["model_name"] == "m1" for e in ml)
+    # Multi-leg chains get per-leg names (m1#0, m1#1) for build_fallbacks chaining.
+    assert ml[0]["model_name"] == "m1#0"
+    assert ml[1]["model_name"] == "m1#1"
 
 
 # ── the actual Router construction (needs litellm installed) ───────────────────
