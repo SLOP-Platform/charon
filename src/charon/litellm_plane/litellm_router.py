@@ -81,10 +81,25 @@ def resolve_route_key(
     provider_id = getattr(route, "provider", None)
     base_url = getattr(route, "upstream_base", None)
     key_env = getattr(route, "key_env", None)
+    route_api_key = getattr(route, "api_key", None)
     if provider_id:
-        # Authoritative, base-bound. None => send no key rather than the wrong one.
-        return key_resolver(provider_id, key_env=key_env, base_url=base_url)
-    return getattr(route, "api_key", None)
+        resolved = key_resolver(provider_id, key_env=key_env, base_url=base_url)
+        if resolved is not None:
+            return resolved
+        if _has_stored_provider_key(provider_id):
+            return None
+        return route_api_key
+    return route_api_key
+
+
+def _has_stored_provider_key(provider_id: str) -> bool:
+    """True when a per-provider secret exists (stored via secrets.set_provider_key)."""
+    try:
+        from charon.secrets import load_secrets
+        store = load_secrets()
+    except Exception:  # noqa: BLE001
+        return False
+    return bool(store.get("provider:" + provider_id))
 
 
 def _is_anthropic(route: UpstreamRoute, agent_model: str) -> bool:
