@@ -280,6 +280,18 @@
     "reason": "Instance-inert detector false positive: CapSet has a callable covers() method that IS invoked in production (capability/taxonomy.py and related modules), but the invocation pattern involves method calls on objects typed as the parent protocol/interface rather than the concrete CapSet type, which the heuristic cannot resolve statically.",
     "inert_class": true
   },
+  "charon.provider_probe.chat_url": {
+    "disposition": "keep-detector-false-positive-decomposed-module",
+    "reason": "WCI-DEC decomposition seam: charon.provider_probe is a new internal module containing the provider-URL-helper and probe logic extracted from charon.providers. The facade charon.providers re-exports chat_url (among others), and all callers use the facade path (charon.providers.chat_url). The sub-module entry exists only because the dead-code detector scans every importable symbol, not just the facade."
+  },
+  "charon.provider_probe.list_models": {
+    "disposition": "keep-detector-false-positive-decomposed-module",
+    "reason": "WCI-DEC decomposition seam: charon.provider_probe is a new internal module extracted from charon.providers. The facade charon.providers re-exports list_models, and all callers use the facade path (charon.providers.list_models). The sub-module entry exists only because the dead-code detector scans every importable symbol, not just the facade."
+  },
+  "charon.provider_routing.is_anthropic_route": {
+    "disposition": "keep-detector-false-positive-decomposed-module",
+    "reason": "WCI-DEC decomposition seam: charon.provider_routing is a new internal module containing the SG-never-Anthropic hard rule extracted from charon.providers. The facade charon.providers re-exports is_anthropic_route, and all callers use the facade path (charon.providers.is_anthropic_route). The sub-module entry exists only because the dead-code detector scans every importable symbol, not just the facade."
+  },
   "charon.startup_check.V": {
     "disposition": "keep-detector-instance-inert-false-positive",
     "reason": "Instance-inert detector false positive: `V` is not a module-level class at all. It is a throwaway function-LOCAL ast.NodeVisitor subclass, declared and instantiated inside the very function that uses it (src/charon/startup_check.py defines `class V(ast.NodeVisitor)` inside _parse_forwarder_for_attrs and again inside _collect_self_attrs, each followed immediately by `V().visit(...)`). The symbol scan walks class definitions without tracking enclosing function scope, so it sees a class with zero module-level callers and reports it as instance-inert. The construction site is one line below the definition in both cases; deleting `V` would break startup_check outright.",
