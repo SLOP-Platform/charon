@@ -149,7 +149,7 @@ def _get_model_cost() -> dict[str, dict] | None:
     ``derived_cost_rank`` stays, so cost ordering is unchanged, never broken."""
     try:
         from litellm import model_cost  # type: ignore[import-not-found]
-    except Exception:  # noqa: BLE001 — pragma: no cover
+    except Exception:  # noqa: BLE001  # pragma: no cover — litellm optional extra
         log.debug("litellm.model_cost unavailable")  # pragma: no cover
         return None  # pragma: no cover
     # litellm exports model_cost as a dict, but the type is not statically
