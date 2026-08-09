@@ -145,7 +145,8 @@ def _deployment(
         "api_base": base,
         "api_key": key,
     }
-    info: dict[str, Any] = {"provider": getattr(route, "provider", None) or getattr(route, "label", "")}
+    _prov = getattr(route, "provider", None) or getattr(route, "label", "")
+    info: dict[str, Any] = {"provider": _prov}
     max_context = getattr(route, "max_context", None)
     if max_context is not None:
         info["max_input_tokens"] = int(max_context)
@@ -447,10 +448,10 @@ def _install_attempt_callbacks() -> None:
         reason = str(getattr(exc, "message", "") or type(exc).__name__)[:200] if exc else ""
         attempts.append(AttemptRecord(provider=provider, status=status, ok=ok, reason=reason))
 
-    def _on_failure(kwargs, completion_response, start_time, end_time):  # noqa: ANN001
+    def _on_failure(kwargs, completion_response, start_time, end_time):  # noqa: ANN001, ARG001
         _record(kwargs, False)
 
-    def _on_success(kwargs, completion_response, start_time, end_time):  # noqa: ANN001
+    def _on_success(kwargs, completion_response, start_time, end_time):  # noqa: ANN001, ARG001
         _record(kwargs, True)
 
     _tag = "__charon_installed__"
