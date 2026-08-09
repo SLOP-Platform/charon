@@ -281,3 +281,146 @@ def test_router_happy_path_with_default_params(monkeypatch, tmp_path):
     finally:
         server.shutdown()
         legit.shutdown()
+
+
+# ── litellm_router pure-function unit tests ────────────────────────────────
+
+
+def test_deployment_with_max_context():
+    """Cover ``_deployment`` max_context injection (litellm_router.py:151)."""
+    from charon.litellm_plane.litellm_router import _deployment
+    from charon.proxy_server import UpstreamRoute
+
+    route = UpstreamRoute(
+        upstream_base="http://x/v1", api_key="k", provider="p", max_context=8192)
+    dep = _deployment(route, "m1", "http://x/v1", "k")
+    assert dep["model_info"]["max_input_tokens"] == 8192
+
+
+def test_preorder_chain_drained_provider():
+    """Cover ``_preorder_chain`` drained-provider exclusion (litellm_router.py:253)."""
+    from unittest.mock import MagicMock
+
+    from charon.litellm_plane.litellm_router import _preorder_chain
+    from charon.proxy_server import UpstreamRoute
+
+    bt = MagicMock()
+    bt.funding_class.return_value = 4
+    bt.remaining.return_value = 0.0
+    bt.is_parked.return_value = False
+    bt.is_drained.return_value = True
+    bt.parked_provider_ids.return_value = frozenset()
+    bt.cooldown_provider_ids.return_value = frozenset()
+
+    route = UpstreamRoute(upstream_base="http://d/v1", provider="drained")
+    result = _preorder_chain([route], bt)
+    assert len(result) == 0, "drained provider must be excluded"
+
+
+def test_primary_leg_no_chain():
+    """Cover ``_primary_leg`` returning None when no chain (litellm_router.py:505)."""
+    from charon.litellm_plane.litellm_router import _primary_leg
+    assert _primary_leg("absent", {}) is None
+
+
+def test_provider_from_deployment_edge_cases():
+    """Cover ``_provider_from_deployment`` falsy model_id + no-match (512,517)."""
+    from charon.litellm_plane.litellm_router import _provider_from_deployment
+
+    assert _provider_from_deployment(None, "") == ""
+    assert _provider_from_deployment(None, None) == ""
+
+
+def test_classify_for_envelope_no_bt():
+    """Cover ``_classify_for_envelope`` with no balance tracker (523-530)."""
+    from charon.litellm_plane.litellm_router import _classify_for_envelope
+
+    cls_, arm = _classify_for_envelope("p", None)
+    assert cls_ == "unknown"
+    assert arm == "unknown"
+
+
+def test_synth_exhaustion_envelope_all_parked():
+    """Cover ``_synth_exhaustion_envelope`` all_parked=True (538-544)."""
+    from charon.litellm_plane.litellm_router import AttemptRecord, _synth_exhaustion_envelope
+
+    rec = AttemptRecord(provider="p1", status=0, ok=False, reason="parked")
+    status, env = _synth_exhaustion_envelope(
+        "m", [rec], all_parked=True, bt=None)
+    assert status == 503
+    assert env["error"]["type"] == "all_providers_exhausted"
+    assert env["error"]["no_provider_reason"] == "all_legs_parked"
+    assert len(env["error"]["providers_tried"]) == 1
+    assert env["error"]["providers_tried"][0]["status"] == "parked"
+
+
+def test_complete_via_router_no_route():
+    """Cover ``complete_via_router_tracked`` primary-is-None no-route (574-592)."""
+    from charon.litellm_plane.litellm_router import complete_via_router_tracked
+
+    status, env, headers = complete_via_router_tracked(
+        None, {"model": "absent", "messages": [{"role": "user", "content": "x"}]},
+        chains={}, bt=None, orig_pools=None, orig_routes=None, timeout=10)
+    assert status == 502
+    assert "no_route_configured" == env["error"]["type"]
+
+
+# ── litellm_pricing pure-function unit tests ───────────────────────────────
+
+
+def test_strip_provider_suffix_matching():
+    """Cover ``_strip_provider_suffix`` matching suffix (116-118)."""
+    from charon.routing_policy.litellm_pricing import _strip_provider_suffix
+
+    assert _strip_provider_suffix("gpt-5.4-mini-ng") == "gpt-5.4-mini"
+    assert _strip_provider_suffix("deepseek-v4-flash") == "deepseek-v4-flash"
+
+
+def test_litellm_candidates_empty_base():
+    """Cover ``_litellm_candidates`` empty-base early return (138).
+    Patches _strip_free_suffix to return '' so `not base` triggers."""
+    from unittest.mock import patch
+
+    from charon.routing_policy.litellm_pricing import _litellm_candidates
+
+    with patch("charon.routing_policy.litellm_pricing._strip_free_suffix",
+               return_value=""):
+        assert _litellm_candidates("x", {"provider": "deepseek",
+                                         "upstream_model": "free-"}) == []
+
+
+def test_price_for_image_only_entry():
+    """Cover ``price_for`` ci_f/co_f both-None branch (litellm_pricing.py:203)."""
+    from charon.routing_policy.litellm_pricing import price_for
+    # DALL-E is an image-only model in litellm with no token pricing
+    dall_e = price_for("dall-e-3", {"provider": "openai"})
+    # Must return None — entry exists but carries no token price
+    assert dall_e is None
+
+
+def test_enrich_registry_non_dict_passthrough():
+    """Cover ``enrich_registry`` non-dict passthrough (228-229)."""
+    from charon.routing_policy.litellm_pricing import enrich_registry
+
+    reg = {"key": "not-a-dict"}
+    out = enrich_registry(dict(reg))
+    assert out["key"] == "not-a-dict"
+
+
+def test_coverage_report_all_branches():
+    """Cover all branches of ``coverage_report`` (269-296)."""
+    from charon.routing_policy.litellm_pricing import coverage_report
+
+    reg = {
+        "priced-by-op": {"provider": "a", "cost_input": 1e-6},
+        "unmapped": {"provider": "nanogpt", "upstream_model": "nanogpt-id"},
+        "skip-non-dict": "not-a-dict",
+    }
+    report = coverage_report(reg)
+    assert report["total"] == 3
+    assert report["priced"] >= 1  # priced-by-op is priced
+    assert report["unmapped_count"] >= 1  # nanogpt is unmapped
+    assert "a" in report["per_provider"]
+    assert report["per_provider"]["a"] == [1, 1]  # 1 priced, 1 total
+    unmapped_ids = [u["id"] for u in report["unmapped"]]
+    assert "unmapped" in unmapped_ids
