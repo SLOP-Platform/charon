@@ -569,6 +569,12 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
             if not hasattr(self, _mn):
                 setattr(self, _mn, self.modules[_mn])
         self.balance_tracker = balance_tracker
+        # LITELLM-ROUTER-CUTOVER (D-019): the adopted litellm.Router. ``None`` when
+        # litellm is absent → the hand-rolled forwarder path runs. Built by
+        # ``_build_router`` (gateway.py calls it at construction; apply_routes re-calls).
+        self.router: Any = None
+        # The screened chains the Router was built from (routes_by_model output).
+        self.router_chains: dict[str, list] = {}
         # R3: optional capability deny-table, set by gateway.build_server;
         # forwarder reads via getattr(..., None) so direct-server tests are unaffected.
         self.capability_matrix: Any = None
@@ -616,6 +622,26 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
             self.model_meta = model_meta or {}
             self.model_pricing = model_pricing or {}
             self.observer.set_pricing(self.model_pricing)
+        self._build_router()
+
+    def _build_router(self) -> None:
+        """Construct (or reconstruct) the adopted litellm.Router from the live config —
+        the production importer for src/charon/litellm_plane. Best-effort: litellm
+        absent → self.router stays None (hand-rolled path runs); a misconfigured route
+        logs a warning and leaves the hand-rolled path serving."""
+        try:
+            from .litellm_plane import litellm_router as _lr
+            self.router_chains = _lr.routes_by_model(self)
+            self.router = _lr.make_router(self)
+        except ImportError:
+            self.router = None
+            self.router_chains = {}
+        except Exception:  # noqa: BLE001 — a misconfigured route must not brick the gateway
+            import logging
+            logging.getLogger("charon.proxy_server").warning(
+                "litellm.Router build failed; serving via the hand-rolled path", exc_info=True)
+            self.router = None
+            self.router_chains = {}
 
     def chain_for(self, model: str) -> list[UpstreamRoute]:
         """The ordered failover chain for ``model``: a configured pool (multiple

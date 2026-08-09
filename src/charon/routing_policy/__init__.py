@@ -167,6 +167,13 @@ def build_routes_and_pools(
     in an explicit, attributable control (e.g. drain policy, pool removal)."""
     providers_cfg = providers_cfg or {}
     metered_costs = metered_costs or {}
+    # LITELLM-COST-ADOPT: stamp litellm-sourced per-token pricing onto registry
+    # entries that lack cost_input/cost_output BEFORE rank derivation, so
+    # derived_cost_rank sees real magnitudes instead of the neutral 1000
+    # fallback. Clobber-safe (operator prices win) and never guesses — an
+    # unmappable model stays unpriced (see litellm_pricing.enrich_registry).
+    from .litellm_pricing import enrich_registry
+    registry = enrich_registry(registry)
     routes: dict[str, _UpstreamRoute] = {}
     for mid, spec in registry.items():
         if isinstance(spec, dict):

@@ -331,6 +331,164 @@ def _has_live_sibling(provider: str, pools: dict[str, list], bt) -> bool:
     return owned > 0
 
 
+def forward_via_router(handler, srv) -> bool:
+    """Serve ONE request through the adopted ``litellm.Router`` (D-019 cutover).
+
+    Returns ``True`` if the request was fully served through the Router path; ``False``
+    if the hand-rolled path should run instead (no Router wired, the model is a
+    ``policy/`` virtual route, or the request is streaming — the streaming Router path
+    is a follow-on slice).
+
+    Preserves the money-path invariants on the Router path:
+      * D-012 — a fully-parked chain returns a real 503 ``all_legs_parked``, never a 200.
+      * D-018 — cooldown KEEPS the never-strand guard; park does NOT.
+      * X-Charon headers — reconstructed from litellm's per-attempt callbacks (ADR D3).
+      * cache / spend / balance / downgrade-guard — the same post-serve hooks the
+        hand-rolled path applies, on the Router-served 200."""
+    router = getattr(srv, "router", None)
+    if router is None:
+        return False
+    raw_body = getattr(handler, "_cutover_raw_body", None)
+    if raw_body is None:
+        return False
+    orig_bj: dict = getattr(handler, "_cutover_body", {})
+    requested = orig_bj.get("model", "")
+    # ``policy/`` virtual routes are resolved by the hand-rolled PolicyRouter.
+    if requested.startswith("policy/"):
+        return False
+    # Streaming through the Router is a follow-on slice — fall back to the hand-roll.
+    if orig_bj.get("stream") is True:
+        return False
+
+    from .litellm_plane import litellm_router as _lr
+
+    chains = getattr(srv, "router_chains", {}) or {}
+    bt = getattr(srv, "balance_tracker", None)
+    session_id = getattr(handler, "_cutover_session", None)
+
+    # ── spend cap check (before any upstream call) ──────────────────────────
+    est_tokens = max(len(raw_body) // 4, 100)
+    est_cost = 0.0
+    if srv.spend_limiter is not None:
+        est_cost = _pre_flight_estimate(requested, est_tokens, srv)
+        dec = srv.spend_limiter.check(est_cost)
+        if not dec.allowed:
+            handler._json(402, {"error": {"message": dec.reason,
+                           "remaining": dec.remaining}})
+            return True
+
+    # ── guardrail request scan ──────────────────────────────────────────────
+    if srv.guardrails is not None:
+        violations, _ = srv.guardrails.scan_request(orig_bj.get("messages", []))
+        blocking = [v for v in violations if v.severity == "BLOCK"]
+        if blocking:
+            handler._json(400, {"error": {
+                "message": "request blocked by guardrails",
+                "violations": [{"pattern": v.pattern, "message": v.message}
+                               for v in blocking]}})
+            return True
+
+    # ── cache check ─────────────────────────────────────────────────────────
+    if srv.semantic_cache is not None:
+        cache_key = hashlib.sha256(raw_body).hexdigest()
+        cached = srv.semantic_cache.get(cache_key)
+        if cached is not None:
+            ctype = cached.headers.get("Content-Type", "application/json")
+            handler._send_resp_headers(200, ctype, "cache", [], False, cache_status="HIT")
+            handler._write(cached.content)
+            srv.note_request(requested, "cache-hit", 200, 0.0, [])
+            return True
+
+    # ── D-012 / D-018: dispatch through the Router (or synthesize the 503) ──
+    status, body_dict, xheaders = _lr.complete_via_router_tracked(
+        router, orig_bj, chains=chains, bt=bt,
+        orig_pools=getattr(srv, "pools", {}), orig_routes=getattr(srv, "routes", {}),
+        timeout=srv.fwd_timeout)
+
+    # ── terminal 502 / 503 (no successful 200) ──────────────────────────────
+    if status != 200:
+        retry_after = body_dict.get("error", {}).get("retry_after_s")
+        provider = None
+        failovers: list[dict] = []
+        reasons_hdr = xheaders.get("X-Charon-Failover-Reasons", "")
+        if reasons_hdr:
+            for pair in reasons_hdr.split("; "):
+                if "=" in pair:
+                    p, s = pair.split("=", 1)
+                    failovers.append({"provider": p, "status": _safe_status(s),
+                                      "reason": "exhausted"})
+        handler._send_resp_headers(
+            status, "application/json", provider, failovers, False,
+            retry_after=int(retry_after) if retry_after else None)
+        handler._write(json.dumps(body_dict).encode())
+        served_by = failovers[-1]["provider"] if failovers else (requested or "router")
+        srv.note_request(requested, served_by, status, 0.0, failovers)
+        return True
+
+    # ── 200: serve with the post-serve hook set (cache/spend/balance/downgrade) ─
+    served = body_dict
+    # Downgrade guard: classify the served 200 (canonical SR-1/SR-2 compare).
+    downgrade = False
+    try:
+        from charon.proxy import GatewayProxy
+        expected = served.get("model")
+        obs = (srv.observer or GatewayProxy()).classify(
+            requested_model=requested, status=200, headers=None, body=served,
+            expected_model=expected)
+        downgrade = bool(obs.pseudo_success)
+        srv.observer.record(obs, count_usage=True, session=session_id,
+                            provider=xheaders.get("X-Charon-Provider", ""))
+    except Exception:  # noqa: BLE001 — the downgrade classify must never break serving
+        pass
+
+    body_bytes = json.dumps(served).encode()
+    provider = xheaders.get("X-Charon-Provider") or None
+    failover_reasons = xheaders.get("X-Charon-Failover-Reasons")
+    failovers: list[dict] = []
+    if failover_reasons:
+        for pair in failover_reasons.split("; "):
+            if "=" in pair:
+                p, s = pair.split("=", 1)
+                failovers.append({"provider": p, "status": _safe_status(s),
+                                  "reason": "exhausted"})
+    cost = 0.0
+    if srv.response_normalizer is not None:
+        body_bytes = _normalize_message_content(body_bytes, srv.response_normalizer)
+    if not downgrade and srv.semantic_cache is not None:
+        cache_key = hashlib.sha256(raw_body).hexdigest()
+        srv.semantic_cache.set(cache_key, body_bytes, {}, ttl=3600)
+    if srv.spend_limiter is not None:
+        srv.spend_limiter.record(_spend_to_record_from(served, est_cost))
+    if srv.balance_tracker is not None and provider:
+        srv.balance_tracker.record_spend(provider, cost, model=requested)
+    handler._send_resp_headers(200, "application/json", provider, failovers, downgrade)
+    handler._write(body_bytes)
+    srv.note_request(requested, provider or requested, 200, cost, failovers)
+    return True
+
+
+def _safe_status(s: str):
+    try:
+        return int(s)
+    except (TypeError, ValueError):
+        return s
+
+
+def _spend_to_record_from(served: dict, est_cost: float) -> float:
+    """Record the provider's real cost for a Router-served 200, mirroring
+    ``_spend_to_record`` on the hand-rolled path. A free/flat route reports a real $0
+    → record 0.0 (never the est_cost floor); an unpriced response keeps the floor."""
+    usage = served.get("usage")
+    if not isinstance(usage, dict):
+        return est_cost
+    cost = float(usage.get("cost", usage.get("total_cost", 0.0)) or 0.0)
+    if cost > 0:
+        return cost
+    if usage.get("prompt_tokens") is not None or usage.get("total_tokens") is not None:
+        return 0.0
+    return est_cost
+
+
 def forward_with_failover(handler, srv) -> None:
     """Run the data-plane failover loop for one client request (money path).
 
@@ -358,6 +516,18 @@ def forward_with_failover(handler, srv) -> None:
         requested = orig_bj.get("model", "")
     except Exception:  # noqa: BLE001
         pass
+
+    # LITELLM-ROUTER-CUTOVER (D-019): dispatch through the adopted litellm.Router when
+    # one is wired. Stash the parsed body / session on the handler so ``forward_via_router``
+    # can reuse them without re-reading the request. Falls back to the hand-rolled loop
+    # below when the Router is absent, the request is streaming/policy, or the Router
+    # dispatch declines (returns False).
+    if getattr(srv, "router", None) is not None:
+        handler._cutover_raw_body = raw_body  # type: ignore[attr-defined]
+        handler._cutover_body = orig_bj  # type: ignore[attr-defined]
+        handler._cutover_session = session_id  # type: ignore[attr-defined]
+        if forward_via_router(handler, srv):
+            return
 
     chain = srv.chain_for(requested)
     if not chain:
