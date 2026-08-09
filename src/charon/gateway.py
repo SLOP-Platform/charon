@@ -131,7 +131,8 @@ class GatewayConfig:
     # F29: replaced the ~15 optional module fields with ONE registry-driven dict.
     # Backward-compat attribute access (cfg.guardrails, etc.) → __getattr__ below.
     modules: dict[str, Any] = field(default_factory=dict)
-    balance_tracker: Any = None  # BalanceTracker | None (typed as Any to avoid import cycle)
+    balance_tracker: Any = None
+    use_litellm_router: bool = True
 
     def __getattr__(self, name: str) -> Any:
         """Backward-compat: cfg.guardrails → self.modules["guardrails"] etc."""
@@ -151,6 +152,7 @@ def load_config(
     host: str | None = None,
     port: int | None = None,
     token: str | None = None,
+    use_litellm_router: bool | None = None,
 ) -> GatewayConfig:
     """Resolve gateway config. ``toml_path`` wins; else ``state_dir/models.json``.
     Explicit ``host``/``port``/``token`` args override file values; ``token`` also
@@ -160,6 +162,7 @@ def load_config(
     cfg_token: str | None = None
     cfg_failover_on_downgrade: bool = False
     cfg_anthropic_prompt_cache: bool = True
+    cfg_use_litellm_router: bool = True
     registry: dict = {}
     pool_map: dict = {}
     providers_cfg: dict = {}
@@ -173,6 +176,7 @@ def load_config(
         cfg_failover_on_downgrade = bool(gw.get("failover_on_downgrade", False))
         cfg_anthropic_prompt_cache = bool(
             gw.get(providers.ANTHROPIC_PROMPT_CACHE_KEY, True))
+        cfg_use_litellm_router = bool(gw.get("use_litellm_router", True))
         registry = data.get("models") or {}
         pool_map = data.get("pools") or {}  # virtual id → ordered [model id]
         providers_cfg = data.get("providers") or {}  # preset overrides (P3)
@@ -195,6 +199,7 @@ def load_config(
                         gw_file.get("failover_on_downgrade", False))
                     cfg_anthropic_prompt_cache = bool(
                         gw_file.get(providers.ANTHROPIC_PROMPT_CACHE_KEY, True))
+                    cfg_use_litellm_router = bool(gw_file.get("use_litellm_router", True))
             except (OSError, json.JSONDecodeError):
                 pass
 
@@ -278,6 +283,7 @@ def load_config(
         anthropic_prompt_cache=cfg_anthropic_prompt_cache,
         modules=modules,
         balance_tracker=balance_tracker,
+        use_litellm_router=(use_litellm_router if use_litellm_router is not None else cfg_use_litellm_router),
     )
 
 
@@ -534,6 +540,8 @@ def build_server(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> 
         balance_tracker=cfg.balance_tracker,
         observer=observer,
     )
+    if cfg.use_litellm_router:
+        server._build_router()  # noqa: SLF001
     # DRAIN-AND-PARK: wire the observer meter as the spend source for class-3
     # drain-then-park providers (anti-sprawl: one spend source, not two).
     if server.balance_tracker is not None:
