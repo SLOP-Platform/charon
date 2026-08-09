@@ -81,10 +81,25 @@ def resolve_route_key(
     provider_id = getattr(route, "provider", None)
     base_url = getattr(route, "upstream_base", None)
     key_env = getattr(route, "key_env", None)
+    route_api_key = getattr(route, "api_key", None)
     if provider_id:
-        # Authoritative, base-bound. None => send no key rather than the wrong one.
-        return key_resolver(provider_id, key_env=key_env, base_url=base_url)
-    return getattr(route, "api_key", None)
+        resolved = key_resolver(provider_id, key_env=key_env, base_url=base_url)
+        if resolved is not None:
+            return resolved
+        if _has_stored_provider_key(provider_id):
+            return None
+        return route_api_key
+    return route_api_key
+
+
+def _has_stored_provider_key(provider_id: str) -> bool:
+    """True when a per-provider secret exists (stored via secrets.set_provider_key)."""
+    try:
+        from charon.secrets import load_secrets
+        store = load_secrets()
+    except Exception:  # noqa: BLE001
+        return False
+    return bool(store.get("provider:" + provider_id))
 
 
 def _is_anthropic(route: UpstreamRoute, agent_model: str) -> bool:
@@ -119,28 +134,27 @@ def _screen_base(base: str | None, agent_model: str) -> str:
     return egress.assert_base_allowed(base)
 
 
-def _deployment(
-    route: UpstreamRoute, agent_model: str, base: str, key: str | None
-) -> dict[str, Any]:
-    """One ``model_list`` entry (a litellm "deployment"). ``model_name`` is the agent-facing
-    id — several deployments sharing one ``model_name`` are what gives litellm intra-model
-    failover/load-balancing, so a Charon failover CHAIN maps to N deployments of one name.
+FALLBACK_SEP = "#"
 
-    ``api_base`` is set to *base* — the exact value :func:`_screen_base` validated — so the
-    guarded value and the dialed value are the same object (the CVE-2024-6587 lesson made
-    structural)."""
-    upstream_model = getattr(route, "upstream_model", None) or agent_model
+
+def _leg_model_name(agent_model: str, index: int) -> str:
+    """Synthetic model_name for the index-th leg (D-019)."""
+    return f"{agent_model}{FALLBACK_SEP}{index}"
+
+
+def _deployment(
+    route: UpstreamRoute, model_name: str, base: str, key: str | None
+) -> dict[str, Any]:
+    """One model_list entry. model_info carries the charon provider id."""
+    upstream_model = getattr(route, "upstream_model", None) or model_name
     params: dict[str, Any] = {
-        # openai/ prefix => litellm speaks the OpenAI-compatible wire to api_base.
-        "model": f"openai/{upstream_model}",
-        "api_base": base,
-        "api_key": key,
+        "model": f"openai/{upstream_model}", "api_base": base, "api_key": key,
     }
-    max_context = getattr(route, "max_context", None)
-    entry: dict[str, Any] = {"model_name": agent_model, "litellm_params": params}
-    if max_context is not None:
-        entry["model_info"] = {"max_input_tokens": int(max_context)}
-    return entry
+    info: dict[str, Any] = {"provider": getattr(route, "provider", None) or getattr(route, "label", "")}
+    mc = getattr(route, "max_context", None)
+    if mc is not None:
+        info["max_input_tokens"] = int(mc)
+    return {"model_name": model_name, "litellm_params": params, "model_info": info}
 
 
 def build_model_list(
@@ -157,16 +171,30 @@ def build_model_list(
     """
     model_list: list[dict[str, Any]] = []
     for agent_model, chain in chains_by_model.items():
-        for route in chain:
-            # Controls 2 + 3: SSRF refusal, then the fail-closed preset egress allowlist.
+        screened_legs = [r for r in chain if not _is_anthropic(r, agent_model)]
+        multi = len(screened_legs) > 1
+        for pos, route in enumerate(chain):
             base = _screen_base(getattr(route, "upstream_base", None), agent_model)
-            # Control 5: SG-never-Anthropic. Drop (never select) an Anthropic route.
             if _is_anthropic(route, agent_model):
                 continue
-            # Control 1: base-bound key.
             key = resolve_route_key(route, key_resolver=key_resolver)
-            model_list.append(_deployment(route, agent_model, base, key))
+            name = _leg_model_name(agent_model, pos) if multi else agent_model
+            model_list.append(_deployment(route, name, base, key))
     return model_list
+
+
+def build_fallbacks(chains_by_model: dict[str, list[UpstreamRoute]]) -> list[dict[str, list[str]]]:
+    """Map chains to litellm fallbacks (D-019)."""
+    fallbacks: list[dict[str, list[str]]] = []
+    for agent_model, chain in chains_by_model.items():
+        legs: list[str] = []
+        for route in chain:
+            if _is_anthropic(route, agent_model):
+                continue
+            legs.append(_leg_model_name(agent_model, len(legs)))
+        if len(legs) > 1:
+            fallbacks.append({legs[0]: legs[1:]})
+    return fallbacks
 
 
 def routes_by_model(server: Any) -> dict[str, list[UpstreamRoute]]:
@@ -366,12 +394,172 @@ def make_router(
 
     chains = routes_by_model(server)
     model_list = build_model_list(chains, key_resolver=key_resolver)
+    fallbacks = build_fallbacks(chains)
     cooldown = float(getattr(server, "default_cooldown", 60.0) or 60.0)
     return Router(
         model_list=model_list,
+        fallbacks=fallbacks,
         cooldown_time=cooldown,
         allowed_fails=allowed_fails,
         num_retries=num_retries,
         retry_after=int(cooldown),
         set_verbose=False,
     )
+
+
+# -- LIVE DISPATCH (LITELLM-ROUTER-CUTOVER) -------------------------------------
+
+ATTEMPTS_META_KEY = "__charon_attempts__"
+
+
+@dataclass
+class AttemptRecord:
+    """One leg's outcome for X-Charon header reconstruction."""
+    provider: str
+    status: int
+    ok: bool
+    reason: str = ""
+
+
+def _install_attempt_callbacks() -> None:
+    """Install global litellm success/failure callbacks. Idempotent."""
+    import litellm
+
+    def _record(kwargs: dict, ok: bool) -> None:
+        lp = kwargs.get("litellm_params") or {}
+        meta = lp.get("metadata") or {}
+        attempts: list[AttemptRecord] | None = meta.get(ATTEMPTS_META_KEY)
+        if attempts is None:
+            return
+        mi = lp.get("model_info") or {}
+        provider = str(mi.get("provider") or "")
+        exc = kwargs.get("exception")
+        status = int(getattr(exc, "status_code", 0) or 0) if exc else 200
+        reason = str(getattr(exc, "message", "") or type(exc).__name__)[:200] if exc else ""
+        attempts.append(AttemptRecord(provider=provider, status=status, ok=ok, reason=reason))
+
+    def _on_failure(kwargs, completion_response, start_time, end_time):  # noqa: ANN001
+        _record(kwargs, ok=False)
+
+    def _on_success(kwargs, completion_response, start_time, end_time):  # noqa: ANN001
+        _record(kwargs, ok=True)
+
+    _tag = "__charon_installed__"
+    if not getattr(litellm, _tag, False):
+        litellm.failure_callback = list(litellm.failure_callback or []) + [_on_failure]
+        litellm.success_callback = list(litellm.success_callback or []) + [_on_success]
+        setattr(litellm, _tag, True)
+
+
+def _primary_leg(agent_model: str, chains: dict[str, list]) -> str | None:
+    """The model_name litellm routes to first."""
+    chain = chains.get(agent_model)
+    if not chain:
+        return None
+    screened = sum(1 for r in chain if not _is_anthropic(r, agent_model))
+    return _leg_model_name(agent_model, 0) if screened > 1 else agent_model
+
+
+def _provider_from_deployment(router: Any, model_id: str | None) -> str:
+    """Recover the Charon provider label for the deployment litellm selected."""
+    if not model_id:
+        return ""
+    for entry in getattr(router, "model_list", None) or []:
+        mi = entry.get("model_info") or {}
+        if mi.get("id") == model_id:
+            return str(mi.get("provider") or "")
+    return ""
+
+
+def _classify_for_envelope(provider: str, bt: Any) -> tuple[str, str]:
+    """Source (class, rearm) from the balance tracker."""
+    if bt is None:
+        return ("unknown", "unknown")
+    fc = bt.funding_class(provider)
+    if fc is None:
+        return ("unknown", "unknown")
+    _L = {1: "free-recurring", 2: "flat-sub", 3: "drain-then-park", 4: "PAYG"}
+    _R = {1: "auto reset (quota window)", 2: "operator top-up (next cycle)",
+          3: "operator top-up", 4: "top-up or rate-limit cooldown"}
+    try:
+        return (_L[int(fc)], _R[int(fc)])
+    except (KeyError, ValueError):
+        return ("unknown", "unknown")
+
+
+def _synth_exhaustion_envelope(
+    requested: str, attempts: list[AttemptRecord], *, all_parked: bool, bt: Any,
+    retry_after_s: int | None = None,
+) -> tuple[int, dict]:
+    """Build the ADR-0016 terminal envelope."""
+    if all_parked:
+        legs = []
+        for r in (attempts or []):
+            cls, rearm = _classify_for_envelope(r.provider, bt)
+            legs.append({"provider": r.provider, "status": "parked",
+                         "reason": "provider is parked -- spend is intentionally stopped",
+                         "class": cls, "rearm": rearm})
+        return 503, {"error": {"message": "every leg is parked", "type": "all_providers_exhausted",
+                    "requested_model": requested, "no_provider_reason": "all_legs_parked",
+                    "retry_after_s": None, "providers_tried": legs,
+                    "failover_reasons": [f"{l['provider']}=parked" for l in legs]}}
+    legs = []
+    for r in attempts:
+        cls, rearm = _classify_for_envelope(r.provider, bt)
+        legs.append({"provider": r.provider, "status": r.status,
+                     "reason": r.reason or "exhausted", "class": cls, "rearm": rearm})
+    return 503, {"error": {"message": "all providers exhausted", "type": "all_providers_exhausted",
+                "requested_model": requested, "no_provider_reason": None,
+                "retry_after_s": retry_after_s, "providers_tried": legs,
+                "failover_reasons": [f"{r.provider}={r.status}" for r in attempts]}}
+
+
+def complete_via_router_tracked(
+    router: Any, body: dict, *, chains: dict[str, list], bt: Any = None,
+    timeout: float = 180.0,
+) -> tuple[int, dict, dict[str, str]]:
+    """Serve ONE non-streaming request through the Router (live money-path dispatch).
+    D-012: fully-parked -> 503, zero upstream calls. On failure: 503 from attempts.
+    On success: 200 with X-Charon headers."""
+    _install_attempt_callbacks()
+    requested = body.get("model", "")
+    primary = _primary_leg(requested, chains)
+
+    if primary is None:
+        has_unscreened = bool(chains.get(requested))
+        if has_unscreened:
+            parked_legs = [AttemptRecord(
+                provider=getattr(r, "provider", None) or getattr(r, "label", ""),
+                status=0, ok=False, reason="parked") for r in chains[requested]]
+            status, env = _synth_exhaustion_envelope(requested, parked_legs, all_parked=True, bt=bt)
+            return status, env, {"X-Charon-Failovers": "0"}
+        return 502, {"error": {"message": f"no route for model {requested!r}",
+                    "type": "no_route_configured", "requested_model": requested,
+                    "no_provider_reason": "no_providers_configured",
+                    "retry_after_s": None, "providers_tried": []}}, {"X-Charon-Failovers": "0"}
+
+    attempts: list[AttemptRecord] = []
+    passthrough = {k: body[k] for k in ("temperature", "top_p", "max_tokens", "tools",
+                                       "tool_choice", "stop", "response_format") if k in body}
+    try:
+        raw = router.completion(model=primary, messages=body.get("messages") or [],
+                                timeout=timeout, metadata={ATTEMPTS_META_KEY: attempts}, **passthrough)
+    except Exception as exc:  # noqa: BLE001
+        if not attempts:
+            attempts = [AttemptRecord(provider=_provider_from_deployment(router, None),
+                status=int(getattr(exc, "status_code", 0) or 0), ok=False,
+                reason=str(getattr(exc, "message", "") or type(exc).__name__)[:200])]
+        status, env = _synth_exhaustion_envelope(requested, attempts, all_parked=False, bt=bt)
+        return status, env, {"X-Charon-Failovers": str(max(len(attempts) - 1, 0)),
+            "X-Charon-Failover-Reasons": "; ".join(f"{r.provider}={r.status}" for r in attempts if not r.ok)}
+
+    served = _to_dict(raw)
+    hp = getattr(raw, "_hidden_params", None) or {}
+    provider = _provider_from_deployment(router, hp.get("model_id"))
+    fa = [r for r in attempts if not r.ok]
+    headers: dict[str, str] = {"X-Charon-Failovers": str(len(fa))}
+    if provider:
+        headers["X-Charon-Provider"] = provider
+    if fa:
+        headers["X-Charon-Failover-Reasons"] = "; ".join(f"{r.provider}={r.status}" for r in fa)
+    return 200, served, headers
