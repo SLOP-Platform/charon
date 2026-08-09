@@ -40,6 +40,7 @@ from charon.routing_policy.litellm_pricing import (  # noqa: E402
 # RED-PROOF (1): a known litellm price is returned EXACTLY — never adjusted.
 # ---------------------------------------------------------------------------
 
+
 def test_known_litellm_price_returned_exactly() -> None:
     """RED-PROOF: openrouter/openai/gpt-5.2 has a litellm price; price_for MUST
     return the exact (input_cost_per_token, output_cost_per_token) per-token USD,
