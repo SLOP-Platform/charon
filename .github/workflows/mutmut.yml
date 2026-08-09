@@ -1,5 +1,5 @@
-# mutmut.yml — REPORT-ONLY mutation testing workflow using the EXISTING
-# tools/mutmut_diff_gate.py (landed on master via PR #237).
+# mutmut.yml — DIFF-SCOPED MUTATION GATE.
+# tools/mutmut_diff_gate.py landed on master via PR #237.
 #
 # WHAT THIS IS: a diff-scoped mutation gate. It breaks every changed function
 # and checks whether any test notices. A test that passes on mutated code is
@@ -7,10 +7,10 @@
 # thing" test. It runs diff-scoped (only functions touched by the PR diff),
 # which makes it gate-able: full-tree mutation is hours, diff-scoped is seconds.
 #
-# WHAT THIS IS NOT: this workflow is REPORT-ONLY. It does NOT block merge.
-# Promotion to a required check is a deliberate later step, once it has been
-# earning value in CI for a while and the sandbox suite RED blocker is resolved
-# (see tools/gates.json mutmut entry cadence_note).
+# HONEST: surviving mutants turn this check RED. Clean diff → GREEN with an
+# explicit message. Zero mutants → reports "mutated nothing" (not a silent pass).
+# This gate is NOT a required check (not promoted to branch protection) but it
+# CAN fail — unlike the report-only predecessor that always exited 0.
 #
 # RUNNER — HARD-PINNED to ubuntu-latest. This repository is PUBLIC.
 # --------------------------------------------------------------------------
@@ -43,15 +43,8 @@ jobs:
       - name: install (dev + quality)
         run: pip install -e '.[dev,quality]'
 
-      - name: mutmut — mutation testing (report-only)
+      - name: mutmut — diff-scoped mutation gate
         id: mutmut
-        continue-on-error: true
         run: |
           set -euo pipefail
           python3 tools/mutmut_diff_gate.py 2>&1 | tee /tmp/mutmut.log
-          rc=${PIPESTATUS[0]}
-          if [ "$rc" -ne 0 ]; then
-            echo "::warning title=mutmut gate::mutmut did not pass (exit $rc). This is REPORT-ONLY — it does NOT block merge. See workflow log for details."
-          fi
-          # Report-only: always exit 0 so this does not block merge.
-          exit 0
