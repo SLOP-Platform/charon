@@ -540,6 +540,7 @@ def build_server(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> 
         balance_tracker=cfg.balance_tracker,
         observer=observer,
     )
+    server._use_litellm_router = cfg.use_litellm_router  # noqa: SLF001
     if cfg.use_litellm_router:
         server._build_router()  # noqa: SLF001
     # DRAIN-AND-PARK: wire the observer meter as the spend source for class-3

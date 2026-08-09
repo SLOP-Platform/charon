@@ -571,6 +571,7 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         self.balance_tracker = balance_tracker
         self.router: Any = None
         self.router_chains: dict[str, list] = {}
+        self._use_litellm_router: bool = True
         # R3: optional capability deny-table, set by gateway.build_server;
         # forwarder reads via getattr(..., None) so direct-server tests are unaffected.
         self.capability_matrix: Any = None
@@ -618,7 +619,8 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
             self.model_meta = model_meta or {}
             self.model_pricing = model_pricing or {}
             self.observer.set_pricing(self.model_pricing)
-        self._build_router()
+        if self._use_litellm_router:
+            self._build_router()
 
     def _build_router(self) -> None:
         """Construct the adopted litellm.Router from live config -- the production
