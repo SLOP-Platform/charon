@@ -38,7 +38,7 @@ _SESSION_USAGE_MAX = 4096
 
 # Gateway statuses that mean "this model/account is out of capacity right now"
 # (transient — retry later / fail over).
-_EXHAUSTION_STATUSES = {429, 402, 503}
+_EXHAUSTION_STATUSES = {429, 402, 403, 503}
 # Statuses meaning "this model is gone" — drop it from the pool permanently for
 # this run, not retry (free rosters churn; renames/removals return 404). ADR R6.
 _DROP_STATUSES = {404}

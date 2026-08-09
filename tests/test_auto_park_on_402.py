@@ -152,14 +152,12 @@ def test_all_deterministically_exhausted_providers_surface_loud_terminal_503():
     the SAME request, the client still sees the loud synthesized "all
     providers exhausted" 503 — never a silent hang/500.
 
-    The FIRST provider tried (prov-a) has a live sibling (prov-b, not yet
-    failed) at the moment it is evaluated, so it IS auto-parked. The LAST
-    provider (prov-b) is evaluated only after prov-a is already parked, so
-    the sole-leg guard (``_has_live_sibling``) correctly refuses to park it
-    too — parking the last live leg would strand the pool with zero routes
-    for the NEXT request. Either way this request's client-visible outcome is
-    unaffected: both attempts fail NOW, so the terminal 503 fires regardless
-    of the parked bookkeeping."""
+    Deterministic 402/403 means the key is drained or lacks entitlement —
+    retrying cannot succeed.  Every deterministic exhaustion is parked,
+    even the last leg of a pool.  The D-012 fully-parked 503 on the next
+    request is a FAST, structured failure naming every leg and its real
+    reason — strictly better than silently retrying a dead provider every
+    cycle (slower AND more expensive)."""
     a, base_a = _up([(402, "deterministic")])
     b, base_b = _up([(402, "deterministic")])
     bt = BalanceTracker()
@@ -172,10 +170,11 @@ def test_all_deterministically_exhausted_providers_surface_loud_terminal_503():
         assert body["error"]["type"] == "all_providers_exhausted"
         assert hdrs["X-Charon-Failovers"] == "2"
         assert bt.is_parked("prov-a")
-        assert not bt.is_parked("prov-b"), (
-            "SOLE-LEG GUARD FAILED: the last live leg of the pool was parked, "
-            "which would strand ALL traffic for this model on the next "
-            "request with no fallback")
+        assert bt.is_parked("prov-b"), (
+            "DETERMINISTIC 402 MUST PARK even the last leg — a drained key "
+            "cannot recover; keeping it alive just burns every request on a "
+            "dead provider.  The D-012 fully-parked 503 is the correct "
+            "terminal state.")
     finally:
         gw.shutdown()
         a.shutdown()
@@ -264,10 +263,12 @@ def test_429_throttle_not_parked():
         b.shutdown()
 
 
-def test_sole_leg_guard_prevents_parking_last_live_provider():
-    """A deterministic 402 on a provider whose only pool-sibling is ALREADY
-    parked must NOT be auto-parked — parking it would orphan the pool with
-    zero live legs, violating the never-strand invariant."""
+def test_sole_leg_deterministic_402_must_park_last_live_provider():
+    """A deterministic 402 on the last live provider of a pool MUST still
+    park it.  A drained key cannot recover; keeping it alive just burns every
+    request on a dead provider (slower AND more expensive).  The D-012
+    fully-parked 503 on the next request is a FAST, structured failure naming
+    every leg and its real reason."""
     a, base_a = _up([(402, "deterministic")])
     bt = BalanceTracker()
     bt.park("sibling")  # pre-parked (e.g. balance-drained, or a prior 402)
@@ -275,12 +276,12 @@ def test_sole_leg_guard_prevents_parking_last_live_provider():
                    UpstreamRoute("http://127.0.0.1:1", "kb", provider="sibling")]}
     gw = _gw_with_balance(pools, bt)
     try:
-        # Pre-flight excludes "sibling" (parked) → only "last-one" is dispatched.
         status, body, hdrs = _req(gw.url + "/v1/chat/completions", {"model": "v"})
         assert status in (402, 503)  # relayed/terminal — no live alternative
-        assert not bt.is_parked("last-one"), (
-            "SOLE-LEG GUARD FAILED: the only live provider in the pool was "
-            "auto-parked, orphaning it with zero live legs")
+        assert bt.is_parked("last-one"), (
+            "DETERMINISTIC 402 MUST PARK even the last leg — a drained key "
+            "cannot recover.  The D-012 fully-parked 503 on the next request "
+            "is the correct terminal state.")
     finally:
         gw.shutdown()
         a.shutdown()
