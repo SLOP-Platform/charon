@@ -244,7 +244,6 @@ class _FailPrimary(http.server.BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         self.send_response(429)
         self.send_header("Content-Type", "application/json")
-        self.send_header("Retry-After", "30")
         self.end_headers()
         self.wfile.write(json.dumps({"error": "quota exceeded"}).encode())
 

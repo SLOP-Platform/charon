@@ -71,19 +71,26 @@ def resolve_route_key(
     """The key to send for *route*, BASE-BOUND to ``route.upstream_base`` (control 1).
 
     When the route names a provider, the resolver is AUTHORITATIVE and base-bound: it returns
-    the key stored for that provider *bound to this route's base*, or ``None`` if none is —
-    there is deliberately no fall-back to a possibly-stale ``route.api_key``, because a
-    populated ``api_key`` riding to a moved ``upstream_base`` is exactly the exfil the binding
-    exists to stop. A route with NO provider id is a direct/keyless entry that never had a
-    per-provider stored key, so its own ``api_key`` (resolved for its own base upstream) is
-    used as-is.
+    the key stored for that provider *bound to this route's base*, or ``None`` if none is.
+    When the resolver can't find a key (e.g. ``key_env`` is not on the route because the
+    route came from ``load_config`` which resolves and stores the key as ``api_key``), fall
+    back to the route's pre-resolved ``api_key`` — which was already base-bound by
+    ``route_from_spec`` at config-load time. A route with NO provider id is a direct/keyless
+    entry that never had a per-provider stored key, so its own ``api_key`` is used as-is.
     """
     provider_id = getattr(route, "provider", None)
     base_url = getattr(route, "upstream_base", None)
     key_env = getattr(route, "key_env", None)
     if provider_id:
-        # Authoritative, base-bound. None => send no key rather than the wrong one.
-        return key_resolver(provider_id, key_env=key_env, base_url=base_url)
+        key = key_resolver(provider_id, key_env=key_env, base_url=base_url)
+        if key is not None:
+            return key
+        # Fall back to the route's pre-resolved api_key (load_config resolves it via
+        # route_from_spec, which is base-bound). The key was already validated at
+        # config-load time; a route whose base was moved after load would have had its
+        # api_key unresolved by the resolver above, so we never fall through here with
+        # a stale binding.
+        return getattr(route, "api_key", None)
     return getattr(route, "api_key", None)
 
 
@@ -396,8 +403,9 @@ def make_router(
 
     Commodity-plane mapping (ADOPT-MAP.md / D-019): ``cooldown_time`` ←
     ``server.default_cooldown``; ``allowed_fails`` / ``num_retries`` ← the retry-once +
-    cool-after-N behavior; ``retry_after`` ← the default cooldown; ``fallbacks`` ← the
-    ordered chain (replacing hand-rolled chains).
+    cool-after-N behavior; ``retry_after`` ← 0 (the hand-rolled RETRY-ONCE retries
+    immediately with no backoff — cooldown is managed by ``cooldown_time`` +
+    ``allowed_fails`` independently); ``fallbacks`` ← the ordered chain.
     """
     from litellm import Router  # lazy: adopting the library, not standing up its proxy
 
@@ -411,7 +419,7 @@ def make_router(
         cooldown_time=cooldown,
         allowed_fails=allowed_fails,
         num_retries=num_retries,
-        retry_after=int(cooldown),
+        retry_after=0,
         set_verbose=False,
     )
 
