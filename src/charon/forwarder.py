@@ -481,12 +481,12 @@ def forward_via_router(handler, srv) -> bool:
     body_bytes = json.dumps(served).encode()
     provider = xheaders.get("X-Charon-Provider") or None
     failover_reasons = xheaders.get("X-Charon-Failover-Reasons")
-    failovers: list[dict] = []
+    failovers_200: list[dict] = []
     if failover_reasons:
         for pair in failover_reasons.split("; "):
             if "=" in pair:
                 p, s = pair.split("=", 1)
-                failovers.append({"provider": p, "status": _safe_status(s),
+                failovers_200.append({"provider": p, "status": _safe_status(s),
                                   "reason": "exhausted"})
     cost = 0.0
     if srv.response_normalizer is not None:
@@ -498,9 +498,9 @@ def forward_via_router(handler, srv) -> bool:
         srv.spend_limiter.record(_spend_to_record_from(served, est_cost))
     if srv.balance_tracker is not None and provider:
         srv.balance_tracker.record_spend(provider, cost, model=requested)
-    handler._send_resp_headers(200, "application/json", provider, failovers, downgrade)
+    handler._send_resp_headers(200, "application/json", provider, failovers_200, downgrade)
     handler._write(body_bytes)
-    srv.note_request(requested, provider or requested, 200, cost, failovers)
+    srv.note_request(requested, provider or requested, 200, cost, failovers_200)
     return True
 
 
