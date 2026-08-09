@@ -196,9 +196,9 @@ def price_for(model_id: str, spec: dict[str, Any]) -> tuple[float, float] | None
             continue  # pragma: no cover — litellm model_cost has well-typed numeric entries
         # Reject non-finite / negative — garbage never reaches the money path.
         if ci_f is not None and (not math.isfinite(ci_f) or ci_f < 0):
-            continue  # pragma: no cover — well-formed entries always have finite non-negative prices
+            continue  # pragma: no cover
         if co_f is not None and (not math.isfinite(co_f) or co_f < 0):
-            continue  # pragma: no cover — well-formed entries always have finite non-negative prices
+            continue  # pragma: no cover
         if ci_f is None and co_f is None:
             continue  # entry exists but carries no token price (e.g. image-only)
         return (ci_f or 0.0, co_f or 0.0)

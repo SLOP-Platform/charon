@@ -36,8 +36,8 @@ class _MockProvider(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
-        self.server.seen_auth = self.headers.get("Authorization")
-        self.server.seen_auths.append(self.server.seen_auth)
+        self.server.seen_auth = self.headers.get("Authorization")  # type: ignore[attr-defined]
+        self.server.seen_auths.append(self.server.seen_auth)  # type: ignore[attr-defined]
         body = json.dumps({
             "id": "chatcmpl-mock",
             "object": "chat.completion",
@@ -68,8 +68,8 @@ def _start():
     import socketserver
 
     srv = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _MockProvider)
-    srv.seen_auth = None
-    srv.seen_auths = []
+    srv.seen_auth = None  # type: ignore[attr-defined]
+    srv.seen_auths = []  # type: ignore[attr-defined]
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv
 
@@ -163,7 +163,7 @@ def test_router_build_router_handles_exception(monkeypatch, tmp_path):
 
     def _bad_router(*args, **kwargs):
         raise RuntimeError("simulated Router construction failure")
-    litellm.Router = _bad_router
+    litellm.Router = _bad_router  # type: ignore[assignment,misc]
 
     try:
         server = gateway.build_server(
@@ -174,7 +174,7 @@ def test_router_build_router_handles_exception(monkeypatch, tmp_path):
         assert server.router is None, (
             f"router should be None when Router construction fails, got {server.router!r}")
     finally:
-        litellm.Router = _orig_router
+        litellm.Router = _orig_router  # type: ignore[assignment,misc]
 
 
 def test_enrich_registry_called_in_load_config(monkeypatch, tmp_path):

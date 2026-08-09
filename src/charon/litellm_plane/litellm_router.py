@@ -484,7 +484,7 @@ def _install_no_redirect_patch() -> None:
 
     _orig_init = _hh.HTTPHandler.__init__
 
-    def _patched_init(self, *args, **kwargs):  # pragma: no cover — HTTPHandler not used by litellm ≥1.93 (httpx is); patch is a safety net
+    def _patched_init(self, *args, **kwargs):  # pragma: no cover
         _orig_init(self, *args, **kwargs)
         if not getattr(self, "_charon_redirect_patched", False):
             try:
@@ -602,7 +602,7 @@ def complete_via_router_tracked(
                                    "tool_choice", "stop", "response_format") if k in body})
     except Exception as exc:  # noqa: BLE001
         if not attempts:
-            attempts = [AttemptRecord(  # pragma: no cover — callbacks fire before Router raises; defensive fallback
+            attempts = [AttemptRecord(  # pragma: no cover
                 provider=_provider_from_deployment(router, None),
                 status=int(getattr(exc, "status_code", 0) or 0), ok=False,
                 reason=str(getattr(exc, "message", "") or type(exc).__name__)[:200])]
