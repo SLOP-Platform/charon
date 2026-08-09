@@ -54,7 +54,8 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any, Mapping, TypedDict
+from collections.abc import Mapping
+from typing import Any, TypedDict
 
 log = logging.getLogger("charon.litellm_pricing")
 
