@@ -12,9 +12,7 @@ integration test (mock upstream) and live via a real OpenCode-Go call.
 """
 from __future__ import annotations
 
-import base64
 import collections
-import hashlib
 import hmac
 import http.cookies
 import http.server
@@ -23,9 +21,8 @@ import os
 import socketserver
 import threading
 import time
-from dataclasses import dataclass
 from typing import Any
-from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from . import console_router, forwarder
 from .balance import BalanceTracker
@@ -34,7 +31,6 @@ from .guardrails import Guardrails
 from .latency import RollingLatency
 from .netutil import is_loopback
 from .policy_router import PolicyRouter
-from .providers import WIRE_OPENAI
 from .proxy import GatewayProxy
 
 # Facade re-exports (decompose): keep the public import surface resolving
@@ -46,6 +42,17 @@ from .proxy_console_assets import (
     _WORK_HTML,
 )
 from .proxy_response import _extract, _pre_flight_estimate
+from .proxy_routes import UpstreamRoute
+from .proxy_session import (
+    _GUI_ROUTES,
+    _SESSION_COOKIE,
+    _SESSION_TTL,
+    _b64url,  # noqa: F401  # backward-compat re-export (test_gateway_gui_auth)
+    _resolve_session_key,
+    _sign_session,
+    _strip_token_from_path,
+    _verify_session,
+)
 from .quality_scorer import QualityScorer
 from .request_inspector import RequestInspector
 from .response_normalizer import ResponseNormalizer
@@ -65,139 +72,6 @@ __all__ = [
     "_pre_flight_estimate",
 ]
 
-
-# ---- /charon session cookie (SR-13, AUTH-GUI-DESIGN Option C) ---------------
-# Opaque, signed, stdlib-only session that authorizes the /charon/* console ONLY.
-# The gateway token stays the byte-for-byte /v1/* Bearer credential; the session
-# cookie is an ADDITIONAL front door for the browser and is never accepted for
-# /v1/*. Signed with CHARON_SESSION_KEY (separate from the token — rotating the
-# token does NOT log the operator out).
-_SESSION_COOKIE = "charon_sess"
-_SESSION_TTL = 30 * 24 * 3600  # 2_592_000 — 30-day sliding lifetime
-
-# SR-13 F1: the ENUMERATED browser-console surface. Only these exact paths are
-# ``is_gui`` — i.e. session-cookie-authorizable and login-redirectable. An
-# un-enumerated ``/charon/*`` path is deliberately NOT here, so a stolen session
-# cookie can never authorize it and it can never fall through to the billed
-# data-plane forwarder (it 404s / 401s instead). Keep in sync with the routes
-# consumed by console_router.try_handle_public_gui / try_handle_control_plane.
-_GUI_ROUTES = frozenset({
-    "", "/charon",                                    # console home
-    "/charon/login", "/charon/logout",                # public auth pages
-    "/charon/status", "/charon/cost", "/charon/work",  # read-only panels
-    "/charon/setup", "/charon/config",                # setup UI + summary
-    "/charon/providers", "/charon/models", "/charon/models/import",
-    "/charon/pools", "/charon/tiers", "/charon/fallback",
-    "/charon/enable", "/charon/disable", "/charon/remove",  # setup writes
-    "/charon/balance",                               # DRAIN-AND-PARK re-arm
-})
-
-
-def _b64url(raw: bytes) -> str:
-    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
-
-
-def _b64url_decode(s: str) -> bytes:
-    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
-
-
-def _sign_session(session_key: str, exp: int) -> str:
-    """``b64url(payload).b64url(HMAC_SHA256(key, b64url(payload)))``; the compact
-    payload is ``{"exp": <unix>, "v": 1}`` — no PII, no username."""
-    payload = _b64url(json.dumps({"exp": int(exp), "v": 1},
-                                 separators=(",", ":")).encode("utf-8"))
-    mac = hmac.new(session_key.encode("utf-8"), payload.encode("ascii"),
-                   hashlib.sha256).digest()
-    return f"{payload}.{_b64url(mac)}"
-
-
-def _verify_session(session_key: str, raw: str, *, now: float | None = None) -> int | None:
-    """Return the payload ``exp`` if ``raw`` is a valid, unexpired session for
-    ``session_key``; else None. Constant-time MAC compare (``hmac.compare_digest``)
-    over the presented signature — a tampered MAC or an expired ``exp`` is rejected."""
-    now = time.time() if now is None else now
-    parts = raw.split(".")
-    if len(parts) != 2 or not parts[0] or not parts[1]:
-        return None
-    payload, sig = parts
-    expected = _b64url(hmac.new(session_key.encode("utf-8"),
-                                payload.encode("ascii"), hashlib.sha256).digest())
-    if not hmac.compare_digest(sig, expected):
-        return None
-    try:
-        data = json.loads(_b64url_decode(payload))
-    except (ValueError, json.JSONDecodeError):
-        return None
-    exp = data.get("exp")
-    if not isinstance(exp, int) or exp < now:
-        return None
-    return exp
-
-
-def _resolve_session_key() -> str:
-    """Get-or-create the HMAC session-signing key: ``CHARON_SESSION_KEY`` env
-    override wins, else the value stored in ``secrets.json``, else generate one and
-    persist it 0600 (best effort, atomic — reuses the existing secrets writer).
-
-    NOTE: first-start generation properly belongs in the gateway/secrets bootstrap
-    (a coordinated follow-on per the SR-13 scope note). This lazy resolver keeps the
-    server self-contained and testable until then, and NEVER logs the key."""
-    import secrets as _stdlib_secrets
-
-    env = os.environ.get("CHARON_SESSION_KEY")
-    if env:
-        return env
-    from . import secrets as _store
-    stored = _store.load_secrets().get("CHARON_SESSION_KEY")
-    if stored:
-        return stored
-    key = _stdlib_secrets.token_hex(32)
-    try:
-        _store.set_secret("CHARON_SESSION_KEY", key)
-    except OSError:
-        pass
-    return key
-
-
-def _strip_token_from_path(path: str) -> str:
-    """Drop the ``token`` query param, preserving any others — used to 302 the raw
-    ``?token=`` link off the address bar/history after a TOFU cookie upgrade."""
-    parts = urlsplit(path)
-    kept = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
-            if k != "token"]
-    q = urlencode(kept)
-    base = parts.path or "/charon"
-    return base + ("?" + q if q else "")
-
-
-@dataclass(frozen=True)
-class UpstreamRoute:
-    """Where one agent-facing model id is forwarded (multi-provider pools)."""
-
-    upstream_base: str
-    api_key: str | None = None
-    upstream_model: str | None = None  # rewrite the body's model to this id upstream
-    pool_id: str | None = None  # observe under this id (the router's pool id) if set
-    provider: str | None = None  # display label for failover visibility (X-Charon-Provider)
-    strip_v1: bool | None = None  # per-provider quirk; None → use the server default
-    wire: str = WIRE_OPENAI  # upstream wire format (SR-6): WIRE_OPENAI | WIRE_ANTHROPIC
-    adapter: str | None = None  # response-shape adapter key (response_adapters.py);
-    model_id: str | None = None  # registry model id (for live meter lookup in R2)
-    #                             None → IDENTITY passthrough (byte-identical relay)
-    # R7 capability-engine: per-route hard limits (None = unknown / no limit)
-    max_context: int | None = None       # max tokens this route admits
-    max_concurrency: int | None = None   # max in-flight requests to this route
-
-    @property
-    def label(self) -> str:
-        """Human-facing provider id for failover headers/logs — never a secret. Uses
-        host[:port] (NOT netloc) so any ``user:pass@`` userinfo in a misconfigured
-        base never surfaces in a header/console (P4 review)."""
-        if self.provider:
-            return self.provider
-        parts = urlsplit(self.upstream_base)
-        host = parts.hostname or self.upstream_base
-        return f"{host}:{parts.port}" if parts.port else host
 
 class _ProxyHandler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.0"  # close-delimited; works for SSE without length
