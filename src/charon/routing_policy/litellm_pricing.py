@@ -54,7 +54,7 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any
+from typing import Any, TypedDict
 
 log = logging.getLogger("charon.litellm_pricing")
 
@@ -79,6 +79,25 @@ _PROVIDER_SUFFIXES: tuple[str, ...] = (
     "openrouter", "together", "cerebras", "groq",
     "or", "ng", "ds", "nw", "go", "cb", "code", "free",
 )
+
+
+class UnmappedModel(TypedDict):
+    """One entry in :func:`coverage_report`'s ``unmapped`` list — a NAMED
+    unmappable model (never a silent default)."""
+    id: str
+    provider: str
+    upstream_model: object  # str | None — the raw upstream id, when present
+    tried: list[str]        # candidate litellm keys attempted (evidence)
+
+
+class CoverageReport(TypedDict):
+    """The evidence surface :func:`coverage_report` returns: per-provider
+    ``priced/total`` and the NAMED list of unmapped models."""
+    total: int
+    priced: int
+    unmapped_count: int
+    per_provider: dict[str, list[int]]
+    unmapped: list[UnmappedModel]
 
 
 def _strip_free_suffix(s: str) -> str:
@@ -132,9 +151,13 @@ def _get_model_cost() -> dict[str, dict] | None:
     except Exception:  # noqa: BLE001 — optional extra; absence is a reportable, not a crash
         log.debug("litellm.model_cost unavailable (litellm not installed) — pricing source idle")
         return None
-    if not isinstance(model_cost, dict):
+    # litellm exports model_cost as a dict, but the type is not statically
+    # declared (the import is ignore'd), so narrow through object to keep the
+    # runtime guard reachable and honest rather than relying on the ignore.
+    raw: object = model_cost
+    if not isinstance(raw, dict):
         return None
-    return model_cost
+    return raw
 
 
 def price_for(model_id: str, spec: dict[str, Any]) -> tuple[float, float] | None:
@@ -181,7 +204,7 @@ def price_for(model_id: str, spec: dict[str, Any]) -> tuple[float, float] | None
     return None
 
 
-def enrich_registry(registry: dict[str, dict]) -> dict[str, dict]:
+def enrich_registry(registry: dict[str, object]) -> dict[str, dict[str, Any]]:
     """Stamp litellm-sourced ``cost_input``/``cost_output`` onto registry entries
     that lack them. Returns a NEW dict (the input is not mutated); only entries
     that get a price are copied-with-update so the rest alias the originals.
@@ -197,10 +220,11 @@ def enrich_registry(registry: dict[str, dict]) -> dict[str, dict]:
     1000 fallback in ``derived_cost_rank`` remains, and the model is named in
     :func:`coverage_report`'s ``unmapped`` list rather than silently defaulted.
     """
-    out: dict[str, dict] = {}
+    out: dict[str, dict[str, Any]] = {}
     for mid, spec in registry.items():
         if not isinstance(spec, dict):
-            out[mid] = spec
+            # pass through non-dict entries unchanged (registry is object-valued)
+            out[mid] = spec  # type: ignore[assignment]
             continue
         has_ci = spec.get("cost_input") is not None
         has_co = spec.get("cost_output") is not None
@@ -220,7 +244,7 @@ def enrich_registry(registry: dict[str, dict]) -> dict[str, dict]:
     return out
 
 
-def coverage_report(registry: dict[str, dict]) -> dict[str, object]:
+def coverage_report(registry: dict[str, object]) -> CoverageReport:
     """Report litellm pricing coverage for *registry*: per-provider
     ``priced/total`` and the NAMED list of unmapped models (never a silent
     default). Returns a JSON-serializable dict::
@@ -244,7 +268,7 @@ def coverage_report(registry: dict[str, dict]) -> dict[str, object]:
     table = _get_model_cost()
     per_provider: dict[str, list[int]] = {}
     priced = 0
-    unmapped: list[dict[str, object]] = []
+    unmapped: list[UnmappedModel] = []
     for mid, spec in registry.items():
         if not isinstance(spec, dict):
             continue
