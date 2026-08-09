@@ -84,6 +84,7 @@ def route_from_spec(spec: dict, providers_cfg: dict,
         max_concurrency = _int_or_none(spec.get("max_concurrency"))
         if max_concurrency is None:
             max_concurrency = preset.max_concurrency
+        default_params = spec.get("default_params") or preset.default_params
     else:
         base = spec.get("upstream_base")
         if not base:
@@ -94,6 +95,7 @@ def route_from_spec(spec: dict, providers_cfg: dict,
         adapter = str(spec.get("adapter") or "") or None
         max_context = _int_or_none(spec.get("context_window") or spec.get("max_context"))
         max_concurrency = _int_or_none(spec.get("max_concurrency"))
+        default_params = spec.get("default_params")
     from charon import egress as _egress
     from charon import secrets as _secrets
 
@@ -138,6 +140,7 @@ def route_from_spec(spec: dict, providers_cfg: dict,
         model_id=model_id,
         max_context=max_context,
         max_concurrency=max_concurrency,
+        default_params=default_params,
     )
 
 
@@ -167,6 +170,13 @@ def build_routes_and_pools(
     in an explicit, attributable control (e.g. drain policy, pool removal)."""
     providers_cfg = providers_cfg or {}
     metered_costs = metered_costs or {}
+    # LITELLM-COST-ADOPT: stamp litellm-sourced per-token pricing onto registry
+    # entries that lack cost_input/cost_output BEFORE rank derivation, so
+    # derived_cost_rank sees real magnitudes instead of the neutral 1000
+    # fallback. Clobber-safe (operator prices win) and never guesses — an
+    # unmappable model stays unpriced (see litellm_pricing.enrich_registry).
+    from .litellm_pricing import enrich_registry
+    registry = enrich_registry(registry)
     routes: dict[str, _UpstreamRoute] = {}
     for mid, spec in registry.items():
         if isinstance(spec, dict):
