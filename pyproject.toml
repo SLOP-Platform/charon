@@ -255,7 +255,7 @@ disable_error_code = ["unreachable"]
 
 [[tool.mypy.overrides]]
 module = ["charon.forwarder"]
-disable_error_code = ["no-any-return", "unreachable"]
+disable_error_code = ["no-any-return", "no-redef", "unreachable"]
 
 [[tool.mypy.overrides]]
 module = ["charon.gateway"]
