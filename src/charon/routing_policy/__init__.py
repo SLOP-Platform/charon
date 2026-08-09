@@ -84,6 +84,7 @@ def route_from_spec(spec: dict, providers_cfg: dict,
         max_concurrency = _int_or_none(spec.get("max_concurrency"))
         if max_concurrency is None:
             max_concurrency = preset.max_concurrency
+        default_params = spec.get("default_params") or preset.default_params
     else:
         base = spec.get("upstream_base")
         if not base:
@@ -94,6 +95,7 @@ def route_from_spec(spec: dict, providers_cfg: dict,
         adapter = str(spec.get("adapter") or "") or None
         max_context = _int_or_none(spec.get("context_window") or spec.get("max_context"))
         max_concurrency = _int_or_none(spec.get("max_concurrency"))
+        default_params = spec.get("default_params")
     from charon import egress as _egress
     from charon import secrets as _secrets
 
@@ -138,6 +140,7 @@ def route_from_spec(spec: dict, providers_cfg: dict,
         model_id=model_id,
         max_context=max_context,
         max_concurrency=max_concurrency,
+        default_params=default_params,
     )
 
 

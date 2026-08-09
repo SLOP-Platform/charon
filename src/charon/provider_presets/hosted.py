@@ -34,7 +34,10 @@ CATEGORY_PRESETS_DATA: dict[str, dict] = {
     "deepseek": {
         "base_url": "https://api.deepseek.com/v1",
         "key_env": "DEEPSEEK_API_KEY",
-        "note": "DeepSeek (base verified).",
+        "default_params": {"thinking": {"type": "disabled"}},
+        "note": "DeepSeek (base verified). Reasoning suppressed at source: DeepSeek "
+                "requires reasoning_content round-tripped on multi-turn; suppressing "
+                "it means there is nothing to pass back (avoids 400 on turn >1).",
     },
     "chutes": {
         "base_url": "https://llm.chutes.ai/v1",
