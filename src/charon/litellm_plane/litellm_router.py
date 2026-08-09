@@ -224,6 +224,7 @@ def _preorder_chain(chain: list[UpstreamRoute], bt: Any) -> list[UpstreamRoute]:
     can never silently serve a parked leg. A pool with at least one unparked leg is
     unaffected — ``live`` is non-empty and is returned exactly as before."""
     from charon.routing_policy import order_chain_by_funding_class
+    from charon.litellm_plane.park_cooldown import excluded_provider_ids
 
     def _fc(prov: str) -> int | None:
         fc = bt.funding_class(prov)
@@ -234,8 +235,23 @@ def _preorder_chain(chain: list[UpstreamRoute], bt: Any) -> list[UpstreamRoute]:
 
     ordered = order_chain_by_funding_class(
         list(chain), funding_class_fn=_fc, remaining_fn=_rem)
-    live = [r for r in ordered
-            if not bt.is_parked(getattr(r, "provider", None) or getattr(r, "label", ""))]
+
+    # Hard-exclude: parked (deterministic 402/403) + drained (balance ~0).
+    # Item 3: excluded_provider_ids unifies park + cooldown exclusion.
+    # D-019: no funding = no deployment. The sole-leg guard from the hand-rolled
+    # path does NOT apply here -- a fully-exhausted chain returns empty and the
+    # caller 503s. Free-quota providers with remaining allowance are FUNDED.
+    excluded = excluded_provider_ids(bt=bt)
+    live = []
+    for r in ordered:
+        prov = getattr(r, "provider", None) or getattr(r, "label", "")
+        if prov in excluded:
+            continue
+        # is_drained catches a class-3 provider at ~0 that was not yet auto-parked
+        # (the hand-rolled sole-leg guard may have prevented the park). D-019: hard-exclude.
+        if bt.is_drained(prov):
+            continue
+        live.append(r)
     return live  # D-012: fully parked → EMPTY, never the restored parked chain
 
 

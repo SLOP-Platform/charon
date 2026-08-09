@@ -88,7 +88,7 @@ def _req(url, payload, token=None):
     req = urllib.request.Request(url, data=json.dumps(payload).encode(),
                                  headers=headers, method="POST")
     try:
-        resp = urllib.request.urlopen(req, timeout=30)
+        resp = urllib.request.urlopen(req, timeout=30)  # nosec B310 — local test stub, not user input
         return resp.status, json.loads(resp.read()), dict(resp.headers)
     except urllib.error.HTTPError as exc:
         return exc.code, json.loads(exc.read()), dict(exc.headers)
