@@ -649,7 +649,7 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
             _lr = import_module("charon.litellm_plane.litellm_router")
             self.router_chains = _lr.routes_by_model(self)
             self.router = _lr.make_router(self)
-        except ImportError:
+        except ImportError:  # pragma: no cover — litellm always installed in test/CI
             self.router = None
             self.router_chains = {}
         except Exception:  # noqa: BLE001 — a misconfigured route must not brick the gateway

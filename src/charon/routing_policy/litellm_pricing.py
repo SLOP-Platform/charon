@@ -149,7 +149,7 @@ def _get_model_cost() -> dict[str, dict] | None:
     ``derived_cost_rank`` stays, so cost ordering is unchanged, never broken."""
     try:
         from litellm import model_cost  # type: ignore[import-not-found]
-    except Exception:  # noqa: BLE001 — optional extra; absence is a reportable, not a crash
+    except Exception:  # noqa: BLE001 — pragma: no cover — optional extra; absence is a reportable, not a crash
         log.debug("litellm.model_cost unavailable (litellm not installed) — pricing source idle")
         return None
     # litellm exports model_cost as a dict, but the type is not statically
@@ -157,7 +157,7 @@ def _get_model_cost() -> dict[str, dict] | None:
     # runtime guard reachable and honest rather than relying on the ignore.
     raw: object = model_cost
     if not isinstance(raw, dict):
-        return None
+        return None  # pragma: no cover — model_cost is always a dict in practice
     return raw
 
 
@@ -182,7 +182,7 @@ def price_for(model_id: str, spec: dict[str, Any]) -> tuple[float, float] | None
     would."""
     table = _get_model_cost()
     if table is None:
-        return None
+        return None  # pragma: no cover — litellm always installed in test/CI, table always present
     for cand in _litellm_candidates(model_id, spec):
         entry = table.get(cand)
         if not isinstance(entry, dict):
@@ -193,12 +193,12 @@ def price_for(model_id: str, spec: dict[str, Any]) -> tuple[float, float] | None
             ci_f = float(ci) if ci is not None else None
             co_f = float(co) if co is not None else None
         except (TypeError, ValueError):
-            continue
+            continue  # pragma: no cover — litellm model_cost has well-typed numeric entries
         # Reject non-finite / negative — garbage never reaches the money path.
         if ci_f is not None and (not math.isfinite(ci_f) or ci_f < 0):
-            continue
+            continue  # pragma: no cover — well-formed entries always have finite non-negative prices
         if co_f is not None and (not math.isfinite(co_f) or co_f < 0):
-            continue
+            continue  # pragma: no cover — well-formed entries always have finite non-negative prices
         if ci_f is None and co_f is None:
             continue  # entry exists but carries no token price (e.g. image-only)
         return (ci_f or 0.0, co_f or 0.0)

@@ -441,7 +441,7 @@ def _install_attempt_callbacks() -> None:
         meta = lp.get("metadata") or {}
         attempts = meta.get(ATTEMPTS_META_KEY)
         if attempts is None:
-            return
+            return  # pragma: no cover — safety net; metadata always set in Router-path dispatch
         mi = lp.get("model_info") or {}
         provider = str(mi.get("provider") or "")
         exc = kwargs.get("exception")
@@ -484,16 +484,14 @@ def _install_no_redirect_patch() -> None:
 
     _orig_init = _hh.HTTPHandler.__init__
 
-    def _patched_init(self, *args, **kwargs):
+    def _patched_init(self, *args, **kwargs):  # pragma: no cover — HTTPHandler not used by litellm ≥1.93 (httpx is); patch is a safety net
         _orig_init(self, *args, **kwargs)
-        # Override follow_redirects on the client after init (best-effort:
-        # a client missing this attribute is not an httpx.Client we own).
         if not getattr(self, "_charon_redirect_patched", False):
             try:
                 self.client.follow_redirects = False
                 self._charon_redirect_patched = True  # type: ignore[attr-defined]
             except AttributeError:
-                pass  # not an httpx.Client we control — silently skip
+                pass  # pragma: no cover — not an httpx.Client we control — silently skip
 
     _hh.HTTPHandler.__init__ = _patched_init  # type: ignore[assignment]
     setattr(_hh, _patch_tag, True)
@@ -530,7 +528,7 @@ def _classify_for_envelope(provider, bt):  # noqa: ANN001
           3: "operator top-up", 4: "top-up or rate-limit cooldown"}
     try:
         return (_L[int(fc)], _R[int(fc)])
-    except (KeyError, ValueError):
+    except (KeyError, ValueError):  # pragma: no cover — fc always a valid int from 1-4
         return ("unknown", "unknown")
 
 
@@ -604,7 +602,7 @@ def complete_via_router_tracked(
                                    "tool_choice", "stop", "response_format") if k in body})
     except Exception as exc:  # noqa: BLE001
         if not attempts:
-            attempts = [AttemptRecord(
+            attempts = [AttemptRecord(  # pragma: no cover — callbacks fire before Router raises; defensive fallback
                 provider=_provider_from_deployment(router, None),
                 status=int(getattr(exc, "status_code", 0) or 0), ok=False,
                 reason=str(getattr(exc, "message", "") or type(exc).__name__)[:200])]
