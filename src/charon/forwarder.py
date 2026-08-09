@@ -1048,17 +1048,20 @@ def forward_with_failover(handler, srv) -> None:
                         # ``obs.exhausted and not obs.transient`` alone would also
                         # be true for a bare 429 (transient is only ever set True
                         # for 503/transient-402, never for 429).
-                        if bt is not None and status == 402 and not obs.transient:
+                        if bt is not None and status in (402, 403) and not obs.transient:
                             prov = route.provider or route.label
-                            if _has_live_sibling(prov, srv.pools, bt):
-                                bt.record_exhaustion(prov)
-                            else:
-                                import logging
-                                logging.getLogger("charon.forwarder").warning(
-                                    "SOLE-LEG GUARD: provider %r deterministically "
-                                    "exhausted (402) but has no live sibling in any "
-                                    "pool — NOT auto-parking it (would strand traffic "
-                                    "with no fallback).", prov)
+                            bt.record_exhaustion(prov)
+                            # DETERMINISTIC 402 (drained key) / 403 (entitlement):
+                            # retrying cannot succeed. Always park, even as the
+                            # sole leg.  The D-012 fully-parked 503 on the next
+                            # request is a FAST, structured failure naming every
+                            # leg and its real reason — strictly better than
+                            # silently retrying a dead provider every cycle
+                            # (slower AND more expensive).  The old SOLE-LEG
+                            # GUARD kept the dead provider alive, which is
+                            # precisely the worst failure mode: every request
+                            # hits it, fails, and falls through — burning latency
+                            # and retries on a provider that can never recover.
                     # a 404 ("model gone") is model-level — do NOT cool the provider.
                     if more:  # count only providers we actually move PAST
                         failovers.append({"provider": route.label, "status": status,

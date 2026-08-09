@@ -72,25 +72,17 @@ def resolve_route_key(
 
     When the route names a provider, the resolver is AUTHORITATIVE and base-bound: it returns
     the key stored for that provider *bound to this route's base*, or ``None`` if none is.
-    When the resolver can't find a key (e.g. ``key_env`` is not on the route because the
-    route came from ``load_config`` which resolves and stores the key as ``api_key``), fall
-    back to the route's pre-resolved ``api_key`` — which was already base-bound by
-    ``route_from_spec`` at config-load time. A route with NO provider id is a direct/keyless
-    entry that never had a per-provider stored key, so its own ``api_key`` is used as-is.
+    There is NO fallback to ``route.api_key`` — the one provider-key resolver is the single
+    chokepoint, and every keyed path goes through it (control-1 fail-on-revert: falling back
+    to ``route.api_key`` defeats the base-binding check, leaking a key to a moved base).
+    A route with NO provider id is a direct/keyless entry that never had a per-provider
+    stored key, so its own ``api_key`` is used as-is.
     """
     provider_id = getattr(route, "provider", None)
     base_url = getattr(route, "upstream_base", None)
     key_env = getattr(route, "key_env", None)
     if provider_id:
-        key = key_resolver(provider_id, key_env=key_env, base_url=base_url)
-        if key is not None:
-            return key
-        # Fall back to the route's pre-resolved api_key (load_config resolves it via
-        # route_from_spec, which is base-bound). The key was already validated at
-        # config-load time; a route whose base was moved after load would have had its
-        # api_key unresolved by the resolver above, so we never fall through here with
-        # a stale binding.
-        return getattr(route, "api_key", None)
+        return key_resolver(provider_id, key_env=key_env, base_url=base_url)
     return getattr(route, "api_key", None)
 
 
@@ -409,6 +401,7 @@ def make_router(
     """
     from litellm import Router  # lazy: adopting the library, not standing up its proxy
 
+    _install_no_redirect_patch()  # control 4: patch litellm's HTTPHandler NOW, before first use
     chains = routes_by_model(server)
     model_list = build_model_list(chains, key_resolver=key_resolver)
     fallbacks = build_fallbacks(chains)
@@ -466,7 +459,44 @@ def _install_attempt_callbacks() -> None:
     if not getattr(litellm, _tag, False):
         litellm.failure_callback = list(litellm.failure_callback or []) + [_on_failure]
         litellm.success_callback = list(litellm.success_callback or []) + [_on_success]
+        _install_no_redirect_patch()
         setattr(litellm, _tag, True)
+
+
+def _install_no_redirect_patch() -> None:
+    """Patch litellm's HTTPHandler to never follow redirects (control 4: no-redirect transport).
+
+    litellm's ``HTTPHandler.__init__`` hardcodes ``follow_redirects=True`` in every httpx
+    client it creates (litellm/llms/custom_httpx/http_handler.py:1098). A redirecting
+    upstream harvests the provider key because httpx re-sends the ``Authorization`` header
+    cross-host. This patch replaces the default with ``follow_redirects=False`` —
+    idempotent, one-time, and scoped to ``make_router`` side-effects.
+
+    The ``no_redirect_client`` helper constructs the same no-redirect client explicitly for
+    any direct-httpx use (e.g. balance polling); this patch covers the Router's internal
+    client creation which we do not control directly.
+    """
+    import litellm.llms.custom_httpx.http_handler as _hh
+
+    _patch_tag = "__charon_no_redirect_patched__"
+    if getattr(_hh, _patch_tag, False):
+        return
+
+    _orig_init = _hh.HTTPHandler.__init__
+
+    def _patched_init(self, *args, **kwargs):
+        _orig_init(self, *args, **kwargs)
+        # Override follow_redirects on the client after init (best-effort:
+        # a client missing this attribute is not an httpx.Client we own).
+        if not getattr(self, "_charon_redirect_patched", False):
+            try:
+                self.client.follow_redirects = False
+                self._charon_redirect_patched = True  # type: ignore[attr-defined]
+            except AttributeError:
+                pass  # not an httpx.Client we control — silently skip
+
+    _hh.HTTPHandler.__init__ = _patched_init  # type: ignore[assignment]
+    setattr(_hh, _patch_tag, True)
 
 
 def _primary_leg(agent_model: str, chains: dict[str, list]) -> str | None:
