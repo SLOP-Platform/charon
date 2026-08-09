@@ -398,9 +398,21 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
         authed_by_session = (
             not authed_by_token and is_gui and self._valid_session(srv))
         if not (authed_by_token or authed_by_session):
-            if is_gui and self.command == "GET":
-                # A browser hitting the console gets a login page, not raw 401 JSON.
-                self._redirect("/charon/login")
+            auth_header = self.headers.get("Authorization", "")
+            presented_bearer = (
+                auth_header[len("Bearer "):].strip()
+                if auth_header.startswith("Bearer ")
+                else "")
+            if presented_bearer:
+                self._json(401,
+                           {"error": {"message": "missing or invalid bearer token"}})
+            elif is_gui and self.command == "GET":
+                accept = self.headers.get("Accept", "")
+                if "text/html" in accept:
+                    self._redirect("/charon/login")
+                else:
+                    self._json(401,
+                               {"error": {"message": "missing or invalid bearer token"}})
             else:
                 self._json(401,
                            {"error": {"message": "missing or invalid bearer token"}})
