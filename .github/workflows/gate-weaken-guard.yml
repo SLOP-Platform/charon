@@ -39,7 +39,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  guard:
+  gate-weaken-guard:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
