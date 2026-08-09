@@ -366,6 +366,34 @@ def test_models_endpoint_excludes_all_parked_pool_model():
         srv.shutdown()
 
 
+def test_models_endpoint_viable_route_leg_saves_model_in_both_pools_and_routes():
+    """When a model is in both pools and routes, a viable route leg rescues it
+    even if all pool legs are parked."""
+    bt = BalanceTracker()
+    bt.park("p1")
+    bt.park("p2")
+    cfg = GatewayConfig(
+        port=0,
+        token="t",
+        pools={"m": [
+            UpstreamRoute("http://127.0.0.1:1/v1", api_key="k", provider="p1"),
+            UpstreamRoute("http://127.0.0.1:1/v1", api_key="k2", provider="p2"),
+        ]},
+        routes={"m": UpstreamRoute("http://127.0.0.1:1/v1", api_key="k3",
+                                    provider="live-prov")},
+        model_ids=["m"],
+        balance_tracker=bt,
+    )
+    srv = gateway.build_server(cfg)
+    srv.serve_in_thread()
+    try:
+        _, body = _req(srv.url + "/v1/models", token="t")
+        ids = [m["id"] for m in body["data"]]
+        assert ids == ["m"]  # rescued by viable route leg
+    finally:
+        srv.shutdown()
+
+
 # ---- loopback guard -------------------------------------------------------
 
 def test_run_refuses_nonloopback_without_token(capsys):

@@ -34,3 +34,5 @@ graphify-out/
 
 # local opencode workspace (node_modules, session-bridge plugin) — never ship in the public product
 .opencode/
+.coverage
+hypabase.db

@@ -78,13 +78,16 @@ def _has_viable_leg(model_id: str, srv) -> bool:
     bt = getattr(srv, "balance_tracker", None)
     if bt is None:
         return True
-    chain = srv.pools.get(model_id)
-    if chain is None:
-        route = srv.routes.get(model_id)
-        if route is None:
-            return False
-        chain = [route]
-    for r in chain:
+    legs: list = []
+    pool_chain = srv.pools.get(model_id)
+    if pool_chain:
+        legs.extend(pool_chain)
+    route = srv.routes.get(model_id)
+    if route is not None:
+        legs.append(route)
+    if not legs:
+        return False
+    for r in legs:
         prov = r.provider or r.label
         if not bt.is_parked(prov) and not bt.is_drained(prov):
             return True
