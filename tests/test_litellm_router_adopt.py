@@ -181,13 +181,19 @@ def test_no_redirect_client_disables_redirects():
 
 def test_chain_order_preserved():
     """With no grades and no live-cost signal, the deployment order equals the input chain
-    order (the static cheapest-capable / cold-start path, byte-order-identical)."""
+    order (the static cheapest-capable / cold-start path). A multi-leg chain gives each
+    leg a distinct per-leg ``model_name`` (``<model>#<i>``) so ``build_fallbacks`` can
+    chain them; a single-leg chain keeps the agent id."""
     r1 = UpstreamRoute(upstream_base=GOOD_BASE, api_key="k", provider="a", upstream_model="ma")
     r2 = UpstreamRoute(upstream_base=OTHER_PRESET_BASE, api_key="k", provider="b",
                        upstream_model="mb")
     ml = lr.build_model_list({"m1": [r1, r2]})
     assert [e["litellm_params"]["api_base"] for e in ml] == [GOOD_BASE, OTHER_PRESET_BASE]
-    assert all(e["model_name"] == "m1" for e in ml)
+    assert [e["model_name"] for e in ml] == ["m1#0", "m1#1"]
+    assert lr.build_fallbacks({"m1": [r1, r2]}) == [{"m1#0": ["m1#1"]}]
+    solo = lr.build_model_list({"m1": [r1]})
+    assert solo[0]["model_name"] == "m1"
+    assert lr.build_fallbacks({"m1": [r1]}) == []
 
 
 # ── the actual Router construction (needs litellm installed) ───────────────────

@@ -146,7 +146,8 @@ def victim_install(monkeypatch, tmp_path):
 
 def _serve(tmp_path):
     server = gateway.build_server(
-        GatewayConfig(host="127.0.0.1", port=0, token="t", model_ids=[]),
+        GatewayConfig(host="127.0.0.1", port=0, token="t", model_ids=[],
+                      use_litellm_router=False),  # verify the hand-rolled netutil chokepoint
         setup_dir=tmp_path)
     server.serve_in_thread()
     return server

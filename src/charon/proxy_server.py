@@ -622,7 +622,11 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
             self.model_meta = model_meta or {}
             self.model_pricing = model_pricing or {}
             self.observer.set_pricing(self.model_pricing)
-        self._build_router()
+        # Rebuild the Router on hot-reload ONLY when one was initialized at construction
+        # (use_litellm_router=True). When the server was built opt-out, self.router
+        # stays None and the hand-rolled path keeps serving.
+        if self.router is not None:
+            self._build_router()
 
     def _build_router(self) -> None:
         """Construct (or reconstruct) the adopted litellm.Router from the live config —

@@ -163,6 +163,8 @@ def test_e2e_failover_across_legs_with_x_charon_headers():
         status, body, hdrs = _req(srv.url + "/v1/chat/completions", {"model": "v",
                               "messages": [{"role": "user", "content": "hi"}]})
         assert status == 200, f"expected 200 via failover, got {status}: {body!r}"
+        assert body["object"] == "chat.completion"
+        assert "choices" in body and body.get("usage")
         assert body["model"] == "mb"
         assert body["choices"][0]["message"]["content"] == "served-by-b"
         assert hdrs.get("X-Charon-Failovers") == "1", (
@@ -238,8 +240,13 @@ def test_d012_fully_parked_returns_503_not_200_via_router():
 
 def test_d012_one_unparked_leg_serves_normally():
     """D-012 anti-over-block: a pool with ONE unparked leg still serves normally."""
+    from charon import secrets
+    import tempfile, os
+    tmp = tempfile.mkdtemp(); os.environ["CHARON_HOME"] = tmp
     a, base_a = _up([(200, "ma", "served-by-a")])
     b, base_b = _up([(200, "mb", "should-not-be-needed")])
+    secrets.set_provider_key("a", "ka", base_url=base_a)
+    secrets.set_provider_key("b", "kb", base_url=base_b)
     bt = BalanceTracker(config={
         "a": {"mode": "fixed", "starting_balance": 5.0, "funding_class": 3},
         "b": {"mode": "fixed", "starting_balance": 1.0, "funding_class": 3},
@@ -251,7 +258,7 @@ def test_d012_one_unparked_leg_serves_normally():
     try:
         status, body, hdrs = _req(srv.url + "/v1/chat/completions", {"model": "v",
                               "messages": [{"role": "user", "content": "hi"}]})
-        assert status == 200
+        assert status == 200, f"expected 200, got {status}: {body!r}"
         assert body["model"] == "ma"
         assert a.calls == 1
     finally:
