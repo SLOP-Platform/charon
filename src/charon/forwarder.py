@@ -206,6 +206,22 @@ def _build_upstream_req(handler, srv, route: UpstreamRoute, orig_bj: dict,
         # routes (route.wire defaults "openai"). Flag OFF → byte-identical body.
         if srv.anthropic_prompt_cache and route.wire == WIRE_ANTHROPIC:
             bj = translate.enrich_anthropic_cache(bj)
+        # Per-provider default request params (capability-matrix quirk,
+        # src/charon/capability/).  Reasoning-suppression keys (``thinking``,
+        # ``reasoning_effort``, etc.) are gated: only applied for multi-turn
+        # requests (assistant turn present, where reasoning round-tripping is
+        # required by DeepSeek) AND when the server's ``reasoning_suppression``
+        # flag is True (default).  Non-reasoning default_params always apply.
+        # Client-supplied values are never overwritten (setdefault semantics).
+        if route.default_params:
+            multi_turn = _has_assistant_turn(bj.get("messages"))
+            suppress = getattr(srv, "reasoning_suppression", True)
+            for key, val in route.default_params.items():
+                if key in _REASONING_SUPPRESSION_KEYS:
+                    if suppress and multi_turn:
+                        bj.setdefault(key, val)
+                else:
+                    bj.setdefault(key, val)
         data: bytes | None = json.dumps(bj).encode()
     else:
         data = raw_body or None
@@ -254,6 +270,22 @@ def _required_capability(body: dict) -> str | None:
         if val is not None and val is not False:
             return "reasoning"  # type: ignore[return-value]
     return None
+
+
+# Top-level request keys that control reasoning/thinking behaviour (DeepSeek
+# ``thinking``, OpenAI ``reasoning_effort``, Anthropic-style ``reasoning``).
+_REASONING_SUPPRESSION_KEYS: frozenset[str] = frozenset({
+    "thinking", "reasoning_effort", "reasoning", "reasoning_config",
+})
+
+
+def _has_assistant_turn(messages: list[dict] | None) -> bool:
+    """True when *messages* contains at least one previous assistant turn —
+    i.e. this is a multi-turn conversation where reasoning round-tripping
+    would be required by providers that mandate it (DeepSeek)."""
+    if not messages:
+        return False
+    return any(isinstance(m, dict) and m.get("role") == "assistant" for m in messages)
 
 
 def _is_sole_leg(provider: str,
@@ -331,6 +363,248 @@ def _has_live_sibling(provider: str, pools: dict[str, list], bt) -> bool:
     return owned > 0
 
 
+def forward_via_router(handler, srv) -> bool:
+    """Serve ONE request through the adopted ``litellm.Router`` (D-019 cutover).
+
+    Returns ``True`` if the request was fully served through the Router path; ``False``
+    if the hand-rolled path should run instead (no Router wired, the model is a
+    ``policy/`` virtual route, or the Router path declines).
+
+    Preserves the money-path invariants on the Router path:
+      * D-012 — a fully-parked chain returns a real 503 ``all_legs_parked``, never a 200.
+      * D-018 — cooldown KEEPS the never-strand guard; park does NOT.
+      * X-Charon headers — reconstructed from litellm's per-attempt callbacks (ADR D3).
+      * cache / spend / balance / downgrade-guard — the same post-serve hooks the
+        hand-rolled path applies, on the Router-served 200."""
+    router = getattr(srv, "router", None)
+    if router is None:
+        return False
+    raw_body = getattr(handler, "_cutover_raw_body", None)
+    if raw_body is None:
+        return False
+    orig_bj: dict = getattr(handler, "_cutover_body", {})
+    requested = orig_bj.get("model", "")
+    if requested.startswith("policy/"):
+        return False
+
+    from .litellm_plane import litellm_router as _lr
+
+    chains = getattr(srv, "router_chains", {}) or {}
+    bt = getattr(srv, "balance_tracker", None)
+    session_id = getattr(handler, "_cutover_session", None)
+
+    # ── spend cap check (before any upstream call) ──────────────────────────
+    est_tokens = max(len(raw_body) // 4, 100)
+    est_cost = 0.0
+    if srv.spend_limiter is not None:
+        est_cost = _pre_flight_estimate(requested, est_tokens, srv)
+        dec = srv.spend_limiter.check(est_cost)
+        if not dec.allowed:
+            handler._json(402, {"error": {"message": dec.reason,
+                           "remaining": dec.remaining}})
+            return True
+
+    # ── guardrail request scan ──────────────────────────────────────────────
+    if srv.guardrails is not None:
+        violations, _ = srv.guardrails.scan_request(orig_bj.get("messages", []))
+        blocking = [v for v in violations if v.severity == "BLOCK"]
+        if blocking:
+            handler._json(400, {"error": {
+                "message": "request blocked by guardrails",
+                "violations": [{"pattern": v.pattern, "message": v.message}
+                               for v in blocking]}})
+            return True
+
+    # ── cache check ─────────────────────────────────────────────────────────
+    if srv.semantic_cache is not None:
+        cache_key = hashlib.sha256(raw_body).hexdigest()
+        cached = srv.semantic_cache.get(cache_key)
+        if cached is not None:
+            ctype = cached.headers.get("Content-Type", "application/json")
+            handler._send_resp_headers(200, ctype, "cache", [], False, cache_status="HIT")
+            handler._write(cached.content)
+            srv.note_request(requested, "cache-hit", 200, 0.0, [])
+            return True
+
+    # ── streaming: dispatch through the Router's SSE path ────────────────────
+    if orig_bj.get("stream") is True:
+        return _forward_stream_via_router(
+            handler, srv, router, orig_bj, raw_body, chains, bt, session_id,
+            est_cost, requested)
+
+    # ── D-012 / D-018: non-streaming dispatch through the Router ────────────
+    status, body_dict, xheaders = _lr.complete_via_router_tracked(
+        router, orig_bj, chains=chains, bt=bt,
+        orig_pools=getattr(srv, "pools", {}), orig_routes=getattr(srv, "routes", {}),
+        timeout=srv.fwd_timeout)
+
+    # ── terminal 502 / 503 (no successful 200) ──────────────────────────────
+    if status != 200:
+        retry_after = body_dict.get("error", {}).get("retry_after_s")
+        provider = None
+        failovers: list[dict] = []
+        reasons_hdr = xheaders.get("X-Charon-Failover-Reasons", "")
+        if reasons_hdr:
+            for pair in reasons_hdr.split("; "):
+                if "=" in pair:
+                    p, s = pair.split("=", 1)
+                    failovers.append({"provider": p, "status": _safe_status(s),
+                                      "reason": "exhausted"})
+        handler._send_resp_headers(
+            status, "application/json", provider, failovers, False,
+            retry_after=int(retry_after) if retry_after else None)
+        handler._write(json.dumps(body_dict).encode())
+        served_by = failovers[-1]["provider"] if failovers else (requested or "router")
+        srv.note_request(requested, served_by, status, 0.0, failovers)
+        return True
+
+    # ── 200: serve with the post-serve hook set (cache/spend/balance/downgrade) ─
+    served = body_dict
+    downgrade = False
+    try:
+        from charon.proxy import GatewayProxy
+        expected = served.get("model")
+        obs = (srv.observer or GatewayProxy()).classify(
+            requested_model=requested, status=200, headers=None, body=served,
+            expected_model=expected)
+        downgrade = bool(obs.pseudo_success)
+        srv.observer.record(obs, count_usage=True, session=session_id,
+                            provider=xheaders.get("X-Charon-Provider", ""))
+        # GW-BRIDGE-2 / ADR-0020: verify-only cost cross-check (litellm vs Charon).
+        # Pure observation — never mutates BalanceTracker or the money path.
+        from .litellm_plane.metering import crosscheck_response_dict
+        crosscheck_response_dict(served, obs, model=requested,
+                                 provider=xheaders.get("X-Charon-Provider", ""))
+    except Exception:  # noqa: BLE001 — the downgrade classify must never break serving
+        pass
+
+    body_bytes = json.dumps(served).encode()
+    provider = xheaders.get("X-Charon-Provider") or None
+    failover_reasons = xheaders.get("X-Charon-Failover-Reasons")
+    failovers: list[dict] = []
+    if failover_reasons:
+        for pair in failover_reasons.split("; "):
+            if "=" in pair:
+                p, s = pair.split("=", 1)
+                failovers.append({"provider": p, "status": _safe_status(s),
+                                  "reason": "exhausted"})
+    cost = 0.0
+    if srv.response_normalizer is not None:
+        body_bytes = _normalize_message_content(body_bytes, srv.response_normalizer)
+    if not downgrade and srv.semantic_cache is not None:
+        cache_key = hashlib.sha256(raw_body).hexdigest()
+        srv.semantic_cache.set(cache_key, body_bytes, {}, ttl=3600)
+    if srv.spend_limiter is not None:
+        srv.spend_limiter.record(_spend_to_record_from(served, est_cost))
+    if srv.balance_tracker is not None and provider:
+        srv.balance_tracker.record_spend(provider, cost, model=requested)
+    handler._send_resp_headers(200, "application/json", provider, failovers, downgrade)
+    handler._write(body_bytes)
+    srv.note_request(requested, provider or requested, 200, cost, failovers)
+    return True
+
+
+def _forward_stream_via_router(
+    handler, srv, router, orig_bj, _raw_body, _chains, _bt, session_id,
+    est_cost, requested,
+) -> bool:
+    """Serve a streaming request through the adopted ``litellm.Router`` SSE path.
+
+    Relays SSE chunks through the handler's writer and preserves the post-serve
+    hooks (observer record, spend limits, balance tracking) that the non-streaming
+    Router path applies. On Router failure (no deployment can serve), synthesises
+    the ADR-0016 exhaustion envelope."""
+    from .litellm_plane import streaming as _str
+
+    def _writer(data: bytes) -> bool:
+        return handler._write(data)
+
+    def _header_sender(status, ctype, headers, is_downgrade):
+        provider = headers.get("X-Charon-Provider") or None
+        failovers: list[dict] = []
+        reasons_hdr = headers.get("X-Charon-Failover-Reasons", "")
+        if reasons_hdr:
+            for pair in reasons_hdr.split("; "):
+                if "=" in pair:
+                    p, s = pair.split("=", 1)
+                    failovers.append({"provider": p, "status": _safe_status(s),
+                                      "reason": "exhausted"})
+        handler._send_resp_headers(status, ctype, provider, failovers, is_downgrade)
+
+    try:
+        result = _str.stream_via_router_guarded(
+            router, orig_bj, writer=_writer, header_sender=_header_sender,
+            timeout=srv.fwd_timeout)
+    except Exception as exc:  # noqa: BLE001 — synthesise exhaustion envelope on failure
+        status_code = int(getattr(exc, "status_code", 0) or 0)
+        reason = str(getattr(exc, "message", "") or type(exc).__name__)[:200]
+        retry_after_s = srv.retry_after_hint([]) if hasattr(srv, "retry_after_hint") else None
+        provider_tried = {
+            "provider": requested, "status": status_code or 503, "reason": reason,
+            "class": "unknown", "rearm": "unknown",
+        }
+        handler._json(503, {"error": {
+            "message": "all providers exhausted",
+            "type": "all_providers_exhausted",
+            "requested_model": requested,
+            "no_provider_reason": None,
+            "retry_after_s": retry_after_s,
+            "providers_tried": [provider_tried],
+            "failover_reasons": [f"{requested}={status_code or 503}"],
+        }})
+        srv.note_request(requested, requested, 503, 0.0, [])
+        return True
+
+    _downgrade = result.get("downgrade", False)
+    provider = result.get("model", requested) or requested
+    usage = result.get("usage")
+    cost = 0.0
+    if usage is not None:
+        cost = float(getattr(usage, "cost", getattr(usage, "total_cost", 0.0)) or 0.0)
+
+    try:
+        from charon.proxy import GatewayProxy
+        obs = (srv.observer or GatewayProxy()).classify(
+            requested_model=requested, status=200, headers=None,
+            body={"model": provider, "usage": {
+                "total_tokens": getattr(usage, "total_tokens", 0) if usage else 0,
+            }},
+            expected_model=provider)
+        srv.observer.record(obs, count_usage=True, session=session_id,
+                            provider=provider)
+    except Exception:  # noqa: BLE001
+        pass
+
+    if srv.spend_limiter is not None:
+        srv.spend_limiter.record(cost if cost > 0 else est_cost)
+    if srv.balance_tracker is not None and provider:
+        srv.balance_tracker.record_spend(provider, cost, model=requested)
+    srv.note_request(requested, provider, 200, cost, [])
+    return True
+
+
+def _safe_status(s: str):
+    try:
+        return int(s)
+    except (TypeError, ValueError):
+        return s
+
+
+def _spend_to_record_from(served: dict, est_cost: float) -> float:
+    """Record the provider's real cost for a Router-served 200, mirroring
+    ``_spend_to_record`` on the hand-rolled path. A free/flat route reports a real $0
+    → record 0.0 (never the est_cost floor); an unpriced response keeps the floor."""
+    usage = served.get("usage")
+    if not isinstance(usage, dict):
+        return est_cost
+    cost = float(usage.get("cost", usage.get("total_cost", 0.0)) or 0.0)
+    if cost > 0:
+        return cost
+    if usage.get("prompt_tokens") is not None or usage.get("total_tokens") is not None:
+        return 0.0
+    return est_cost
+
+
 def forward_with_failover(handler, srv) -> None:
     """Run the data-plane failover loop for one client request (money path).
 
@@ -358,6 +632,18 @@ def forward_with_failover(handler, srv) -> None:
         requested = orig_bj.get("model", "")
     except Exception:  # noqa: BLE001
         pass
+
+    # LITELLM-ROUTER-CUTOVER (D-019): dispatch through the adopted litellm.Router when
+    # one is wired. Stash the parsed body / session on the handler so ``forward_via_router``
+    # can reuse them without re-reading the request. Falls back to the hand-rolled loop
+    # below when the Router is absent, the request is streaming/policy, or the Router
+    # dispatch declines (returns False).
+    if getattr(srv, "router", None) is not None:
+        handler._cutover_raw_body = raw_body  # type: ignore[attr-defined]
+        handler._cutover_body = orig_bj  # type: ignore[attr-defined]
+        handler._cutover_session = session_id  # type: ignore[attr-defined]
+        if forward_via_router(handler, srv):
+            return
 
     chain = srv.chain_for(requested)
     if not chain:
@@ -762,20 +1048,17 @@ def forward_with_failover(handler, srv) -> None:
                         # ``obs.exhausted and not obs.transient`` alone would also
                         # be true for a bare 429 (transient is only ever set True
                         # for 503/transient-402, never for 429).
-                        if bt is not None and status in (402, 403) and not obs.transient:
+                        if bt is not None and status == 402 and not obs.transient:
                             prov = route.provider or route.label
-                            bt.record_exhaustion(prov)
-                            # DETERMINISTIC 402 (drained key) / 403 (entitlement):
-                            # retrying cannot succeed. Always park, even as the
-                            # sole leg.  The D-012 fully-parked 503 on the next
-                            # request is a FAST, structured failure naming every
-                            # leg and its real reason — strictly better than
-                            # silently retrying a dead provider every cycle
-                            # (slower AND more expensive).  The old SOLE-LEG
-                            # GUARD kept the dead provider alive, which is
-                            # precisely the worst failure mode: every request
-                            # hits it, fails, and falls through — burning latency
-                            # and retries on a provider that can never recover.
+                            if _has_live_sibling(prov, srv.pools, bt):
+                                bt.record_exhaustion(prov)
+                            else:
+                                import logging
+                                logging.getLogger("charon.forwarder").warning(
+                                    "SOLE-LEG GUARD: provider %r deterministically "
+                                    "exhausted (402) but has no live sibling in any "
+                                    "pool — NOT auto-parking it (would strand traffic "
+                                    "with no fallback).", prov)
                     # a 404 ("model gone") is model-level — do NOT cool the provider.
                     if more:  # count only providers we actually move PAST
                         failovers.append({"provider": route.label, "status": status,

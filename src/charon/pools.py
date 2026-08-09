@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .routing_policy.cost_rank import cost_class_priority, derived_cost_rank
+from .routing_policy.litellm_pricing import enrich_registry
 
 
 class PoolConfigError(RuntimeError):
@@ -121,6 +122,12 @@ def load_pools(
         raise PoolConfigError(f"pool config is not valid JSON: {exc}") from exc
 
     pools: dict[str, list[PoolEntry]] = {}
+    # LITELLM-COST-ADOPT: stamp litellm-sourced per-token pricing onto entries
+    # that lack cost_input/cost_output BEFORE deriving cost_rank, so the
+    # free-first→cost-class→cheapest-first sort has real magnitudes for the
+    # ~850 legs that previously collapsed to the neutral 1000. Clobber-safe and
+    # never guesses (see routing_policy.litellm_pricing.enrich_registry).
+    registry = enrich_registry(registry)
     for role, model_ids in pools_raw.items():
         if not isinstance(model_ids, list):
             raise PoolConfigError(f"pool {role!r} must be a list of model ids")

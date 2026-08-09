@@ -34,7 +34,10 @@ CATEGORY_PRESETS_DATA: dict[str, dict] = {
     "deepseek": {
         "base_url": "https://api.deepseek.com/v1",
         "key_env": "DEEPSEEK_API_KEY",
-        "note": "DeepSeek (base verified).",
+        "default_params": {"thinking": {"type": "disabled"}},
+        "note": "DeepSeek (base verified). Reasoning suppressed at source: DeepSeek "
+                "requires reasoning_content round-tripped on multi-turn; suppressing "
+                "it means there is nothing to pass back (avoids 400 on turn >1).",
     },
     "chutes": {
         "base_url": "https://llm.chutes.ai/v1",
@@ -104,5 +107,12 @@ CATEGORY_PRESETS_DATA: dict[str, dict] = {
         "strip_v1": False,
         "note": "Perplexity (domain resolves, /models may 404; "
                 "endpoint varies; if using, check strip_v1 setting).",
+    },
+    "nvidia_nim": {
+        "base_url": "https://integrate.api.nvidia.com/v1",
+        "key_env": "NVIDIA_API_KEY",
+        "note": "NVIDIA NIM — 112 models (live-probed 2026-08). Model IDs must use "
+                "the NIM namespaced format (e.g. meta/llama-3.1-8b-instruct), not "
+                "bare short-ids. Upstream model id MUST be set correctly.",
     },
 }
