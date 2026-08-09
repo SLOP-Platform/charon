@@ -15,9 +15,8 @@ import threading
 
 import pytest
 
-from charon import config, gateway, secrets
+from charon import gateway
 from charon.gateway import GatewayConfig
-
 
 # ── mock provider: serves /models and /chat/completions ───────────────────
 
@@ -89,7 +88,7 @@ def _req(url, method="GET", token=None, body=None):
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        r = urllib.request.urlopen(req, timeout=10)
+        r = urllib.request.urlopen(req, timeout=10)  # nosec B310 — test-only mock URL open
         return r.status, r.read().decode()
     except urllib.error.HTTPError as e:
         return e.code, e.read().decode()
@@ -161,6 +160,7 @@ def test_router_build_router_handles_exception(monkeypatch, tmp_path):
 
     import litellm
     _orig_router = litellm.Router
+
     def _bad_router(*args, **kwargs):
         raise RuntimeError("simulated Router construction failure")
     litellm.Router = _bad_router
@@ -192,7 +192,8 @@ def test_enrich_registry_called_in_load_config(monkeypatch, tmp_path):
     cfg = gateway.load_config(state_dir=str(tmp_path))
     # The enriched registry should still contain the model (enrich_registry is
     # additive — it never removes entries, only adds cost_input/cost_output).
-    assert "gpt-4o" in cfg.routes, f"model should be in routes after enrichment, got {list(cfg.routes)}"
+    assert "gpt-4o" in cfg.routes, (
+        f"model should be in routes after enrichment, got {list(cfg.routes)}")
 
 
 # ── pure-function unit tests ──────────────────────────────────────────────
@@ -212,7 +213,8 @@ def test_spend_to_record_from_branches():
     assert _spend_to_record_from({"usage": {"total_cost": 0.02}}, est) == 0.02
 
     # Branch 3: usage has tokens but cost ≤ 0 → 0.0
-    assert _spend_to_record_from({"usage": {"prompt_tokens": 10, "completion_tokens": 5}}, est) == 0.0
+    assert _spend_to_record_from(
+        {"usage": {"prompt_tokens": 10, "completion_tokens": 5}}, est) == 0.0
     assert _spend_to_record_from({"usage": {"total_tokens": 15}}, est) == 0.0
 
     # Branch 4: usage is a dict with no tokens → est_cost
@@ -237,8 +239,6 @@ def test_has_assistant_turn():
 def test_gateway_json_use_litellm_router(monkeypatch, tmp_path):
     """Cover loading ``use_litellm_router`` from gateway.json (gateway.py:209)."""
     monkeypatch.setenv("CHARON_HOME", str(tmp_path))
-    import os
-    os.makedirs(tmp_path, exist_ok=True)
 
     # Write models.json so the state_dir branch loads
     (tmp_path / "models.json").write_text(json.dumps({"gpt-4o": {"provider": "openai"}}))
@@ -247,6 +247,10 @@ def test_gateway_json_use_litellm_router(monkeypatch, tmp_path):
 
     cfg = gateway.load_config(state_dir=str(tmp_path))
     assert cfg.use_litellm_router is False, "gateway.json use_litellm_router should be read"
+
+    # Verify the hand-rolled path: server built without Router
+    server = gateway.build_server(cfg)
+    assert server.router is None, "Router should be None when use_litellm_router=False"
 
 
 def test_router_happy_path_with_default_params(monkeypatch, tmp_path):
