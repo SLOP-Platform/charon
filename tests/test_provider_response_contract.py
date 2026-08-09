@@ -89,7 +89,7 @@ _OPENAI_SHAPE_PRESETS = frozenset({
     "opencode-zen", "opencode-go", "openrouter", "nanogpt", "zai",
     "deepseek", "chutes", "groq", "together", "mistral", "fireworks", "sambanova",
     "replicate", "xai", "cohere", "openai", "huggingface", "neuralwatt",
-    "perplexity", "lmstudio", "jan", "ollama", "vllm", "local",
+    "nvidia_nim", "perplexity", "lmstudio", "jan", "ollama", "vllm", "local",
 })
 
 # Presets whose declared upstream `wire` is NOT OpenAI-compatible -- their
