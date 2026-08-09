@@ -54,7 +54,7 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any, TypedDict
+from typing import Any, Mapping, TypedDict
 
 log = logging.getLogger("charon.litellm_pricing")
 
@@ -204,7 +204,7 @@ def price_for(model_id: str, spec: dict[str, Any]) -> tuple[float, float] | None
     return None
 
 
-def enrich_registry(registry: dict[str, object]) -> dict[str, dict[str, Any]]:
+def enrich_registry(registry: Mapping[str, object]) -> dict[str, dict[str, Any]]:
     """Stamp litellm-sourced ``cost_input``/``cost_output`` onto registry entries
     that lack them. Returns a NEW dict (the input is not mutated); only entries
     that get a price are copied-with-update so the rest alias the originals.
@@ -244,7 +244,7 @@ def enrich_registry(registry: dict[str, object]) -> dict[str, dict[str, Any]]:
     return out
 
 
-def coverage_report(registry: dict[str, object]) -> CoverageReport:
+def coverage_report(registry: Mapping[str, object]) -> CoverageReport:
     """Report litellm pricing coverage for *registry*: per-provider
     ``priced/total`` and the NAMED list of unmapped models (never a silent
     default). Returns a JSON-serializable dict::
