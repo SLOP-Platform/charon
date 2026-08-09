@@ -89,6 +89,13 @@ class ProviderPreset:
     # eligibility filtering.  None/absent means "unknown / no limit" (safe default).
     max_context: int | None = None       # max input+output tokens this provider admits
     max_concurrency: int | None = None   # max in-flight requests to this provider
+    # Per-provider default request params (capability-matrix quirk, src/charon/capability/).
+    # Key-value pairs merged into the request body before forwarding — e.g. DeepSeek's
+    # ``{"thinking": {"type": "disabled"}}`` to suppress reasoning at source (reasoning
+    # round-trip requirement breaks multi-turn; suppressing it means nothing to pass
+    # back).  None/absent means no extra params.  Client-supplied values are NOT
+    # overwritten (setdefault semantics).
+    default_params: dict | None = None
 
 
 # Built-in presets assembled from the ``provider_presets/`` category modules.
@@ -257,7 +264,7 @@ def list_models(name: str, overrides: dict | None = None, *,
 
 
 _PRESET_FIELDS = ("base_url", "key_env", "strip_v1", "downgrade_prone", "wire", "adapter",
-                  "max_context", "max_concurrency")
+                  "max_context", "max_concurrency", "default_params")
 
 
 def resolve(name: str, overrides: dict | None = None) -> ProviderPreset:

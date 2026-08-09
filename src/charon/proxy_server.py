@@ -187,6 +187,9 @@ class UpstreamRoute:
     # R7 capability-engine: per-route hard limits (None = unknown / no limit)
     max_context: int | None = None       # max tokens this route admits
     max_concurrency: int | None = None   # max in-flight requests to this route
+    # Per-provider default request params (capability-matrix quirk). Merged into
+    # every forwarded body — client-supplied values are never overwritten.
+    default_params: dict | None = None
 
     @property
     def label(self) -> str:
@@ -492,6 +495,13 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         balance_tracker: BalanceTracker | None = None,
         latency_tracker: RollingLatency | None = None,
         slow_provider_threshold_ms: float | None = None,
+        # Reasoning suppression: when True (default), per-provider default_params
+        # that suppress reasoning (e.g. ``{"thinking":{"type":"disabled"}}``) are
+        # applied for multi-turn requests (those with at least one assistant turn
+        # in the message history). This prevents the DeepSeek 400 on turn >1 when
+        # ``reasoning_content`` is not round-tripped. Set False to never suppress
+        # reasoning (may cost quality, but allows single-turn reasoning to work).
+        reasoning_suppression: bool = True,
     ) -> None:
         super().__init__((host, port), _ProxyHandler)
         self.upstream_base = upstream_base
@@ -574,6 +584,7 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         self.capability_matrix: Any = None
         self.latency_tracker = latency_tracker or RollingLatency()
         self.slow_provider_threshold_ms = slow_provider_threshold_ms
+        self.reasoning_suppression = reasoning_suppression
         self._cooldown: dict[str, float] = {}
         self._cooldown_lock = threading.Lock()
         self.failover_events: collections.deque[dict] = collections.deque(maxlen=200)

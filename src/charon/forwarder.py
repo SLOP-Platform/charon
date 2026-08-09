@@ -206,6 +206,22 @@ def _build_upstream_req(handler, srv, route: UpstreamRoute, orig_bj: dict,
         # routes (route.wire defaults "openai"). Flag OFF → byte-identical body.
         if srv.anthropic_prompt_cache and route.wire == WIRE_ANTHROPIC:
             bj = translate.enrich_anthropic_cache(bj)
+        # Per-provider default request params (capability-matrix quirk,
+        # src/charon/capability/).  Reasoning-suppression keys (``thinking``,
+        # ``reasoning_effort``, etc.) are gated: only applied for multi-turn
+        # requests (assistant turn present, where reasoning round-tripping is
+        # required by DeepSeek) AND when the server's ``reasoning_suppression``
+        # flag is True (default).  Non-reasoning default_params always apply.
+        # Client-supplied values are never overwritten (setdefault semantics).
+        if route.default_params:
+            multi_turn = _has_assistant_turn(bj.get("messages"))
+            suppress = getattr(srv, "reasoning_suppression", True)
+            for key, val in route.default_params.items():
+                if key in _REASONING_SUPPRESSION_KEYS:
+                    if suppress and multi_turn:
+                        bj.setdefault(key, val)
+                else:
+                    bj.setdefault(key, val)
         data: bytes | None = json.dumps(bj).encode()
     else:
         data = raw_body or None
@@ -254,6 +270,22 @@ def _required_capability(body: dict) -> str | None:
         if val is not None and val is not False:
             return "reasoning"  # type: ignore[return-value]
     return None
+
+
+# Top-level request keys that control reasoning/thinking behaviour (DeepSeek
+# ``thinking``, OpenAI ``reasoning_effort``, Anthropic-style ``reasoning``).
+_REASONING_SUPPRESSION_KEYS: frozenset[str] = frozenset({
+    "thinking", "reasoning_effort", "reasoning", "reasoning_config",
+})
+
+
+def _has_assistant_turn(messages: list[dict] | None) -> bool:
+    """True when *messages* contains at least one previous assistant turn —
+    i.e. this is a multi-turn conversation where reasoning round-tripping
+    would be required by providers that mandate it (DeepSeek)."""
+    if not messages:
+        return False
+    return any(isinstance(m, dict) and m.get("role") == "assistant" for m in messages)
 
 
 def _is_sole_leg(provider: str,
@@ -650,6 +682,28 @@ def forward_with_failover(handler, srv) -> None:
         # so the default path is provably byte-identical (never re-encodes).
         adapter = get_adapter(route.adapter)
 
+        # FREE-TIER QUOTA: skip a provider whose free-tier limit would be exceeded
+        # by this attempt. The pre-flight estimate (est_tokens) is a floor; the
+        # actual token count is recorded after the 200.
+        qt = getattr(srv, "quota_tracker", None)
+        provider_name = route.provider or route.label
+        if qt is not None and qt.should_skip(provider_name, est_tokens=est_tokens):
+            if more:
+                wait_s = qt.get_wait_time(provider_name, est_tokens=est_tokens)
+                reason = f"free-tier quota exhausted (retry in {wait_s:.0f}s)" if wait_s > 0 else "free-tier quota exhausted"
+                failovers.append({"provider": route.label, "status": "quota-exhausted",
+                                  "reason": reason})
+                continue
+            handler._send_resp_headers(503, "application/json", route.label, failovers, False)
+            handler._write(json.dumps({"error": {
+                "message": "all providers exhausted (free-tier quota)",
+                "type": "all_providers_exhausted",
+                "requested_model": requested,
+                "no_provider_reason": "free_tier_exhausted",
+            }}).encode())
+            srv.note_request(requested, route.label, "quota-exhausted", 0.0, failovers)
+            return
+
         # R7: track in-flight for max_concurrency awareness
         srv.inflight_inc(route)
         start = time.monotonic()
@@ -911,6 +965,9 @@ def forward_with_failover(handler, srv) -> None:
                     srv.spend_limiter.record(_spend_to_record(obs, est_cost))
                 if srv.balance_tracker is not None:
                     srv.balance_tracker.record_spend(route.label, cost, model=requested)
+                if qt is not None:
+                    actual_tokens = obs.usage.total_tokens if obs.usage else est_tokens
+                    qt.record(provider_name, tokens=actual_tokens)
                 handler._send_resp_headers(200, ctype, route.label, failovers, obs.pseudo_success)
                 handler._write(body_bytes)
                 srv.note_request(requested, route.label, 200, cost, failovers)
@@ -1005,6 +1062,9 @@ def forward_with_failover(handler, srv) -> None:
                 srv.spend_limiter.record(_spend_to_record(served_obs, est_cost))
             if srv.balance_tracker is not None:
                 srv.balance_tracker.record_spend(route.label, cost, model=requested)
+            if qt is not None:
+                actual_tokens = served_obs.usage.total_tokens if served_obs.usage else est_tokens
+                qt.record(provider_name, tokens=actual_tokens)
             srv.note_request(requested, route.label, 200, cost, failovers)
             return
         finally:
