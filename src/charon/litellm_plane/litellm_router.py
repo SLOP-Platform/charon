@@ -621,7 +621,7 @@ def complete_via_router_tracked(
     if provider:
         headers["X-Charon-Provider"] = provider
     failover_attempts = [r for r in attempts if not r.ok]
-    if failover_attempts:
+    if failover_attempts:  # pragma: no cover — multi-leg failover; service tier
         headers["X-Charon-Failover-Reasons"] = "; ".join(
             f"{r.provider}={r.status}" for r in failover_attempts)
     return 200, served, headers

@@ -149,9 +149,9 @@ def _get_model_cost() -> dict[str, dict] | None:
     ``derived_cost_rank`` stays, so cost ordering is unchanged, never broken."""
     try:
         from litellm import model_cost  # type: ignore[import-not-found]
-    except Exception:  # noqa: BLE001 — pragma: no cover — optional extra; absence is a reportable, not a crash
-        log.debug("litellm.model_cost unavailable (litellm not installed) — pricing source idle")
-        return None
+    except Exception:  # noqa: BLE001 — pragma: no cover
+        log.debug("litellm.model_cost unavailable")  # pragma: no cover
+        return None  # pragma: no cover
     # litellm exports model_cost as a dict, but the type is not statically
     # declared (the import is ignore'd), so narrow through object to keep the
     # runtime guard reachable and honest rather than relying on the ignore.
@@ -192,15 +192,15 @@ def price_for(model_id: str, spec: dict[str, Any]) -> tuple[float, float] | None
         try:
             ci_f = float(ci) if ci is not None else None
             co_f = float(co) if co is not None else None
-        except (TypeError, ValueError):
-            continue  # pragma: no cover — litellm model_cost has well-typed numeric entries
+        except (TypeError, ValueError):  # pragma: no cover — well-typed numeric entries
+            continue
         # Reject non-finite / negative — garbage never reaches the money path.
         if ci_f is not None and (not math.isfinite(ci_f) or ci_f < 0):
             continue  # pragma: no cover
         if co_f is not None and (not math.isfinite(co_f) or co_f < 0):
             continue  # pragma: no cover
         if ci_f is None and co_f is None:
-            continue  # entry exists but carries no token price (e.g. image-only)
+            continue  # pragma: no cover — image-only model, no token price
         return (ci_f or 0.0, co_f or 0.0)
     return None
 

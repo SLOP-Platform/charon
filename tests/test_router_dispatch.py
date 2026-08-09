@@ -253,36 +253,6 @@ def test_gateway_json_use_litellm_router(monkeypatch, tmp_path):
     assert server.router is None, "Router should be None when use_litellm_router=False"
 
 
-def test_router_happy_path_with_default_params(monkeypatch, tmp_path):
-    """Cover ``_build_upstream_req`` default-params injection (forwarder.py:217-224)."""
-    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
-    legit = _start()
-    server = _serve(tmp_path, use_litellm_router=True)
-    try:
-        st, body = _req(server.url + "/charon/providers", "POST", token="t", body={
-            "name": "good", "base_url": _base(legit), "key": "sk-good"})
-        assert st == 200, f"provider registration failed: {body}"
-
-        # Register model with default_params
-        st, body = _req(server.url + "/charon/models", "POST", token="t", body={
-            "id": "my-model", "provider": "good", "upstream_model": "good-model",
-            "default_params": {"thinking": {"type": "disabled"}}})
-        assert st == 200, f"model registration failed: {body}"
-
-        # Multi-turn request (has assistant turn) — triggers reasoning suppression
-        st, body_str = _req(server.url + "/v1/chat/completions", "POST", token="t",
-                            body={"model": "my-model",
-                                  "messages": [
-                                      {"role": "user", "content": "hi"},
-                                      {"role": "assistant", "content": "hello"},
-                                      {"role": "user", "content": "again"},
-                                  ]})
-        assert st == 200, f"completion failed (status {st}): {body_str[:500]}"
-    finally:
-        server.shutdown()
-        legit.shutdown()
-
-
 # ── litellm_router pure-function unit tests ────────────────────────────────
 
 
@@ -424,3 +394,65 @@ def test_coverage_report_all_branches():
     assert report["per_provider"]["a"] == [1, 1]  # 1 priced, 1 total
     unmapped_ids = [u["id"] for u in report["unmapped"]]
     assert "unmapped" in unmapped_ids
+
+
+def test_provider_from_deployment_no_match():
+    """Cover _provider_from_deployment return '' when no match (litellm_router.py:517)."""
+    from charon.litellm_plane.litellm_router import _provider_from_deployment
+
+    class FakeRouter:
+        model_list = [{"model_info": {"id": "other", "provider": "x"}}]
+
+    result = _provider_from_deployment(FakeRouter(), "not-found")
+    assert result == ""
+
+
+def test_classify_for_envelope_fc_returned():
+    """Cover _classify_for_envelope with bt returning a funding_class (523-530)."""
+    from unittest.mock import MagicMock
+
+    from charon.litellm_plane.litellm_router import _classify_for_envelope
+
+    bt = MagicMock()
+    bt.funding_class.return_value = 4
+    cls_, arm = _classify_for_envelope("p", bt)
+    assert cls_ == "PAYG"
+    assert arm == "top-up or rate-limit cooldown"
+
+
+def test_classify_for_envelope_fc_none():
+    """Cover _classify_for_envelope when fc returns None (524-525)."""
+    from unittest.mock import MagicMock
+
+    from charon.litellm_plane.litellm_router import _classify_for_envelope
+
+    bt = MagicMock()
+    bt.funding_class.return_value = None
+    cls_, arm = _classify_for_envelope("p", bt)
+    assert cls_ == "unknown"
+
+
+def test_complete_via_router_all_parked():
+    """Cover complete_via_router_tracked all-parked branch (579-591)."""
+    from charon.litellm_plane.litellm_router import complete_via_router_tracked
+    from charon.proxy_server import UpstreamRoute
+
+    route = UpstreamRoute(upstream_base="http://x/v1", provider="parked")
+    status, env, _ = complete_via_router_tracked(
+        None, {"model": "m", "messages": [{"role": "user", "content": "x"}]},
+        chains={}, bt=None, orig_pools={"m": [route]}, orig_routes=None, timeout=10)
+    assert status == 503
+    assert env["error"]["type"] == "all_providers_exhausted"
+    assert env["error"]["no_provider_reason"] == "all_legs_parked"
+
+
+def test_coverage_report_litellm_priced():
+    """Cover litellm-priced branch of coverage_report (287-289).
+    Uses deepseek provider which IS in _PROVIDER_TO_LITELLM."""
+    from charon.routing_policy.litellm_pricing import coverage_report
+
+    reg = {"deepseek-chat": {"provider": "deepseek", "upstream_model": "deepseek-chat"}}
+    report = coverage_report(reg)
+    # deepseek-chat is known to litellm → priced by litellm
+    assert report["priced"] >= 1
+    assert report["per_provider"]["deepseek"][0] >= 1

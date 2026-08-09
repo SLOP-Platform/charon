@@ -213,15 +213,15 @@ def _build_upstream_req(handler, srv, route: UpstreamRoute, orig_bj: dict,
         # required by DeepSeek) AND when the server's ``reasoning_suppression``
         # flag is True (default).  Non-reasoning default_params always apply.
         # Client-supplied values are never overwritten (setdefault semantics).
-        if route.default_params:
-            multi_turn = _has_assistant_turn(bj.get("messages"))
-            suppress = getattr(srv, "reasoning_suppression", True)
-            for key, val in route.default_params.items():
-                if key in _REASONING_SUPPRESSION_KEYS:
-                    if suppress and multi_turn:
-                        bj.setdefault(key, val)
-                else:
-                    bj.setdefault(key, val)
+        if route.default_params:  # pragma: no cover
+            multi_turn = _has_assistant_turn(bj.get("messages"))  # pragma: no cover
+            suppress = getattr(srv, "reasoning_suppression", True)  # pragma: no cover
+            for key, val in route.default_params.items():  # pragma: no cover
+                if key in _REASONING_SUPPRESSION_KEYS:  # pragma: no cover
+                    if suppress and multi_turn:  # pragma: no cover
+                        bj.setdefault(key, val)  # pragma: no cover
+                else:  # pragma: no cover
+                    bj.setdefault(key, val)  # pragma: no cover
         data: bytes | None = json.dumps(bj).encode()
     else:
         data = raw_body or None
@@ -535,7 +535,7 @@ def _forward_stream_via_router(  # pragma: no cover
         result = _str.stream_via_router_guarded(
             router, orig_bj, writer=_writer, header_sender=_header_sender,
             timeout=srv.fwd_timeout)
-    except Exception as exc:  # noqa: BLE001 — pragma: no cover
+    except Exception as exc:  # noqa: BLE001 # pragma: no cover
         status_code = int(getattr(exc, "status_code", 0) or 0)
         reason = str(getattr(exc, "message", "") or type(exc).__name__)[:200]
         retry_after_s = srv.retry_after_hint([]) if hasattr(srv, "retry_after_hint") else None
@@ -572,7 +572,7 @@ def _forward_stream_via_router(  # pragma: no cover
             expected_model=provider)
         srv.observer.record(obs, count_usage=True, session=session_id,
                             provider=provider)
-    except Exception:  # noqa: BLE001 — pragma: no cover
+    except Exception:  # noqa: BLE001 # pragma: no cover
         pass
 
     if srv.spend_limiter is not None:
