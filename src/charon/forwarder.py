@@ -331,6 +331,141 @@ def _has_live_sibling(provider: str, pools: dict[str, list], bt) -> bool:
     return owned > 0
 
 
+def _safe_status(s: str):
+    try:
+        return int(s)
+    except (TypeError, ValueError):
+        return s
+
+
+def _spend_to_record_from(served: dict, est_cost: float) -> float:
+    """Record the provider's real cost for a Router-served 200."""
+    usage = served.get("usage")
+    if not isinstance(usage, dict):
+        return est_cost
+    cost = float(usage.get("cost", usage.get("total_cost", 0.0)) or 0.0)
+    if cost > 0:
+        return cost
+    if usage.get("prompt_tokens") is not None or usage.get("total_tokens") is not None:
+        return 0.0
+    return est_cost
+
+
+def _failovers_from_header(reasons_hdr: str) -> list[dict]:
+    """Parse the X-Charon-Failover-Reasons header into the failovers list."""
+    failovers: list[dict] = []
+    if reasons_hdr:
+        for pair in reasons_hdr.split("; "):
+            if "=" in pair:
+                p, s = pair.split("=", 1)
+                failovers.append({"provider": p, "status": _safe_status(s), "reason": "exhausted"})
+    return failovers
+
+
+def forward_via_router(handler, srv) -> bool:
+    """Serve ONE non-streaming request through the adopted litellm.Router (D-019 cutover).
+    Returns True if served through the Router; False if the hand-rolled path should run."""
+    router = getattr(srv, "router", None)
+    if router is None:
+        return False
+    raw_body = getattr(handler, "_cutover_raw_body", None)
+    if raw_body is None:
+        return False
+    orig_bj: dict = getattr(handler, "_cutover_body", {})
+    requested = orig_bj.get("model", "")
+    if requested.startswith("policy/"):
+        return False
+    if orig_bj.get("stream") is True:
+        return False
+
+    from .litellm_plane import litellm_router as _lr
+    from .litellm_plane import metering as _metering
+
+    chains = getattr(srv, "router_chains", {}) or {}
+    bt = getattr(srv, "balance_tracker", None)
+    session_id = getattr(handler, "_cutover_session", None)
+
+    est_tokens = max(len(raw_body) // 4, 100)
+    est_cost = 0.0
+    if srv.spend_limiter is not None:
+        est_cost = _pre_flight_estimate(requested, est_tokens, srv)
+        dec = srv.spend_limiter.check(est_cost)
+        if not dec.allowed:
+            handler._json(402, {"error": {"message": dec.reason, "remaining": dec.remaining}})
+            return True
+
+    if srv.guardrails is not None:
+        violations, _ = srv.guardrails.scan_request(orig_bj.get("messages", []))
+        blocking = [v for v in violations if v.severity == "BLOCK"]
+        if blocking:
+            handler._json(400, {"error": {"message": "request blocked by guardrails",
+                "violations": [{"pattern": v.pattern, "message": v.message} for v in blocking]}})
+            return True
+
+    if srv.semantic_cache is not None:
+        cache_key = hashlib.sha256(raw_body).hexdigest()
+        cached = srv.semantic_cache.get(cache_key)
+        if cached is not None:
+            ctype = cached.headers.get("Content-Type", "application/json")
+            handler._send_resp_headers(200, ctype, "cache", [], False, cache_status="HIT")
+            handler._write(cached.content)
+            srv.note_request(requested, "cache-hit", 200, 0.0, [])
+            return True
+
+    status, body_dict, xheaders = _lr.complete_via_router_tracked(
+        router, orig_bj, chains=chains, bt=bt, timeout=srv.fwd_timeout)
+
+    if status != 200:
+        ctype = "application/json"
+        retry_after = body_dict.get("error", {}).get("retry_after_s")
+        failovers = _failovers_from_header(xheaders.get("X-Charon-Failover-Reasons", ""))
+        handler._send_resp_headers(status, ctype, None, failovers, False,
+            retry_after=int(retry_after) if retry_after else None)
+        handler._write(json.dumps(body_dict).encode())
+        served_by = failovers[-1]["provider"] if failovers else (requested or "router")
+        srv.note_request(requested, served_by, status, 0.0, failovers)
+        return True
+
+    served = body_dict
+    provider = xheaders.get("X-Charon-Provider") or None
+    failovers = _failovers_from_header(xheaders.get("X-Charon-Failover-Reasons", ""))
+
+    expected = served.get("model")
+    downgrade = False
+    obs = None
+    try:
+        obs = srv.observer.classify(requested_model=requested, status=200, headers=None,
+                                    body=served, expected_model=expected)
+        downgrade = bool(obs.pseudo_success)
+        srv.observer.record(obs, count_usage=True, session=session_id, provider=provider or "")
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Item 4: metering cross-check (verify-only, logs WARNING on divergence)
+    if obs is not None:
+        try:
+            _metering.check_divergence(_metering.litellm_cost(served),
+                _metering.charon_cost(obs), model=requested, provider=provider or "")
+        except Exception:  # noqa: BLE001
+            pass
+
+    body_bytes = json.dumps(served).encode()
+    cost = obs.usage.cost_usd if (obs and obs.usage) else 0.0
+    if srv.response_normalizer is not None:
+        body_bytes = _normalize_message_content(body_bytes, srv.response_normalizer)
+    if not downgrade and srv.semantic_cache is not None:
+        cache_key = hashlib.sha256(raw_body).hexdigest()
+        srv.semantic_cache.set(cache_key, body_bytes, {}, ttl=3600)
+    if srv.spend_limiter is not None:
+        srv.spend_limiter.record(_spend_to_record_from(served, est_cost))
+    if srv.balance_tracker is not None and provider:
+        srv.balance_tracker.record_spend(provider, cost, model=requested)
+    handler._send_resp_headers(200, "application/json", provider, failovers, downgrade)
+    handler._write(body_bytes)
+    srv.note_request(requested, provider or requested, 200, cost, failovers)
+    return True
+
+
 def forward_with_failover(handler, srv) -> None:
     """Run the data-plane failover loop for one client request (money path).
 
@@ -358,6 +493,13 @@ def forward_with_failover(handler, srv) -> None:
         requested = orig_bj.get("model", "")
     except Exception:  # noqa: BLE001
         pass
+
+    if getattr(srv, "router", None) is not None:
+        handler._cutover_raw_body = raw_body  # type: ignore[attr-defined]
+        handler._cutover_body = orig_bj  # type: ignore[attr-defined]
+        handler._cutover_session = session_id  # type: ignore[attr-defined]
+        if forward_via_router(handler, srv):
+            return
 
     chain = srv.chain_for(requested)
     if not chain:
