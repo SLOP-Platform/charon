@@ -89,6 +89,12 @@ _OPENAI_SHAPE_PRESETS = frozenset({
     "opencode-zen", "opencode-go", "openrouter", "nanogpt", "zai",
     "deepseek", "chutes", "groq", "together", "mistral", "fireworks", "sambanova",
     "replicate", "xai", "cohere", "openai", "huggingface", "neuralwatt",
+    # nvidia_nim: OpenAI-compatible. VERIFIED against the live endpoint
+    # 2026-08-09 -- POST https://integrate.api.nvidia.com/v1/chat/completions
+    # with model deepseek-ai/deepseek-v4-flash-0731 returned HTTP 200 with a
+    # top-level `choices[0].message.content` and no reasoning field. Declared
+    # here rather than left undeclared so this contract test EXERCISES the
+    # preset; an undeclared preset raises AssertionError by design.
     "nvidia_nim", "perplexity", "lmstudio", "jan", "ollama", "vllm", "local",
 })
 
