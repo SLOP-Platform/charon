@@ -1,0 +1,122 @@
+# gate-weaken-guard.yml — MERGE-BLOCKING guard that makes weakening a gate LOUD.
+#
+# WHAT THIS IS: a pull_request_target job that reds any PR touching .github/workflows/**
+# or .github/CODEOWNERS UNLESS it carries an explicit override marker (PR label
+# `gate-weaken` or title token `[gate-weaken]`). Because pull_request_target
+# reads the workflow YAML from the BASE branch, a PR cannot edit the guard that
+# is judging it — closing the hole .github/CODEOWNERS names in its own header.
+#
+# WHAT THIS IS NOT: a proof that gates cannot be weakened. An agent can still set
+# the marker. This is a speed bump plus an audit trail, not a security invariant.
+# It is strictly better than the status quo (silent weakening) and strictly
+# weaker than human review.
+#
+# ⛔ SECURITY, NON-NEGOTIABLE: pull_request_target runs with a write token and repo
+# secrets against PR content. This guard job therefore ONLY diffs path names via
+# the GitHub API. It NEVER checks out, builds, installs from, or executes PR content.
+#
+# GATE PATHS (the weakening surface):
+#   .github/workflows/**  — workflow YAML edits
+#   .github/CODEOWNERS     — ownership rule edits
+#
+# MAKING IT BLOCK: this workflow running green is NOT enforcement. Enforcement is
+# being a REQUIRED status check in branch protection for `master`. Add "gate-weaken-guard"
+# to the required list ONLY AFTER this workflow has been observed completing on a
+# real PR — a required context that has never reported blocks every PR forever.
+# --------------------------------------------------------------------------------
+name: gate-weaken-guard
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, labeled, unlabeled]
+  workflow_dispatch:
+
+permissions:
+  pull-requests: read
+
+concurrency:
+  group: gate-weaken-guard-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Gate weaken guard — diff paths, check marker, never checkout PR content
+        run: |
+          set -euo pipefail
+
+          PR="${GITHUB_REPOSITORY}/pull/${{ github.event.pull_request.number }}"
+          TITLE="${{ github.event.pull_request.title }}"
+
+          GATE_PATHS=(
+            '.github/workflows/'
+            '.github/CODEOWNERS'
+          )
+
+          echo "::group::Changed files in this PR"
+          changed="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename' 2>/dev/null || echo '')"
+
+          if [ -z "$changed" ]; then
+            echo "::warning::No files returned from API — failing closed. Re-push to re-trigger."
+            exit 1
+          fi
+
+          changed_count="$(echo "$changed" | grep -c . || echo 0)"
+          echo "Total changed files: $changed_count"
+          echo "$changed"
+          echo "::endgroup::"
+
+          HIT=()
+
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            for gp in "${GATE_PATHS[@]}"; do
+              if [[ "$f" == "$gp"* ]]; then
+                HIT+=("$f")
+                break
+              fi
+            done
+          done <<< "$changed"
+
+          if [ ${#HIT[@]} -eq 0 ]; then
+            echo "::notice::gate-weaken-guard: no gate paths in this diff — passing (non-vacuous: examined ${changed_count} changed files)"
+            exit 0
+          fi
+
+          echo "::group::Gate paths touched"
+          printf '  %s\n' "${HIT[@]}"
+          echo "::endgroup::"
+
+          LABELS="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${{ github.event.pull_request.number }}/labels" --jq '.[].name' 2>/dev/null || echo '')"
+
+          MARKER_FOUND=0
+          MARKER_DETAIL=""
+
+          if echo "$LABELS" | grep -qx 'gate-weaken'; then
+            MARKER_FOUND=1
+            MARKER_DETAIL="label 'gate-weaken'"
+          elif [[ "$TITLE" == *"[gate-weaken]"* ]]; then
+            MARKER_FOUND=1
+            MARKER_DETAIL="title token [gate-weaken]"
+          fi
+
+          if [ "$MARKER_FOUND" -eq 0 ]; then
+            echo "::error title=Gate weaken blocked::This PR touches gate-defining paths without the override marker."
+            echo ""
+            echo "Offending paths:"
+            printf '  %s\n' "${HIT[@]}"
+            echo ""
+            echo "Override: add label 'gate-weaken' or title token [gate-weaken]"
+            exit 1
+          fi
+
+          echo "::notice title=Gate weaken acknowledged::This PR touches gate-defining paths and carries the ${MARKER_DETAIL} — the override is recorded in this check output."
+          echo ""
+          echo "Gate weaken guard: PASS (override acknowledged via ${MARKER_DETAIL})"
+          echo "Offending paths:"
+          printf '  %s\n' "${HIT[@]}"
+          exit 0
