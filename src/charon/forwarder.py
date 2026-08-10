@@ -461,6 +461,7 @@ def forward_via_router(handler, srv) -> bool:
     # ── 200: serve with the post-serve hook set (cache/spend/balance/downgrade) ─
     served = body_dict
     downgrade = False
+    cost = 0.0
     try:
         from charon.proxy import GatewayProxy
         expected = served.get("model")
@@ -475,6 +476,7 @@ def forward_via_router(handler, srv) -> bool:
         from .litellm_plane.metering import crosscheck_response_dict
         crosscheck_response_dict(served, obs, model=requested,
                                   provider=xheaders.get("X-Charon-Provider", ""))
+        cost = obs.usage.cost_usd if obs.usage else 0.0
     except Exception:  # pragma: no cover
         pass
 
@@ -488,7 +490,6 @@ def forward_via_router(handler, srv) -> bool:
                 p, s = pair.split("=", 1)
                 failovers.append({"provider": p, "status": _safe_status(s),
                                   "reason": "exhausted"})
-    cost = 0.0
     if srv.response_normalizer is not None:  # pragma: no cover
         body_bytes = _normalize_message_content(body_bytes, srv.response_normalizer)
     if not downgrade and srv.semantic_cache is not None:  # pragma: no cover
