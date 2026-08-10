@@ -46,6 +46,7 @@ CHECKS: list[tuple[list[str], str]] = [
     (["python3", "tools/check_workflows.py"], "workflow-policy"),
     (["python3", "tools/check_inert_code.py"], "inert-code"),
     (["python3", "tools/check_catalog_case_quant.py"], "catalog-case-quant"),
+    (["python3", "tools/check_catalog_persist_safety.py"], "catalog-persist-safety"),
     (["python3", "tools/check_redproof.py"], "redproof"),
     (["python3", "tools/check_wiring_alignment.py"], "wiring-alignment"),
     (["python3", "tools/check_coverage_ssot.py"], "coverage-ssot"),

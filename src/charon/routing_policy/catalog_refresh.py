@@ -12,6 +12,29 @@ BRIDGES that cache straight into the live router via
 freshly-discovered ``(provider, model)`` therefore routes with **zero manual
 mapping** on the next refresh.
 
+CATALOG-REFRESH-PERSIST: the discovered catalog is ALSO written back to
+``models.json`` (atomically, via the config package's one ``_save``) so it
+survives a gateway restart. Discovery merges with existing entries: operator-set
+``upstream_base``/``key_env`` signals hand-ownership and discovery skips those
+ids entirely; an operator ``enabled: false`` is never clobbered. A model that
+disappears from a provider's ``/models`` is marked
+``enabled: false, refresh_withdrawn: true`` (surfaces rotations) and its
+in-memory route is dropped by the bridge — ``refresh_withdrawn`` is OURS and
+REVERSIBLE, so the model re-enables itself when the provider advertises it
+again; it is deliberately NOT ``refresh_disabled`` (the operator's opt-out).
+
+CATALOG-WIPE SAFETY (this file writes the ONE file every route is built from,
+so a bad write kills the whole gateway). Three refusals, gated by
+``tools/check_catalog_persist_safety.py``:
+  * a poll that SUCCEEDS but returns zero models is treated as a FAILURE — an
+    empty ``data: []`` is what a lapsed key / downgraded plan / soft rate-limit
+    returns with HTTP 200 and must never be believed as "serves nothing";
+  * an existing ``models.json`` that will not parse aborts the write (never
+    fall back to ``{}`` — that replaces a catalog we failed to READ);
+  * a merge that would leave zero enabled models aborts the write.
+Every cycle also writes ``catalog_refresh_status.json`` — the externally
+observable cadence/health marker, written even when every provider failed.
+
 Hard constraints (why PRICE-REFRESHER was rejected — do NOT repeat):
   * WIRED, not a library: registered in ``gateway._MODULE_SPECS`` and its cache
     bridged onto ``srv.routes``/``srv.pools``/``srv.model_pricing`` via
@@ -98,11 +121,17 @@ class CatalogCache:
     ``per_provider[provider]`` maps a unique member id (``"<provider>/<raw>"``)
     to its :class:`ProviderEntry`."""
     per_provider: dict[str, dict[str, ProviderEntry]] = field(default_factory=dict)
-    updated: dict[str, float] = field(default_factory=dict)  # provider -> last-success ts
+    updated: dict[str, float] = field(default_factory=dict)
+    last_failure: dict[str, str] = field(default_factory=dict)
 
-    def put(self, provider: str, entries: dict[str, ProviderEntry]) -> None:
+    def put(self, provider: str, entries: dict[str, ProviderEntry],
+            failure: str | None = None) -> None:
         self.per_provider[provider] = entries
         self.updated[provider] = time.time()
+        if failure is not None:
+            self.last_failure[provider] = failure
+        else:
+            self.last_failure.pop(provider, None)
 
     def registry_and_pool_map(self) -> tuple[dict[str, dict], dict[str, list[str]]]:
         """Compile the cache into the ``(registry, pool_map)`` pair that
@@ -146,49 +175,327 @@ class CatalogRefresher:
     ) -> None:
         self._providers_cfg: dict = (
             providers_cfg if providers_cfg is not None
-            else _load_providers(state_dir))
+            else _load_providers(state_dir)[0])
         self.ttl_s = float(ttl_s)
         self._list_models: ListModelsFn = list_models_fn or _default_list_models
         self.cache = CatalogCache()
-        # Number of provider polls attempted — a test asserts this stays 0 across
-        # a forward_with_failover call (the off-hot-path guard).
         self.poll_count = 0
-        self._lock = threading.Lock()
+        self._cycle_ok: set[str] = set()
+        self._last_attempt: float | None = None
+        self._persisted_at: float | None = None
+        self._persist_error: str | None = None
+        self._lock = threading.RLock()
         self._server: GatewayProxyServer | None = None
-        # Static config snapshot captured at bind(): discovered entries are always
-        # layered ON TOP of this baseline so a refresh never clobbers hand config.
         self._base: tuple[dict, dict, dict, dict] | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
+        self._state_dir: Path | None
+        if state_dir is not None:
+            self._state_dir = Path(state_dir)
+        elif providers_cfg is not None:
+            self._state_dir = None
+        else:
+            try:
+                from charon import secrets
+                self._state_dir = secrets.config_dir()
+            except Exception:  # noqa: BLE001
+                self._state_dir = None
 
     # ── discovery (background / on-demand only — NEVER on the hot path) ──────
     def refresh_now(self) -> None:
-        """Poll every configured provider's ``/models`` and update the cache.
+        """Poll every configured provider's ``/models``, update the cache, and
+        persist the merged catalog to ``models.json``.
 
         A provider whose poll raises is logged as a red and SKIPPED — its
-        last-good entries stay in the cache (stale-but-usable). Never raises."""
+        last-good entries stay in the cache (stale-but-usable). Never raises.
+
+        MONEY-PATH GUARD: a poll that *succeeds* but yields ZERO usable models is
+        treated as a FAILURE, not as "this provider now serves nothing". An empty
+        ``data: []`` is what a lapsed key, a downgraded plan, a soft rate-limit or
+        an upstream bug returns with HTTP 200, and it is indistinguishable from a
+        genuinely empty provider. Believing it would withdraw every model that
+        provider serves — a catalog wipe that kills every route. The safe read of
+        an empty catalog is "I learned nothing", so we keep last-good."""
+        cycle_ok: set[str] = set()
         for name, cfg in self._providers_cfg.items():
             overrides = cfg if isinstance(cfg, dict) else None
             self.poll_count += 1
+            failure: str | None = None
+            found: list[dict] = []
             try:
                 found = self._list_models(name, overrides)
             except Exception as exc:  # noqa: BLE001 — degrade, never block routing
+                failure = f"{type(exc).__name__}: {exc}"
                 log.error(
                     "catalog refresh: provider %r /models poll failed "
-                    "(%s: %s) — keeping last-good entries (stale-but-usable)",
-                    name, type(exc).__name__, exc)
-                continue
+                    "(%s) — keeping last-good entries (stale-but-usable)",
+                    name, failure)
             entries: dict[str, ProviderEntry] = {}
-            for m in found:
-                raw = m.get("id") if isinstance(m, dict) else None
-                if not isinstance(raw, str) or not raw:
+            if failure is None:
+                for m in found:
+                    raw = m.get("id") if isinstance(m, dict) else None
+                    if not isinstance(raw, str) or not raw:
+                        continue
+                    member_id = f"{name}/{raw}"
+                    price = {k: m[k] for k in _PRICE_KEYS if k in m}
+                    meta = {k: m[k] for k in _META_KEYS if k in m}
+                    entries[member_id] = ProviderEntry(name, raw, price, meta)
+                if not entries:
+                    failure = "empty /models response (0 usable models)"
+                    log.error(
+                        "catalog refresh: provider %r returned an EMPTY /models "
+                        "list — refusing to withdraw its catalog; keeping "
+                        "last-good entries (stale-but-usable)", name)
+            if failure is None:
+                cycle_ok.add(name)
+                with self._lock:
+                    self.cache.put(name, entries, failure=None)
+                    self.cache.last_failure.pop(name, None)
+            else:
+                with self._lock:
+                    self.cache.last_failure[name] = failure
+                    self.cache.updated.pop(name, None)
+        with self._lock:
+            self._cycle_ok = cycle_ok
+            self._last_attempt = time.time()
+            self._persist_unlocked()
+        self._persist_status()
+
+    def _persist_unlocked(self) -> None:
+        """Persist the discovered catalog into ``models.json``, merging with
+        existing entries. Caller must hold ``_lock``.
+
+        Merge rules (precedence order, highest first):
+          1. ``upstream_base`` or ``key_env`` in existing entry → skip (hand-owned).
+          2. ``refresh_disabled: true`` in existing entry → skip (explicitly opted out).
+          3. ``enabled: false`` in existing entry → skip (operator intent wins;
+             ``refresh_disabled`` is NOT set so the operator can re-enable later).
+          4. New model absent from catalog → add entry.
+          5. Existing model not in this provider's current /models → mark
+             ``enabled: false, refresh_withdrawn: true`` (rotation surfaced).
+             ``refresh_withdrawn`` is OURS and is REVERSIBLE — it is deliberately
+             not ``refresh_disabled`` (the operator's opt-out), so a model that
+             comes back is re-enabled automatically instead of staying dead until
+             a human hand-edits ``models.json``.
+          6. Existing discovered entry → update ``free``/``cost_input``/``cost_output``
+             and stamp ``refreshed_via: "<provider>"``.
+
+        MONEY-PATH GUARD: this is a read-modify-write of the file that every route
+        is built from, so it REFUSES to write rather than risk emptying it —
+        an unparseable existing file or a would-be-empty result aborts the write
+        loudly and leaves the on-disk catalog exactly as it was."""
+        if self._state_dir is None:
+            return
+        models_path = self._state_dir / "models.json"
+        existing: dict = {}
+        if models_path.exists():
+            try:
+                loaded = json.loads(models_path.read_text())
+            except (OSError, json.JSONDecodeError) as exc:
+                # NEVER fall back to {} here: that would overwrite a catalog we
+                # merely failed to READ with an empty one, killing every route.
+                self._persist_error = f"models.json unreadable: {exc}"
+                log.critical(
+                    "catalog refresh: existing models.json is unreadable (%s) — "
+                    "REFUSING to persist; on-disk catalog left untouched", exc)
+                return
+            if not isinstance(loaded, dict):
+                self._persist_error = "models.json is not a JSON object"
+                log.critical(
+                    "catalog refresh: existing models.json is not an object "
+                    "(%s) — REFUSING to persist; catalog left untouched",
+                    type(loaded).__name__)
+                return
+            existing = loaded
+        if not any(self.cache.per_provider.values()):
+            # Nothing was ever discovered (cold start with every provider down).
+            # Writing here can only subtract.
+            self._persist_error = "no models discovered — persist skipped"
+            log.error("catalog refresh: no models discovered from any provider — "
+                      "skipping models.json write (nothing to persist)")
+            return
+
+        merged = dict(existing)
+        now = time.time()
+
+        def _casefold_get(d: dict, key: str) -> dict | None:
+            cf = key.casefold()
+            for k, v in d.items():
+                if isinstance(k, str) and k.casefold() == cf:
+                    return v
+            return None
+
+        def _casefold_del(d: dict, key: str) -> None:
+            cf = key.casefold()
+            for k in list(d.keys()):
+                if isinstance(k, str) and k.casefold() == cf:
+                    del d[k]
+                    return
+
+        def _casefold_update_existing(d: dict, key: str,
+                                      updates: dict) -> str:
+            cf = key.casefold()
+            for k in list(d.keys()):
+                if isinstance(k, str) and k.casefold() == cf:
+                    d[k].update(updates)
+                    return k
+            d[key] = updates
+            return key
+
+        def _find_by_upstream_model(d: dict,
+                                    upstream_model: str) -> tuple[str, dict] | None:
+            cf = upstream_model.casefold()
+            for k, v in d.items():
+                if (isinstance(k, str) and isinstance(v, dict)
+                        and v.get("upstream_model", "").casefold() == cf):
+                    return k, v
+            return None
+
+        for provider, members in self.cache.per_provider.items():
+            for _member_id, entry in members.items():
+                raw = entry.upstream_model
+                normalized_id = _normalize(raw)
+                existing_entry = _casefold_get(merged, normalized_id)
+                if existing_entry is None:
+                    existing_entry = {}
+                if (existing_entry.get("upstream_base") or existing_entry.get("key_env")):
                     continue
-                member_id = f"{name}/{raw}"
-                price = {k: m[k] for k in _PRICE_KEYS if k in m}
-                meta = {k: m[k] for k in _META_KEYS if k in m}
-                entries[member_id] = ProviderEntry(name, raw, price, meta)
-            with self._lock:
-                self.cache.put(name, entries)
+                if existing_entry.get("refresh_disabled"):
+                    continue
+                # ``enabled: false`` is honoured as operator intent ONLY when the
+                # operator set it. If WE withdrew this model on an earlier cycle
+                # (``refresh_withdrawn``) and the provider is now advertising it
+                # again, re-enable it — an auto-withdrawal must not become a
+                # permanent one.
+                if (existing_entry.get("enabled") is False
+                        and not existing_entry.get("refresh_withdrawn")):
+                    continue
+                new_entry: dict[str, Any] = {
+                    "provider": provider,
+                    "upstream_model": raw,
+                    "free": bool(entry.price.get("free", False)),
+                }
+                if entry.price.get("cost_input") is not None:
+                    new_entry["cost_input"] = entry.price["cost_input"]
+                if entry.price.get("cost_output") is not None:
+                    new_entry["cost_output"] = entry.price["cost_output"]
+                for k in _META_KEYS:
+                    if k in entry.meta:
+                        new_entry[k] = entry.meta[k]
+                new_entry["refreshed_via"] = provider
+                new_entry["refreshed_at"] = now
+                if existing_entry.get("refresh_withdrawn"):
+                    # Back from the dead: clear our own withdrawal marks.
+                    new_entry["enabled"] = True
+                    new_entry["refresh_withdrawn"] = False
+                match = _find_by_upstream_model(merged, raw)
+                if match is not None:
+                    _existing_key, existing_val = match
+                    existing_val.update(new_entry)
+                else:
+                    merged[normalized_id] = new_entry
+
+        for model_id in list(merged.keys()):
+            entry = merged[model_id]
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("refresh_disabled"):
+                continue
+            prov = entry.get("provider")
+            # Only a provider that ACTUALLY answered this cycle may withdraw its
+            # models. A failed or empty poll proves nothing about what that
+            # provider still serves.
+            if prov and prov in self._cycle_ok and entry.get("refreshed_via") == prov:
+                current_ids = {
+                    _normalize(pe.upstream_model)
+                    for pe in self.cache.per_provider.get(prov, {}).values()
+                }
+                if _normalize(entry.get("upstream_model", "")) not in current_ids:
+                    entry["enabled"] = False
+                    entry["refresh_withdrawn"] = True
+
+        live = [k for k, v in merged.items()
+                if not (isinstance(v, dict) and v.get("enabled") is False)]
+        if existing and not live:
+            # Every entry would end up disabled. Something is wrong upstream, not
+            # in the operator's catalog — refuse rather than kill every route.
+            self._persist_error = "refresh would disable every model — write refused"
+            log.critical(
+                "catalog refresh: merge would leave 0 enabled models (was %d "
+                "entries) — REFUSING to persist; catalog left untouched",
+                len(existing))
+            return
+
+        self._write_models_json(merged)
+
+    def _write_models_json(self, models: dict) -> None:
+        """Persist via the config package's ONE atomic writer (tmp + rename) —
+        no bespoke fetcher/writer, so there is a single place where the catalog
+        write semantics live."""
+        if self._state_dir is None:
+            return
+        from charon.config._store import _save
+        try:
+            _save("models.json", models, config_dir=self._state_dir)
+        except OSError as exc:
+            self._persist_error = f"models.json write failed: {exc}"
+            log.critical("catalog refresh: failed to write models.json (%s)", exc)
+        else:
+            self._persist_error = None
+            self._persisted_at = time.time()
+
+    def _persist_status(self) -> None:
+        """Write ``catalog_refresh_status.json`` — the OBSERVABLE cadence marker.
+
+        This is written on EVERY cycle, including one where every provider failed
+        and no catalog write happened, so an outside observer can always answer
+        "when did this last run, and did it work?" without reading logs or
+        touching the process. A refresh that silently does nothing is exactly the
+        rot this file exists to make visible."""
+        if self._state_dir is None:
+            return
+        from charon.config._store import _save
+        with self._lock:
+            status = self.status_summary()
+            status["last_attempt"] = self._last_attempt
+            status["last_persist"] = self._persisted_at
+            status["persist_error"] = self._persist_error
+            status["poll_count"] = self.poll_count
+            failed = sorted(self.cache.last_failure)
+            status["healthy"] = (not failed) and self._persist_error is None
+            status["failed_providers"] = failed
+        try:
+            _save("catalog_refresh_status.json", status, config_dir=self._state_dir)
+        except OSError as exc:
+            log.error("catalog refresh: failed to write status file (%s)", exc)
+
+    def status_summary(self) -> dict[str, Any]:
+        """Return human-readable status of the last refresh cycle.
+
+        Returns ``{"last_refresh": float|None, "providers": {name: status_dict}}``
+        where each status dict has ``ok`` or ``failed: <reason>`` and
+        ``models_discovered: int``."""
+        with self._lock:
+            last = max(
+                (ts for ts in self.cache.updated.values()),
+                default=None,
+            )
+            result: dict[str, Any] = {
+                "last_refresh": last,
+                "providers": {},
+            }
+            for name in self._providers_cfg:
+                info: dict[str, Any] = {}
+                if name in self.cache.updated:
+                    info["ok"] = True
+                    info["models_discovered"] = len(
+                        self.cache.per_provider.get(name, {}))
+                elif name in self.cache.last_failure:
+                    info["failed"] = self.cache.last_failure[name]
+                else:
+                    info["failed"] = "unknown"
+                result["providers"][name] = info
+            return result
 
     # ── the WIRE: cache → live router ───────────────────────────────────────
     def bind(self, server: GatewayProxyServer) -> None:
@@ -215,8 +522,6 @@ class CatalogRefresher:
         with self._lock:
             registry, pool_map = self.cache.registry_and_pool_map()
 
-        # Compile discovered specs through the SAME router compiler the gateway
-        # uses for hand config — no bespoke routing logic here.
         from charon.routing_policy import build_routes_and_pools
         disc_routes, disc_pools, _ = build_routes_and_pools(
             registry, pool_map, self._providers_cfg)
@@ -226,13 +531,13 @@ class CatalogRefresher:
             routes.setdefault(mid, r)
         pools = {k: list(v) for k, v in base_pools.items()}
         for vid, chain in disc_pools.items():
-            pools.setdefault(vid, chain)   # a static pool of the same id wins
+            pools.setdefault(vid, chain)
 
         pricing = dict(base_pricing)
         meta = dict(base_meta)
         for mid, spec in registry.items():
             if mid not in routes:
-                continue  # dropped by the compiler (no resolvable base) — skip
+                continue
             price = {k: spec[k] for k in _PRICE_KEYS if k in spec}
             if price:
                 pricing.setdefault(mid, price)
@@ -241,21 +546,18 @@ class CatalogRefresher:
                 meta.setdefault(mid, mm)
 
         model_ids = sorted(set(routes) | set(pools))
-        # ── BRIDGE SITE: discovered catalog → the live routing tables that
-        #    chain_for() and order_pool_by_live_cost() read. Revert this call and
-        #    a discovered model is unroutable (chain_for returns []).
         self._server.apply_routes(routes, pools, model_ids, meta, pricing)
 
     def refresh_and_bridge(self) -> None:
-        """One full cycle: poll all providers, then bridge the cache into the
-        router. This is what the TTL loop and on-demand callers invoke."""
+        """One full cycle: poll all providers, persist the catalog, then bridge
+        into the router. This is what the TTL loop and on-demand callers invoke."""
         self.refresh_now()
         self.bridge()
 
     # ── scheduling (daemon TTL loop — off the request path) ─────────────────
     def start(self) -> threading.Thread:
         """Launch the background TTL refresh loop (idempotent). The first cycle
-        runs immediately, then every ``ttl_s`` seconds until :meth:`stop`."""
+        runs immediately, then every ``ttl_s`` seconds until :meth:`stop``."""
         if self._thread is not None and self._thread.is_alive():
             return self._thread
         self._stop.clear()
@@ -288,23 +590,26 @@ class CatalogRefresher:
             t.join(timeout=1.0)
 
 
-def _load_providers(state_dir: str | Path | None) -> dict:
+def _load_providers(
+    state_dir: str | Path | None,
+) -> tuple[dict, Path | None]:
     """Load the configured providers (``base_url`` + ``key_env`` per provider)
-    from ``<state_dir>/providers.json`` (or the default config dir). Missing /
-    unreadable → ``{}`` (no providers to poll; the module stays idle)."""
+    from ``<state_dir>/providers.json`` (or the default config dir). Returns
+    ``(providers_dict, resolved_state_dir)``. Missing/unreadable → ``({}, None)``."""
+    resolved_dir: Path | None = None
     if state_dir is not None:
-        base = Path(state_dir)
+        resolved_dir = Path(state_dir)
     else:
         try:
             from charon import secrets
-            base = secrets.config_dir()
+            resolved_dir = secrets.config_dir()
         except Exception:  # noqa: BLE001
-            return {}
-    path = base / "providers.json"
+            return {}, None
+    path = resolved_dir / "providers.json"
     if not path.exists():
-        return {}
+        return {}, resolved_dir
     try:
         data = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError):
-        return {}
-    return data if isinstance(data, dict) else {}
+        return {}, resolved_dir
+    return (data if isinstance(data, dict) else {}), resolved_dir
