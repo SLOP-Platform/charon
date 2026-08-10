@@ -7,6 +7,44 @@ from unittest.mock import MagicMock, patch
 from charon.balance import BalanceTracker, _poll_deepseek, _poll_nanogpt, _poll_openrouter
 
 
+class TestAutoDerivedFundingClass:
+    """S26: funding_class is auto-derived from config when not explicitly set."""
+
+    def test_free_tier_config_implies_class_1(self):
+        bt = BalanceTracker(config={
+            "groq": {"free_tier": {"rpm": 500, "tpm": 200_000}}})
+        assert bt.funding_class("groq") == 1
+
+    def test_poll_mode_implies_class_3(self):
+        bt = BalanceTracker(config={
+            "deepseek": {"mode": "poll", "base_url": "https://api.deepseek.com/v1",
+                         "api_key": "sk-test"}})
+        # Note: _build_configs_internal resolves the key, but the config dict itself
+        # needs to survive as-is for funding_class lookup. The cfg dict gets
+        # base_url/api_key stamped during build — mode should still be present.
+        assert bt.funding_class("deepseek") == 3
+
+    def test_fixed_mode_implies_class_3(self):
+        bt = BalanceTracker(config={
+            "opencode-zen": {"mode": "fixed", "starting_usd": 10.00}})
+        assert bt.funding_class("opencode-zen") == 3
+
+    def test_explicit_funding_class_wins_over_derivation(self):
+        bt = BalanceTracker(config={
+            "groq": {"funding_class": 4,
+                     "free_tier": {"rpm": 500}}})
+        assert bt.funding_class("groq") == 4
+
+    def test_no_config_returns_none(self):
+        bt = BalanceTracker()
+        assert bt.funding_class("nonexistent") is None
+
+    def test_config_without_markers_returns_none(self):
+        bt = BalanceTracker(config={
+            "unknown-agg": {"base_url": "https://example.com/v1"}})
+        assert bt.funding_class("unknown-agg") is None
+
+
 class TestUnconfiguredProviderInert:
     """An unconfigured provider is completely inert — no drain, no spend, no drain state."""
 

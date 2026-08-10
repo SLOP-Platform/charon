@@ -418,13 +418,26 @@ class BalanceTracker:
 
     def funding_class(self, provider: str) -> int | None:
         """Return the provider's ``funding_class``, or None if not configured
-        or unset."""
+        or unset.
+
+        AUTO-DERIVED from config when ``funding_class`` is not explicit:
+        * a ``free_tier`` block in the provider config → class 1 (free-recurring).
+        * ``mode == \"fixed\"`` in the balance entry → class 3 (drain-then-park).
+        * ``mode == \"poll\"`` → class 3 (drain-then-park prepaid).
+        S26: without this, the forwarder's drain-and-park pre-flight never fires
+        on a deploy where funding_class was never hand-set (the common case)."""
         cfg = self._config.get(provider)
         if cfg is None:
             return None
         fc = cfg.get("funding_class")
         if fc is not None:
             return int(fc)
+        ft = cfg.get("free_tier")
+        if isinstance(ft, dict):
+            return 1
+        mode = cfg.get("mode")
+        if mode == "fixed" or mode == "poll":
+            return 3
         return None
 
     # -- park lifecycle (class-3 drain-then-park) ------------------------
