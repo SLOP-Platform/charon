@@ -1192,7 +1192,8 @@ def forward_with_failover(handler, srv) -> None:
                     # would reward a habitual downgrader and make quality routing
                     # PREFER it (feedback loop, DTC CONCERN #4).
                     srv.quality_scorer.record(
-                        route.label, 0, success=not obs.pseudo_success, tokens=0)
+                        route.label, 0, success=not obs.pseudo_success, tokens=0,
+                        downgrade=obs.pseudo_success)
                 if srv.spend_limiter is not None:
                     srv.spend_limiter.record(_spend_to_record(obs, est_cost))
                 if srv.balance_tracker is not None:

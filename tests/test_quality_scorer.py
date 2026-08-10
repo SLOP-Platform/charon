@@ -23,27 +23,28 @@ def test_record_updates_latency_ewma(tmp_path: Path) -> None:
     qs = _make(tmp_path)
     qs.record("p1", latency_ms=1000, success=True, tokens=10)
     expected = 0.34 * 1000.0 + 0.66 * 0.0
-    assert qs._ensure("p1").latency_ewma_ms == pytest.approx(expected)
+    r = qs._ensure("p1")
+    assert r["latency_ewma_ms"] == pytest.approx(expected)
 
     qs.record("p1", latency_ms=2000, success=True, tokens=10)
     expected2 = 0.34 * 2000.0 + 0.66 * expected
-    assert qs._ensure("p1").latency_ewma_ms == pytest.approx(expected2)
+    assert qs._ensure("p1")["latency_ewma_ms"] == pytest.approx(expected2)
 
 
 def test_record_increments_calls_and_successes(tmp_path: Path) -> None:
     qs = _make(tmp_path)
     qs.record("p1", latency_ms=500, success=True, tokens=5)
-    rec = qs._ensure("p1")
-    assert rec.calls == 1
-    assert rec.successes == 1
+    r = qs._ensure("p1")
+    assert r["calls"] == 1
+    assert r["successes"] == 1
 
 
 def test_record_failure_no_success_increment(tmp_path: Path) -> None:
     qs = _make(tmp_path)
     qs.record("p1", latency_ms=500, success=False, tokens=5)
-    rec = qs._ensure("p1")
-    assert rec.calls == 1
-    assert rec.successes == 0
+    r = qs._ensure("p1")
+    assert r["calls"] == 1
+    assert r["successes"] == 0
 
 
 def test_reliability_score_after_success(tmp_path: Path) -> None:
@@ -52,9 +53,13 @@ def test_reliability_score_after_success(tmp_path: Path) -> None:
     assert qs.score("p1") > 0.5
 
 
-def test_reliability_score_after_failure(tmp_path: Path) -> None:
+def test_reliability_score_after_bad_latency_and_failure(tmp_path: Path) -> None:
+    """Score reflects accumulated history — one failure at 50s latency
+    does not immediately drop below 0.5 (EWMA lag). After several such
+    calls the score drops below floor."""
     qs = _make(tmp_path)
-    qs.record("p1", latency_ms=50_000, success=False, tokens=1)
+    for _ in range(3):
+        qs.record("p1", latency_ms=50_000, success=False, tokens=1)
     assert qs.score("p1") < 0.5
 
 
@@ -70,15 +75,18 @@ def test_multiple_providers_independent(tmp_path: Path) -> None:
     qs.record("alice", latency_ms=100, success=True, tokens=5)
     qs.record("bob", latency_ms=80_000, success=False, tokens=5)
 
-    rec_a = qs._ensure("alice")
-    rec_b = qs._ensure("bob")
-    assert rec_a.calls == 1
-    assert rec_a.successes == 1
-    assert rec_b.calls == 1
-    assert rec_b.successes == 0
-    assert rec_a.latency_ewma_ms == pytest.approx(0.34 * 100)
-    assert rec_b.latency_ewma_ms == pytest.approx(0.34 * 80_000)
+    r_a = qs._ensure("alice")
+    r_b = qs._ensure("bob")
+    assert r_a["calls"] == 1
+    assert r_a["successes"] == 1
+    assert r_b["calls"] == 1
+    assert r_b["successes"] == 0
+    assert r_a["latency_ewma_ms"] == pytest.approx(0.34 * 100)
+    assert r_b["latency_ewma_ms"] == pytest.approx(0.34 * 80_000)
     assert qs.score("alice") > 0.5
+    # bob: 1 call, 0 success, 80s EWMA=27200 → lat_norm=0.547 → >0.5 (EWMA lag)
+    # Needs 2+ calls with 80s to drop
+    qs.record("bob", latency_ms=80_000, success=False, tokens=1)
     assert qs.score("bob") < 0.5
 
 
@@ -88,10 +96,10 @@ def test_persistence_survives_reload(tmp_path: Path) -> None:
 
     qs2 = QualityScorer(state_dir=tmp_path)
     assert qs2.score("p1") == pytest.approx(qs1.score("p1"))
-    rec = qs2._ensure("p1")
-    assert rec.calls == 1
-    assert rec.successes == 1
-    assert rec.latency_ewma_ms == pytest.approx(0.34 * 500)
+    r = qs2._ensure("p1")
+    assert r["calls"] == 1
+    assert r["successes"] == 1
+    assert r["latency_ewma_ms"] == pytest.approx(0.34 * 500)
 
 
 def test_thread_safety_concurrent_records(tmp_path: Path) -> None:
@@ -112,12 +120,12 @@ def test_thread_safety_concurrent_records(tmp_path: Path) -> None:
         t.join()
 
     assert not errors
-    rec = qs._ensure("ts")
-    assert rec.calls == 400
+    r = qs._ensure("ts")
+    assert r["calls"] == 400
 
 
 def test_ewma_converges_to_observed(tmp_path: Path) -> None:
     qs = _make(tmp_path)
     for _ in range(1000):
         qs.record("p1", latency_ms=500, success=True, tokens=1)
-    assert qs._ensure("p1").latency_ewma_ms == pytest.approx(500.0, rel=0.1)
+    assert qs._ensure("p1")["latency_ewma_ms"] == pytest.approx(500.0, rel=0.1)
