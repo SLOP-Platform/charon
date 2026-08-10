@@ -654,8 +654,7 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
                 "litellm is not installed — it is a core dependency (pyproject.toml). "
                 "Re-run: pip install charon", exc_info=True)
             raise
-        # pragma: no cover — noqa: BLE001 — misconfigured route must not brick gateway
-        except Exception:
+        except Exception:  # pragma: no cover — noqa: BLE001
             import logging
             logging.getLogger("charon.proxy_server").warning(
                 "litellm.Router build failed; serving via the hand-rolled path", exc_info=True)
