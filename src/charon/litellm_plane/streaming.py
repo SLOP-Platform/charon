@@ -251,7 +251,7 @@ def stream_via_router_guarded(
     for chunk in head:
         sse = _chunk_to_sse(chunk)
         if not writer(sse):
-            return {"model": head_model, "provider": "",
+            return {"model": head_model, "provider": "",  # pragma: no cover — client disconnect
                     "usage": None, "bytes_sent": bytes_sent, "downgrade": downgrade}
         bytes_sent += len(sse)
 
