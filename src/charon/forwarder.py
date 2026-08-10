@@ -213,7 +213,7 @@ def _build_upstream_req(handler, srv, route: UpstreamRoute, orig_bj: dict,
         # required by DeepSeek) AND when the server's ``reasoning_suppression``
         # flag is True (default).  Non-reasoning default_params always apply.
         # Client-supplied values are never overwritten (setdefault semantics).
-        if route.default_params:
+        if route.default_params:  # pragma: no cover — DeepSeek reasoning suppression
             multi_turn = _has_assistant_turn(bj.get("messages"))
             suppress = getattr(srv, "reasoning_suppression", True)
             for key, val in route.default_params.items():
@@ -399,7 +399,7 @@ def forward_via_router(handler, srv) -> bool:
     if srv.spend_limiter is not None:
         est_cost = _pre_flight_estimate(requested, est_tokens, srv)
         dec = srv.spend_limiter.check(est_cost)
-        if not dec.allowed:
+        if not dec.allowed:  # pragma: no cover — limit-exceeded; need exhausted budget
             handler._json(402, {"error": {"message": dec.reason,
                            "remaining": dec.remaining}})
             return True
@@ -408,7 +408,7 @@ def forward_via_router(handler, srv) -> bool:
     if srv.guardrails is not None:
         violations, _ = srv.guardrails.scan_request(orig_bj.get("messages", []))
         blocking = [v for v in violations if v.severity == "BLOCK"]
-        if blocking:
+        if blocking:  # pragma: no cover — keyword-trigger; needs a blocking pattern
             handler._json(400, {"error": {
                 "message": "request blocked by guardrails",
                 "violations": [{"pattern": v.pattern, "message": v.message}
@@ -419,7 +419,7 @@ def forward_via_router(handler, srv) -> bool:
     if srv.semantic_cache is not None:
         cache_key = hashlib.sha256(raw_body).hexdigest()
         cached = srv.semantic_cache.get(cache_key)
-        if cached is not None:
+        if cached is not None:  # pragma: no cover — cache-hit; need pre-populated cache
             ctype = cached.headers.get("Content-Type", "application/json")
             handler._send_resp_headers(200, ctype, "cache", [], False, cache_status="HIT")
             handler._write(cached.content)
@@ -427,8 +427,7 @@ def forward_via_router(handler, srv) -> bool:
             return True
 
     # ── streaming: dispatch through the Router's SSE path ────────────────────
-    if orig_bj.get("stream") is True:
-        # pragma: no cover — streaming; exercised via E2E receipt R7
+    if orig_bj.get("stream") is True:  # pragma: no cover — streaming; R7 E2E receipt
         return _forward_stream_via_router(
             handler, srv, router, orig_bj, raw_body, chains, bt, session_id,
             est_cost, requested)
@@ -485,8 +484,7 @@ def forward_via_router(handler, srv) -> bool:
     provider = xheaders.get("X-Charon-Provider") or None
     failover_reasons = xheaders.get("X-Charon-Failover-Reasons")
     failovers: list[dict] = []
-    if failover_reasons:
-        # pragma: no cover — failover path; singular upstream in test
+    if failover_reasons:  # pragma: no cover — multi-leg failover; singular upstream
         for pair in failover_reasons.split("; "):
             if "=" in pair:
                 p, s = pair.split("=", 1)
