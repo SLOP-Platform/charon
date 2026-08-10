@@ -589,10 +589,10 @@ def build_server(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> 
     )
     # LITELLM-ROUTER-CUTOVER (D-019): construct the adopted litellm.Router ONCE here —
     # the production importer that finally wires src/charon/litellm_plane. The Router
-    # replaces the hand-rolled failover loop as the live money-path dispatch when litellm
-    # is importable AND cfg.use_litellm_router is True (default); the hand-rolled path
-    # stays as the fallback for streaming, policy/ routes, a None Router (litellm absent),
-    # and the security/exfil tests that opt out.
+    # replaces the hand-rolled failover loop as the live money-path dispatch when
+    # cfg.use_litellm_router is True (default); streaming also goes through the Router
+    # SSE path (_forward_stream_via_router). The hand-rolled path stays as the fallback
+    # for policy/ routes, a None Router (broken install), and security/exfil tests.
     if cfg.use_litellm_router:
         server._build_router()  # noqa: SLF001 — gateway owns the server lifecycle
     # DRAIN-AND-PARK: wire the observer meter as the spend source for class-3
