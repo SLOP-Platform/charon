@@ -30,6 +30,9 @@ MAPPING RULE (provider-faithful — NEVER guesses across providers):
       mistral    -> "mistral/<upstream_or_id>"
       cerebras   -> "cerebras/<upstream_or_id>"
       zai        -> "zai/<upstream_or_id>"
+      deepinfra  -> "deepinfra/<upstream_or_id>"
+      google-aistudio -> "gemini/<upstream_or_id>"
+      nvidia     -> "nvidia/<upstream_or_id>"
 
   Proprietary aggregators (``nanogpt``, ``neuralwatt``, ``opencode-zen``,
   ``opencode-go``) have NO litellm pricing source — their per-token rate is
@@ -70,6 +73,9 @@ _PROVIDER_TO_LITELLM: dict[str, str] = {
     "mistral": "mistral",
     "cerebras": "cerebras",
     "zai": "zai",
+    "deepinfra": "deepinfra",
+    "google-aistudio": "gemini",
+    "nvidia": "nvidia",
 }
 
 # The provider suffixes Charon stamps onto catalog ids (the ``-<tag>`` encoding).

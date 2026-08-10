@@ -331,8 +331,13 @@ def _build_balance_tracker(
     from . import secrets
     from .balance import BalanceTracker
     resolved_dir = Path(state_dir) if state_dir is not None else secrets.config_dir()
+    # S26: also build the tracker when a provider has free_tier config
+    # (auto-derived to funding_class 1), not just when funding_class/mode
+    # are hand-set. Without this, free-tier rate limits and drain-park are
+    # silently absent on any deploy that never set funding_class explicitly.
     has_balance = any(
         v.get("funding_class") is not None or v.get("mode") is not None
+        or isinstance(v.get("free_tier"), dict)
         for v in (providers_cfg or {}).values())
     if not has_balance and not _has_persisted_parks(resolved_dir):
         return None
