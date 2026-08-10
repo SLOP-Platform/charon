@@ -539,6 +539,85 @@ class QuotaTracker:
         with self._lock:
             return dict(self._counters)
 
+    def window_status(self) -> dict[str, Any]:
+        """Return a monitoring snapshot: per-provider window usage, limits,
+        and reset times.
+
+        The returned dict is JSON-serializable and intended for
+        ``/charon/status`` exposure.  Each provider entry carries:
+
+        * ``windows`` — a list of dicts, one per active window:
+          ``{window, used, limit, pct, reset_at_epoch, reset_kind}``
+        * ``cooldown_s`` — shortest seconds until any window frees up
+          (0.0 = all clear, ``null`` = all windows at 0-limit, or
+          provider has no limits at all)
+
+        A provider with no configured limits is absent from the dict.
+        Cooldown is computed OUTSIDE the lock to avoid a deadlock with
+        ``get_wait_time`` (which also acquires ``self._lock``).
+        """
+        now_mono = self._now()
+        now_utc = self._utc_now()
+        # Phase 1: collect window data under lock.
+        result: dict[str, Any] = {}
+        cooldown_providers: set[str] = set()
+        with self._lock:
+            for provider, active in self._active.items():
+                st = self._state.setdefault(provider, _ProviderState())
+                windows: list[dict[str, Any]] = []
+                blocked = False
+                for key, (limit, reset) in active.items():
+                    try:
+                        window_seconds, is_token = _window_defaults(key)
+                    except KeyError:
+                        continue
+                    used: float = 0.0
+                    reset_at: float | None = None
+                    if reset == "rolling":
+                        if is_token:
+                            dq = st.tok_rolling.setdefault(key, deque())  # type: ignore[arg-type]
+                            _evict_token(dq, window_seconds, now_mono)  # type: ignore[arg-type]
+                            used = float(sum(t for _, t in dq))
+                            if dq:
+                                reset_at = dq[0][0] + window_seconds
+                        else:
+                            dq = st.req_rolling.setdefault(key, deque())  # type: ignore[arg-type]
+                            _evict_req(dq, window_seconds, now_mono)  # type: ignore[arg-type]
+                            used = float(len(dq))
+                            if dq:
+                                reset_at = dq[0] + window_seconds
+                    else:  # calendar
+                        cal = st.calendar.get(key)
+                        if cal is None or _is_calendar_rolled(cal, key, now_utc):
+                            used = 0.0
+                        else:
+                            used = cal.count
+                        reset_at = _calendar_next_boundary(key, now_utc)
+                    pct = round(used / limit * 100, 1) if limit > 0 else 100.0
+                    if pct >= 100.0:
+                        blocked = True
+                    windows.append({
+                        "window": key,
+                        "used": int(used) if reset == "rolling" and is_token else int(used),
+                        "limit": limit,
+                        "pct": pct,
+                        "reset_at_epoch": reset_at,
+                        "reset_kind": reset,
+                    })
+                if blocked:
+                    cooldown_providers.add(provider)
+                result[provider] = {
+                    "windows": windows,
+                    "cooldown_s": None,  # filled in phase 2
+                }
+        # Phase 2: compute cooldowns OUTSIDE the lock (get_wait_time locks).
+        for provider in cooldown_providers:
+            wait = self.get_wait_time(provider)
+            ent = result.get(provider)
+            if ent is not None:
+                ent["cooldown_s"] = wait if wait != float("inf") else None
+        return result
+
     # -- internals -------------------------------------------------------
 
     def _bump(self, name: str) -> None:

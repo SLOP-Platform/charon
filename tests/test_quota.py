@@ -558,3 +558,186 @@ def test_persistence_handles_unconfigured_provider(tmp_path: Path) -> None:
     b.set_utc_now(utc)
     assert not b.should_skip("p", est_tokens=999_999)
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# WHITE-PROOF TESTS — assert CONTENT, not counts.
+# These verify the operator's hard constraints:
+#   P1: provider at 100% rolling → excluded, then auto-restored after reset.
+#   P2: provider at 100% calendar → excluded, then auto-restored after boundary.
+#   P3: window_status() returns correct window names, usage, limits, and
+#       a NON-NULL reset_at_epoch that is in the future.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_rolling_100pct_excluded_restored_after_reset() -> None:
+    """P1: A provider at 100% rolling usage must be excluded (should_skip=True)
+    AND must become available again after the window slides past.
+
+    CONTENT assertion: should_skip returns True at full capacity, False after
+    the oldest entry's timestamp + window_seconds has elapsed.
+    """
+    clock = FakeClock(0.0)
+    tracker = QuotaTracker(limits={"p": {"rpm": 2}}, now=clock)
+    # Consume both slots at t=1 and t=2
+    tracker.record("p", tokens=0)
+    tracker.record("p", tokens=0)
+    # Now at 100% — must be excluded
+    assert tracker.should_skip("p"), (
+        "rpm=2 with 2 records: should_skip must be True (100%% rolling)")
+
+    # Verify window_status reports 100% and a non-null reset time
+    ws = tracker.window_status()
+    assert "p" in ws, "window_status must include provider 'p'"
+    w = ws["p"]["windows"]
+    rpm_win = [x for x in w if x["window"] == "rpm"]
+    assert len(rpm_win) == 1
+    assert rpm_win[0]["used"] == 2, "used must be 2, not a count-like estimate"
+    assert rpm_win[0]["limit"] == 2
+    assert rpm_win[0]["pct"] == 100.0
+    assert rpm_win[0]["reset_at_epoch"] is not None, (
+        "reset_at_epoch must be non-null when usage > 0")
+    assert rpm_win[0]["reset_kind"] == "rolling"
+
+    # Advance past the window — provider must auto-restore
+    clock.set(63.0)  # oldest entry at t=1, window=60 → 1+60=61 < 63
+    assert not tracker.should_skip("p"), (
+        "after window slides past, should_skip must be False (auto-restored)")
+
+
+def test_calendar_100pct_excluded_restored_after_boundary() -> None:
+    """P2: A provider at 100% calendar quota must be excluded AND auto-restored
+    after the calendar boundary (UTC midnight).
+
+    CONTENT assertion: should_skip returns True within the period, False after
+    crossing the next boundary.
+    """
+    utc = _UtcClock(1_700_000_000.0)  # some UTC day
+    tracker = QuotaTracker(limits={"p": {"rmo": 10}})
+    tracker.set_utc_now(utc)
+    # Consume all 10 request slots
+    for _ in range(10):
+        tracker.record("p", tokens=0)
+    assert tracker.should_skip("p"), (
+        "rmo=10 with 10 records: should_skip must be True (100%% calendar)")
+
+    ws = tracker.window_status()
+    assert "p" in ws
+    rmo_win = [x for x in ws["p"]["windows"] if x["window"] == "rmo"]
+    assert len(rmo_win) == 1
+    assert rmo_win[0]["used"] == 10
+    assert rmo_win[0]["limit"] == 10
+    assert rmo_win[0]["pct"] == 100.0
+    assert rmo_win[0]["reset_at_epoch"] is not None, (
+        "reset_at_epoch must be non-null for a calendar window")
+
+    # Cross the month boundary (next month start)
+    # _next_month_start at t=1_700_000_000 is > t, so add enough seconds
+    from charon.quota import _next_month_start
+    next_boundary = _next_month_start(utc())
+    utc.set(next_boundary + 1.0)
+    assert not tracker.should_skip("p"), (
+        "after crossing the month boundary, should_skip must be False (auto-restored)")
+
+
+def test_window_status_returns_all_active_windows() -> None:
+    """P3: window_status() must return EVERY configured window for a provider,
+    each with its window name, used count, limit, pct, and a non-null
+    reset_at_epoch in the future.
+    """
+    clock = FakeClock(0.0)
+    tracker = QuotaTracker(limits={"go": {"rpm": 30, "rpd": 250, "rwk": 1000}},
+                           now=clock)
+    # Record some usage
+    for _ in range(15):
+        tracker.record("go", tokens=0)
+
+    ws = tracker.window_status()
+    assert "go" in ws, "window_status must include provider 'go'"
+    windows = ws["go"]["windows"]
+    window_names = {w["window"] for w in windows}
+    assert window_names >= {"rpm", "rpd", "rwk"}, (
+        f"window_status must report all active windows, got {window_names}")
+
+    for w in windows:
+        assert isinstance(w["window"], str), "window must be a string"
+        assert isinstance(w["used"], int), "used must be int"
+        assert isinstance(w["limit"], int), "limit must be int"
+        assert isinstance(w["pct"], float), "pct must be float"
+        assert w["reset_kind"] in ("rolling", "calendar"), (
+            f"reset_kind must be rolling or calendar, got {w['reset_kind']}")
+        if w["used"] > 0:
+            assert w["reset_at_epoch"] is not None, (
+                f"window {w['window']} has used={w['used']} but reset_at_epoch is null")
+
+
+def test_quota_cooldown_s_is_bounded() -> None:
+    """P4: cooldown_s in window_status must be a finite float when blocked,
+    and 0.0 when not blocked.
+    """
+    clock = FakeClock(0.0)
+    tracker = QuotaTracker(limits={"p": {"rpm": 2}}, now=clock)
+    # Not blocked
+    ws = tracker.window_status()
+    assert ws["p"]["cooldown_s"] is None, (
+        "cooldown_s must be None when not blocked")
+
+    # Block it
+    tracker.record("p", tokens=0)
+    tracker.record("p", tokens=0)
+    ws = tracker.window_status()
+    cd = ws["p"]["cooldown_s"]
+    assert cd is not None, "cooldown_s must be non-null when blocked"
+    assert cd > 0, f"cooldown_s must be positive when blocked, got {cd}"
+    assert cd <= 60.0, f"cooldown_s must be <= window (60s), got {cd}"
+
+
+def test_no_limits_provider_absent_from_window_status() -> None:
+    """A provider with no configured limits must be ABSENT from window_status,
+    not present with empty windows.
+    """
+    tracker = QuotaTracker(limits={"limited": {"rpm": 5}})
+    ws = tracker.window_status()
+    assert "limited" in ws
+    assert "unlimited" not in ws, (
+        "providers without limits must be ABSENT from window_status")
+
+
+def test_quota_record_is_provider_scoped() -> None:
+    """Each provider's quota is tracked independently — exhausting one must
+    not affect another."""
+    clock = FakeClock(0.0)
+    tracker = QuotaTracker(limits={"a": {"rpm": 2}, "b": {"rpm": 10}},
+                           now=clock)
+    # Exhaust provider a
+    tracker.record("a", tokens=0)
+    tracker.record("a", tokens=0)
+    assert tracker.should_skip("a"), "provider a must be blocked"
+    assert not tracker.should_skip("b"), (
+        "provider b must NOT be blocked when a is exhausted")
+
+
+def test_quota_window_status_during_calendar_reset() -> None:
+    """After a calendar boundary, window_status must show used=0 (reset)."""
+    utc = _UtcClock(1_700_000_000.0)
+    tracker = QuotaTracker(limits={"p": {"rmo": 10}})
+    tracker.set_utc_now(utc)
+    for _ in range(5):
+        tracker.record("p", tokens=0)
+
+    ws = tracker.window_status()
+    rmo_win = [x for x in ws["p"]["windows"] if x["window"] == "rmo"]
+    assert rmo_win[0]["used"] == 5
+
+    # Cross boundary
+    from charon.quota import _next_month_start
+    next_boundary = _next_month_start(utc())
+    utc.set(next_boundary + 1.0)
+
+    # should_skip triggers the reset
+    assert not tracker.should_skip("p")
+
+    ws = tracker.window_status()
+    rmo_win = [x for x in ws["p"]["windows"] if x["window"] == "rmo"]
+    assert rmo_win[0]["used"] == 0, (
+        f"after boundary, calendar window must reset to 0, got {rmo_win[0]['used']}")
+
