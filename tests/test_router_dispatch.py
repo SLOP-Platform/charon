@@ -469,7 +469,7 @@ def test_router_path_with_wired_modules(monkeypatch, tmp_path):
     pytest.importorskip("litellm")
     from charon.balance import BalanceTracker
     from charon.cache import SemanticCache
-    from charon.response_normalizer import ResponseNormalizer
+    from charon.response_normalizer import NormalizeMode, ResponseNormalizer
     from charon.spend_limits import SpendDecision, SpendLimiter
 
     class _RecLimiter(SpendLimiter):
@@ -487,8 +487,8 @@ def test_router_path_with_wired_modules(monkeypatch, tmp_path):
         def __init__(self):
             self.seen: list[str] = []
 
-        def normalize(self, content, mode):
-            self.seen.append(str(content))
+        def normalize(self, content: str, mode: NormalizeMode) -> str:  # type: ignore[override]
+            self.seen.append(content)
             return ResponseNormalizer.normalize(content, mode)
 
     monkeypatch.setenv("CHARON_HOME", str(tmp_path))
@@ -501,12 +501,12 @@ def test_router_path_with_wired_modules(monkeypatch, tmp_path):
     gr = Guardrails(config={"disable_pii": True})
     # Wrap record_spend to capture the spend args flowing through R1's cost binding
     _bt_spend_args: list[tuple] = []
-    _bt_orig_record = bt.record_spend
+    _bt_orig_record = bt.record_spend  # type: ignore[method-assign]
 
-    def _bt_record_spend(provider, usd, model=None):
+    def _bt_record_spend(provider: str, usd: float, model: str | None = None) -> None:
         _bt_spend_args.append((provider, usd, model))
         _bt_orig_record(provider, usd, model=model)
-    bt.record_spend = _bt_record_spend
+    bt.record_spend = _bt_record_spend  # type: ignore[method-assign]
 
     server = _serve(tmp_path, use_litellm_router=True)
     server.spend_limiter = limiter
