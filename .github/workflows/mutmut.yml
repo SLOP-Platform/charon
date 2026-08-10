@@ -40,8 +40,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: install (dev + quality)
-        run: pip install -e '.[dev,quality]'
+      - name: install (dev + quality + service)
+        run: pip install -e '.[dev,quality,service]'
 
       - name: mutmut — diff-scoped mutation gate
         id: mutmut
