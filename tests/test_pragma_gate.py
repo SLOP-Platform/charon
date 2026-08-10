@@ -26,8 +26,6 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tools.gate_contract import parse_work_units  # noqa: E402
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 _BASE_MODULE = '''"""Fixture product module."""
@@ -130,12 +128,16 @@ def _run_gate(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
 #             the file and line
 # ---------------------------------------------------------------------------
 
+def _detail(proc: subprocess.CompletedProcess[str]) -> str:
+    return f"got {proc.returncode}:\nstdout: {proc.stdout}\nstderr: {proc.stderr}"
+
+
 def test_unjustified_pragma_reds(fixture_repo: Path) -> None:
     module = fixture_repo / "src" / "fixturepkg" / "calc.py"
     module.write_text(_BASE_MODULE + _UNJUSTIFIED)
 
     red = _run_gate(fixture_repo, "HEAD")
-    assert red.returncode == 1, f"expected RED, got {red.returncode}\n--- stdout ---\n{red.stdout}\n--- stderr ---\n{red.stderr}"
+    assert red.returncode == 1, _detail(red)
     assert "UNJUSTIFIED PRAGMA" in red.stderr
     assert "calc.py:" in red.stderr
     assert "pragma violation" in red.stderr
@@ -150,7 +152,7 @@ def test_money_path_pragma_reds(fixture_repo: Path) -> None:
     module.write_text(_BASE_MODULE + _MONEY_PATH)
 
     red = _run_gate(fixture_repo, "HEAD")
-    assert red.returncode == 1, f"expected RED, got {red.returncode}\n--- stdout ---\n{red.stdout}\n--- stderr ---\n{red.stderr}"
+    assert red.returncode == 1, _detail(red)
     assert "MONEY-PATH PRAGMA REFUSED" in red.stderr
     assert "pragma violation" in red.stderr
 
@@ -164,7 +166,7 @@ def test_justified_pragma_greens(fixture_repo: Path) -> None:
     module.write_text(_BASE_MODULE + _JUSTIFIED)
 
     green = _run_gate(fixture_repo, "HEAD")
-    assert green.returncode == 0, f"expected GREEN, got {green.returncode}\n--- stdout ---\n{green.stdout}\n--- stderr ---\n{green.stderr}"
+    assert green.returncode == 0, _detail(green)
     assert "added '# pragma: no cover'" in green.stdout
     assert "all justified" in green.stdout
 
@@ -180,5 +182,5 @@ def test_no_pragmas_greens_with_explicit_message(fixture_repo: Path) -> None:
     test_file.write_text(_NOOP_TEST)
 
     green = _run_gate(fixture_repo, "HEAD")
-    assert green.returncode == 0, f"expected GREEN, got {green.returncode}\n--- stdout ---\n{green.stdout}\n--- stderr ---\n{green.stderr}"
+    assert green.returncode == 0, _detail(green)
     assert "no added '# pragma: no cover'" in green.stdout
