@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import pytest
 
-from charon.proxy_server import UpstreamRoute
 from charon.routing_policy import build_routes_and_pools
 
 
