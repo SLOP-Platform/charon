@@ -41,6 +41,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -217,6 +218,111 @@ def _report_total() -> int:
         return 0
 
 
+# ---------------------------------------------------------------------------
+# Pragma gate: refuse unjustified and money-path pragmas added in a diff
+# ---------------------------------------------------------------------------
+
+_PRAGMA_RE = re.compile(r'#\s*pragma:\s*no\s*cover')
+
+_PRAGMA_FULL_RE = re.compile(
+    r'#\s*pragma:\s*no\s*cover'
+    r'(?:\s+#\s*)?'
+    r'(.*)$'
+)
+
+_MONEY_PATH_PATTERNS = [
+    r'\brecord_spend\b',
+    r'\bnote_request\b',
+    r'\bspend_limiter\b',
+    r'\bbalance_tracker\b',
+]
+_MONEY_PATH_RE = re.compile('|'.join(_MONEY_PATH_PATTERNS))
+
+_HUNK_HEADER_RE = re.compile(r'^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@')
+
+_PRAGMA_CONTEXT_RADIUS = 3
+
+
+def _check_pragma_violation(
+    pragma_line: str, context: list[str], filepath: str, lineno: int
+) -> str | None:
+    for line in context:
+        if _MONEY_PATH_RE.search(line):
+            return (
+                f"{filepath}:{lineno}: MONEY-PATH PRAGMA REFUSED — "
+                f"'# pragma: no cover' on or adjacent to a money-path call site. "
+                f"Money-path pragmas are never allowed; no justification can rescue them."
+            )
+
+    m = _PRAGMA_FULL_RE.search(pragma_line)
+    justification = m.group(1).strip() if m else ''
+    if not justification:
+        return (
+            f"{filepath}:{lineno}: UNJUSTIFIED PRAGMA — "
+            f"every added '# pragma: no cover' must carry a one-line justification. "
+            f"Add a comment explaining why this line cannot be covered by tests."
+        )
+
+    return None
+
+
+def check_added_pragmas(base_sha: str, scope: str = SCOPE) -> tuple[int, list[str]]:
+    diff_text = unified_diff(base_sha, scope, context=_PRAGMA_CONTEXT_RADIUS)
+
+    lines: list[tuple[str, str, int, str]] = []
+    current_file: str | None = None
+    new_lineno = 0
+
+    for raw in diff_text.splitlines():
+        if raw.startswith('--- '):
+            continue
+        if raw.startswith('+++ '):
+            target = raw[4:].strip()
+            current_file = target.removeprefix('b/') if target != '/dev/null' else None
+            continue
+        if current_file is None:
+            continue
+
+        m = _HUNK_HEADER_RE.match(raw)
+        if m:
+            new_lineno = int(m.group(1))
+            continue
+
+        if raw.startswith('+'):
+            lines.append((current_file, 'add', new_lineno, raw[1:]))
+            new_lineno += 1
+        elif raw.startswith('-'):
+            continue
+        elif raw.startswith('\\'):
+            continue
+        else:
+            lines.append((current_file, 'ctx', new_lineno, raw[1:]))
+            new_lineno += 1
+
+    pragma_entries: list[tuple[int, str, int, str]] = []
+    for i, (fpath, ltype, lno, content) in enumerate(lines):
+        if ltype == 'add' and _PRAGMA_RE.search(content):
+            pragma_entries.append((i, fpath, lno, content))
+
+    violations: list[str] = []
+    for idx, filepath, lineno, pragma_line in pragma_entries:
+        context: list[str] = [pragma_line]
+        for j in range(idx - 1, max(-1, idx - _PRAGMA_CONTEXT_RADIUS - 1), -1):
+            if lines[j][0] != filepath:
+                break
+            context.insert(0, lines[j][3])
+        for j in range(idx + 1, min(len(lines), idx + _PRAGMA_CONTEXT_RADIUS + 1)):
+            if lines[j][0] != filepath:
+                break
+            context.append(lines[j][3])
+
+        violation = _check_pragma_violation(pragma_line, context, filepath, lineno)
+        if violation:
+            violations.append(violation)
+
+    return len(pragma_entries), violations
+
+
 def main(argv: list[str]) -> int:
     if running_inside_pytest():
         print(
@@ -245,6 +351,19 @@ def main(argv: list[str]) -> int:
         return _fail(str(exc))
 
     print(f"diff-cover gate: base={base} merge-base={base_sha[:12]}")
+
+    pragma_count, pragma_violations = check_added_pragmas(base_sha, SCOPE)
+    if pragma_violations:
+        for v in pragma_violations:
+            print(f"  {v}", file=sys.stderr)
+        return _fail(f"{len(pragma_violations)} pragma violation(s) — "
+                     "added '# pragma: no cover' lines must be justified and "
+                     "never on money-path call sites")
+    if pragma_count:
+        print(f"diff-cover gate: {pragma_count} added '# pragma: no cover' "
+              "directive(s) — all justified, no money-path adjacency")
+    else:
+        print("diff-cover gate: no added '# pragma: no cover' directives in this diff")
 
     if untracked:
         return _fail(
