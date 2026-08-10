@@ -231,7 +231,8 @@ def test_e2e_sse_byte_relay(monkeypatch, tmp_path):
 
     # At least one SSE chunk + [DONE] were relayed
     assert result["bytes_sent"] > 0
-    assert result["model"] == EXPECTED_MODEL
+    # R3: model comes from deployment (litellm returns openai/ma), not chunk.model
+    assert result["model"] == "openai/" + EXPECTED_MODEL
 
     # Parse the collected SSE output and verify structure
     sse_bytes = b"".join(collected)
@@ -342,7 +343,8 @@ def test_e2e_guarded_stream_relay(monkeypatch, tmp_path):
     assert DOWNGRADE_HEADER not in extra_headers
     # SSE was relayed
     assert result["bytes_sent"] > 0
-    assert result["model"] == "ma"
+    # R3: model comes from deployment (litellm returns openai/ma), not chunk.model
+    assert result["model"] == "openai/ma"
 
 
 def test_e2e_guarded_stream_has_header_sender_integration(monkeypatch, tmp_path):
