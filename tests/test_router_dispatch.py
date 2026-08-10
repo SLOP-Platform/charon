@@ -368,6 +368,26 @@ def test_price_for_image_only_entry():
     assert dall_e is None
 
 
+def test_price_for_rejects_nonfinite_and_negative():
+    """Cover the ``continue`` branches for non-finite/negative costs
+    (litellm_pricing.py:198-201)."""
+    from unittest.mock import patch
+
+    from charon.routing_policy.litellm_pricing import price_for
+
+    with patch("charon.routing_policy.litellm_pricing._get_model_cost") as gmc, \
+         patch("charon.routing_policy.litellm_pricing._litellm_candidates") as lc:
+        # Non-finite: inf input cost -> skipped
+        gmc.return_value = {"bad-model": {"input_cost_per_token": float("inf")}}
+        lc.return_value = ["bad-model"]
+        assert price_for("x", {}) is None
+
+        # Negative: negative output cost -> skipped
+        gmc.return_value = {"bad-model": {"output_cost_per_token": -0.001}}
+        lc.return_value = ["bad-model"]
+        assert price_for("x", {}) is None
+
+
 def test_enrich_registry_non_dict_passthrough():
     """Cover ``enrich_registry`` non-dict passthrough (228-229)."""
     from charon.routing_policy.litellm_pricing import enrich_registry
@@ -553,6 +573,47 @@ def test_router_path_with_wired_modules(monkeypatch, tmp_path):
             f"balance_tracker.record_spend got cost={cost_val!r} — "
             "R1 cost binding is still producing $0.00. "
             f"Provider={prov!r}, model={model!r}")
+    finally:
+        server.shutdown()
+        legit.shutdown()
+
+
+def test_router_path_spend_cap_blocks(monkeypatch, tmp_path):
+    """A spend_limiter returning ``allowed=False`` blocks the request with 402
+    before any upstream call — covers the branch at forwarder.py:402 (R4 fix)."""
+    pytest.importorskip("litellm")
+    from charon.spend_limits import SpendDecision, SpendLimiter
+
+    class _DenyingLimiter(SpendLimiter):
+        def __init__(self, d):
+            super().__init__(monthly_limit_usd=0.0, state_dir=d)
+
+        def check(self, e):
+            return SpendDecision(allowed=False, remaining=0.0, reason="cap exceeded")
+
+        def record(self, c):
+            pass
+
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    legit = _start()
+    limiter = _DenyingLimiter(tmp_path)
+
+    server = _serve(tmp_path, use_litellm_router=True)
+    server.spend_limiter = limiter
+
+    try:
+        st, body = _req(server.url + "/charon/providers", "POST", token="t", body={
+            "name": "good", "base_url": _base(legit), "key": "sk-good"})
+        assert st == 200, f"provider registration failed: {body}"
+
+        st, body = _req(server.url + "/charon/models", "POST", token="t", body={
+            "id": "my-model", "provider": "good", "upstream_model": "good-model"})
+        assert st == 200, f"model registration failed: {body}"
+
+        st, body_str = _req(server.url + "/v1/chat/completions", "POST", token="t",
+                            body={"model": "my-model",
+                                  "messages": [{"role": "user", "content": "hi"}]})
+        assert st == 402, f"expected 402 from denying limiter, got {st}: {body_str[:200]}"
     finally:
         server.shutdown()
         legit.shutdown()

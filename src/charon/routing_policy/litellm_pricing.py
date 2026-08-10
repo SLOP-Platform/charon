@@ -150,8 +150,8 @@ def _get_model_cost() -> dict[str, dict] | None:
     try:
         from litellm import model_cost  # type: ignore[import-not-found]
     except Exception:  # noqa: BLE001  # pragma: no cover — litellm optional extra
-        log.debug("litellm.model_cost unavailable")  # pragma: no cover
-        return None  # pragma: no cover
+        log.debug("litellm.model_cost unavailable")  # pragma: no cover  # installed
+        return None  # pragma: no cover  # litellm always installed
     # litellm exports model_cost as a dict, but the type is not statically
     # declared (the import is ignore'd), so narrow through object to keep the
     # runtime guard reachable and honest rather than relying on the ignore.
@@ -196,9 +196,9 @@ def price_for(model_id: str, spec: dict[str, Any]) -> tuple[float, float] | None
             continue
         # Reject non-finite / negative — garbage never reaches the money path.
         if ci_f is not None and (not math.isfinite(ci_f) or ci_f < 0):
-            continue  # pragma: no cover
+            continue
         if co_f is not None and (not math.isfinite(co_f) or co_f < 0):
-            continue  # pragma: no cover
+            continue
         if ci_f is None and co_f is None:
             continue  # pragma: no cover — image-only model, no token price
         return (ci_f or 0.0, co_f or 0.0)

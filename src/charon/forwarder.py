@@ -399,7 +399,7 @@ def forward_via_router(handler, srv) -> bool:
     if srv.spend_limiter is not None:
         est_cost = _pre_flight_estimate(requested, est_tokens, srv)
         dec = srv.spend_limiter.check(est_cost)
-        if not dec.allowed:  # pragma: no cover — limit-exceeded; need exhausted budget
+        if not dec.allowed:
             handler._json(402, {"error": {"message": dec.reason,
                            "remaining": dec.remaining}})
             return True
@@ -572,7 +572,7 @@ def _forward_stream_via_router(  # pragma: no cover — streaming-only; exercise
         srv.observer.record(obs, count_usage=True, session=session_id,
                             provider=provider)
         cost = obs.usage.cost_usd if obs.usage else 0.0
-    except Exception:  # noqa: BLE001 # pragma: no cover — safety net; observer classify should never fail
+    except Exception:  # noqa: BLE001
         pass
 
     if srv.spend_limiter is not None:
