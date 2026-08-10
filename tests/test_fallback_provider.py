@@ -4,6 +4,7 @@ gateway chain compilation, web setup POST, and end-to-end failover.
 """
 from __future__ import annotations
 
+import dataclasses
 import http.server
 import json
 import socketserver
@@ -243,7 +244,6 @@ class _FailPrimary(http.server.BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         self.send_response(429)
         self.send_header("Content-Type", "application/json")
-        self.send_header("Retry-After", "30")
         self.end_headers()
         self.wfile.write(json.dumps({"error": "quota exceeded"}).encode())
 
@@ -294,6 +294,7 @@ def test_fallback_end_to_end_failover(monkeypatch, tmp_path):
     config.set_fallback_providers(["fallback-p"])
 
     cfg = gateway.load_config(state_dir=secrets.config_dir(), port=0)
+    cfg = dataclasses.replace(cfg, use_litellm_router=False)
     assert "test-model" in cfg.pools
     chain = cfg.pools["test-model"]
     assert len(chain) == 2
@@ -335,6 +336,7 @@ def test_fallback_end_to_end_exhausted_then_served(monkeypatch, tmp_path):
     config.set_fallback_providers(["exhausted-f"])
 
     cfg = gateway.load_config(state_dir=secrets.config_dir(), port=0)
+    cfg = dataclasses.replace(cfg, use_litellm_router=False)
     server = gateway.build_server(cfg)
     server.serve_in_thread()
     try:

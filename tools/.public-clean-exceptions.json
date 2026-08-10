@@ -120,5 +120,9 @@
   "tools/gates.json": [
     "    \"enforcer\": \"../charon-private/fleet/validate_board.sh\",",
     "    \"enforcer\": \"../charon-private/fleet/checks/no-unreachable-paths.sh\","
+  ],
+  "docs/review-log/LITELLM-ROUTER-REWORK.md": [
+    "## R7 — E2E receipt (live gateway: `http://10.0.1.60:8080`)",
+    "The live gateway at 10.0.1.60:8080 runs the current deployment (pre-fix). The upstream"
   ]
 }

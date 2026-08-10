@@ -284,5 +284,13 @@
     "disposition": "keep-detector-instance-inert-false-positive",
     "reason": "Instance-inert detector false positive: `V` is not a module-level class at all. It is a throwaway function-LOCAL ast.NodeVisitor subclass, declared and instantiated inside the very function that uses it (src/charon/startup_check.py defines `class V(ast.NodeVisitor)` inside _parse_forwarder_for_attrs and again inside _collect_self_attrs, each followed immediately by `V().visit(...)`). The symbol scan walks class definitions without tracking enclosing function scope, so it sees a class with zero module-level callers and reports it as instance-inert. The construction site is one line below the definition in both cases; deleting `V` would break startup_check outright.",
     "inert_class": true
+  },
+  "charon.litellm_plane.litellm_router.complete_via_router_tracked": {
+    "reason": "called via dynamic import (importlib.import_module) in proxy_server._build_router",
+    "disposition": "keep-instance-inert-false-positive"
+  },
+  "charon.routing_policy.litellm_pricing.coverage_report": {
+    "reason": "debug/report utility, not dead code",
+    "disposition": "keep-instance-inert-false-positive"
   }
 }

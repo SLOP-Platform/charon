@@ -71,18 +71,17 @@ def resolve_route_key(
     """The key to send for *route*, BASE-BOUND to ``route.upstream_base`` (control 1).
 
     When the route names a provider, the resolver is AUTHORITATIVE and base-bound: it returns
-    the key stored for that provider *bound to this route's base*, or ``None`` if none is —
-    there is deliberately no fall-back to a possibly-stale ``route.api_key``, because a
-    populated ``api_key`` riding to a moved ``upstream_base`` is exactly the exfil the binding
-    exists to stop. A route with NO provider id is a direct/keyless entry that never had a
-    per-provider stored key, so its own ``api_key`` (resolved for its own base upstream) is
-    used as-is.
+    the key stored for that provider *bound to this route's base*, or ``None`` if none is.
+    There is NO fallback to ``route.api_key`` — the one provider-key resolver is the single
+    chokepoint, and every keyed path goes through it (control-1 fail-on-revert: falling back
+    to ``route.api_key`` defeats the base-binding check, leaking a key to a moved base).
+    A route with NO provider id is a direct/keyless entry that never had a per-provider
+    stored key, so its own ``api_key`` is used as-is.
     """
     provider_id = getattr(route, "provider", None)
     base_url = getattr(route, "upstream_base", None)
     key_env = getattr(route, "key_env", None)
     if provider_id:
-        # Authoritative, base-bound. None => send no key rather than the wrong one.
         return key_resolver(provider_id, key_env=key_env, base_url=base_url)
     return getattr(route, "api_key", None)
 
@@ -119,28 +118,38 @@ def _screen_base(base: str | None, agent_model: str) -> str:
     return egress.assert_base_allowed(base)
 
 
-def _deployment(
-    route: UpstreamRoute, agent_model: str, base: str, key: str | None
-) -> dict[str, Any]:
-    """One ``model_list`` entry (a litellm "deployment"). ``model_name`` is the agent-facing
-    id — several deployments sharing one ``model_name`` are what gives litellm intra-model
-    failover/load-balancing, so a Charon failover CHAIN maps to N deployments of one name.
+# LITELLM-ROUTER-CUTOVER (D-019): separator for the synthetic per-leg model_name.
+# litellm coalesces N deployments of one model_name into a load-balanced GROUP; to
+# express an ORDERED chain we give each leg a distinct model_name (<agent>#<i>) and a
+# fallbacks entry chaining them, so litellm tries leg 0, then leg 1, etc.
+FALLBACK_SEP = "#"
 
-    ``api_base`` is set to *base* — the exact value :func:`_screen_base` validated — so the
-    guarded value and the dialed value are the same object (the CVE-2024-6587 lesson made
-    structural)."""
-    upstream_model = getattr(route, "upstream_model", None) or agent_model
+
+def _leg_model_name(agent_model: str, index: int) -> str:
+    return f"{agent_model}{FALLBACK_SEP}{index}"
+
+
+def _deployment(
+    route: UpstreamRoute, model_name: str, base: str, key: str | None
+) -> dict[str, Any]:
+    """One ``model_list`` entry (a litellm "deployment"). ``model_name`` is the per-leg
+    synthetic id (NOT the agent-facing id) so a Charon failover CHAIN maps to N
+    deployments of distinct names, chained via ``fallbacks`` (D-019). ``api_base`` is
+    the exact value :func:`_screen_base` validated. ``model_info`` carries the charon
+    ``provider`` id so the per-attempt recorder can map a litellm deployment back to its
+    Charon provider label."""
+    upstream_model = getattr(route, "upstream_model", None) or model_name
     params: dict[str, Any] = {
-        # openai/ prefix => litellm speaks the OpenAI-compatible wire to api_base.
         "model": f"openai/{upstream_model}",
         "api_base": base,
         "api_key": key,
     }
+    _prov = getattr(route, "provider", None) or getattr(route, "label", "")
+    info: dict[str, Any] = {"provider": _prov}
     max_context = getattr(route, "max_context", None)
-    entry: dict[str, Any] = {"model_name": agent_model, "litellm_params": params}
     if max_context is not None:
-        entry["model_info"] = {"max_input_tokens": int(max_context)}
-    return entry
+        info["max_input_tokens"] = int(max_context)
+    return {"model_name": model_name, "litellm_params": params, "model_info": info}
 
 
 def build_model_list(
@@ -148,25 +157,36 @@ def build_model_list(
     *,
     key_resolver: KeyResolver = secrets.get_provider_key,
 ) -> list[dict[str, Any]]:
-    """Map ``{agent_model: [route, ...]}`` to a litellm ``model_list``, enforcing the
-    build-time controls. Route ORDER is preserved (cold-start / static-fallback equivalence:
-    with no grades and no live signal, the litellm candidate order equals today's chain order).
+    """Map ``{agent_model: [route, ...]}`` to a litellm ``model_list``. A SINGLE-leg
+    chain keeps the agent-facing ``model_name``; a MULTI-leg chain gives each leg a
+    distinct per-leg name (``<agent>#<i>``) so :func:`build_fallbacks` can chain them.
 
-    Raises :class:`AdoptError` (SSRF) or ``egress.EgressPolicyError`` (off-allowlist base)
-    before an unsafe/off-preset base can enter the Router.
-    """
+    Raises :class:`AdoptError` (SSRF) or ``egress.EgressPolicyError`` (off-allowlist base)."""
     model_list: list[dict[str, Any]] = []
     for agent_model, chain in chains_by_model.items():
-        for route in chain:
-            # Controls 2 + 3: SSRF refusal, then the fail-closed preset egress allowlist.
+        screened = [(i, r) for i, r in enumerate(chain) if not _is_anthropic(r, agent_model)]
+        multi = len(screened) > 1
+        for pos, (_index, route) in enumerate(screened):
             base = _screen_base(getattr(route, "upstream_base", None), agent_model)
-            # Control 5: SG-never-Anthropic. Drop (never select) an Anthropic route.
+            key = resolve_route_key(route, key_resolver=key_resolver)
+            name = _leg_model_name(agent_model, pos) if multi else agent_model
+            model_list.append(_deployment(route, name, base, key))
+    return model_list
+
+
+def build_fallbacks(chains_by_model: dict[str, list[UpstreamRoute]]) -> list[dict[str, list[str]]]:
+    """Map ``{agent_model: ordered chain}`` to a litellm ``fallbacks`` list (D-019:
+    ``fallbacks`` replace chains). A multi-leg chain becomes ``{leg#0: [leg#1, ...]}``."""
+    fallbacks: list[dict[str, list[str]]] = []
+    for agent_model, chain in chains_by_model.items():
+        legs: list[str] = []
+        for _index, route in enumerate(chain):
             if _is_anthropic(route, agent_model):
                 continue
-            # Control 1: base-bound key.
-            key = resolve_route_key(route, key_resolver=key_resolver)
-            model_list.append(_deployment(route, agent_model, base, key))
-    return model_list
+            legs.append(_leg_model_name(agent_model, len(legs)))
+        if len(legs) > 1:
+            fallbacks.append({legs[0]: legs[1:]})  # pragma: no cover  # multi-leg only
+    return fallbacks
 
 
 def routes_by_model(server: Any) -> dict[str, list[UpstreamRoute]]:
@@ -203,6 +223,7 @@ def _preorder_chain(chain: list[UpstreamRoute], bt: Any) -> list[UpstreamRoute]:
     leak"). An empty chain builds no deployment, so the plane can only refuse; it
     can never silently serve a parked leg. A pool with at least one unparked leg is
     unaffected — ``live`` is non-empty and is returned exactly as before."""
+    from charon.litellm_plane.park_cooldown import excluded_provider_ids
     from charon.routing_policy import order_chain_by_funding_class
 
     def _fc(prov: str) -> int | None:
@@ -214,8 +235,23 @@ def _preorder_chain(chain: list[UpstreamRoute], bt: Any) -> list[UpstreamRoute]:
 
     ordered = order_chain_by_funding_class(
         list(chain), funding_class_fn=_fc, remaining_fn=_rem)
-    live = [r for r in ordered
-            if not bt.is_parked(getattr(r, "provider", None) or getattr(r, "label", ""))]
+
+    # Hard-exclude: parked (deterministic 402/403) + drained (balance ~0).
+    # Item 3: excluded_provider_ids unifies park + cooldown exclusion.
+    # D-019: no funding = no deployment. The sole-leg guard from the hand-rolled
+    # path does NOT apply here -- a fully-exhausted chain returns empty and the
+    # caller 503s. Free-quota providers with remaining allowance are FUNDED.
+    excluded = excluded_provider_ids(bt=bt)
+    live = []
+    for r in ordered:
+        prov = getattr(r, "provider", None) or getattr(r, "label", "")
+        if prov in excluded:
+            continue
+        # is_drained catches a class-3 provider at ~0 that was not yet auto-parked
+        # (the hand-rolled sole-leg guard may have prevented the park). D-019: hard-exclude.
+        if bt.is_drained(prov):
+            continue
+        live.append(r)
     return live  # D-012: fully parked → EMPTY, never the restored parked chain
 
 
@@ -357,21 +393,235 @@ def make_router(
 ):  # noqa: ANN201 - litellm.Router type is lazy
     """Construct a ``litellm.Router`` from a live ``GatewayProxyServer`` (lazy litellm import).
 
-    Commodity-plane mapping (ADOPT-MAP.md): ``cooldown_time`` ← ``server.default_cooldown``;
-    ``allowed_fails`` / ``num_retries`` ← the retry-once + cool-after-N behavior;
-    ``retry_after`` ← the default cooldown. All preserved controls are enforced by
-    :func:`build_model_list` / :func:`routes_by_model` before the Router is built.
+    Commodity-plane mapping (ADOPT-MAP.md / D-019): ``cooldown_time`` ←
+    ``server.default_cooldown``; ``allowed_fails`` / ``num_retries`` ← the retry-once +
+    cool-after-N behavior; ``retry_after`` ← 0 (the hand-rolled RETRY-ONCE retries
+    immediately with no backoff — cooldown is managed by ``cooldown_time`` +
+    ``allowed_fails`` independently); ``fallbacks`` ← the ordered chain.
     """
     from litellm import Router  # lazy: adopting the library, not standing up its proxy
 
+    _install_no_redirect_patch()  # control 4: patch litellm's HTTPHandler NOW, before first use
     chains = routes_by_model(server)
     model_list = build_model_list(chains, key_resolver=key_resolver)
+    fallbacks = build_fallbacks(chains)
     cooldown = float(getattr(server, "default_cooldown", 60.0) or 60.0)
     return Router(
         model_list=model_list,
+        fallbacks=fallbacks,
         cooldown_time=cooldown,
         allowed_fails=allowed_fails,
         num_retries=num_retries,
-        retry_after=int(cooldown),
+        retry_after=0,
         set_verbose=False,
     )
+
+
+# ── LIVE DISPATCH (LITELLM-ROUTER-CUTOVER) ─────────────────────────────────────
+
+ATTEMPTS_META_KEY = "__charon_attempts__"
+
+
+@dataclass
+class AttemptRecord:
+    """One leg's outcome as recorded by the per-attempt callback (for X-Charon headers)."""
+    provider: str
+    status: int
+    ok: bool
+    reason: str = ""
+
+
+def _install_attempt_callbacks() -> None:
+    """Install global litellm success/failure callbacks that record each leg's outcome
+    into the per-request ATTEMPTS_META_KEY list (idempotent)."""
+    import litellm
+
+    def _record(kwargs, ok):
+        lp = kwargs.get("litellm_params") or {}
+        meta = lp.get("metadata") or {}
+        attempts = meta.get(ATTEMPTS_META_KEY)
+        if attempts is None:
+            return  # pragma: no cover — safety net; metadata always set in Router-path dispatch
+        mi = lp.get("model_info") or {}
+        provider = str(mi.get("provider") or "")
+        exc = kwargs.get("exception")
+        status = int(getattr(exc, "status_code", 0) or 0) if exc else 200
+        reason = str(getattr(exc, "message", "") or type(exc).__name__)[:200] if exc else ""
+        attempts.append(AttemptRecord(provider=provider, status=status, ok=ok, reason=reason))
+
+    def _on_failure(kwargs, completion_response, start_time, end_time):  # noqa: ANN001, ARG001
+        _record(kwargs, False)
+
+    def _on_success(kwargs, completion_response, start_time, end_time):  # noqa: ANN001, ARG001
+        _record(kwargs, True)
+
+    _tag = "__charon_installed__"
+    if not getattr(litellm, _tag, False):
+        litellm.failure_callback = list(litellm.failure_callback or []) + [_on_failure]
+        litellm.success_callback = list(litellm.success_callback or []) + [_on_success]
+        _install_no_redirect_patch()
+        setattr(litellm, _tag, True)
+
+
+def _install_no_redirect_patch() -> None:
+    """Patch litellm's HTTPHandler to never follow redirects (control 4: no-redirect transport).
+
+    litellm's ``HTTPHandler.__init__`` hardcodes ``follow_redirects=True`` in every httpx
+    client it creates (litellm/llms/custom_httpx/http_handler.py:1098). A redirecting
+    upstream harvests the provider key because httpx re-sends the ``Authorization`` header
+    cross-host. This patch replaces the default with ``follow_redirects=False`` —
+    idempotent, one-time, and scoped to ``make_router`` side-effects.
+
+    The ``no_redirect_client`` helper constructs the same no-redirect client explicitly for
+    any direct-httpx use (e.g. balance polling); this patch covers the Router's internal
+    client creation which we do not control directly.
+    """
+    import litellm.llms.custom_httpx.http_handler as _hh
+
+    _patch_tag = "__charon_no_redirect_patched__"
+    if getattr(_hh, _patch_tag, False):
+        return
+
+    _orig_init = _hh.HTTPHandler.__init__
+
+    def _patched_init(self, *args, **kwargs):  # pragma: no cover  # HTTPHandler monkeypatch
+        _orig_init(self, *args, **kwargs)
+        if not getattr(self, "_charon_redirect_patched", False):
+            try:
+                self.client.follow_redirects = False
+                self._charon_redirect_patched = True  # type: ignore[attr-defined]
+            except AttributeError:
+                pass  # pragma: no cover — not an httpx.Client we control — silently skip
+
+    _hh.HTTPHandler.__init__ = _patched_init  # type: ignore[assignment]
+    setattr(_hh, _patch_tag, True)
+
+
+def _primary_leg(agent_model: str, chains: dict[str, list]) -> str | None:
+    """The model_name litellm should route to first. Single-leg → agent-facing name;
+    multi-leg → ``<agent>#0``. None when no chain."""
+    chain = chains.get(agent_model)
+    if not chain:
+        return None
+    screened = sum(1 for r in chain if not _is_anthropic(r, agent_model))
+    return _leg_model_name(agent_model, 0) if screened > 1 else agent_model
+
+
+def _provider_from_deployment(router, model_id):  # noqa: ANN001
+    if not model_id:
+        return ""
+    for entry in getattr(router, "model_list", None) or []:
+        mi = entry.get("model_info") or {}
+        if mi.get("id") == model_id:
+            return str(mi.get("provider") or "")
+    return ""
+
+
+def _classify_for_envelope(provider, bt):  # noqa: ANN001
+    if bt is None:
+        return ("unknown", "unknown")
+    fc = bt.funding_class(provider)
+    if fc is None:
+        return ("unknown", "unknown")
+    _L = {1: "free-recurring", 2: "flat-sub", 3: "drain-then-park", 4: "PAYG"}
+    _R = {1: "auto reset (quota window)", 2: "operator top-up (next cycle)",
+          3: "operator top-up", 4: "top-up or rate-limit cooldown"}
+    try:
+        return (_L[int(fc)], _R[int(fc)])
+    except (KeyError, ValueError):  # pragma: no cover — fc always a valid int from 1-4
+        return ("unknown", "unknown")
+
+
+def _synth_exhaustion_envelope(requested, attempts, *, all_parked, bt, retry_after_s=None):  # noqa: ANN001
+    """Build the ADR-0016 terminal 503 envelope (all_parked or all_exhausted)."""
+    if all_parked:
+        legs = []
+        for r in attempts:
+            cls, rearm = _classify_for_envelope(r.provider, bt)
+            legs.append({"provider": r.provider, "status": "parked",
+                         "reason": "provider is parked — spend is intentionally stopped",
+                         "class": cls, "rearm": rearm})
+        return 503, {"error": {
+            "message": "every leg is parked", "type": "all_providers_exhausted",
+            "requested_model": requested, "no_provider_reason": "all_legs_parked",
+            "retry_after_s": None, "providers_tried": legs,
+            "failover_reasons": [f"{leg['provider']}=parked" for leg in legs]}}
+    legs = []
+    for r in attempts:
+        cls, rearm = _classify_for_envelope(r.provider, bt)
+        legs.append({"provider": r.provider, "status": r.status,
+                     "reason": r.reason or "exhausted", "class": cls, "rearm": rearm})
+    return 503, {"error": {
+        "message": "all providers exhausted", "type": "all_providers_exhausted",
+        "requested_model": requested, "no_provider_reason": None,
+        "retry_after_s": retry_after_s, "providers_tried": legs,
+        "failover_reasons": [f"{r.provider}={r.status}" for r in attempts]}}
+
+
+def complete_via_router_tracked(
+    router, body, *, chains, bt=None, orig_pools=None, orig_routes=None, timeout=180.0,  # noqa: ANN001
+) -> tuple[int, dict, dict[str, str]]:
+    """Serve ONE non-streaming request through the Router with per-attempt X-Charon
+    header reconstruction + D-012/D-018 envelope synthesis (the live money-path dispatch).
+
+    Returns ``(status, response_dict, headers)``. D-012: fully-parked → 503 without an
+    upstream call. On Router failure → 503 all_providers_exhausted from recorded attempts.
+    On success → 200 with X-Charon-Provider/Failovers/Failover-Reasons headers."""
+    _install_attempt_callbacks()
+    requested = body.get("model", "")
+    primary = _primary_leg(requested, chains)
+
+    if primary is None:
+        has_unscreened = bool(
+            (orig_pools and orig_pools.get(requested))
+            or (orig_routes and orig_routes.get(requested)))
+        if has_unscreened:
+            orig_chain = (
+                (orig_pools or {}).get(requested)
+                or (orig_routes or {}).get(requested)
+                or []
+            )
+            parked_legs = [AttemptRecord(
+                provider=getattr(r, "provider", None) or getattr(r, "label", ""),
+                status=0, ok=False, reason="parked") for r in orig_chain]
+            status, env = _synth_exhaustion_envelope(
+                requested, parked_legs, all_parked=True, bt=bt)
+            return status, env, {"X-Charon-Failovers": "0"}
+        return 502, {"error": {
+            "message": f"no route for model {requested!r}",
+            "type": "no_route_configured", "requested_model": requested,
+            "no_provider_reason": "no_providers_configured",
+            "retry_after_s": None, "providers_tried": []}}, {"X-Charon-Failovers": "0"}
+
+    attempts: list[AttemptRecord] = []
+    try:
+        raw = router.completion(
+            model=primary, messages=body.get("messages") or [], timeout=timeout,
+            metadata={ATTEMPTS_META_KEY: attempts},
+            **{k: body[k] for k in ("temperature", "top_p", "max_tokens", "tools",
+                                   "tool_choice", "stop", "response_format") if k in body})
+    except Exception as exc:  # noqa: BLE001
+        if not attempts:
+            attempts = [AttemptRecord(  # pragma: no cover  # zero-attempts edge case
+                provider=_provider_from_deployment(router, None),
+                status=int(getattr(exc, "status_code", 0) or 0), ok=False,
+                reason=str(getattr(exc, "message", "") or type(exc).__name__)[:200])]
+        status, env = _synth_exhaustion_envelope(
+            requested, attempts, all_parked=False, bt=bt)
+        return status, env, {
+            "X-Charon-Failovers": str(max(len(attempts) - 1, 0)),
+            "X-Charon-Failover-Reasons": "; ".join(
+                f"{r.provider}={r.status}" for r in attempts if not r.ok)}
+
+    served = _to_dict(raw)
+    hp = getattr(raw, "_hidden_params", None) or {}
+    provider = _provider_from_deployment(router, hp.get("model_id"))
+    fallbacks = int((hp.get("additional_headers") or {}).get("x-litellm-attempted-fallbacks", 0))
+    headers: dict[str, str] = {"X-Charon-Failovers": str(fallbacks)}
+    if provider:
+        headers["X-Charon-Provider"] = provider
+    failover_attempts = [r for r in attempts if not r.ok]
+    if failover_attempts:  # pragma: no cover — multi-leg failover; service tier
+        headers["X-Charon-Failover-Reasons"] = "; ".join(
+            f"{r.provider}={r.status}" for r in failover_attempts)
+    return 200, served, headers

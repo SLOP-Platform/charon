@@ -144,9 +144,10 @@ def victim_install(monkeypatch, tmp_path):
     return tmp_path
 
 
-def _serve(tmp_path):
+def _serve(tmp_path, *, use_litellm_router: bool = False):
     server = gateway.build_server(
-        GatewayConfig(host="127.0.0.1", port=0, token="t", model_ids=[]),
+        GatewayConfig(host="127.0.0.1", port=0, token="t", model_ids=[],
+                      use_litellm_router=use_litellm_router),
         setup_dir=tmp_path)
     server.serve_in_thread()
     return server
@@ -246,10 +247,10 @@ def test_repoint_with_attacker_key_sends_only_that_key(victim_install):
 # Once a malicious entry is persisted, these fire with NO further attacker action.
 
 
-def _plant_evil(victim_install, legit, attacker):
+def _plant_evil(victim_install, legit, attacker, *, use_litellm_router: bool = False):
     """Run the exploit write, then hand back a live gateway. Shared by the sink
     tests so each one exercises a DIFFERENT read site against the same setup."""
-    server = _serve(victim_install)
+    server = _serve(victim_install, use_litellm_router=use_litellm_router)
     _add_victim(server, legit)
     st, body = _req(server.url + "/charon/providers", "POST", token="t", body={
         "name": "evil", "base_url": _base(attacker),
@@ -296,11 +297,14 @@ def test_sink_recommend_sends_no_victim_key(victim_install):
         server.shutdown(), legit.shutdown(), attacker.shutdown()
 
 
-def test_sink_forwarder_sends_no_victim_key_on_every_completion(victim_install):
+@pytest.mark.parametrize("use_litellm_router", [False, True])
+def test_sink_forwarder_sends_no_victim_key_on_every_completion(
+        victim_install, use_litellm_router):
     """The worst sink: ``routing_policy`` builds the upstream route for EVERY
     proxied completion, so a mis-bound key leaks on ordinary traffic."""
     legit, attacker = _start(), _start()
-    server = _plant_evil(victim_install, legit, attacker)
+    server = _plant_evil(victim_install, legit, attacker,
+                         use_litellm_router=use_litellm_router)
     try:
         st, body = _req(server.url + "/charon/models", "POST", token="t", body={
             "id": "evil-model", "provider": "evil", "upstream_model": "m1"})
@@ -362,7 +366,8 @@ class _RedirectAfterTransient(http.server.BaseHTTPRequestHandler):
     do_GET = do_POST = _reply
 
 
-def test_forwarder_does_not_follow_redirect_to_attacker(victim_install):
+@pytest.mark.parametrize("use_litellm_router", [False, True])
+def test_forwarder_does_not_follow_redirect_to_attacker(victim_install, use_litellm_router):
     """F1 — the round-4 miss, and the highest-volume key-bearing send there is.
 
     ``_build_upstream_req`` attaches ``Authorization: Bearer <provider key>`` and
@@ -383,7 +388,7 @@ def test_forwarder_does_not_follow_redirect_to_attacker(victim_install):
     # it could not produce the state under test.
     config.add_provider("vic", base_url=_base(redirector))
     secrets.set_provider_key("vic", REAL_KEY, base_url=_base(redirector))
-    server = _serve(victim_install)
+    server = _serve(victim_install, use_litellm_router=use_litellm_router)
     try:
         # The model goes in through the handler so it lands in the LIVE routing
         # table (the provider could not: the setup probe refuses a redirecting base).
@@ -403,7 +408,9 @@ def test_forwarder_does_not_follow_redirect_to_attacker(victim_install):
         server.shutdown(), redirector.shutdown(), attacker.shutdown()
 
 
-def test_forwarder_retry_leg_does_not_follow_redirect_to_attacker(victim_install):
+@pytest.mark.parametrize("use_litellm_router", [False, True])
+def test_forwarder_retry_leg_does_not_follow_redirect_to_attacker(
+        victim_install, use_litellm_router):
     """The same hazard on the RETRY-ONCE leg (``forwarder.py`` retries a transient
     503 against the SAME provider): a second key-bearing send, and a second bite at
     the key if it follows redirects."""
@@ -413,7 +420,7 @@ def test_forwarder_retry_leg_does_not_follow_redirect_to_attacker(victim_install
     upstream.hits = []  # type: ignore[attr-defined]
     config.add_provider("vic", base_url=_base(upstream))
     secrets.set_provider_key("vic", REAL_KEY, base_url=_base(upstream))
-    server = _serve(victim_install)
+    server = _serve(victim_install, use_litellm_router=use_litellm_router)
     try:
         # The model goes in through the handler so it lands in the LIVE routing
         # table (the provider could not: the setup probe refuses a redirecting base).
@@ -688,12 +695,14 @@ def test_per_provider_secret_wins_over_a_stale_env_var(monkeypatch, tmp_path):
 # ------------------------------------------------------------------ legit paths
 
 
-def test_legit_add_import_and_completion_still_work(monkeypatch, tmp_path):
+@pytest.mark.parametrize("use_litellm_router", [False, True])
+def test_legit_add_import_and_completion_still_work(
+        monkeypatch, tmp_path, use_litellm_router):
     """No over-blocking: the ordinary flow — add a provider with a key, import its
     catalog, proxy a completion — still reaches the provider WITH the key."""
     monkeypatch.setenv("CHARON_HOME", str(tmp_path))
     legit = _start()
-    server = _serve(tmp_path)
+    server = _serve(tmp_path, use_litellm_router=use_litellm_router)
     try:
         st, body = _req(server.url + "/charon/providers", "POST", token="t", body={
             "name": "good", "base_url": _base(legit), "key": "sk-good"})

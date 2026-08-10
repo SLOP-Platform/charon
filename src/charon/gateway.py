@@ -132,6 +132,11 @@ class GatewayConfig:
     # Backward-compat attribute access (cfg.guardrails, etc.) → __getattr__ below.
     modules: dict[str, Any] = field(default_factory=dict)
     balance_tracker: Any = None  # BalanceTracker | None (typed as Any to avoid import cycle)
+    # LITELLM-ROUTER-CUTOVER (D-019): when True, build_server constructs a
+    # litellm.Router and the forwarder dispatches through it. Default OFF —
+    # dormant until shadow comparison on real traffic proves pricing parity.
+    # Flipped by LITELLM-ROUTER-FLIP-ON (doorbell ticket in PR #266).
+    use_litellm_router: bool = False
 
     def __getattr__(self, name: str) -> Any:
         """Backward-compat: cfg.guardrails → self.modules["guardrails"] etc."""
@@ -151,15 +156,21 @@ def load_config(
     host: str | None = None,
     port: int | None = None,
     token: str | None = None,
+    use_litellm_router: bool | None = None,
 ) -> GatewayConfig:
     """Resolve gateway config. ``toml_path`` wins; else ``state_dir/models.json``.
     Explicit ``host``/``port``/``token`` args override file values; ``token`` also
-    falls back to ``$CHARON_GATEWAY_TOKEN``."""
+    falls back to ``$CHARON_GATEWAY_TOKEN``.
+
+    ``use_litellm_router`` — None (default) reads it from the config file (default
+    True); an explicit bool overrides. False keeps the hand-rolled forwarder path
+    (security tests that verify the netutil.open_keyed chokepoint opt out)."""
     cfg_host: str = _DEFAULT_HOST
     cfg_port: int = _DEFAULT_PORT
     cfg_token: str | None = None
     cfg_failover_on_downgrade: bool = False
     cfg_anthropic_prompt_cache: bool = True
+    cfg_use_litellm_router: bool = False
     registry: dict = {}
     pool_map: dict = {}
     providers_cfg: dict = {}
@@ -173,6 +184,7 @@ def load_config(
         cfg_failover_on_downgrade = bool(gw.get("failover_on_downgrade", False))
         cfg_anthropic_prompt_cache = bool(
             gw.get(providers.ANTHROPIC_PROMPT_CACHE_KEY, True))
+        cfg_use_litellm_router = bool(gw.get("use_litellm_router", False))
         registry = data.get("models") or {}
         pool_map = data.get("pools") or {}  # virtual id → ordered [model id]
         providers_cfg = data.get("providers") or {}  # preset overrides (P3)
@@ -195,6 +207,8 @@ def load_config(
                         gw_file.get("failover_on_downgrade", False))
                     cfg_anthropic_prompt_cache = bool(
                         gw_file.get(providers.ANTHROPIC_PROMPT_CACHE_KEY, True))
+                    cfg_use_litellm_router = bool(
+                        gw_file.get("use_litellm_router", False))
             except (OSError, json.JSONDecodeError):
                 pass
 
@@ -239,6 +253,14 @@ def load_config(
         if meta:
             model_meta[mid] = meta
 
+    # LITELLM-MODEL-COST-ADOPT (D-019 item 5): stamp litellm.model_cost prices
+    # (~2,387 entries) onto registry entries that lack cost_input/cost_output.
+    # Clobber-safe: never overwrites operator-set prices. The enriched registry
+    # feeds model_pricing below, so derived_cost_rank sees real per-token USD
+    # instead of the neutral 1000 fallback that collapsed ~850 legs to one value.
+    from .routing_policy.litellm_pricing import enrich_registry
+    registry = enrich_registry(registry)
+
     # Per-token pricing surfaced to the proxy so it can compute cost_usd when a
     # provider returns a 200 with no cost (SR-5b). Keyed by registry model id;
     # the proxy's lookup also matches on the normalized final segment.
@@ -278,6 +300,8 @@ def load_config(
         anthropic_prompt_cache=cfg_anthropic_prompt_cache,
         modules=modules,
         balance_tracker=balance_tracker,
+        use_litellm_router=(use_litellm_router
+                             if use_litellm_router is not None else cfg_use_litellm_router),
     )
 
 
@@ -564,6 +588,13 @@ def build_server(cfg: GatewayConfig, *, setup_dir: str | Path | None = None) -> 
         balance_tracker=cfg.balance_tracker,
         observer=observer,
     )
+    # LITELLM-ROUTER-CUTOVER (D-019): build the adopted litellm.Router when
+    # cfg.use_litellm_router is True. DEFAULT OFF — the cutover is dormant until
+    # LITELLM-ROUTER-FLIP-ON proves pricing parity via shadow comparison on real
+    # traffic. The litellm PRICING path (enrich_registry → 2,387 priced models)
+    # is NOT behind this flag and remains active regardless.
+    if cfg.use_litellm_router:
+        server._build_router()  # noqa: SLF001 — gateway owns the server lifecycle
     # DRAIN-AND-PARK: wire the observer meter as the spend source for class-3
     # drain-then-park providers (anti-sprawl: one spend source, not two).
     if server.balance_tracker is not None:

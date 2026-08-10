@@ -187,6 +187,9 @@ class UpstreamRoute:
     # R7 capability-engine: per-route hard limits (None = unknown / no limit)
     max_context: int | None = None       # max tokens this route admits
     max_concurrency: int | None = None   # max in-flight requests to this route
+    # Per-provider default request params (capability-matrix quirk). Merged into
+    # every forwarded body — client-supplied values are never overwritten.
+    default_params: dict | None = None
 
     @property
     def label(self) -> str:
@@ -492,6 +495,13 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         balance_tracker: BalanceTracker | None = None,
         latency_tracker: RollingLatency | None = None,
         slow_provider_threshold_ms: float | None = None,
+        # Reasoning suppression: when True (default), per-provider default_params
+        # that suppress reasoning (e.g. ``{"thinking":{"type":"disabled"}}``) are
+        # applied for multi-turn requests (those with at least one assistant turn
+        # in the message history). This prevents the DeepSeek 400 on turn >1 when
+        # ``reasoning_content`` is not round-tripped. Set False to never suppress
+        # reasoning (may cost quality, but allows single-turn reasoning to work).
+        reasoning_suppression: bool = True,
     ) -> None:
         super().__init__((host, port), _ProxyHandler)
         self.upstream_base = upstream_base
@@ -569,11 +579,18 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
             if not hasattr(self, _mn):
                 setattr(self, _mn, self.modules[_mn])
         self.balance_tracker = balance_tracker
+        # LITELLM-ROUTER-CUTOVER (D-019): the adopted litellm.Router. ``None`` when
+        # litellm is absent → the hand-rolled forwarder path runs. Built by
+        # ``_build_router`` (gateway.py calls it at construction; apply_routes re-calls).
+        self.router: Any = None
+        # The screened chains the Router was built from (routes_by_model output).
+        self.router_chains: dict[str, list] = {}
         # R3: optional capability deny-table, set by gateway.build_server;
         # forwarder reads via getattr(..., None) so direct-server tests are unaffected.
         self.capability_matrix: Any = None
         self.latency_tracker = latency_tracker or RollingLatency()
         self.slow_provider_threshold_ms = slow_provider_threshold_ms
+        self.reasoning_suppression = reasoning_suppression
         self._cooldown: dict[str, float] = {}
         self._cooldown_lock = threading.Lock()
         self.failover_events: collections.deque[dict] = collections.deque(maxlen=200)
@@ -616,6 +633,33 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
             self.model_meta = model_meta or {}
             self.model_pricing = model_pricing or {}
             self.observer.set_pricing(self.model_pricing)
+        # Rebuild the Router on hot-reload ONLY when one was initialized at construction
+        # (use_litellm_router=True). When the server was built opt-out, self.router
+        # stays None and the hand-rolled path keeps serving.
+        if self.router is not None:
+            self._build_router()
+
+    def _build_router(self) -> None:
+        """Construct (or reconstruct) the adopted litellm.Router from the live config —
+        the production importer for src/charon/litellm_plane. litellm is a core dependency
+        (pyproject.toml) so ImportError here is a broken install — fail loudly."""
+        try:
+            from importlib import import_module
+            _lr = import_module("charon.litellm_plane.litellm_router")
+            self.router_chains = _lr.routes_by_model(self)
+            self.router = _lr.make_router(self)
+        except ImportError:  # pragma: no cover — litellm is core dependency; cannot import-absent
+            import logging
+            logging.getLogger("charon.proxy_server").error(
+                "litellm is not installed — it is a core dependency (pyproject.toml). "
+                "Re-run: pip install charon", exc_info=True)
+            raise
+        except Exception:  # pragma: no cover — noqa: BLE001
+            import logging
+            logging.getLogger("charon.proxy_server").warning(
+                "litellm.Router build failed; serving via the hand-rolled path", exc_info=True)
+            self.router = None
+            self.router_chains = {}
 
     def chain_for(self, model: str) -> list[UpstreamRoute]:
         """The ordered failover chain for ``model``: a configured pool (multiple
