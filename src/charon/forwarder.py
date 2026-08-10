@@ -577,7 +577,7 @@ def _forward_stream_via_router(  # pragma: no cover — streaming-only; exercise
         pass
 
     if srv.spend_limiter is not None:
-        srv.spend_limiter.record(cost if cost > 0 else est_cost,
+        srv.spend_limiter.record(cost,
                                   provider=provider)
     if srv.balance_tracker is not None and provider:
         srv.balance_tracker.record_spend(provider, cost, model=requested)
