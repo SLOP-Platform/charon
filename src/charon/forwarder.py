@@ -508,7 +508,7 @@ def forward_via_router(handler, srv) -> bool:
 
 def _forward_stream_via_router(  # pragma: no cover — streaming-only; exercised via E2E receipt R7
     handler, srv, router, orig_bj, _raw_body, _chains, _bt, session_id,
-    est_cost, requested,
+    est_cost, requested,  # noqa: ARG001 — est_cost kept for signature compat; removed from spend path
 ) -> bool:
     """Serve a streaming request through the adopted ``litellm.Router`` SSE path.
 
