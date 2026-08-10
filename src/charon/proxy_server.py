@@ -641,17 +641,19 @@ class GatewayProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
     def _build_router(self) -> None:
         """Construct (or reconstruct) the adopted litellm.Router from the live config —
-        the production importer for src/charon/litellm_plane. Best-effort: litellm
-        absent → self.router stays None (hand-rolled path runs); a misconfigured route
-        logs a warning and leaves the hand-rolled path serving."""
+        the production importer for src/charon/litellm_plane. litellm is a core dependency
+        (pyproject.toml) so ImportError here is a broken install — fail loudly."""
         try:
             from importlib import import_module
             _lr = import_module("charon.litellm_plane.litellm_router")
             self.router_chains = _lr.routes_by_model(self)
             self.router = _lr.make_router(self)
-        except ImportError:  # pragma: no cover — litellm always installed in test/CI
-            self.router = None
-            self.router_chains = {}
+        except ImportError:
+            import logging
+            logging.getLogger("charon.proxy_server").error(
+                "litellm is not installed — it is a core dependency (pyproject.toml). "
+                "Re-run: pip install charon", exc_info=True)
+            raise
         except Exception:  # noqa: BLE001 — a misconfigured route must not brick the gateway
             import logging
             logging.getLogger("charon.proxy_server").warning(
