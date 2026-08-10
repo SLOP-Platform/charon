@@ -185,7 +185,7 @@ def build_fallbacks(chains_by_model: dict[str, list[UpstreamRoute]]) -> list[dic
                 continue
             legs.append(_leg_model_name(agent_model, len(legs)))
         if len(legs) > 1:
-            fallbacks.append({legs[0]: legs[1:]})
+            fallbacks.append({legs[0]: legs[1:]})  # pragma: no cover  # multi-leg only
     return fallbacks
 
 
