@@ -456,3 +456,99 @@ def test_coverage_report_litellm_priced():
     # deepseek-chat is known to litellm → priced by litellm
     assert report["priced"] >= 1
     assert report["per_provider"]["deepseek"][0] >= 1
+
+
+# ── module-wired Router path integration test ──────────────────────────────
+
+
+def test_router_path_with_wired_modules(monkeypatch, tmp_path):
+    """Exercise ``forward_via_router`` with spend_limiter, guardrails,
+    response_normalizer, semantic_cache, and balance_tracker wired —
+    covering the module-guard branches (ADOPT-MAP KEEP-list: spend
+    limiter, caching, response normalizer, balance tracking)."""
+    pytest.importorskip("litellm")
+    from charon.spend_limits import SpendLimiter, SpendDecision
+    from charon.response_normalizer import ResponseNormalizer, NormalizeMode
+    from charon.balance import BalanceTracker
+    from charon.cache import SemanticCache
+
+    class _RecLimiter(SpendLimiter):
+        def __init__(self, d):
+            super().__init__(monthly_limit_usd=0.0, state_dir=d)
+            self.recorded: list[float] = []
+        def check(self, e):
+            return SpendDecision(allowed=True, remaining=float("inf"), reason="")
+        def record(self, c):
+            self.recorded.append(c)
+
+    class _RecNormalizer(ResponseNormalizer):
+        def __init__(self):
+            self.seen: list[str] = []
+        def normalize(self, content, mode):
+            self.seen.append(str(content))
+            return ResponseNormalizer.normalize(content, mode)
+
+    monkeypatch.setenv("CHARON_HOME", str(tmp_path))
+    legit = _start()
+    from charon.guardrails import Guardrails
+    limiter = _RecLimiter(tmp_path)
+    norm = _RecNormalizer()
+    cache = SemanticCache()
+    bt = BalanceTracker()
+    gr = Guardrails(config={"disable_pii": True})
+    # Wrap record_spend to capture the spend args flowing through R1's cost binding
+    _bt_spend_args: list[tuple] = []
+    _bt_orig_record = bt.record_spend
+    def _bt_record_spend(provider, usd, model=None):
+        _bt_spend_args.append((provider, usd, model))
+        _bt_orig_record(provider, usd, model=model)
+    bt.record_spend = _bt_record_spend
+
+    server = _serve(tmp_path, use_litellm_router=True)
+    server.spend_limiter = limiter
+    server.response_normalizer = norm
+    server.semantic_cache = cache
+    server.balance_tracker = bt
+    server.guardrails = gr
+
+    try:
+        # Register provider then model — these may rebuild the observer,
+        # so wire pricing AFTER registration
+        st, body = _req(server.url + "/charon/providers", "POST", token="t", body={
+            "name": "good", "base_url": _base(legit), "key": "sk-good"})
+        assert st == 200, f"provider registration failed: {body}"
+
+        st, body = _req(server.url + "/charon/models", "POST", token="t", body={
+            "id": "my-model", "provider": "good", "upstream_model": "good-model"})
+        assert st == 200, f"model registration failed: {body}"
+
+        # Wire pricing so the observer can compute non-zero cost from tokens
+        server.model_pricing = {"good-model": {"cost_input": 1e-6, "cost_output": 2e-6}}
+        server.observer.set_pricing(server.model_pricing)
+
+        # Send completion
+        st, body_str = _req(server.url + "/v1/chat/completions", "POST", token="t",
+                            body={"model": "my-model",
+                                  "messages": [{"role": "user", "content": "hi"}]})
+        assert st == 200, f"completion failed (status {st}): {body_str[:500]}"
+        body = json.loads(body_str)
+        assert body.get("model") == "good-model"
+
+        # spend_limiter: exercised (the guard branch is covered)
+        assert limiter.recorded, "spend_limiter.record was never called"
+
+        # response_normalizer: exercised
+        assert norm.seen, "response_normalizer was never called"
+
+        # balance_tracker: record_spend was called through the R1 cost binding
+        assert _bt_spend_args, (
+            "balance_tracker.record_spend was never called — "
+            "the guard branch at :500 was NOT exercised")
+        prov, cost_val, model = _bt_spend_args[0]
+        assert cost_val > 0.0, (
+            f"balance_tracker.record_spend got cost={cost_val!r} — "
+            "R1 cost binding is still producing $0.00. "
+            f"Provider={prov!r}, model={model!r}")
+    finally:
+        server.shutdown()
+        legit.shutdown()

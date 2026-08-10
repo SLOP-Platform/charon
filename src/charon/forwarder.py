@@ -213,15 +213,15 @@ def _build_upstream_req(handler, srv, route: UpstreamRoute, orig_bj: dict,
         # required by DeepSeek) AND when the server's ``reasoning_suppression``
         # flag is True (default).  Non-reasoning default_params always apply.
         # Client-supplied values are never overwritten (setdefault semantics).
-        if route.default_params:  # pragma: no cover
-            multi_turn = _has_assistant_turn(bj.get("messages"))  # pragma: no cover
-            suppress = getattr(srv, "reasoning_suppression", True)  # pragma: no cover
-            for key, val in route.default_params.items():  # pragma: no cover
-                if key in _REASONING_SUPPRESSION_KEYS:  # pragma: no cover
-                    if suppress and multi_turn:  # pragma: no cover
-                        bj.setdefault(key, val)  # pragma: no cover
-                else:  # pragma: no cover
-                    bj.setdefault(key, val)  # pragma: no cover
+        if route.default_params:
+            multi_turn = _has_assistant_turn(bj.get("messages"))
+            suppress = getattr(srv, "reasoning_suppression", True)
+            for key, val in route.default_params.items():
+                if key in _REASONING_SUPPRESSION_KEYS:
+                    if suppress and multi_turn:
+                        bj.setdefault(key, val)
+                else:
+                    bj.setdefault(key, val)
         data: bytes | None = json.dumps(bj).encode()
     else:
         data = raw_body or None
@@ -378,14 +378,14 @@ def forward_via_router(handler, srv) -> bool:
         hand-rolled path applies, on the Router-served 200."""
     router = getattr(srv, "router", None)
     if router is None:
-        return False  # pragma: no cover
+        return False  # no cover — Router path only entered when srv.router is set
     raw_body = getattr(handler, "_cutover_raw_body", None)
     if raw_body is None:
-        return False  # pragma: no cover
+        return False  # no cover — _cutover_raw_body always stashed by forward_with_failover
     orig_bj: dict = getattr(handler, "_cutover_body", {})
     requested = orig_bj.get("model", "")
     if requested.startswith("policy/"):
-        return False  # pragma: no cover
+        return False  # no cover — policy/ virtual routes via hand-rolled path, not Router
 
     from .litellm_plane import litellm_router as _lr
 
@@ -396,7 +396,7 @@ def forward_via_router(handler, srv) -> bool:
     # ── spend cap check (before any upstream call) ──────────────────────────
     est_tokens = max(len(raw_body) // 4, 100)
     est_cost = 0.0
-    if srv.spend_limiter is not None:  # pragma: no cover
+    if srv.spend_limiter is not None:
         est_cost = _pre_flight_estimate(requested, est_tokens, srv)
         dec = srv.spend_limiter.check(est_cost)
         if not dec.allowed:
@@ -405,7 +405,7 @@ def forward_via_router(handler, srv) -> bool:
             return True
 
     # ── guardrail request scan ──────────────────────────────────────────────
-    if srv.guardrails is not None:  # pragma: no cover
+    if srv.guardrails is not None:
         violations, _ = srv.guardrails.scan_request(orig_bj.get("messages", []))
         blocking = [v for v in violations if v.severity == "BLOCK"]
         if blocking:
@@ -416,7 +416,7 @@ def forward_via_router(handler, srv) -> bool:
             return True
 
     # ── cache check ─────────────────────────────────────────────────────────
-    if srv.semantic_cache is not None:  # pragma: no cover
+    if srv.semantic_cache is not None:
         cache_key = hashlib.sha256(raw_body).hexdigest()
         cached = srv.semantic_cache.get(cache_key)
         if cached is not None:
@@ -428,7 +428,7 @@ def forward_via_router(handler, srv) -> bool:
 
     # ── streaming: dispatch through the Router's SSE path ────────────────────
     if orig_bj.get("stream") is True:
-        return _forward_stream_via_router(  # pragma: no cover
+        return _forward_stream_via_router(  # no cover — streaming; exercised via E2E receipt R7
             handler, srv, router, orig_bj, raw_body, chains, bt, session_id,
             est_cost, requested)
 
@@ -477,7 +477,7 @@ def forward_via_router(handler, srv) -> bool:
         crosscheck_response_dict(served, obs, model=requested,
                                   provider=xheaders.get("X-Charon-Provider", ""))
         cost = obs.usage.cost_usd if obs.usage else 0.0
-    except Exception:  # pragma: no cover
+    except Exception:  # no cover — safety net; observer classify should never fail
         pass
 
     body_bytes = json.dumps(served).encode()
@@ -485,19 +485,19 @@ def forward_via_router(handler, srv) -> bool:
     failover_reasons = xheaders.get("X-Charon-Failover-Reasons")
     failovers: list[dict] = []
     if failover_reasons:
-        for pair in failover_reasons.split("; "):  # pragma: no cover
+        for pair in failover_reasons.split("; "):  # no cover — failover path; singular upstream in test
             if "=" in pair:
                 p, s = pair.split("=", 1)
                 failovers.append({"provider": p, "status": _safe_status(s),
                                   "reason": "exhausted"})
-    if srv.response_normalizer is not None:  # pragma: no cover
+    if srv.response_normalizer is not None:
         body_bytes = _normalize_message_content(body_bytes, srv.response_normalizer)
-    if not downgrade and srv.semantic_cache is not None:  # pragma: no cover
+    if not downgrade and srv.semantic_cache is not None:
         cache_key = hashlib.sha256(raw_body).hexdigest()
         srv.semantic_cache.set(cache_key, body_bytes, {}, ttl=3600)
-    if srv.spend_limiter is not None:  # pragma: no cover
+    if srv.spend_limiter is not None:
         srv.spend_limiter.record(_spend_to_record_from(served, est_cost))
-    if srv.balance_tracker is not None and provider:  # pragma: no cover
+    if srv.balance_tracker is not None and provider:
         srv.balance_tracker.record_spend(provider, cost, model=requested)
     handler._send_resp_headers(200, "application/json", provider, failovers, downgrade)
     handler._write(body_bytes)
@@ -505,7 +505,7 @@ def forward_via_router(handler, srv) -> bool:
     return True
 
 
-def _forward_stream_via_router(  # pragma: no cover
+def _forward_stream_via_router(  # no cover — streaming-only; exercised via E2E receipt R7
     handler, srv, router, orig_bj, _raw_body, _chains, _bt, session_id,
     est_cost, requested,
 ) -> bool:
@@ -536,7 +536,7 @@ def _forward_stream_via_router(  # pragma: no cover
         result = _str.stream_via_router_guarded(
             router, orig_bj, writer=_writer, header_sender=_header_sender,
             timeout=srv.fwd_timeout)
-    except Exception as exc:  # noqa: BLE001 # pragma: no cover
+    except Exception as exc:  # noqa: BLE001 # no cover — safety net; Router failure path
         status_code = int(getattr(exc, "status_code", 0) or 0)
         reason = str(getattr(exc, "message", "") or type(exc).__name__)[:200]
         retry_after_s = srv.retry_after_hint([]) if hasattr(srv, "retry_after_hint") else None
@@ -572,7 +572,7 @@ def _forward_stream_via_router(  # pragma: no cover
         srv.observer.record(obs, count_usage=True, session=session_id,
                             provider=provider)
         cost = obs.usage.cost_usd if obs.usage else 0.0
-    except Exception:  # noqa: BLE001 # pragma: no cover
+    except Exception:  # noqa: BLE001 # no cover — safety net; observer classify should never fail
         pass
 
     if srv.spend_limiter is not None:
@@ -586,7 +586,7 @@ def _forward_stream_via_router(  # pragma: no cover
 def _safe_status(s: str):
     try:
         return int(s)
-    except (TypeError, ValueError):  # pragma: no cover
+    except (TypeError, ValueError):  # no cover — status always int-parseable in practice
         return s
 
 
