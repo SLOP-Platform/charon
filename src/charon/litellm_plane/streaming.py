@@ -117,7 +117,7 @@ def _relay_stream(
         bytes_sent += len(sse)
         if not collected_model and router is not None:
             collected_model = _selected_upstream_model(
-                router, chunk, fallback=getattr(chunk, "model", "") or None)
+                router, chunk, fallback=getattr(chunk, "model", "") or None) or ""
             hp = getattr(chunk, "_hidden_params", None) or {}
             provider = _provider_from_deployment(router, hp.get("model_id"))
         elif not collected_model:
