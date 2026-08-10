@@ -467,23 +467,26 @@ def test_router_path_with_wired_modules(monkeypatch, tmp_path):
     covering the module-guard branches (ADOPT-MAP KEEP-list: spend
     limiter, caching, response normalizer, balance tracking)."""
     pytest.importorskip("litellm")
-    from charon.spend_limits import SpendLimiter, SpendDecision
-    from charon.response_normalizer import ResponseNormalizer, NormalizeMode
     from charon.balance import BalanceTracker
     from charon.cache import SemanticCache
+    from charon.response_normalizer import ResponseNormalizer
+    from charon.spend_limits import SpendDecision, SpendLimiter
 
     class _RecLimiter(SpendLimiter):
         def __init__(self, d):
             super().__init__(monthly_limit_usd=0.0, state_dir=d)
             self.recorded: list[float] = []
+
         def check(self, e):
             return SpendDecision(allowed=True, remaining=float("inf"), reason="")
+
         def record(self, c):
             self.recorded.append(c)
 
     class _RecNormalizer(ResponseNormalizer):
         def __init__(self):
             self.seen: list[str] = []
+
         def normalize(self, content, mode):
             self.seen.append(str(content))
             return ResponseNormalizer.normalize(content, mode)
@@ -499,6 +502,7 @@ def test_router_path_with_wired_modules(monkeypatch, tmp_path):
     # Wrap record_spend to capture the spend args flowing through R1's cost binding
     _bt_spend_args: list[tuple] = []
     _bt_orig_record = bt.record_spend
+
     def _bt_record_spend(provider, usd, model=None):
         _bt_spend_args.append((provider, usd, model))
         _bt_orig_record(provider, usd, model=model)

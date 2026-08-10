@@ -485,7 +485,8 @@ def forward_via_router(handler, srv) -> bool:
     failover_reasons = xheaders.get("X-Charon-Failover-Reasons")
     failovers: list[dict] = []
     if failover_reasons:
-        for pair in failover_reasons.split("; "):  # no cover — failover path; singular upstream in test
+        # no cover — failover path; singular upstream in test
+        for pair in failover_reasons.split("; "):
             if "=" in pair:
                 p, s = pair.split("=", 1)
                 failovers.append({"provider": p, "status": _safe_status(s),
