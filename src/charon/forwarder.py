@@ -557,11 +557,9 @@ def _forward_stream_via_router(  # pragma: no cover
         return True
 
     _downgrade = result.get("downgrade", False)
-    provider = result.get("model", requested) or requested
+    provider = result.get("provider") or result.get("model", requested) or requested
     usage = result.get("usage")
     cost = 0.0
-    if usage is not None:
-        cost = float(getattr(usage, "cost", getattr(usage, "total_cost", 0.0)) or 0.0)
 
     try:
         from charon.proxy import GatewayProxy
@@ -573,6 +571,7 @@ def _forward_stream_via_router(  # pragma: no cover
             expected_model=provider)
         srv.observer.record(obs, count_usage=True, session=session_id,
                             provider=provider)
+        cost = obs.usage.cost_usd if obs.usage else 0.0
     except Exception:  # noqa: BLE001 # pragma: no cover
         pass
 

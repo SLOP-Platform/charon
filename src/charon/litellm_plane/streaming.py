@@ -91,16 +91,23 @@ def _relay_stream(
     *,
     writer: Callable[[bytes], bool],
     collected_model: str = "",
+    router: Any = None,
 ) -> dict:
     """Iterate a litellm streaming iterable, relaying each chunk as SSE.
 
     *writer* receives each SSE ``data:`` event as bytes and returns
     ``True`` to continue or ``False`` to stop (client disconnect).
 
-    Returns ``{model, usage, bytes_sent}``.
+    Returns ``{model, provider, usage, bytes_sent}``.
     """
+    from charon.litellm_plane.litellm_router import (
+        _provider_from_deployment,
+        _selected_upstream_model,
+    )
+
     usage = None
     bytes_sent = 0
+    provider = ""
     for chunk in stream:
         if chunk is None:
             continue
@@ -108,7 +115,12 @@ def _relay_stream(
         if not writer(sse):
             break
         bytes_sent += len(sse)
-        if not collected_model:
+        if not collected_model and router is not None:
+            collected_model = _selected_upstream_model(
+                router, chunk, fallback=getattr(chunk, "model", "") or None)
+            hp = getattr(chunk, "_hidden_params", None) or {}
+            provider = _provider_from_deployment(router, hp.get("model_id"))
+        elif not collected_model:
             collected_model = getattr(chunk, "model", "") or ""
         u = getattr(chunk, "usage", None)
         if u is not None:
@@ -116,7 +128,8 @@ def _relay_stream(
     done = _sse_done()
     writer(done)
     bytes_sent += len(done)
-    return {"model": collected_model, "usage": usage, "bytes_sent": bytes_sent}
+    return {"model": collected_model, "provider": provider,
+            "usage": usage, "bytes_sent": bytes_sent}
 
 
 def _classify_head(
@@ -178,7 +191,7 @@ def stream_via_router(
     The caller should catch that and emit the ADR-0016 exhaustion envelope.
     """
     stream = _raw_stream(router, body, timeout=timeout)
-    return _relay_stream(stream, writer=writer)
+    return _relay_stream(stream, writer=writer, router=router)
 
 
 def stream_via_router_guarded(
@@ -227,16 +240,23 @@ def stream_via_router_guarded(
     if header_sender:
         header_sender(200, "text/event-stream", extra_headers, downgrade)
 
-    head_model = getattr(head[0], "model", "") if head else ""
+    head_model = ""
+    if head:
+        from charon.litellm_plane.litellm_router import (
+            _selected_upstream_model,
+        )
+        head_model = _selected_upstream_model(
+            router, head[0], fallback=getattr(head[0], "model", "") or None) or ""
     bytes_sent = 0
     for chunk in head:
         sse = _chunk_to_sse(chunk)
         if not writer(sse):
-            return {"model": head_model, "usage": None,
-                    "bytes_sent": bytes_sent, "downgrade": downgrade}
+            return {"model": head_model, "provider": "",
+                    "usage": None, "bytes_sent": bytes_sent, "downgrade": downgrade}
         bytes_sent += len(sse)
 
-    result = _relay_stream(stream, writer=writer, collected_model=head_model)
+    result = _relay_stream(stream, writer=writer, collected_model=head_model,
+                           router=router)
     result["downgrade"] = downgrade
     result["bytes_sent"] = bytes_sent + result.get("bytes_sent", 0)
     return result
