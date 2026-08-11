@@ -75,9 +75,11 @@ _MODULE_SPECS: list[ModuleSpec] = [
     ModuleSpec("quality", "quality_scorer",
                lambda d, sd: QualityScorer(state_dir=sd)),
     ModuleSpec("spend", "spend_limiter",
-               lambda d, sd: SpendLimiter(
-                   monthly_limit_usd=float(d.get("monthly_limit_usd", 0)),
-                   state_dir=sd)),
+                lambda d, sd: SpendLimiter(
+                    monthly_limit_usd=float(d.get("monthly_limit_usd", 0)),
+                    state_dir=sd,
+                    provider_limits=_parse_provider_limits(d.get("provider_limits", {})),
+                )),
     ModuleSpec("inspector", "request_inspector",
                lambda d, sd: RequestInspector()),
     ModuleSpec("policy", "policy_router",
@@ -91,6 +93,22 @@ _MODULE_SPECS: list[ModuleSpec] = [
                    ttl_s=float(d.get("ttl_s", 3600.0))),
                opt_in=True),
 ]
+_EMPTY_LIST: list[str] = []
+
+
+def _parse_provider_limits(raw: object) -> dict[str, float]:
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, float] = {}
+    for k, v in raw.items():
+        try:
+            val = float(v)
+            if val > 0.0:
+                out[str(k)] = val
+        except (TypeError, ValueError):
+            pass
+    return out
+
 
 # ── backward-compatible re-exports (tests import these from gateway) ──────────
 _build_routes_and_pools = routing_policy.build_routes_and_pools

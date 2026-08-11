@@ -496,7 +496,8 @@ def forward_via_router(handler, srv) -> bool:
         cache_key = hashlib.sha256(raw_body).hexdigest()
         srv.semantic_cache.set(cache_key, body_bytes, {}, ttl=3600)
     if srv.spend_limiter is not None:
-        srv.spend_limiter.record(_spend_to_record_from(served, est_cost))
+        srv.spend_limiter.record(_spend_to_record_from(served, est_cost),
+                                  provider=provider)
     if srv.balance_tracker is not None and provider:
         srv.balance_tracker.record_spend(provider, cost, model=requested)
     handler._send_resp_headers(200, "application/json", provider, failovers, downgrade)
@@ -507,7 +508,7 @@ def forward_via_router(handler, srv) -> bool:
 
 def _forward_stream_via_router(  # pragma: no cover — streaming-only; exercised via E2E receipt R7
     handler, srv, router, orig_bj, _raw_body, _chains, _bt, session_id,
-    est_cost, requested,
+    est_cost, requested,  # noqa: ARG001 — est_cost kept for signature compat; removed from spend path
 ) -> bool:
     """Serve a streaming request through the adopted ``litellm.Router`` SSE path.
 
@@ -576,7 +577,8 @@ def _forward_stream_via_router(  # pragma: no cover — streaming-only; exercise
         pass
 
     if srv.spend_limiter is not None:
-        srv.spend_limiter.record(cost if cost > 0 else est_cost)
+        srv.spend_limiter.record(cost,
+                                  provider=provider)
     if srv.balance_tracker is not None and provider:
         srv.balance_tracker.record_spend(provider, cost, model=requested)
     srv.note_request(requested, provider, 200, cost, [])
@@ -1194,7 +1196,8 @@ def forward_with_failover(handler, srv) -> None:
                     srv.quality_scorer.record(
                         route.label, 0, success=not obs.pseudo_success, tokens=0)
                 if srv.spend_limiter is not None:
-                    srv.spend_limiter.record(_spend_to_record(obs, est_cost))
+                    srv.spend_limiter.record(_spend_to_record(obs, est_cost),
+                                             provider=route.label)
                 if srv.balance_tracker is not None:
                     srv.balance_tracker.record_spend(route.label, cost, model=requested)
                 handler._send_resp_headers(200, ctype, route.label, failovers, obs.pseudo_success)
@@ -1288,7 +1291,8 @@ def forward_with_failover(handler, srv) -> None:
                 srv.semantic_cache.set(cache_key, full_bytes, rhdrs, ttl=3600)
             cost = served_obs.usage.cost_usd if served_obs.usage else 0.0
             if srv.spend_limiter is not None:
-                srv.spend_limiter.record(_spend_to_record(served_obs, est_cost))
+                srv.spend_limiter.record(_spend_to_record(served_obs, est_cost),
+                                         provider=route.label)
             if srv.balance_tracker is not None:
                 srv.balance_tracker.record_spend(route.label, cost, model=requested)
             srv.note_request(requested, route.label, 200, cost, failovers)

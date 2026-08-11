@@ -497,10 +497,10 @@ def test_router_path_with_wired_modules(monkeypatch, tmp_path):
             super().__init__(monthly_limit_usd=0.0, state_dir=d)
             self.recorded: list[float] = []
 
-        def check(self, e):
+        def check(self, e, **kw):  # type: ignore[override]
             return SpendDecision(allowed=True, remaining=float("inf"), reason="")
 
-        def record(self, c):
+        def record(self, c, **kw):  # type: ignore[override]
             self.recorded.append(c)
 
     class _RecNormalizer(ResponseNormalizer):
@@ -588,10 +588,10 @@ def test_router_path_spend_cap_blocks(monkeypatch, tmp_path):
         def __init__(self, d):
             super().__init__(monthly_limit_usd=0.0, state_dir=d)
 
-        def check(self, e):
+        def check(self, e, **kw):  # type: ignore[override]
             return SpendDecision(allowed=False, remaining=0.0, reason="cap exceeded")
 
-        def record(self, c):
+        def record(self, c, **kw):  # type: ignore[override]
             pass
 
     monkeypatch.setenv("CHARON_HOME", str(tmp_path))

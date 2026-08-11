@@ -69,10 +69,10 @@ class _RecordingLimiter(SpendLimiter):
         super().__init__(monthly_limit_usd=0.0, state_dir=state_dir)
         self.recorded: list[float] = []
 
-    def check(self, estimated_cost: float) -> SpendDecision:
+    def check(self, estimated_cost: float, *, provider: str | None = None) -> SpendDecision:
         return SpendDecision(allowed=True, remaining=float("inf"), reason="")
 
-    def record(self, cost: float) -> None:
+    def record(self, cost: float, **kw) -> None:
         self.recorded.append(cost)
 
 

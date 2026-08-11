@@ -141,6 +141,34 @@ def _gateway_usage(body: dict | None) -> Usage | None:
     )
 
 
+def _cached_input_tokens(body: dict | None) -> int:
+    if not isinstance(body, dict):
+        return 0
+    usage = body.get("usage")
+    if not isinstance(usage, dict):
+        return 0
+    details = usage.get("prompt_tokens_details")
+    if not isinstance(details, dict):
+        return 0
+    try:
+        ct = int(details.get("cached_tokens", 0) or 0)
+        return max(0, ct)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _cache_read_price(pricing: dict, full_input_rate: float) -> float:
+    cached = pricing.get("cache_read_input_token_cost")
+    if cached is not None:
+        try:
+            val = float(cached)
+            if val >= 0:
+                return val
+        except (TypeError, ValueError):
+            pass
+    return full_input_rate / 50.0
+
+
 def _error_type(body: dict | None) -> str:
     if not body:
         return ""
@@ -495,7 +523,17 @@ class GatewayProxy:
             if pricing.get("free") is True:
                 cost_source = "free"
             elif ci is not None and co is not None:
-                computed = usage.tokens_in * float(ci) + usage.tokens_out * float(co)
+                ci_f = float(ci)
+                co_f = float(co)
+                cached_tokens = _cached_input_tokens(body)
+                if cached_tokens > 0:
+                    ci_cached = _cache_read_price(pricing, ci_f)
+                    uncached = max(0, usage.tokens_in - cached_tokens)
+                    computed = (uncached * ci_f
+                                + cached_tokens * ci_cached
+                                + usage.tokens_out * co_f)
+                else:
+                    computed = usage.tokens_in * ci_f + usage.tokens_out * co_f
                 if computed > 0:
                     usage = Usage(
                         tokens_in=usage.tokens_in,
