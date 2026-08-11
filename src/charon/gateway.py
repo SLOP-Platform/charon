@@ -333,7 +333,14 @@ def _build_balance_tracker(
     resolved_dir = Path(state_dir) if state_dir is not None else secrets.config_dir()
     has_balance = any(
         v.get("funding_class") is not None or v.get("mode") is not None
+        or isinstance(v.get("free_tier"), dict)
         for v in (providers_cfg or {}).values())
+    # S26: also build the tracker when the TSV seed has per-provider limits,
+    # even when no provider config carries funding_class/mode/free_tier.  The
+    # forwarder's record_exhaustion path depends on bt being non-None, and the
+    # TSV is the only observability we have on a deploy with no provider config.
+    if not has_balance and not _has_persisted_parks(resolved_dir):
+        has_balance = _has_tsv_provider_limits()
     if not has_balance and not _has_persisted_parks(resolved_dir):
         return None
     return BalanceTracker(config=providers_cfg or {}, state_dir=resolved_dir)
@@ -356,6 +363,34 @@ def _has_persisted_parks(state_dir: Path) -> bool:
     if not isinstance(data, dict):
         return True
     return bool(data.get("parked"))
+
+
+def _has_tsv_provider_limits() -> bool:
+    """True when ``fleet/state/FREE-TIER-LIMITS.tsv`` carries at least one row with
+    numeric rate-limit columns — i.e. the TSV seed describes a real provider.
+
+    S26: a deploy with no provider config still needs a BalanceTracker so the
+    forwarder's record_exhaustion path can fire on a deterministic 402.  The TSV
+    seed is the only signal we have that a provider should be drain-then-park'd."""
+    import csv
+    import re
+    from pathlib import Path
+    tsv = Path(__file__).resolve().parents[1] / "fleet" / "state" / "FREE-TIER-LIMITS.tsv"
+    if not tsv.exists():
+        return False
+    try:
+        rows = list(csv.DictReader(tsv.read_text().splitlines(), delimiter="\t"))
+    except (OSError, csv.Error):
+        return False
+    for row in rows:
+        prov = str(row.get("provider", "")).strip()
+        if not prov or prov.startswith("#"):
+            continue
+        for col in ("rpm", "rpd", "tpm", "tpd"):
+            v = str(row.get(col, "")).strip()
+            if re.match(r"\d+", v):
+                return True
+    return False
 
 
 def _module_inst(name: str, state_dir: str | Path | None = None) -> Any:

@@ -96,6 +96,10 @@ class ProviderPreset:
     # back).  None/absent means no extra params.  Client-supplied values are NOT
     # overwritten (setdefault semantics).
     default_params: dict | None = None
+    # funding_class (S26: operator decision for opencode providers). Mirrors the
+    # per-provider ``funding_class`` config field so presets can enforce admission
+    # policy (zen → free-only, go → very-cheap). None/absent means unrestricted.
+    funding_class: int | None = None
 
 
 # Built-in presets assembled from the ``provider_presets/`` category modules.
