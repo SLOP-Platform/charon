@@ -24,12 +24,12 @@ from charon import config as _config_mod
 from charon import providers as _providers_mod
 from charon.proxy_server import UpstreamRoute as _UpstreamRoute
 
+from .admission import AdmissionViolation
 from .base import DefaultPolicy, Policy
 from .cost_rank import cost_class_priority, derived_cost_rank
 from .drain import DrainPolicy
 from .matrix import CapabilityMatrix, Grade, ModelCapability, WorkClass
 from .pools import PoolsSimplificationPolicy
-from .spill import SpillPolicy
 
 __all__ = [
     "Policy",
@@ -42,13 +42,13 @@ __all__ = [
     "cost_class_priority",
     "DrainPolicy",
     "PoolsSimplificationPolicy",
-    "SpillPolicy",
     "route_from_spec",
     "build_routes_and_pools",
     "tier_pools",
     "build_fallback_chain",
     "order_pool_by_live_cost",
     "order_chain_by_funding_class",
+    "AdmissionViolation",
 ]
 
 
@@ -148,6 +148,7 @@ def build_routes_and_pools(
     registry: dict, pool_map: dict, providers_cfg: dict | None = None,
     *, metered_costs: dict[tuple[str, str], float] | None = None,
     enforce_preset_allowlist: bool = False,
+    state_dir: str | None = None,
 ) -> tuple[dict[str, _UpstreamRoute], dict[str, list[_UpstreamRoute]], list[str]]:
     """Compile a model registry + ``pool_map`` (virtual id → [model id]) into
     single routes (concrete models) and failover chains (virtual ids). Each chain
@@ -177,9 +178,35 @@ def build_routes_and_pools(
     # unmappable model stays unpriced (see litellm_pricing.enrich_registry).
     from .litellm_pricing import enrich_registry
     registry = enrich_registry(registry)
+
+    # S26: ZEN/GO admission control — check every model against its provider's
+    # policy BEFORE building routes. ZEN is free-only (discovered set), GO is a
+    # fixed two-model allowlist. A violation is a LOUD skip (the model is dropped
+    # from routes AND logged), not a silent pass.
+    import logging as _log
+    from .admission import (
+        AdmissionViolation,
+        check_go_admission,
+        check_zen_admission,
+        load_zen_free_models,
+    )
+    _zen_free = load_zen_free_models(state_dir)
     routes: dict[str, _UpstreamRoute] = {}
     for mid, spec in registry.items():
         if isinstance(spec, dict):
+            provider = spec.get("provider", "")
+            if provider == "opencode-zen":
+                try:
+                    check_zen_admission(mid, spec, free_models=_zen_free)
+                except AdmissionViolation as exc:
+                    _log.warning("ZEN admission REFUSED: %s", exc)
+                    continue
+            if provider == "opencode-go":
+                try:
+                    check_go_admission(mid, spec)
+                except AdmissionViolation as exc:
+                    _log.warning("GO admission REFUSED: %s", exc)
+                    continue
             r = route_from_spec(spec, providers_cfg, model_id=mid,
                                 enforce_preset_allowlist=enforce_preset_allowlist)
             if r is not None:

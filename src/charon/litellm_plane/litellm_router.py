@@ -384,6 +384,88 @@ def complete_via_router_guarded(
         response=served, downgrade=obs.pseudo_success, headers=headers, observation=obs)
 
 
+def _provider_budget_config() -> dict | None:
+    """Construct ``provider_budget_config`` from the TSV seed for providers with
+    known rate limits. Returns None when no limits are configured or file absent.
+
+    S26: reads ``fleet/state/FREE-TIER-LIMITS.tsv`` (per-provider rpd/rpm/tpm/tpd).
+    Skips ``unpublished``/``unverified`` rows — only rows with at least one numeric
+    limit are included. A daily limit is divided by 1440 for the per-minute proxy
+    that litellm enforces natively via ``RouterBudgetLimiting``.
+
+    Uses the operator's exhaustion_signal column to pick ``budget_duration``:
+    a ``_per_month`` → ``\"30d\"``, a ``_per_day`` → ``\"1d\"``, else ``\"1d\"``.
+    The ``RouterBudgetLimiting`` callback auto-resets on window rollover — exactly
+    the period-boundary park-then-rearm the operator specified.
+    """
+    import csv
+    import re
+    from pathlib import Path
+
+    # Repo-root-relative path: free_tier.py lives at 4 parents, but we're in
+    # litellm_plane which is one deeper. Find the product repo root.
+    tsv_path = Path(__file__).resolve().parents[3] / "fleet" / "state" / "FREE-TIER-LIMITS.tsv"
+    if not tsv_path.exists():
+        return None
+    try:
+        text = tsv_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    rows = list(csv.DictReader(text.splitlines(), delimiter="\t"))
+    if not rows:
+        return None
+
+    cfg: dict[str, dict] = {}
+    for row in rows:
+        prov = str(row.get("provider", "")).strip()
+        if not prov or prov.startswith("#"):
+            continue
+        if prov in cfg:
+            continue
+
+        def _int_or(v: str) -> int | None:
+            s = v.strip()
+            if not s or s in ("-", "unknown", "unpublished", "unverified"):
+                return None
+            m = re.match(r"(\d+)(?:_per_\w+)?", s)
+            if m:
+                return int(m.group(1))
+            try:
+                return int(s)
+            except (ValueError, TypeError):
+                return None
+
+        rpm_v = _int_or(row.get("rpm", ""))
+        rpd_v = _int_or(row.get("rpd", ""))
+        tpm_v = _int_or(row.get("tpm", ""))
+        tpd_v = _int_or(row.get("tpd", ""))
+
+        if rpm_v is None and rpd_v is None and tpm_v is None and tpd_v is None:
+            continue  # no numeric limits — skip unpublished/unverified rows
+
+        entry: dict[str, object] = {}
+        rpm = rpm_v or (rpd_v // 1440 if rpd_v else None)
+        tpm = tpm_v or (tpd_v // 1440 if tpd_v else None)
+        if rpm:
+            entry["rpm_limit"] = rpm
+        if tpm:
+            entry["tpm_limit"] = tpm
+
+        sig = str(row.get("exhaustion_signal", "")).strip().lower()
+        if "month" in sig or "monthly" in sig or (tpd_v and tpd_v > 10_000_000):
+            entry["budget_duration"] = "30d"
+        elif "week" in sig:
+            entry["budget_duration"] = "7d"
+        elif "tmo" in row or "tpd" in row and tpd_v > 1_000_000:
+            entry["budget_duration"] = "30d"
+        else:
+            entry["budget_duration"] = "1d"
+
+        if entry:
+            cfg[prov] = entry
+    return cfg or None
+
+
 def make_router(
     server: Any,
     *,
@@ -398,6 +480,10 @@ def make_router(
     cool-after-N behavior; ``retry_after`` ← 0 (the hand-rolled RETRY-ONCE retries
     immediately with no backoff — cooldown is managed by ``cooldown_time`` +
     ``allowed_fails`` independently); ``fallbacks`` ← the ordered chain.
+
+    S26: ``provider_budget_config`` ← TSV-seed per-provider rate limits, enabling
+    litellm's ``RouterBudgetLimiting`` for period-boundary auto-reset + pre-request
+    filtering — no hand-rolled token-volume accounting.
     """
     from litellm import Router  # lazy: adopting the library, not standing up its proxy
 
@@ -406,6 +492,7 @@ def make_router(
     model_list = build_model_list(chains, key_resolver=key_resolver)
     fallbacks = build_fallbacks(chains)
     cooldown = float(getattr(server, "default_cooldown", 60.0) or 60.0)
+    budget = _provider_budget_config()
     return Router(
         model_list=model_list,
         fallbacks=fallbacks,
@@ -414,6 +501,7 @@ def make_router(
         num_retries=num_retries,
         retry_after=0,
         set_verbose=False,
+        provider_budget_config=budget,
     )
 
 
